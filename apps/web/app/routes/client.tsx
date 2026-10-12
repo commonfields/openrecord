@@ -32,7 +32,7 @@ import { SearchSuggestions } from "@/components/search-suggestions"
 import { errorMessage, formatDate, formatDateTime, relativeTime, sentenceCase } from "@/lib/format"
 import { ApiError } from "@/lib/api"
 import {
-  DECISION_LABELS, OUTCOME_LABELS, publicRecordPath, Records, RUN_STATUS_LABELS, safeRecordUrl,
+  DECISION_LABELS, FINDING_STATE_LABELS, OUTCOME_LABELS, publicRecordPath, Records, RUN_STATUS_LABELS, safeRecordUrl,
   type Decision, type OperatorRecord, type RecordCheck, type RecordResponse, type ValueType,
 } from "@/lib/record"
 import { useApi } from "@/lib/use-api"
@@ -48,6 +48,10 @@ const REFUSALS: Record<string, string> = {
   ItemSuperseded: "This fact was edited since; approve the current version.",
   FactsManagedByRepository: "This client's facts are managed by a repository manifest.",
   FixtureProviderDisabled: "The test fixture provider is disabled on this server.",
+  InvalidSamples: "A run checks each fact 1 to 5 times.",
+  SamplingPolicyChanged: "A re-check must reuse the first check's number of samples per fact.",
+  FactNotValidAtObservation: "The approved fact was not valid when this was observed; save the version that was.",
+  InvalidClaim: "The quoted claim must come from the observed answer.",
   Conflict: "Someone else just changed this. Reload and try again.",
 }
 const failure = (e: unknown) => {
@@ -197,8 +201,9 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
   )
 }
 
-function Review({ clientId, check, reload }: { clientId: string; check: RecordCheck; reload: () => Promise<void> }) {
+function Review({ clientId, check, sampleLabel, reload }: { clientId: string; check: RecordCheck; sampleLabel: string | null; reload: () => Promise<void> }) {
   const [note, setNote] = useState("")
+  const [span, setSpan] = useState("")
   const { busy, run } = useAction(reload)
   if (check.status === "QUEUED" || check.status === "RUNNING")
     return (
@@ -220,6 +225,7 @@ function Review({ clientId, check, reload }: { clientId: string; check: RecordCh
   const o = check.observation
   return (
     <div className="space-y-3">
+      {sampleLabel ? <p className="text-[11px] font-medium text-muted-foreground">{sampleLabel}</p> : null}
       <blockquote className="rounded-lg bg-muted/40 px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap">{o.answerText}</blockquote>
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
         <span>{check.surface}</span>·<span>{o.modelVersion ?? o.observedModel ?? o.requestedModel ?? "model unknown"}</span>·<span>{formatDateTime(o.collectedAt)}</span>·
@@ -256,14 +262,35 @@ function Review({ clientId, check, reload }: { clientId: string; check: RecordCh
             <span className="font-medium text-review">Needs your review. It stays private until you judge it.</span>
           )}
         </div>
+        {check.claims.length ? (
+          <ul className="space-y-1 text-[11px] text-muted-foreground">
+            {check.claims.map((c) => (
+              <li key={c.id}>
+                Claim: “{c.supportingSpan ?? c.claimText}”
+                {c.supportingSpan ? <span> (exact span, {c.extractionMethod === "MANUAL_EXACT_SPAN" ? "quoted" : "transcribed"} by reviewer)</span> : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <Textarea placeholder="Internal note (never shown to the client)" className="text-xs" rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+        <Input
+          placeholder="Exact quoted span from the answer (optional)"
+          aria-label="Exact quoted span"
+          className="text-xs"
+          value={span}
+          onChange={(e) => setSpan(e.target.value)}
+          maxLength={2000}
+        />
         <div className="flex flex-wrap gap-1.5">
           {(["MATCHES", "CONTRADICTS", "UNKNOWN"] as Decision[]).map((d) => (
             <button
               key={d}
               type="button"
               disabled={busy}
-              onClick={() => void run(() => Records.judge(clientId, o.id, d, note.trim() || null), `Marked ${DECISION_LABELS[d].toLowerCase()}`).then((saved) => { if (saved) setNote("") })}
+              onClick={() => {
+                const claim = span.trim() ? { text: span.trim(), span: span.trim() } : undefined
+                void run(() => Records.judge(clientId, o.id, d, note.trim() || null, claim), `Marked ${DECISION_LABELS[d].toLowerCase()}`).then((saved) => { if (saved) { setNote(""); setSpan("") } })
+              }}
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-50",
                 check.judgment?.decision === d && decisionTone[d],
@@ -279,10 +306,22 @@ function Review({ clientId, check, reload }: { clientId: string; check: RecordCh
   )
 }
 
-function checkFor(record: OperatorRecord, runId: string | undefined, slot: number) {
+function checksFor(record: OperatorRecord, runId: string | undefined, slot: number) {
   const run = record.runs.find((r) => r.id === runId)
   const versions = new Set(record.slots.find((s) => s.slot === slot)?.history.map((h) => h.id) ?? [])
-  return run?.checks.find((c) => versions.has(c.itemId)) ?? null
+  return (run?.checks.filter((c) => versions.has(c.itemId)) ?? []).slice().sort((a, b) => a.sample - b.sample)
+}
+
+const FINDING_TONE: Record<string, string> = {
+  NEEDS_REVIEW: "border-review/40 bg-review-soft text-review",
+  OPEN: "border-wrong/50 bg-wrong-soft text-wrong",
+  ACTION_RECORDED: "border-partial/40 bg-partial-soft text-partial",
+  FOLLOW_UP_PENDING: "border-review/40 bg-review-soft text-review",
+  AGREEMENT: "border-supported/50 bg-supported-soft text-supported",
+  OBSERVED_CORRECTED: "border-supported/50 bg-supported-soft text-supported",
+  NO_OBSERVED_CHANGE: "border-wrong/50 bg-wrong-soft text-wrong",
+  INDETERMINATE: "border-unknown/50 bg-unknown-soft text-unknown",
+  RESOLVED_EXTERNALLY: "border-unknown/50 bg-unknown-soft text-unknown",
 }
 
 function ActionForm({ record, reload }: { record: OperatorRecord; reload: () => Promise<void> }) {
@@ -405,15 +444,106 @@ function Steps({ steps }: { steps: Array<{ label: string; hint: string; state: S
   )
 }
 
+function SampleChecks({ id, checks, total, kindLabel, reload }: {
+  id: string; checks: RecordCheck[]; total: number; kindLabel: string; reload: () => Promise<void>
+}) {
+  if (checks.length === 0) return null
+  return (
+    <div className="space-y-4 border-t pt-4">
+      <p className="text-xs font-medium">{kindLabel}{total > 1 ? ` · ${checks.length} of ${total} samples` : ""}</p>
+      {checks.map((c) => (
+        <Review key={c.id} clientId={id} check={c} sampleLabel={total > 1 ? `Sample ${c.sample} of ${total}` : null} reload={reload} />
+      ))}
+    </div>
+  )
+}
+
+function EvidenceHistory({ record, slot, latest, initial }: {
+  record: OperatorRecord; slot: 1 | 2 | 3; latest: OperatorRecord["runs"][number] | undefined; initial: OperatorRecord["runs"][number] | undefined
+}) {
+  const s = record.slots.find((x) => x.slot === slot)
+  const item = s?.item
+  if (!item) return null
+  const baseline = checksFor(record, initial?.id, slot)
+  const followUp = checksFor(record, latest?.id, slot)
+  const followUpShown = latest?.kind === "FOLLOW_UP" ? followUp : []
+  return (
+    <details className="group rounded-lg border px-3 py-2 text-xs">
+      <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
+        Evidence history: record → observations → claims → judgments → actions → outcome
+      </summary>
+      <ol className="space-y-2.5 pt-3">
+        <li>
+          <p className="font-medium">Approved record</p>
+          <p className="text-muted-foreground">
+            “{item.fact.valueText}” · fact version {item.fact.version} · valid {formatDate(item.fact.validFrom)}
+            {item.fact.validUntil ? ` – ${formatDate(item.fact.validUntil)}` : " – present"}
+            {item.approval ? ` · approved ${formatDateTime(item.approval.approvedAt)}` : " · not approved"}
+          </p>
+        </li>
+        {baseline.map((c) => (
+          <li key={c.id}>
+            <p className="font-medium">First check · sample {c.sample}{c.observation ? ` · observed ${formatDateTime(c.observation.collectedAt)}` : ""}</p>
+            {c.observation ? (
+              <p className="text-muted-foreground">
+                {c.surface} · {c.observation.modelVersion ?? c.observation.observedModel ?? c.observation.requestedModel ?? "model unknown"} ·{" "}
+                {c.retrievalObserved ? "live web retrieval used" : c.retrievalRequested ? "retrieval requested but not used" : "no live web retrieval"} ·{" "}
+                digest {c.observation.rawDigest.slice(0, 12)}…
+              </p>
+            ) : <p className="text-muted-foreground">Check {c.status.toLowerCase()}.</p>}
+            {c.claims.map((claim) => (
+              <p key={claim.id} className="text-muted-foreground">
+                Claim: “{claim.supportingSpan ?? claim.claimText}” ({claim.extractionMethod === "MANUAL_EXACT_SPAN" ? "exact span" : "transcription"}, reviewer {formatDateTime(claim.createdAt)})
+              </p>
+            ))}
+            {c.judgments.map((j) => (
+              <p key={j.id} className="text-muted-foreground">
+                Judgment {DECISION_LABELS[j.decision]} against fact version {j.factVersion} · {formatDateTime(j.reviewedAt)}
+                {j.supersedesId ? " · correction, history kept" : ""}
+              </p>
+            ))}
+          </li>
+        ))}
+        {s.actions.length ? (
+          <li>
+            <p className="font-medium">Recorded actions</p>
+            {s.actions.map((a) => (
+              <p key={a.id} className="text-muted-foreground">{formatDate(a.performedAt)} · {a.note}</p>
+            ))}
+          </li>
+        ) : null}
+        {followUpShown.map((c) => (
+          <li key={c.id}>
+            <p className="font-medium">Re-check · sample {c.sample}{c.observation ? ` · observed ${formatDateTime(c.observation.collectedAt)}` : ""}</p>
+            {c.judgment ? (
+              <p className="text-muted-foreground">
+                Judgment {DECISION_LABELS[c.judgment.decision]} against fact version {c.judgment.factVersion} · {formatDateTime(c.judgment.reviewedAt)}
+              </p>
+            ) : <p className="text-muted-foreground">Awaiting review.</p>}
+          </li>
+        ))}
+        {s.comparison?.state === "DERIVED" ? (
+          <li>
+            <p className="font-medium">{OUTCOME_LABELS[s.comparison.outcome]}</p>
+            <p className="text-muted-foreground">{s.comparison.text}</p>
+            <p className="text-muted-foreground">{record.disclosure}</p>
+          </li>
+        ) : null}
+      </ol>
+    </details>
+  )
+}
+
 function FactCard({ id, record, slot, latest, initial, reload }: {
   id: string; record: OperatorRecord; slot: 1 | 2 | 3; latest: OperatorRecord["runs"][number] | undefined; initial: OperatorRecord["runs"][number] | undefined; reload: () => Promise<void>
 }) {
   const s = record.slots.find((x) => x.slot === slot)
   const [editing, setEditing] = useState(!s)
   const { busy, run } = useAction(reload)
-  const latestCheck = checkFor(record, latest?.id, slot)
-  const baseline = checkFor(record, initial?.id, slot)
+  const latestChecks = checksFor(record, latest?.id, slot)
+  const baseline = checksFor(record, initial?.id, slot)
   const item = s?.item
+  const finding = s?.finding
 
   return (
     <Panel>
@@ -436,6 +566,11 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
             <Badge variant="partial">Not approved</Badge>
           )
         ) : null}
+        {finding ? (
+          <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium", FINDING_TONE[finding.state])}>
+            {FINDING_STATE_LABELS[finding.state]}{finding.samples.reviewed > 0 ? ` · ${finding.samples.statement.replace(/\.$/, "")}` : ""}
+          </span>
+        ) : null}
         {item && !editing ? (
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(true)}>
             <PenLineIcon />
@@ -453,7 +588,8 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
               <div className="text-[11px] text-muted-foreground">Approved value</div>
               <div className="text-xs font-semibold">{item.fact.valueText}</div>
               <div className="text-[11px] text-muted-foreground">
-                {sentenceCase(item.fact.valueType)} · v{item.fact.version}
+                {sentenceCase(item.fact.valueType)} · v{item.fact.version} · valid {formatDate(item.fact.validFrom)}
+                {item.fact.validUntil ? ` – ${formatDate(item.fact.validUntil)}` : ""}
               </div>
             </div>
             <div className="rounded-lg bg-muted/40 px-3 py-2.5">
@@ -476,18 +612,19 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
           </div>
         ) : null}
 
-        {latestCheck ? (
-          <div className="space-y-2 border-t pt-4">
-            <p className="text-xs font-medium">{latest?.kind === "FOLLOW_UP" ? "Weekly re-check answer" : "First check answer"}</p>
-            <Review clientId={id} check={latestCheck} reload={reload} />
-          </div>
+        {latestChecks.length ? (
+          <SampleChecks id={id} checks={latestChecks} total={latest?.sampleCount ?? latestChecks.length} kindLabel={latest?.kind === "FOLLOW_UP" ? "Weekly re-check answers" : "First check answers"} reload={reload} />
         ) : null}
 
-        {latest?.kind === "FOLLOW_UP" && baseline && baseline.id !== latestCheck?.id ? (
+        {latest?.kind === "FOLLOW_UP" && baseline.length && (latest.id !== initial?.id) ? (
           <details className="group rounded-lg border px-3 py-2 text-xs">
-            <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">First check answer (before)</summary>
-            <div className="pt-3">
-              <Review clientId={id} check={baseline} reload={reload} />
+            <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
+              First check answers (before){baseline.length > 1 ? ` · ${baseline.length} samples` : ""}
+            </summary>
+            <div className="space-y-4 pt-3">
+              {baseline.map((c) => (
+                <Review key={c.id} clientId={id} check={c} sampleLabel={baseline.length > 1 ? `Sample ${c.sample} of ${baseline.length}` : null} reload={reload} />
+              ))}
             </div>
           </details>
         ) : null}
@@ -496,7 +633,7 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
           <div
             className={cn(
               "rounded-lg px-4 py-3 text-xs",
-              s.comparison.state === "DERIVED" && s.comparison.outcome === "OBSERVED_CORRECTION" ? "bg-supported-soft" : "bg-muted/50",
+              s.comparison.state === "DERIVED" && (s.comparison.outcome === "OBSERVED_CORRECTED" || s.comparison.outcome === "RESOLVED_EXTERNALLY") ? "bg-supported-soft" : "bg-muted/50",
             )}
           >
             {s.comparison.state === "DERIVED" ? (
@@ -505,12 +642,14 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
                 <p className="mt-0.5 text-muted-foreground">{s.comparison.text}</p>
               </>
             ) : s.comparison.state === "AWAITING_REVIEW" ? (
-              <p>Review both the first check and the re-check to derive the outcome.</p>
+              <p>Review the first check and the re-check samples to derive the outcome.</p>
             ) : (
               <p>Re-check in progress.</p>
             )}
           </div>
         ) : null}
+
+        <EvidenceHistory record={record} slot={slot} latest={latest} initial={initial} />
 
         {s?.actions.length ? (
           <ul className="space-y-1 border-t pt-3 text-xs">
