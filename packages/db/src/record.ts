@@ -16,6 +16,10 @@ export type RecordDecision = "MATCHES" | "CONTRADICTS" | "UNKNOWN"
 export type RecordRunKind = "INITIAL" | "FOLLOW_UP"
 export type RecordFactValueType = "TEXT" | "NUMBER" | "CURRENCY" | "BOOLEAN" | "DATE" | "URL" | "ENUM"
 export type RecordActionType = "SOURCE_UPDATED" | "SOURCE_PUBLISHED" | "STRUCTURED_DATA_UPDATED" | "THIRD_PARTY_CORRECTION_REQUESTED" | "OTHER"
+/** How a record claim was derived. Manual only: machines never extract record claims. */
+export type RecordClaimMethod = "MANUAL_TRANSCRIPTION" | "MANUAL_EXACT_SPAN"
+export const RECORD_SAMPLES_MIN = 1
+export const RECORD_SAMPLES_MAX = 5
 
 /** A business rule refused the request; `reason` is a stable machine code. */
 export class RecordRefused extends Data.TaggedError("RecordRefused")<{ readonly reason: string }> {}
@@ -36,20 +40,25 @@ const ItemSchema = Schema.Struct({
   fact_status: Str, fact_valid_from: Ts, fact_valid_until: NullableTs, question_prompt: Str,
 })
 const RunSchema = Schema.Struct({ id: Schema.UUID, kind: Schema.Literal("INITIAL", "FOLLOW_UP"), baseline_run_id: Schema.NullOr(Schema.UUID),
-  provider: Str, requested_model: NullableStr, retrieval_required: Schema.Boolean, created_at: Ts })
+  provider: Str, requested_model: NullableStr, retrieval_required: Schema.Boolean, sample_count: Schema.Number, created_at: Ts })
 const CitationSchema = Schema.Struct({ uri: NullableStr, title: NullableStr, position: Schema.NullOr(Schema.Number) })
+const ClaimSchema = Schema.Struct({ id: Schema.UUID, fact_key: Str, claim_text: Str, supporting_span: NullableStr, normalized_value: NullableStr,
+  extraction_method: Schema.Literal("MANUAL_TRANSCRIPTION", "MANUAL_EXACT_SPAN"), extractor_version: NullableStr,
+  created_by_user_id: Schema.UUID, created_at: Ts })
 const JudgmentSchema = Schema.Struct({ id: Schema.UUID, decision: Schema.Literal("MATCHES", "CONTRADICTS", "UNKNOWN"), note: NullableStr,
-  supersedes_id: Schema.NullOr(Schema.UUID), reviewed_by_user_id: Schema.UUID, reviewed_at: Ts })
+  supersedes_id: Schema.NullOr(Schema.UUID), claim_id: Schema.NullOr(Schema.UUID), fact_id: Schema.UUID, fact_version: Schema.Number,
+  reviewed_by_user_id: Schema.UUID, reviewed_at: Ts })
 const ObservationSchema = Schema.Struct({
   id: Schema.UUID, provider: Str, requested_model: NullableStr, observed_model: NullableStr, model_version: NullableStr,
   collected_at: Ts, answer_text: Str, retrieval_mode: Str, retrieval_tool: NullableStr, request_parameters: Schema.Unknown,
   raw_digest: Str, synthetic: Schema.Boolean, measurement_context: Schema.Unknown, provider_metadata: Schema.Unknown,
 })
 const CheckSchema = Schema.Struct({
-  id: Schema.UUID, record_run_id: Schema.UUID, record_item_id: Schema.UUID, question_id: Schema.UUID,
+  id: Schema.UUID, record_run_id: Schema.UUID, record_item_id: Schema.UUID, record_sample: Schema.Number, question_id: Schema.UUID,
   status: Schema.Literal("QUEUED", "RUNNING", "SUCCEEDED", "FAILED"), failure_class: NullableStr, failure_detail_safe: NullableStr,
   queued_at: Ts, completed_at: NullableTs,
-  observation: Schema.NullOr(ObservationSchema), citations: Schema.Array(CitationSchema), judgments: Schema.Array(JudgmentSchema),
+  observation: Schema.NullOr(ObservationSchema), citations: Schema.Array(CitationSchema),
+  claims: Schema.Array(ClaimSchema), judgments: Schema.Array(JudgmentSchema),
 })
 const ActionSchema = Schema.Struct({ id: Schema.UUID, slot: Schema.NullOr(Schema.Number), type: Str, note: NullableStr,
   links: Schema.Array(Str), performed_at: Ts, actor_id: NullableStr, created_at: Ts })
@@ -70,8 +79,25 @@ export interface RecordItem {
   readonly question: { readonly id: string; readonly prompt: string }
 }
 export interface RecordRun { readonly id: string; readonly kind: RecordRunKind; readonly baselineRunId: string | null; readonly provider: string
-  readonly requestedModel: string | null; readonly retrievalRequired: boolean; readonly createdAt: string }
+  readonly requestedModel: string | null; readonly retrievalRequired: boolean; readonly sampleCount: number; readonly createdAt: string }
+export interface RecordClaim {
+  readonly id: string
+  /** Predicate of the reviewed fact: the stable subject identity of the claim. */
+  readonly factKey: string
+  readonly claimText: string
+  /** Exact substring of the observed answer, when the reviewer quoted one. */
+  readonly supportingSpan: string | null
+  readonly normalizedValue: string | null
+  readonly extractionMethod: RecordClaimMethod
+  /** Present only when machine-derived; manual claims carry null. */
+  readonly extractorVersion: string | null
+  readonly createdByUserId: string
+  readonly createdAt: string
+}
 export interface RecordJudgment { readonly id: string; readonly decision: RecordDecision; readonly note: string | null; readonly supersedesId: string | null
+  readonly claimId: string | null
+  /** The authoritative fact version judged against: valid when observed. */
+  readonly factId: string; readonly factVersion: number
   readonly reviewedByUserId: string; readonly reviewedAt: string }
 export interface RecordObservation {
   readonly id: string
@@ -95,6 +121,8 @@ export interface RecordCheck {
   readonly id: string
   readonly runId: string
   readonly itemId: string
+  /** 1-based sample within the run's sampling policy. */
+  readonly sample: number
   readonly questionId: string
   readonly status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED"
   readonly failureClass: string | null
@@ -102,6 +130,8 @@ export interface RecordCheck {
   readonly queuedAt: string
   readonly completedAt: string | null
   readonly observation: RecordObservation | null
+  /** Claims recorded for this observation, oldest first. */
+  readonly claims: ReadonlyArray<RecordClaim>
   /** Full append-only chain, oldest first. */
   readonly judgments: ReadonlyArray<RecordJudgment>
 }
@@ -137,6 +167,18 @@ export interface RecordActionInput {
   readonly links: ReadonlyArray<string>
   readonly performedAt: string
 }
+export interface RecordClaimInput {
+  /** Reviewer-quoted evidence. Absent: the whole observed answer is the claim. */
+  readonly text: string
+  /** Exact substring of the observed answer, when quoting one. */
+  readonly span?: string | null
+}
+export interface RecordJudgeInput {
+  readonly observationId: string
+  readonly decision: RecordDecision
+  readonly note: string | null
+  readonly claim?: RecordClaimInput | null
+}
 
 export class RecordRepository extends Context.Tag("RecordRepository")<RecordRepository, {
   readonly listClients: (accountId: string) => RecordEffect<ReadonlyArray<RecordProfile & { readonly hasActiveShare: boolean; readonly lastCheckedAt: string | null }>>
@@ -144,8 +186,8 @@ export class RecordRepository extends Context.Tag("RecordRepository")<RecordRepo
   readonly updateClient: (businessId: string, input: { name: string; websiteUrl: string }) => RecordEffect<void>
   readonly saveSlot: (session: Session, businessId: string, input: SaveSlotInput) => RecordEffect<RecordItem>
   readonly approveItem: (session: Session, businessId: string, itemId: string) => RecordEffect<void>
-  readonly startRun: (session: Session, businessId: string, input: { kind: RecordRunKind | null; provider: string; requestedModel: string | null }) => RecordEffect<RecordRun>
-  readonly judge: (session: Session, businessId: string, input: { observationId: string; decision: RecordDecision; note: string | null }) => RecordEffect<RecordJudgment>
+  readonly startRun: (session: Session, businessId: string, input: { kind: RecordRunKind | null; provider: string; requestedModel: string | null; samples?: number | null }) => RecordEffect<RecordRun>
+  readonly judge: (session: Session, businessId: string, input: RecordJudgeInput) => RecordEffect<RecordJudgment>
   readonly recordAction: (session: Session, businessId: string, input: RecordActionInput) => RecordEffect<RecordAction>
   readonly share: (session: Session, businessId: string) => RecordEffect<RecordShare>
   readonly revokeShare: (session: Session, businessId: string) => RecordEffect<void>
@@ -163,9 +205,12 @@ const toItem = (r: typeof ItemSchema.Type): RecordItem => ({
   question: { id: r.question_id, prompt: r.question_prompt },
 })
 const toRun = (r: typeof RunSchema.Type): RecordRun => ({ id: r.id, kind: r.kind, baselineRunId: r.baseline_run_id, provider: r.provider,
-  requestedModel: r.requested_model, retrievalRequired: r.retrieval_required, createdAt: iso(r.created_at) })
+  requestedModel: r.requested_model, retrievalRequired: r.retrieval_required, sampleCount: r.sample_count, createdAt: iso(r.created_at) })
+const toClaim = (k: typeof ClaimSchema.Type): RecordClaim => ({ id: k.id, factKey: k.fact_key, claimText: k.claim_text, supportingSpan: k.supporting_span,
+  normalizedValue: k.normalized_value, extractionMethod: k.extraction_method, extractorVersion: k.extractor_version,
+  createdByUserId: k.created_by_user_id, createdAt: iso(k.created_at) })
 const toJudgment = (j: typeof JudgmentSchema.Type): RecordJudgment => ({ id: j.id, decision: j.decision, note: j.note, supersedesId: j.supersedes_id,
-  reviewedByUserId: j.reviewed_by_user_id, reviewedAt: iso(j.reviewed_at) })
+  claimId: j.claim_id, factId: j.fact_id, factVersion: j.fact_version, reviewedByUserId: j.reviewed_by_user_id, reviewedAt: iso(j.reviewed_at) })
 const toShare = (s: typeof ShareSchema.Type): RecordShare => ({ id: s.id, publicId: s.public_id, status: s.status, createdAt: iso(s.created_at),
   revokedAt: s.revoked_at === null ? null : iso(s.revoked_at) })
 const toAction = (a: typeof ActionSchema.Type): RecordAction => ({ id: a.id, slot: a.slot, type: a.type, note: a.note, links: a.links,
@@ -277,38 +322,74 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
       yield* lockClient(businessId)
       const active = yield* sql`SELECT 1 FROM check_runs WHERE business_id = ${businessId} AND record_run_id IS NOT NULL AND status IN ('QUEUED','RUNNING') LIMIT 1`
       if (active.length > 0) return yield* refuse("RunInProgress")
-      const runs = (yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, created_at FROM record_runs WHERE business_id = ${businessId} ORDER BY created_at, id`.pipe(
+      const runs = (yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, sample_count, created_at FROM record_runs WHERE business_id = ${businessId} ORDER BY created_at, id`.pipe(
         Effect.flatMap(rows => Effect.forEach(rows, r => decodeRow(RunSchema, "record_runs", r).pipe(Effect.map(toRun))))))
       const baseline = [...runs].reverse().find(r => r.kind === "INITIAL") ?? null
       const kind: RecordRunKind = input.kind ?? (baseline === null ? "INITIAL" : "FOLLOW_UP")
       if (kind === "FOLLOW_UP" && baseline === null) return yield* refuse("NoBaseline")
       // A new baseline is allowed until the first follow-up compares against it.
       if (kind === "INITIAL" && runs.some(r => r.kind === "FOLLOW_UP")) return yield* refuse("BaselineLocked")
+      // A follow-up compares like with like: same sampling policy as baseline.
+      const samples = input.samples ?? (kind === "FOLLOW_UP" ? baseline!.sampleCount : 1)
+      if (!Number.isInteger(samples) || samples < RECORD_SAMPLES_MIN || samples > RECORD_SAMPLES_MAX) return yield* refuse("InvalidSamples")
+      if (kind === "FOLLOW_UP" && samples !== baseline!.sampleCount) return yield* refuse("SamplingPolicyChanged")
       const approved = (yield* heads(businessId)).filter(i => i.approval !== null && i.fact.status === "ACTIVE")
       if (approved.length === 0) return yield* refuse("NoApprovedFacts")
       const now = Date.now()
       if (approved.some(i => Date.parse(i.fact.validFrom) > now || (i.fact.validUntil !== null && Date.parse(i.fact.validUntil) <= now))) return yield* refuse("FactNotCurrentlyValid")
-      const rows = yield* sql`INSERT INTO record_runs (business_id, kind, baseline_run_id, provider, requested_model, requested_by_user_id)
-        VALUES (${businessId}, ${kind}, ${kind === "FOLLOW_UP" ? baseline!.id : null}, ${input.provider}, ${input.requestedModel}, ${session.userId})
-        RETURNING id, kind, baseline_run_id, provider, requested_model, retrieval_required, created_at`
+      const rows = yield* sql`INSERT INTO record_runs (business_id, kind, baseline_run_id, provider, requested_model, sample_count, requested_by_user_id)
+        VALUES (${businessId}, ${kind}, ${kind === "FOLLOW_UP" ? baseline!.id : null}, ${input.provider}, ${input.requestedModel}, ${samples}, ${session.userId})
+        RETURNING id, kind, baseline_run_id, provider, requested_model, retrieval_required, sample_count, created_at`
       const run = toRun(yield* decodeRow(RunSchema, "record_runs", rows[0]))
       for (const item of approved) {
-        yield* sql`INSERT INTO check_runs (business_id, question_id, provider, requested_model, record_run_id, record_item_id)
-          VALUES (${businessId}, ${item.question.id}, ${input.provider}, ${input.requestedModel}, ${run.id}, ${item.id})`
+        for (let sample = 1; sample <= samples; sample++) {
+          yield* sql`INSERT INTO check_runs (business_id, question_id, provider, requested_model, record_run_id, record_item_id, record_sample)
+            VALUES (${businessId}, ${item.question.id}, ${input.provider}, ${input.requestedModel}, ${run.id}, ${item.id}, ${sample})`
+        }
       }
       return run
     }).pipe(sql.withTransaction),
 
     judge: (session, businessId, input) => Effect.gen(function*() {
-      const found = yield* sql`SELECT c.record_item_id FROM observations o JOIN check_runs c ON c.id = o.check_run_id
+      const found = yield* sql`SELECT c.record_item_id AS item_id, o.collected_at AS collected_at FROM observations o JOIN check_runs c ON c.id = o.check_run_id
         WHERE o.id = ${input.observationId} AND o.business_id = ${businessId} AND c.record_item_id IS NOT NULL FOR UPDATE OF c`
       if (found.length !== 1) return yield* refuse("ObservationNotFound")
+      const itemId = String(found[0]!["item_id"])
+      const collectedAt = found[0]!["collected_at"] as Date | string
+      const items = yield* itemsQuery(businessId, itemId)
+      const item = items[0]
+      if (!item) return yield* refuse("ObservationNotFound")
+      // Temporal truth: the judgment pins the fact version that was valid
+      // when the observation was collected. An old observation is never
+      // judged against today's fact.
+      const collectedMs = Date.parse(iso(collectedAt))
+      if (Number.isNaN(collectedMs) || collectedMs < Date.parse(item.fact.validFrom)
+        || (item.fact.validUntil !== null && collectedMs >= Date.parse(item.fact.validUntil))) {
+        return yield* refuse("FactNotValidAtObservation")
+      }
+      // An optional reviewer-quoted claim is stored with the judgment; the
+      // span must occur verbatim in the observed answer (database guard).
+      let claimId: string | null = null
+      if (input.claim) {
+        const text = input.claim.text.trim()
+        if (!text) return yield* refuse("InvalidClaim")
+        const span = input.claim.span?.trim() ? input.claim.span.trim() : null
+        try {
+          const created = yield* sql`INSERT INTO record_claims (business_id, observation_id, item_id, fact_key, claim_text, supporting_span, extraction_method, created_by_user_id)
+            VALUES (${businessId}, ${input.observationId}, ${itemId}, ${item.fact.predicate}, ${text}, ${span},
+              ${span === null ? "MANUAL_TRANSCRIPTION" : "MANUAL_EXACT_SPAN"}, ${session.userId}) RETURNING id`
+          claimId = String(created[0]!["id"])
+        } catch (e) {
+          return yield* refuse("InvalidClaim")
+        }
+      }
       // Corrections append and supersede the current head; history is kept.
       const head = yield* sql`SELECT j.id FROM record_judgments j WHERE j.observation_id = ${input.observationId}
         AND NOT EXISTS (SELECT 1 FROM record_judgments n WHERE n.supersedes_id = j.id)`
-      const rows = yield* sql`INSERT INTO record_judgments (business_id, observation_id, item_id, decision, note, supersedes_id, reviewed_by_user_id)
-        VALUES (${businessId}, ${input.observationId}, ${String(found[0]!["record_item_id"])}, ${input.decision}, ${input.note}, ${head[0] ? String(head[0]["id"]) : null}, ${session.userId})
-        RETURNING id, decision, note, supersedes_id, reviewed_by_user_id, reviewed_at`
+      const rows = yield* sql`INSERT INTO record_judgments (business_id, observation_id, item_id, decision, note, supersedes_id, claim_id, fact_id, fact_version, reviewed_by_user_id)
+        VALUES (${businessId}, ${input.observationId}, ${itemId}, ${input.decision}, ${input.note}, ${head[0] ? String(head[0]["id"]) : null}, ${claimId},
+          ${item.fact.id}, ${item.fact.version}, ${session.userId})
+        RETURNING id, decision, note, supersedes_id, claim_id, fact_id, fact_version, reviewed_by_user_id, reviewed_at`
       return toJudgment(yield* decodeRow(JudgmentSchema, "record_judgments", rows[0]))
     }).pipe(sql.withTransaction),
 
@@ -345,10 +426,10 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
       if (!profileRows[0]) return null
       const p = yield* decodeRow(ProfileSchema, "record_profiles", profileRows[0])
       const items = yield* itemsQuery(businessId)
-      const runs = yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, created_at FROM record_runs WHERE business_id = ${businessId} ORDER BY created_at, id`.pipe(
+      const runs = yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, sample_count, created_at FROM record_runs WHERE business_id = ${businessId} ORDER BY created_at, id`.pipe(
         Effect.flatMap(rows => Effect.forEach(rows, r => decodeRow(RunSchema, "record_runs", r).pipe(Effect.map(toRun)))))
       const checks = yield* sql`
-        SELECT c.id, c.record_run_id, c.record_item_id, c.question_id, c.status, c.failure_class, c.failure_detail_safe, c.queued_at, c.completed_at,
+        SELECT c.id, c.record_run_id, c.record_item_id, c.record_sample, c.question_id, c.status, c.failure_class, c.failure_detail_safe, c.queued_at, c.completed_at,
           CASE WHEN o.id IS NULL THEN NULL ELSE jsonb_build_object(
             'id', o.id, 'provider', o.provider, 'requested_model', o.requested_model, 'observed_model', o.observed_model, 'model_version', o.model_version,
             'collected_at', o.collected_at, 'answer_text', o.answer_text, 'retrieval_mode', o.retrieval_mode, 'retrieval_tool', o.retrieval_tool,
@@ -356,14 +437,19 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
             'provider_metadata', re.provider_metadata) END AS observation,
           COALESCE((SELECT jsonb_agg(jsonb_build_object('uri', ci.uri, 'title', ci.title, 'position', ci.position) ORDER BY ci.position NULLS LAST, ci.id)
             FROM observation_citations ci WHERE ci.observation_id = o.id), '[]'::jsonb) AS citations,
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id', k.id, 'fact_key', k.fact_key, 'claim_text', k.claim_text, 'supporting_span', k.supporting_span,
+            'normalized_value', k.normalized_value, 'extraction_method', k.extraction_method, 'extractor_version', k.extractor_version,
+            'created_by_user_id', k.created_by_user_id, 'created_at', k.created_at) ORDER BY k.created_at, k.id)
+            FROM record_claims k WHERE k.observation_id = o.id), '[]'::jsonb) AS claims,
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id', j.id, 'decision', j.decision, 'note', j.note, 'supersedes_id', j.supersedes_id,
+            'claim_id', j.claim_id, 'fact_id', j.fact_id, 'fact_version', j.fact_version,
             'reviewed_by_user_id', j.reviewed_by_user_id, 'reviewed_at', j.reviewed_at) ORDER BY j.reviewed_at, j.id)
             FROM record_judgments j WHERE j.observation_id = o.id), '[]'::jsonb) AS judgments
         FROM check_runs c LEFT JOIN observations o ON o.check_run_id = c.id AND o.business_id = c.business_id
         LEFT JOIN raw_evidence re ON re.id = o.raw_evidence_id
-        WHERE c.business_id = ${businessId} AND c.record_run_id IS NOT NULL ORDER BY c.queued_at, c.id`.pipe(
+        WHERE c.business_id = ${businessId} AND c.record_run_id IS NOT NULL ORDER BY c.queued_at, c.record_sample, c.id`.pipe(
         Effect.flatMap(rows => Effect.forEach(rows, r => decodeRow(CheckSchema, "record_checks", r).pipe(Effect.map((c): RecordCheck => ({
-          id: c.id, runId: c.record_run_id, itemId: c.record_item_id, questionId: c.question_id, status: c.status,
+          id: c.id, runId: c.record_run_id, itemId: c.record_item_id, sample: c.record_sample, questionId: c.question_id, status: c.status,
           failureClass: c.failure_class, failureDetailSafe: c.failure_detail_safe, queuedAt: iso(c.queued_at),
           completedAt: c.completed_at === null ? null : iso(c.completed_at),
           observation: c.observation === null ? null : {
@@ -373,6 +459,7 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
             rawDigest: c.observation.raw_digest, synthetic: c.observation.synthetic, measurementContext: c.observation.measurement_context,
             providerMetadata: c.observation.provider_metadata, citations: c.citations,
           },
+          claims: c.claims.map(toClaim),
           judgments: c.judgments.map(toJudgment),
         }))))))
       const actions = yield* sql`SELECT i.id, a.slot, i.type, i.notes AS note, a.links, i.performed_at, i.actor_id, a.created_at
