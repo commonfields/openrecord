@@ -28,14 +28,23 @@
 
 -- N samples per (run, slot). Existing rows are single-sample runs.
 ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS record_sample INT NOT NULL DEFAULT 1;
-DROP INDEX IF EXISTS uq_check_runs_record_item;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'check_runs_record_sample_range') THEN
     ALTER TABLE check_runs ADD CONSTRAINT check_runs_record_sample_range CHECK (record_sample BETWEEN 1 AND 5);
   END IF;
 END $$;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_check_runs_record_sample
-  ON check_runs(record_run_id, record_item_id, record_sample) WHERE record_run_id IS NOT NULL;
+-- The sample-aware identity keeps the historic index name on purpose:
+-- migration 0022 replays CREATE UNIQUE INDEX IF NOT EXISTS under that name
+-- on every migrate(), so reusing it makes 0022 a no-op once converged
+-- instead of resurrecting the single-sample definition.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_check_runs_record_item' AND indexdef NOT LIKE '%record_sample%') THEN
+    DROP INDEX uq_check_runs_record_item;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_check_runs_record_item') THEN
+    CREATE UNIQUE INDEX uq_check_runs_record_item ON check_runs(record_run_id, record_item_id, record_sample) WHERE record_run_id IS NOT NULL;
+  END IF;
+END $$;
 
 ALTER TABLE record_runs ADD COLUMN IF NOT EXISTS sample_count INT NOT NULL DEFAULT 1;
 DO $$ BEGIN

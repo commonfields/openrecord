@@ -111,7 +111,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_record_shares_active ON record_shares(busin
 ALTER TABLE check_runs
   ADD COLUMN IF NOT EXISTS record_run_id UUID,
   ADD COLUMN IF NOT EXISTS record_item_id UUID;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_check_runs_record_item ON check_runs(record_run_id, record_item_id) WHERE record_run_id IS NOT NULL;
+-- Converged by 0024_record_integrity_v1.sql to (record_run_id,
+-- record_item_id, record_sample). This replay guard keeps migrate() green on
+-- databases that already carry the converged definition or multi-sample
+-- rows: creating the single-sample definition there would fail, and 0024
+-- re-applies the converged one on its turn.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_check_runs_record_item')
+     AND (NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'check_runs' AND column_name = 'record_sample')
+          OR NOT EXISTS (SELECT 1 FROM check_runs WHERE record_sample <> 1)) THEN
+    CREATE UNIQUE INDEX uq_check_runs_record_item ON check_runs(record_run_id, record_item_id) WHERE record_run_id IS NOT NULL;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_record_tenant_interventions ON interventions(id, business_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_record_tenant_judgments ON record_judgments(id, business_id);
 

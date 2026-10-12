@@ -178,7 +178,7 @@ export type FindingState =
 export interface SlotFinding {
   readonly kind: FindingKind
   readonly state: FindingState
-  readonly samples: SampleCounts
+  readonly samples: SampleCounts & { readonly statement: string }
 }
 
 export const findingFor = (args: {
@@ -192,21 +192,22 @@ export const findingFor = (args: {
   readonly actionRecorded: boolean
 }): SlotFinding => {
   const samples = countSamples(args.current)
+  const counted = { ...samples, statement: sampleStatement(samples) }
   if (samples.reviewed === 0) {
-    return { kind: "UNREVIEWED", state: args.followUpPending ? "FOLLOW_UP_PENDING" : "NEEDS_REVIEW", samples }
+    return { kind: "UNREVIEWED", state: args.followUpPending ? "FOLLOW_UP_PENDING" : "NEEDS_REVIEW", samples: counted }
   }
   const kind: FindingKind =
     samples.contradict > 0 ? "CONTRADICTION" : samples.unknown > 0 ? "UNDETERMINED" : "AGREEMENT"
   if (args.comparison !== null && args.comparison.state === "DERIVED") {
-    return { kind, state: args.comparison.outcome, samples }
+    return { kind, state: args.comparison.outcome, samples: counted }
   }
   if (args.comparison !== null && args.comparison.state === "AWAITING_REVIEW") {
-    return { kind, state: "NEEDS_REVIEW", samples }
+    return { kind, state: "NEEDS_REVIEW", samples: counted }
   }
-  if (args.followUpPending) return { kind, state: "FOLLOW_UP_PENDING", samples }
-  if (kind === "CONTRADICTION") return { kind, state: args.actionRecorded ? "ACTION_RECORDED" : "OPEN", samples }
-  if (kind === "AGREEMENT") return { kind, state: "AGREEMENT", samples }
-  return { kind, state: "NEEDS_REVIEW", samples }
+  if (args.followUpPending) return { kind, state: "FOLLOW_UP_PENDING", samples: counted }
+  if (kind === "CONTRADICTION") return { kind, state: args.actionRecorded ? "ACTION_RECORDED" : "OPEN", samples: counted }
+  if (kind === "AGREEMENT") return { kind, state: "AGREEMENT", samples: counted }
+  return { kind, state: "NEEDS_REVIEW", samples: counted }
 }
 
 const failureWords = (failureClass: string | null): string => {
