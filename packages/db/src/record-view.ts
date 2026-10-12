@@ -146,11 +146,14 @@ export const compareSlot = (
   const latestBefore = Math.max(...beforeOk.map(e => Date.parse(e.check.observation!.collectedAt)))
   const earliestAfter = Math.min(...afterOk.map(e => Date.parse(e.check.observation!.collectedAt)))
   if (!(earliestAfter > latestBefore)) return indeterminate("OUT_OF_ORDER")
-  if ([...beforeOk, ...afterOk].some(e => !e.runComplete)) return indeterminate("PARTIAL_RUN")
   const was: Verdict = aggregateVerdict(beforeOk.map(e => e.judgment!))
   const now: Verdict = aggregateVerdict(afterOk.map(e => e.judgment!))
   if (was === "UNKNOWN") return indeterminate("BEFORE_UNKNOWN")
   if (now === "UNKNOWN") return indeterminate("AFTER_UNKNOWN")
+  // A failure elsewhere in the run never overrides the verdict on this
+  // slot's own complete evidence — but a partial run still cannot establish
+  // a before/after outcome for this slot.
+  if ([...beforeOk, ...afterOk].some(e => !e.runComplete)) return indeterminate("PARTIAL_RUN")
   if (was === "CONTRADICTS" && now === "MATCHES") {
     return actionRecorded
       ? { state: "DERIVED", outcome: "OBSERVED_CORRECTED", reason: null }

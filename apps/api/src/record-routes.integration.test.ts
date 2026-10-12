@@ -206,9 +206,10 @@ suite("client record HTTP (TEST fixtures only)", () => {
     expect(res.headers.get("x-robots-tag")).toContain("noindex")
     expect(res.headers.get("referrer-policy")).toBe("no-referrer")
     const text = await res.text()
-    const { record } = JSON.parse(text) as { record: { facts: Array<{ latest: { answer: string; judgment: { decision: string } } }>; disclosure: string } }
+    const { record } = JSON.parse(text) as { record: { facts: Array<{ samples: Array<{ answer: string; judgment: { decision: string }; status: string }>; summary: { statement: string } }>; disclosure: string } }
     expect(record.facts).toHaveLength(3)
-    expect(record.facts.every(f => f.latest.judgment.decision === "CONTRADICTS" && f.latest.answer.startsWith("TEST answer for check"))).toBe(true)
+    expect(record.facts.every(f => f.samples.length === 1 && f.samples[0]!.status === "ANSWERED" && f.samples[0]!.judgment.decision === "CONTRADICTS" && f.samples[0]!.answer.startsWith("TEST answer for check"))).toBe(true)
+    expect(record.facts.every(f => f.summary.statement === "1 of 1 reviewed observation contradicted this fact.")).toBe(true)
     expect(record.disclosure).toContain("does not prove that the edit caused")
     for (const hidden of [p.businessId, p.account, p.user, p.session, "TEST internal reviewer note", "TEST-internal-response", "gemini-test-key",
       ...p.view.record.runs.flatMap(r => [r.id, ...r.checks.flatMap(c => [c.id, c.observation!.id])]), ...p.view.record.slots.map(s => s.item.id)]) {
