@@ -314,7 +314,6 @@ const actionsBetween = (actions: ReadonlyArray<RecordAction>, slot: number, from
     && (from === null || Date.parse(a.performedAt) >= Date.parse(from))
     && (until === null || Date.parse(a.performedAt) <= Date.parse(until)))
 
-const collectedAt = (e: SlotEvidence): string => e.check.observation!.collectedAt
 const checkedAt = (e: SlotEvidence | null): string | null => e?.check.observation?.collectedAt ?? e?.check.completedAt ?? null
 const rangeOf = (evidence: ReadonlyArray<SlotEvidence>): { from: string | null; until: string | null } => {
   const times = evidence.flatMap(e => (e.check.observation ? [e.check.observation.collectedAt] : []))

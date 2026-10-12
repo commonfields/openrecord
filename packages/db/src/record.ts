@@ -379,7 +379,7 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
             VALUES (${businessId}, ${input.observationId}, ${itemId}, ${item.fact.predicate}, ${text}, ${span},
               ${span === null ? "MANUAL_TRANSCRIPTION" : "MANUAL_EXACT_SPAN"}, ${session.userId}) RETURNING id`
           claimId = String(created[0]!["id"])
-        } catch (e) {
+        } catch {
           return yield* refuse("InvalidClaim")
         }
       }
