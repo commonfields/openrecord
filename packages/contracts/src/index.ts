@@ -93,6 +93,22 @@ export const Routes = {
     method: "POST",
     path: `/api/businesses/${businessId}/agent/messages`,
   }),
+  listAgentProposals: (businessId: string) => ({
+    method: "GET",
+    path: `/api/businesses/${businessId}/agent/proposals`,
+  }),
+  createAgentProposal: (businessId: string) => ({
+    method: "POST",
+    path: `/api/businesses/${businessId}/agent/proposals`,
+  }),
+  approveAgentProposal: (businessId: string, proposalId: string) => ({
+    method: "POST",
+    path: `/api/businesses/${businessId}/agent/proposals/${proposalId}/approve`,
+  }),
+  rejectAgentProposal: (businessId: string, proposalId: string) => ({
+    method: "POST",
+    path: `/api/businesses/${businessId}/agent/proposals/${proposalId}/reject`,
+  }),
   listSites: (businessId: string) => ({ method: "GET", path: `/api/businesses/${businessId}/search/sites` }),
   createSite: (businessId: string) => ({
     method: "POST",
@@ -328,6 +344,27 @@ export const AgentMessageRequest = Schema.Struct({
   history: Schema.optional(Schema.Array(AgentHistoryEntry).pipe(Schema.maxItems(10))),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
+
+// Agent proposals: the only agent write path, gated by human approval.
+// Creation records intent (never executes); approval executes exactly once
+// with the approver's session attribution. Provider choice stays human:
+// the approver supplies provider/requestedModel at approve time, mirroring
+// the Checks page. Question identity comes from the proposal, never the
+// approve body, so substitution is impossible by construction.
+export const AgentProposalKind = Schema.Literal("REQUEST_CHECK")
+export type AgentProposalKind = typeof AgentProposalKind.Type
+
+export const CreateAgentProposalRequest = Schema.Struct({
+  kind: AgentProposalKind,
+  questionId: Schema.UUID,
+})
+export type CreateAgentProposalRequest = typeof CreateAgentProposalRequest.Type
+
+export const ApproveAgentProposalRequest = Schema.Struct({
+  provider: Schema.Literal("mock", "9router"),
+  requestedModel: Schema.optional(Schema.NullOr(Schema.String)),
+})
+export type ApproveAgentProposalRequest = typeof ApproveAgentProposalRequest.Type
 
 // SEARCH_OPERATOR_V1 write-boundary contracts. URLs are untrusted operator
 // input: http(s) only, validated server-side with SSRF-safe fetching.

@@ -27,6 +27,7 @@ import {
   SupersedeFactRequest,
 } from "@openrecord/contracts"
 import {
+  AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
   AssayRepositoryLive,
@@ -105,6 +106,7 @@ import {
   validateDiscoveryScopeRoot,
 } from "./discovery-reads.js"
 import { assayApi, assaySyntheticEnabled } from "./assay-routes.js"
+import { agentProposalApi } from "./agent-proposals.js"
 import { siteApi } from "./site-routes.js"
 import { recordApi, recordFixtureAllowed } from "./record-routes.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
@@ -1284,7 +1286,7 @@ export const makeRouter = () => {
           }
           const body = decodeRequest(AgentMessageRequest, (yield* readJson) as unknown)
           if (!body) return yield* json(422, malformed)
-          const reply = yield* handleAgentMessage(session.accountId, businessId, body.message)
+          const reply = yield* handleAgentMessage(session.accountId, session.userId, businessId, body.message)
           return yield* json(200, reply)
         }),
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
@@ -1469,11 +1471,12 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), recordApi(withSession)),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(recordApi(withSession), agentProposalApi(withSession))),
   )
 }
 
 export const RepoLayers = {
+  AgentProposalRepositoryLive,
   AssayRepositoryLive,
   AssayReviewRepositoryLive,
   BusinessRepositoryLive,
