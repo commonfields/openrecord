@@ -3,7 +3,7 @@
 -- integration) records; nothing executes until the operator approves, and
 -- approval attributes execution to the approving session user. The tool
 -- registry stays read-only: proposals are the only agent write path.
-CREATE TABLE agent_proposals (
+CREATE TABLE IF NOT EXISTS agent_proposals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('REQUEST_CHECK')),
@@ -19,12 +19,12 @@ CREATE TABLE agent_proposals (
   CHECK ((status = 'PROPOSED') = (decided_by_user_id IS NULL AND decided_at IS NULL)),
   CHECK ((status = 'EXECUTED') = (executed_check_run_id IS NOT NULL))
 );
-CREATE INDEX agent_proposals_business_status ON agent_proposals(business_id, status);
+CREATE INDEX IF NOT EXISTS agent_proposals_business_status ON agent_proposals(business_id, status);
 
 -- Proposal spam guard: one pending proposal per business, kind, and
 -- question. Concurrent duplicate proposes collide here; the repository
 -- catches the violation and returns the winning row instead of failing.
-CREATE UNIQUE INDEX agent_proposals_pending_unique
+CREATE UNIQUE INDEX IF NOT EXISTS agent_proposals_pending_unique
   ON agent_proposals(business_id, kind, question_id) WHERE status = 'PROPOSED';
 
 -- One decision per proposal: only a PROPOSED row may change status, and the
