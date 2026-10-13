@@ -343,6 +343,63 @@ suite("record integrity v1 (TEST Northstar agency, TEST clients, TEST reviewer)"
     expect(comparison.explanation).toContain("no action was recorded in OpenRecord, so OpenRecord takes no credit")
   })
 
+  it("attribution: a targeted action corrects its fact only; record-level actions take no credit", async () => {
+    const session = await agency()
+    const targeted = await client(session, "TEST Attribution", [
+      { slot: 1, predicate: "Monthly price", value: "$79", valueType: "CURRENCY", validFrom: "2026-07-01T00:00:00.000Z", question: PRICE_Q },
+      { slot: 2, predicate: "Saturday hours", value: "09:00–14:00", validFrom: "2026-01-01T00:00:00.000Z", question: HOURS_Q },
+      { slot: 3, predicate: "Free trial", value: "14 days", validFrom: "2026-01-01T00:00:00.000Z", question: "y?" },
+    ])
+    const runTargeted = async (kind: "INITIAL" | "FOLLOW_UP", at: string, texts: [string, string]) => {
+      const run = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, targeted,
+        { kind: kind === "INITIAL" ? null : "FOLLOW_UP", provider: "gemini", requestedModel: MODEL, samples: 1 })))
+      for (const { check, slot } of await slotOf(targeted, run.id)) {
+        const text = slot === 1 ? texts[0] : slot === 2 ? texts[1] : "TEST agreed answer."
+        const obs = await answer(targeted, check.id, text, at)
+        await judge(session, targeted, obs.id, slot === 3 ? "MATCHES" : kind === "INITIAL" ? "CONTRADICTS" : "MATCHES")
+      }
+    }
+    await runTargeted("INITIAL", "2026-10-01T10:00:00.000Z", ["It costs $49 per month.", "Closed on Saturdays."])
+    // Only Fact A gets a targeted action. Fact B's contradiction is on its own.
+    await runFx(Effect.flatMap(RecordRepository, r => r.recordAction(session, targeted,
+      { slot: 1, type: "SOURCE_UPDATED", note: "Updated pricing page.", links: [], performedAt: "2026-10-04T12:00:00.000Z" })))
+    await runTargeted("FOLLOW_UP", "2026-10-08T10:00:00.000Z", ["It costs $79 per month.", "Open Saturdays 09:00–14:00."])
+    const page = publicRecord(await snapshot(targeted))
+    expect(page.facts[0]!.comparison).toMatchObject({ outcome: "OBSERVED_CORRECTED" })
+    // Fact B also matches now — independently. The pricing action must not
+    // give OpenRecord attribution for Fact B.
+    expect(page.facts[1]!.comparison).toMatchObject({ outcome: "RESOLVED_EXTERNALLY" })
+    expect(page.facts[1]!.comparison!.actions).toEqual([])
+
+    // Record-level action alone + disappearance = RESOLVED_EXTERNALLY, never corrected.
+    const businessId = await client(session, "TEST Record Level", [
+      { slot: 1, predicate: "Monthly price", value: "$79", valueType: "CURRENCY", validFrom: "2026-07-01T00:00:00.000Z", question: PRICE_Q },
+      { slot: 2, predicate: "Saturday hours", value: "09:00–14:00", validFrom: "2026-01-01T00:00:00.000Z", question: HOURS_Q },
+      { slot: 3, predicate: "Free trial", value: "14 days", validFrom: "2026-01-01T00:00:00.000Z", question: "y?" },
+    ])
+    for (const [kind, at] of [["INITIAL", "2026-10-01T10:00:00.000Z"], ["FOLLOW_UP", "2026-10-08T10:00:00.000Z"]] as const) {
+      const run = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId,
+        { kind: kind === "INITIAL" ? null : "FOLLOW_UP", provider: "gemini", requestedModel: MODEL, samples: 1 })))
+      for (const { check, slot } of await slotOf(businessId, run.id)) {
+        const text = slot === 1
+          ? kind === "INITIAL" ? "It costs $49 per month." : "It costs $79 per month."
+          : slot === 2 ? (kind === "INITIAL" ? "Closed on Saturdays." : "Open Saturdays 09:00–14:00.") : "TEST agreed answer."
+        const obs = await answer(businessId, check.id, text, at)
+        await judge(session, businessId, obs.id, slot === 3 ? "MATCHES" : kind === "INITIAL" ? "CONTRADICTS" : "MATCHES")
+      }
+      if (kind === "INITIAL") {
+        await runFx(Effect.flatMap(RecordRepository, r => r.recordAction(session, businessId,
+          { slot: null, type: "SOURCE_UPDATED", note: "General website refresh.", links: [], performedAt: "2026-10-04T12:00:00.000Z" })))
+      }
+    }
+    const general = publicRecord(await snapshot(businessId))
+    for (const fact of [general.facts[0]!, general.facts[1]!]) {
+      expect(fact.comparison).toMatchObject({ outcome: "RESOLVED_EXTERNALLY" })
+      // Still visible in the overall history — just not attributing.
+      expect(fact.comparison!.actions).toEqual([{ performedAt: "2026-10-04T12:00:00.000Z", note: "General website refresh.", links: [] }])
+    }
+  })
+
   it("invariants: history, immutability, tenancy, sampling policy and evidence-backed counts", async () => {
     const session = await agency()
     const other = await agency()

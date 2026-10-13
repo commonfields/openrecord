@@ -314,6 +314,17 @@ const actionsBetween = (actions: ReadonlyArray<RecordAction>, slot: number, from
     && (from === null || Date.parse(a.performedAt) >= Date.parse(from))
     && (until === null || Date.parse(a.performedAt) <= Date.parse(until)))
 
+/**
+ * V1 attribution rule: only a slot-targeted action qualifies its fact for
+ * OBSERVED_CORRECTED. A record-level action (slot null) stays visible in the
+ * overall history but never attributes an individual fact's correction — a
+ * pricing-page edit must not take credit for independently corrected hours.
+ */
+const targetedActionsBetween = (actions: ReadonlyArray<RecordAction>, slot: number, from: string | null, until: string | null) =>
+  actions.filter(a => a.slot === slot
+    && (from === null || Date.parse(a.performedAt) >= Date.parse(from))
+    && (until === null || Date.parse(a.performedAt) <= Date.parse(until)))
+
 const checkedAt = (e: SlotEvidence | null): string | null => e?.check.observation?.collectedAt ?? e?.check.completedAt ?? null
 const rangeOf = (evidence: ReadonlyArray<SlotEvidence>): { from: string | null; until: string | null } => {
   const times = evidence.flatMap(e => (e.check.observation ? [e.check.observation.collectedAt] : []))
@@ -335,7 +346,7 @@ export const operatorView = (s: RecordSnapshot) => {
   const slots = timelines(s).map(t => {
     const after = t.latestFollowUp
     const range = after === null || after.length === 0 ? null : { from: rangeOf(t.baseline).until, until: rangeOf(after).from }
-    const actionRecorded = range !== null && actionsBetween(s.actions, t.slot, range.from, range.until).length > 0
+    const actionRecorded = range !== null && targetedActionsBetween(s.actions, t.slot, range.from, range.until).length > 0
     const comparison = after === null || after.length === 0 ? null : compareSlot(t.baseline.length > 0 ? t.baseline : null, after, actionRecorded)
     const current = t.publishedFollowUp ?? (t.baseline.length > 0 ? t.baseline : [])
     const currentRange = rangeOf(current)
@@ -343,7 +354,7 @@ export const operatorView = (s: RecordSnapshot) => {
       current,
       comparison: t.publishedFollowUp === null ? null : comparison,
       followUpPending: t.followUpPending,
-      actionRecorded: actionsBetween(s.actions, t.slot, currentRange.from, null).length > 0,
+      actionRecorded: targetedActionsBetween(s.actions, t.slot, currentRange.from, null).length > 0,
     })
     return {
       slot: t.slot, item: t.head, history: s.items.filter(i => i.slot === t.slot),
@@ -436,7 +447,7 @@ export const publicRecord = (s: RecordSnapshot) => {
     // rather than reading as "no earlier answer".
     const baseline = t.baseline.length > 0 ? t.baseline : null
     const range = after === null ? null : { from: rangeOf(baseline ?? []).until, until: rangeOf(after).from }
-    const actionRecorded = range !== null && actionsBetween(s.actions, t.slot, range.from, range.until).length > 0
+    const actionRecorded = range !== null && targetedActionsBetween(s.actions, t.slot, range.from, range.until).length > 0
     const comparison = after === null ? null : compareSlot(baseline, after, actionRecorded)
     const publishedBaseline = baseline !== null && runPublished(baseline.map(e => e.check)) ? baseline : []
     const candidate = after !== null && comparison?.state === "DERIVED" ? after : publishedBaseline

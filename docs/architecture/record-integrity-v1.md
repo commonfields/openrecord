@@ -23,7 +23,7 @@ invariants that must not be broken.
 | Judgment | `record_judgments`: `MATCHES` / `CONTRADICTS` / `UNKNOWN` per observation, append-only correction chain via `supersedes_id`, reviewer = session account member at server time. Pins `claim_id` (nullable), `fact_id` + `fact_version` (mandatory): **judgment truth version = fact version valid_at observation.collected_at**, enforced by `guard_record_judgment` and pre-checked by `RecordRepository.judge` (`FactNotValidAtObservation`). |
 | IntegrityFinding | **Derived, not stored** (divergence, deliberate): `findingFor()` in `record-view.ts` computes `{ kind, state, samples }` per slot from stored judgments, actions and outcomes. Identity is the business slot (fact predicate), never the evidence wording — new observations attach to the existing finding. States: `NEEDS_REVIEW`, `OPEN`, `ACTION_RECORDED`, `FOLLOW_UP_PENDING`, `AGREEMENT`, plus the four outcomes below. There is no explicit `ACKNOWLEDGED` gesture yet; a reviewed contradiction with no action is `OPEN`. |
 | Action | `interventions` (human, account-member actor) linked by `record_actions` to a slot or the whole record. Evidence of what the operator says they did — never proof of deployment, indexing, consumption, or causation. |
-| Outcome | **Derived, never stored**: `compareSlot()` over reviewed before/after sample sets. `OBSERVED_CORRECTED` (contradiction → agreement **with** a recorded action between), `NO_OBSERVED_CHANGE`, `INDETERMINATE` (+ reason), `RESOLVED_EXTERNALLY` (agreement with **no** recorded action — the product takes no credit). `CAUSALITY_DISCLOSURE` accompanies every comparison. |
+| Outcome | **Derived, never stored**: `compareSlot()` over reviewed before/after sample sets. `OBSERVED_CORRECTED` (contradiction → agreement **with a slot-targeted recorded action between**), `NO_OBSERVED_CHANGE`, `INDETERMINATE` (+ reason), `RESOLVED_EXTERNALLY` (agreement with **no** attributable action — the product takes no credit). `CAUSALITY_DISCLOSURE` accompanies every comparison. |
 
 ## Divergences from the milestone vocabulary (deliberate)
 
@@ -33,6 +33,11 @@ invariants that must not be broken.
 4. **Temporal routing is lineage-first, windows-second.** Supersession never rewrites old `[valid_from, valid_until)` windows (0023 immutability). The exact authority for "which truth applies" is the item→fact binding of the check that produced the observation; the validity window is the backstop that refuses drifted judgments. Overlapping windows across a supersession are therefore normal; the version chain disambiguates.
 5. **Sampling policy lives on the run** (`record_runs.sample_count`, 1–5). A follow-up must reuse its baseline count (`SamplingPolicyChanged`); provider/model changes are allowed but read as `SURFACE_CHANGED`, never silently substituted.
 6. **Slot cap of 3 and the `record_items` slot chain predate this milestone** and are unchanged. Ordinary business facts only: predicates are free text (`price`, `opening_hours`, `policy`, …); no SaaS ontology is encoded anywhere in the new code.
+7. **V1 action attribution.** Only a slot-targeted action (`record_actions.slot = N`) qualifies its fact for `OBSERVED_CORRECTED`. A record-level action (`slot = NULL`) stays visible in every fact's history and comparison action list but attributes nothing. Multi-fact actions need an explicit many-to-many target model — deliberately not built here.
+
+## Migration assumption
+
+OpenRecord migration files are replay-safe convergence scripts: `migrate()` re-executes every file on each run (tests, CI smoke, deploys), so each file must converge rather than assume a blank database. Some historical files carry compatibility guards for that repeated execution (e.g. 0014's catalog probes; 0022's conditional single-sample index, converged to the sample-aware identity by 0024, which reuses the historic index name so the older definition is never resurrected). Do not rely on migrations running exactly once.
 
 ## Remaining duplication / future convergence
 
