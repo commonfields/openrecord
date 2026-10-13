@@ -33,6 +33,7 @@ const SaveSlotRequest = Schema.Struct({
   subject: Text(200), predicate: Text(200), valueText: Text(500),
   valueType: Schema.Literal("TEXT", "NUMBER", "CURRENCY", "BOOLEAN", "DATE", "URL", "ENUM"),
   validFrom: Schema.optional(IsoTime), validUntil: Schema.optional(Schema.NullOr(IsoTime)),
+  sourceKind: Schema.optional(Schema.Literal("WEBSITE", "BUSINESS_APPROVED", "PUBLIC_SOURCE_UNAPPROVED")),
   sourceUrl: PublicUrl, question: Text(500),
 })
 const StartRunRequest = Schema.Struct({ kind: Schema.optional(Schema.Literal("INITIAL", "FOLLOW_UP")),
@@ -133,7 +134,8 @@ export const recordApi = (withSession: WithSession) => {
       if (validFrom !== undefined && validUntil != null && Date.parse(validUntil) <= Date.parse(validFrom)) return yield* json(422, { _tag: "InvalidRequest", reason: "validUntil must follow validFrom" })
       const item = yield* (yield* RecordRepository).saveSlot(session, businessId, {
         slot, subject: body.subject.trim(), predicate: body.predicate.trim(), valueText: body.valueText.trim(), valueType: body.valueType,
-        ...(validFrom === undefined ? {} : { validFrom }), ...(validUntil === undefined ? {} : { validUntil }), sourceUrl: body.sourceUrl, question: body.question.trim(),
+        ...(validFrom === undefined ? {} : { validFrom }), ...(validUntil === undefined ? {} : { validUntil }),
+        ...(body.sourceKind === undefined ? {} : { sourceKind: body.sourceKind }), sourceUrl: body.sourceUrl, question: body.question.trim(),
       })
       return yield* json(200, { item })
     }))),

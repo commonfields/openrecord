@@ -96,6 +96,9 @@ function FactRecord({ fact }: { fact: PublicFact }) {
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Approved fact {fact.position}</p>
         <h2 className="text-sm font-semibold">{fact.fact.label}: {fact.fact.value}</h2>
+        {fact.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? (
+          <p className="text-sm text-muted-foreground">Public source, not business-approved: this differs from what the current website says.</p>
+        ) : null}
         {fact.fact.source ? <p className="text-sm">Source: <ExternalLink href={fact.fact.source}>{fact.fact.source}</ExternalLink></p> : null}
       </header>
       <p className="text-sm"><span className="text-muted-foreground">Question asked: </span>“{fact.question}”</p>

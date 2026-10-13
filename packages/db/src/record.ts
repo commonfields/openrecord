@@ -16,6 +16,10 @@ export type RecordDecision = "MATCHES" | "CONTRADICTS" | "UNKNOWN"
 export type RecordRunKind = "INITIAL" | "FOLLOW_UP"
 export type RecordFactValueType = "TEXT" | "NUMBER" | "CURRENCY" | "BOOLEAN" | "DATE" | "URL" | "ENUM"
 export type RecordActionType = "SOURCE_UPDATED" | "SOURCE_PUBLISHED" | "STRUCTURED_DATA_UPDATED" | "THIRD_PARTY_CORRECTION_REQUESTED" | "OTHER"
+/** Truth authority for a record fact. BUSINESS_APPROVED = the business said
+ * so. PUBLIC_SOURCE_UNAPPROVED = derived from public first-party pages only,
+ * never to be presented as business truth. */
+export type RecordSourceKind = "WEBSITE" | "BUSINESS_APPROVED" | "PUBLIC_SOURCE_UNAPPROVED"
 /** How a record claim was derived. Manual only: machines never extract record claims. */
 export type RecordClaimMethod = "MANUAL_TRANSCRIPTION" | "MANUAL_EXACT_SPAN"
 export const RECORD_SAMPLES_MIN = 1
@@ -37,7 +41,7 @@ const ItemSchema = Schema.Struct({
   supersedes_id: Schema.NullOr(Schema.UUID), superseded: Schema.Boolean, created_at: Ts,
   approved_at: NullableTs, approved_by_user_id: Schema.NullOr(Schema.UUID),
   fact_subject: Str, fact_predicate: Str, fact_value_text: Str, fact_value_type: Str, fact_version: Schema.Number,
-  fact_status: Str, fact_valid_from: Ts, fact_valid_until: NullableTs, question_prompt: Str,
+  fact_status: Str, fact_valid_from: Ts, fact_valid_until: NullableTs, fact_source_kind: Str, question_prompt: Str,
 })
 const RunSchema = Schema.Struct({ id: Schema.UUID, kind: Schema.Literal("INITIAL", "FOLLOW_UP"), baseline_run_id: Schema.NullOr(Schema.UUID),
   provider: Str, requested_model: NullableStr, retrieval_required: Schema.Boolean, sample_count: Schema.Number, created_at: Ts })
@@ -75,7 +79,7 @@ export interface RecordItem {
   readonly sourceUrl: string
   readonly approval: { readonly approvedAt: string; readonly approvedByUserId: string } | null
   readonly fact: { readonly id: string; readonly subject: string; readonly predicate: string; readonly valueText: string; readonly valueType: string;
-    readonly version: number; readonly status: string; readonly validFrom: string; readonly validUntil: string | null }
+    readonly version: number; readonly status: string; readonly sourceKind: string; readonly validFrom: string; readonly validUntil: string | null }
   readonly question: { readonly id: string; readonly prompt: string }
 }
 export interface RecordRun { readonly id: string; readonly kind: RecordRunKind; readonly baselineRunId: string | null; readonly provider: string
@@ -157,6 +161,8 @@ export interface SaveSlotInput {
   readonly valueType: RecordFactValueType
   readonly validFrom?: string
   readonly validUntil?: string | null
+  /** Truth authority. Defaults to WEBSITE (current behavior). */
+  readonly sourceKind?: RecordSourceKind
   readonly sourceUrl: string
   readonly question: string
 }
@@ -201,7 +207,7 @@ const toItem = (r: typeof ItemSchema.Type): RecordItem => ({
   id: r.id, slot: r.slot, supersedesId: r.supersedes_id, superseded: r.superseded, createdAt: iso(r.created_at), sourceUrl: r.source_url,
   approval: r.approved_at === null || r.approved_by_user_id === null ? null : { approvedAt: iso(r.approved_at), approvedByUserId: r.approved_by_user_id },
   fact: { id: r.fact_id, subject: r.fact_subject, predicate: r.fact_predicate, valueText: r.fact_value_text, valueType: r.fact_value_type,
-    version: r.fact_version, status: r.fact_status, validFrom: iso(r.fact_valid_from), validUntil: r.fact_valid_until === null ? null : iso(r.fact_valid_until) },
+    version: r.fact_version, status: r.fact_status, sourceKind: r.fact_source_kind, validFrom: iso(r.fact_valid_from), validUntil: r.fact_valid_until === null ? null : iso(r.fact_valid_until) },
   question: { id: r.question_id, prompt: r.question_prompt },
 })
 const toRun = (r: typeof RunSchema.Type): RecordRun => ({ id: r.id, kind: r.kind, baselineRunId: r.baseline_run_id, provider: r.provider,
@@ -226,7 +232,7 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
       EXISTS (SELECT 1 FROM record_items n WHERE n.supersedes_id = i.id) AS superseded,
       a.approved_at, a.approved_by_user_id,
       f.subject AS fact_subject, f.predicate AS fact_predicate, f.value_text AS fact_value_text, f.value_type AS fact_value_type,
-      f.version AS fact_version, f.status AS fact_status, f.valid_from AS fact_valid_from, f.valid_until AS fact_valid_until,
+      f.version AS fact_version, f.status AS fact_status, f.source_kind AS fact_source_kind, f.valid_from AS fact_valid_from, f.valid_until AS fact_valid_until,
       q.prompt AS question_prompt
     FROM record_items i
     JOIN authoritative_facts f ON f.id = i.fact_id AND f.business_id = i.business_id
@@ -274,23 +280,25 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
       const validFrom = input.validFrom ?? head?.fact.validFrom ?? new Date().toISOString()
       const validUntil = input.validUntil === undefined ? head?.fact.validUntil ?? null : input.validUntil
       if (validUntil !== null && Date.parse(validUntil) <= Date.parse(validFrom)) return yield* refuse("InvalidFactValidity")
+      const sourceKind: RecordSourceKind = input.sourceKind ?? "WEBSITE"
       // Fact identity is (subject, predicate). A changed value supersedes the
       // version the slot tracks; a different identity is a new fact.
       let factId: string
       const sameIdentity = head !== null && head.fact.subject === input.subject && head.fact.predicate === input.predicate && head.fact.status === "ACTIVE"
       const sameValue = sameIdentity && head.fact.valueText === input.valueText && head.fact.valueType === input.valueType
         && head.fact.validFrom === new Date(validFrom).toISOString() && head.fact.validUntil === (validUntil === null ? null : new Date(validUntil).toISOString())
+        && head.fact.sourceKind === sourceKind
       if (sameValue) {
         factId = head!.fact.id
       } else if (sameIdentity) {
         yield* sql`UPDATE authoritative_facts SET status = 'SUPERSEDED' WHERE id = ${head!.fact.id} AND business_id = ${businessId}`
         const rows = yield* sql`INSERT INTO authoritative_facts (business_id, subject, predicate, value_text, value_type, version, supersedes_id, valid_from, valid_until, source_kind)
           VALUES (${businessId}, ${input.subject}, ${input.predicate}, ${input.valueText}, ${input.valueType}, ${head!.fact.version + 1}, ${head!.fact.id},
-            ${validFrom}::timestamptz, ${validUntil}::timestamptz, 'WEBSITE') RETURNING id`
+            ${validFrom}::timestamptz, ${validUntil}::timestamptz, ${sourceKind}) RETURNING id`
         factId = String(rows[0]!["id"])
       } else {
         const rows = yield* sql`INSERT INTO authoritative_facts (business_id, subject, predicate, value_text, value_type, valid_from, valid_until, source_kind)
-          VALUES (${businessId}, ${input.subject}, ${input.predicate}, ${input.valueText}, ${input.valueType}, ${validFrom}::timestamptz, ${validUntil}::timestamptz, 'WEBSITE') RETURNING id`
+          VALUES (${businessId}, ${input.subject}, ${input.predicate}, ${input.valueText}, ${input.valueType}, ${validFrom}::timestamptz, ${validUntil}::timestamptz, ${sourceKind}) RETURNING id`
         factId = String(rows[0]!["id"])
       }
       // A question is never edited in place: changed wording is a new

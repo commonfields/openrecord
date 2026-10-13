@@ -456,7 +456,7 @@ export const publicRecord = (s: RecordSnapshot) => {
     return {
       position: t.slot,
       fact: { label: t.head.fact.predicate, subject: t.head.fact.subject, value: t.head.fact.valueText,
-        source: httpUrl(t.head.sourceUrl), approvedAt: t.head.approval!.approvedAt },
+        source: httpUrl(t.head.sourceUrl), approvedAt: t.head.approval!.approvedAt, sourceKind: t.head.fact.sourceKind },
       question: t.head.question.prompt,
       samples: current.samples,
       summary: current.summary,

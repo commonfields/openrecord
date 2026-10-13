@@ -7,6 +7,7 @@ export type Outcome = "OBSERVED_CORRECTED" | "NO_OBSERVED_CHANGE" | "INDETERMINA
 export type RunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED"
 export type ValueType = "TEXT" | "NUMBER" | "CURRENCY" | "BOOLEAN" | "DATE" | "URL" | "ENUM"
 export type Engagement = "CLIENT" | "DOGFOOD" | "FIXTURE"
+export type SourceKind = "WEBSITE" | "BUSINESS_APPROVED" | "PUBLIC_SOURCE_UNAPPROVED"
 
 export type ClientSummary = { businessId: string; name: string; websiteUrl: string; engagement: Engagement; createdAt: string; hasActiveShare: boolean; lastCheckedAt: string | null }
 
@@ -18,7 +19,7 @@ export type RecordItem = {
   createdAt: string
   sourceUrl: string
   approval: { approvedAt: string; approvedByUserId: string } | null
-  fact: { id: string; subject: string; predicate: string; valueText: string; valueType: ValueType; version: number; status: string; validFrom: string; validUntil: string | null }
+  fact: { id: string; subject: string; predicate: string; valueText: string; valueType: ValueType; version: number; status: string; sourceKind: string; validFrom: string; validUntil: string | null }
   question: { id: string; prompt: string }
 }
 export type Judgment = { id: string; decision: Decision; note: string | null; supersedesId: string | null; claimId: string | null;
@@ -90,7 +91,7 @@ export type OperatorRecord = {
 }
 export type RecordResponse = { record: OperatorRecord; surface: { provider: string; model: string } }
 
-export type SlotInput = { subject: string; predicate: string; valueText: string; valueType: ValueType; sourceUrl: string; question: string; validFrom?: string; validUntil?: string | null }
+export type SlotInput = { subject: string; predicate: string; valueText: string; valueType: ValueType; sourceUrl: string; question: string; validFrom?: string; validUntil?: string | null; sourceKind?: SourceKind }
 export type ActionInput = { slot: 1 | 2 | 3 | null; note: string; links: string[]; performedAt?: string }
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
@@ -132,7 +133,7 @@ export type PublicAnswer = { question: string; fact: { label: string; value: str
 export type PublicAction = { performedAt: string; note: string | null; links: string[] }
 export type PublicFact = {
   position: number
-  fact: { label: string; subject: string; value: string; source: string | null; approvedAt: string }
+  fact: { label: string; subject: string; value: string; source: string | null; approvedAt: string; sourceKind: string }
   question: string
   samples: PublicAnswer[]
   summary: SampleSummary

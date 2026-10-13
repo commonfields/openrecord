@@ -33,8 +33,14 @@ import { errorMessage, formatDate, formatDateTime, relativeTime, sentenceCase } 
 import { ApiError } from "@/lib/api"
 import {
   DECISION_LABELS, FINDING_STATE_LABELS, OUTCOME_LABELS, publicRecordPath, Records, RUN_STATUS_LABELS, safeRecordUrl,
-  type Decision, type OperatorRecord, type RecordCheck, type RecordResponse, type ValueType,
+  type Decision, type OperatorRecord, type RecordCheck, type RecordResponse, type SourceKind, type ValueType,
 } from "@/lib/record"
+
+const SOURCE_KIND_LABELS: Record<string, string> = {
+  BUSINESS_APPROVED: "Business-approved",
+  WEBSITE: "Website",
+  PUBLIC_SOURCE_UNAPPROVED: "Public source, unapproved",
+}
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 
@@ -145,15 +151,17 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
   const [label, setLabel] = useState(item?.fact.predicate ?? "")
   const [value, setValue] = useState(item?.fact.valueText ?? "")
   const [valueType, setValueType] = useState<ValueType>(item?.fact.valueType ?? "TEXT")
+  const [sourceKind, setSourceKind] = useState<SourceKind>(
+    item?.fact.sourceKind === "BUSINESS_APPROVED" || item?.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? item.fact.sourceKind : "WEBSITE")
   const [source, setSource] = useState(item?.sourceUrl ?? "https://")
   const [question, setQuestion] = useState(item?.question.prompt ?? "")
   const { busy, run } = useAction(reload)
-  const dirty = !item || label !== item.fact.predicate || value !== item.fact.valueText || valueType !== item.fact.valueType || source !== item.sourceUrl || question !== item.question.prompt
+  const dirty = !item || label !== item.fact.predicate || value !== item.fact.valueText || valueType !== item.fact.valueType || sourceKind !== (item.fact.sourceKind ?? "WEBSITE") || source !== item.sourceUrl || question !== item.question.prompt
   const save = () =>
     run(
       () =>
         Records.saveSlot(clientId, slot, {
-          subject: item?.fact.subject ?? clientName, predicate: label.trim(), valueText: value.trim(), valueType, sourceUrl: source.trim(), question: question.trim(),
+          subject: item?.fact.subject ?? clientName, predicate: label.trim(), valueText: value.trim(), valueType, sourceKind, sourceUrl: source.trim(), question: question.trim(),
           ...(item ? { validFrom: item.fact.validFrom, validUntil: item.fact.validUntil } : {}),
         }),
       "Saved. Approve this version before it is checked.",
@@ -178,6 +186,18 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
             <SelectContent>{(["TEXT", "BOOLEAN", "NUMBER", "CURRENCY", "DATE", "URL", "ENUM"] as const).map((t) => <SelectItem key={t} value={t}>{sentenceCase(t)}</SelectItem>)}</SelectContent>
           </Select>
         </div>
+      </div>
+      <div className="grid gap-1.5">
+        <Label className="text-xs">Truth authority</Label>
+        <Select value={sourceKind} onValueChange={(v) => setSourceKind(v as SourceKind)}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="BUSINESS_APPROVED">Business-approved</SelectItem>
+            <SelectItem value="WEBSITE">Website (default)</SelectItem>
+            <SelectItem value="PUBLIC_SOURCE_UNAPPROVED">Public source, unapproved</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">Unapproved public-source facts are never presented as business truth.</p>
       </div>
       <div className="grid gap-1.5"><Label htmlFor={`source-${slot}`} className="text-xs">Source URL (where this fact is published)</Label><Input id={`source-${slot}`} type="url" value={source} onChange={(e) => setSource(e.target.value)} maxLength={2000} /></div>
       <div className="grid gap-1.5"><Label htmlFor={`question-${slot}`} className="text-xs">Question a buyer would ask</Label><Input id={`question-${slot}`} placeholder={`What time is check-in at ${clientName}?`} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} /></div>
@@ -565,6 +585,11 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
           ) : (
             <Badge variant="partial">Not approved</Badge>
           )
+        ) : null}
+        {item ? (
+          <Badge variant="outline" title={item.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? "Derived from public pages only; not business truth" : undefined}>
+            {SOURCE_KIND_LABELS[item.fact.sourceKind] ?? item.fact.sourceKind}
+          </Badge>
         ) : null}
         {finding ? (
           <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium", FINDING_TONE[finding.state])}>

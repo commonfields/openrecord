@@ -13,7 +13,7 @@ const item = (over: Partial<RecordItem> = {}): RecordItem => ({
   id: "00000000-0000-4000-8000-0000000000a1", slot: 1, supersedesId: null, superseded: false, createdAt: "2026-10-01T00:00:00.000Z",
   sourceUrl: "https://client.test/rooms", approval: { approvedAt: "2026-10-01T00:00:00.000Z", approvedByUserId: "00000000-0000-4000-8000-0000000000u1" },
   fact: { id: "00000000-0000-4000-8000-0000000000f1", subject: "TEST Hotel", predicate: "Breakfast included", valueText: "Yes", valueType: "TEXT",
-    version: 1, status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z", validUntil: null },
+    version: 1, status: "ACTIVE", sourceKind: "WEBSITE", validFrom: "2026-01-01T00:00:00.000Z", validUntil: null },
   question: { id: "00000000-0000-4000-8000-0000000000q1", prompt: "Is breakfast included at TEST Hotel?" },
   ...over,
 })
