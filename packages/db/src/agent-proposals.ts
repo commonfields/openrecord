@@ -85,7 +85,6 @@ export class AgentProposalRepository extends Context.Tag("AgentProposalRepositor
       proposer: AgentProposer
       proposedByUserId: string
     }) => ProposalEffect<AgentProposal>
-    readonly getScoped: (accountId: string, businessId: string, proposalId: string) => ProposalEffect<AgentProposal | null>
     readonly listByBusiness: (accountId: string, businessId: string, status: AgentProposalStatus | null) => ProposalEffect<ReadonlyArray<AgentProposal>>
     readonly approve: (
       accountId: string,
@@ -124,19 +123,21 @@ export const AgentProposalRepositoryLive = Layer.effect(
               AND question_id IS NOT DISTINCT FROM ${input.questionId}::uuid AND status = 'PROPOSED'
             ORDER BY created_at LIMIT 1`) as Array<unknown>
           if (existing[0] !== undefined) return yield* decodeProposal(existing[0])
-          const rows = (yield* sql`INSERT INTO agent_proposals (business_id, kind, question_id, message, proposer, proposed_by_user_id)
+          return yield* sql`INSERT INTO agent_proposals (business_id, kind, question_id, message, proposer, proposed_by_user_id)
             VALUES (${input.businessId}, ${input.kind}, ${input.questionId}::uuid, ${input.message}, ${input.proposer}, ${input.proposedByUserId})
-            RETURNING id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`) as Array<unknown>
-          return yield* decodeProposal(rows[0])
-        }),
-
-      getScoped: (accountId, businessId, proposalId) =>
-        Effect.gen(function*() {
-          const rows = (yield* sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals p
-            JOIN businesses b ON b.id = p.business_id
-            WHERE p.id = ${proposalId} AND p.business_id = ${businessId} AND b.account_id = ${accountId}`) as Array<unknown>
-          if (rows[0] === undefined) return null
-          return yield* decodeProposal(rows[0])
+            RETURNING id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`.pipe(
+            Effect.flatMap((rows) => decodeProposal((rows as Array<unknown>)[0])),
+            Effect.catchTag("SqlError", (e) =>
+              /duplicate key|unique/i.test(e.message)
+                ? sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+                    WHERE business_id = ${input.businessId} AND kind = ${input.kind}
+                      AND question_id IS NOT DISTINCT FROM ${input.questionId}::uuid AND status = 'PROPOSED'
+                    ORDER BY created_at LIMIT 1`.pipe(
+                    Effect.flatMap((rows) => decodeProposal((rows as Array<unknown>)[0])),
+                  )
+                : Effect.fail(e),
+            ),
+          )
         }),
 
       listByBusiness: (accountId, businessId, status) =>

@@ -110,6 +110,38 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     expect(await checksOf(f.business)).toBe(1)
   })
 
+  it("deduplicates identical pending proposals instead of spamming rows", async () => {
+    const f = await fixture()
+    const first = (await (await call("POST", `/api/businesses/${f.business}/agent/proposals`, f.session, { kind: "REQUEST_CHECK", questionId: f.question })).json()) as {
+      proposal: Record<string, unknown>
+    }
+    const second = (await (await call("POST", `/api/businesses/${f.business}/agent/proposals`, f.session, { kind: "REQUEST_CHECK", questionId: f.question })).json()) as {
+      proposal: Record<string, unknown>
+    }
+    expect(second.proposal["id"]).toBe(first.proposal["id"])
+    expect(Number((await pool.query("SELECT count(*)::int n FROM agent_proposals WHERE business_id = $1", [f.business])).rows[0].n)).toBe(1)
+  })
+
+  it("decides at most once and keeps proposal content immutable", async () => {
+    const f = await fixture()
+    const created = (await (await call("POST", `/api/businesses/${f.business}/agent/proposals`, f.session, { kind: "REQUEST_CHECK", questionId: f.question })).json()) as {
+      proposal: Record<string, unknown>
+    }
+    const id = String(created.proposal["id"])
+    // A first decision through any path is legal; a second is refused.
+    await pool.query("UPDATE agent_proposals SET status = 'REJECTED', decided_by_user_id = $2, decided_at = now() WHERE id = $1", [id, f.user])
+    await expect(pool.query("UPDATE agent_proposals SET status = 'EXECUTED', decided_by_user_id = $2, decided_at = now(), executed_check_run_id = $3 WHERE id = $1", [id, f.user, randomUUID()])).rejects.toThrow(/already decided/)
+    expect((await pool.query("SELECT status FROM agent_proposals WHERE id = $1", [id])).rows[0].status).toBe("REJECTED")
+    // Content is immutable even before any decision.
+    const g = await fixture()
+    const pending = (await (await call("POST", `/api/businesses/${g.business}/agent/proposals`, g.session, { kind: "REQUEST_CHECK", questionId: g.question })).json()) as {
+      proposal: Record<string, unknown>
+    }
+    const pendingId = String(pending.proposal["id"])
+    await expect(pool.query("UPDATE agent_proposals SET message = 'edited' WHERE id = $1", [pendingId])).rejects.toThrow(/immutable/)
+    expect((await pool.query("SELECT message, status FROM agent_proposals WHERE id = $1", [pendingId])).rows[0]).toMatchObject({ status: "PROPOSED" })
+  })
+
   it("rejects without executing; decided proposals stay decided", async () => {
     const f = await fixture()
     const created = (await (await call("POST", `/api/businesses/${f.business}/agent/proposals`, f.session, { kind: "REQUEST_CHECK", questionId: f.question })).json()) as {
@@ -140,6 +172,15 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     expect((await call("POST", `/api/businesses/${f.business}/agent/proposals/${randomUUID()}/approve`, f.session, { provider: "mock" })).status).toBe(404)
     expect((await call("GET", `/api/businesses/${f.business}/agent/proposals?status=BOGUS`, f.session)).status).toBe(422)
     expect((await call("POST", `/api/businesses/${f.business}/agent/proposals`, null, { kind: "REQUEST_CHECK", questionId: f.question })).status).toBe(401)
+  })
+
+  it("assistant compare answers include live record outcomes", async () => {
+    const f = await fixture()
+    const reply = await run(handleAgentMessage(f.account, f.user, f.business, "compare before and after"))
+    expect(reply._tag).toBe("Right")
+    if (reply._tag !== "Right") return
+    expect(reply.right.reply).toContain("Record outcomes: this business has no client record yet.")
+    expect(reply.right.toolCalls.map((t) => t.tool)).toContain("read_record_outcomes")
   })
 
   it("assistant drafts a proposal for a named question; approval still runs as the human", async () => {

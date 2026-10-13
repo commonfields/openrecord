@@ -107,8 +107,10 @@ export const handleAgentMessage = (
 
     const reads = yield* Effect.gen(function*() {
       const truth = yield* runAgentTool(accountId, businessId, "read_business_truth", {})
-      const questions = yield* runAgentTool(accountId, businessId, "discover_buyer_questions", {})
-      const issues = yield* runAgentTool(accountId, businessId, "read_open_issues", {})
+      // Full windows for internal lookups (named-question matching below);
+      // user-facing branches still present the top 5.
+      const questions = yield* runAgentTool(accountId, businessId, "discover_buyer_questions", { limit: 20 })
+      const issues = yield* runAgentTool(accountId, businessId, "read_open_issues", { limit: 20 })
       const representations = yield* runAgentTool(accountId, businessId, "read_representations", {})
       const scopes = yield* runAgentTool(accountId, businessId, "read_discovery_scopes", {})
       return { truth, questions, issues, representations, scopes }
@@ -225,6 +227,32 @@ export const handleAgentMessage = (
     }
 
     if (has(clean, "recheck", "re-observe", "reobserve", "verify source and", "before/after", "before after", "compare")) {
+      // Current record outcomes, when a record exists. A failed read is
+      // skipped silently rather than breaking the reply.
+      const outcomes = yield* runAgentTool(accountId, businessId, "read_record_outcomes", {}).pipe(
+        Effect.catchAll(() => Effect.succeed(null)),
+      )
+      if (outcomes !== null) {
+        toolCalls.push({ tool: "read_record_outcomes", summary: outcomes.summary })
+        const record = outcomes.data as {
+          hasRecord: boolean
+          slots?: ReadonlyArray<{ slot: number; comparison: { state: string; outcome?: string; reason?: string | null; text?: string } | null }>
+        }
+        if (!record.hasRecord) {
+          lines.push("Record outcomes: this business has no client record yet.")
+        } else {
+          lines.push("Record outcomes:")
+          for (const s of record.slots ?? []) {
+            lines.push(
+              s.comparison === null
+                ? `- Slot ${s.slot}: no comparison yet.`
+                : s.comparison.state === "DERIVED"
+                  ? `- Slot ${s.slot}: ${s.comparison.text ?? s.comparison.outcome}`
+                  : `- Slot ${s.slot}: ${s.comparison.state === "AWAITING_REVIEW" ? "awaiting review." : "re-check in progress."}`,
+            )
+          }
+        }
+      }
       // A named question turns the plan into a real proposal: the assistant
       // drafts, the human approves, and approval runs as the approver.
       const named = ids

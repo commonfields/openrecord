@@ -21,6 +21,12 @@ CREATE TABLE agent_proposals (
 );
 CREATE INDEX agent_proposals_business_status ON agent_proposals(business_id, status);
 
+-- Proposal spam guard: one pending proposal per business, kind, and
+-- question. Concurrent duplicate proposes collide here; the repository
+-- catches the violation and returns the winning row instead of failing.
+CREATE UNIQUE INDEX agent_proposals_pending_unique
+  ON agent_proposals(business_id, kind, question_id) WHERE status = 'PROPOSED';
+
 -- One decision per proposal: only a PROPOSED row may change status, and the
 -- executed run is set exactly once with the decision. Execution itself runs
 -- inside the approving transaction (SELECT ... FOR UPDATE in the repo), so
@@ -29,9 +35,6 @@ CREATE OR REPLACE FUNCTION guard_agent_proposal_decision() RETURNS trigger AS $$
 BEGIN
   IF OLD.status <> 'PROPOSED' THEN
     RAISE EXCEPTION 'agent proposal already decided';
-  END IF;
-  IF NEW.status = 'PROPOSED' THEN
-    RAISE EXCEPTION 'agent proposal cannot return to PROPOSED';
   END IF;
   IF (NEW.business_id, NEW.kind, NEW.question_id, NEW.message, NEW.proposer, NEW.proposed_by_user_id, NEW.created_at)
     IS DISTINCT FROM
