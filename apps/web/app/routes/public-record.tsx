@@ -12,7 +12,7 @@ const date = (iso: string | null) =>
   iso === null ? "—" : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(iso))
 
 const tone = { MATCHES: "text-emerald-700 dark:text-emerald-400", CONTRADICTS: "text-red-700 dark:text-red-400", UNKNOWN: "text-amber-700 dark:text-amber-400" } as const
-const outcomeTone = { OBSERVED_CORRECTION: "border-emerald-600", NO_OBSERVED_CHANGE: "border-zinc-400", INDETERMINATE: "border-amber-500" } as const
+const outcomeTone = { OBSERVED_CORRECTED: "border-emerald-600", NO_OBSERVED_CHANGE: "border-zinc-400", INDETERMINATE: "border-amber-500", RESOLVED_EXTERNALLY: "border-emerald-600" } as const
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   // A record URL is a capability: never send it to cited sites.
@@ -72,13 +72,18 @@ function Actions({ actions, title }: { actions: PublicAction[]; title: string })
   )
 }
 
-function Step({ label, answer }: { label: string; answer: PublicAnswer | null }) {
+function Step({ label, answers, summary }: { label: string; answers: PublicAnswer[]; summary: { statement: string } }) {
   return (
     <div className="space-y-1">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}{answer?.checkedAt ? ` · ${date(answer.checkedAt)}` : ""}</p>
-      {answer === null ? <p className="text-sm">No reviewed earlier answer.</p> : <>
-        <Judgment answer={answer} />
-        <details><summary className="cursor-pointer text-sm underline underline-offset-2">Show this answer and its sources</summary><div className="pt-3"><AnswerEvidence answer={answer} /></div></details>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      {answers.length === 0 ? <p className="text-sm">No reviewed earlier answer.</p> : <>
+        <p className="text-sm text-muted-foreground">{summary.statement}</p>
+        {answers.map((answer, i) => (
+          <div key={i} className="space-y-1 border-t pt-2 first:border-t-0 first:pt-0">
+            <Judgment answer={answer} />
+            <details><summary className="cursor-pointer text-sm underline underline-offset-2">Show this answer and its sources</summary><div className="pt-3"><AnswerEvidence answer={answer} /></div></details>
+          </div>
+        ))}
       </>}
     </div>
   )
@@ -91,16 +96,19 @@ function FactRecord({ fact }: { fact: PublicFact }) {
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Approved fact {fact.position}</p>
         <h2 className="text-sm font-semibold">{fact.fact.label}: {fact.fact.value}</h2>
+        {fact.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? (
+          <p className="text-sm text-muted-foreground">Public source, not business-approved: this differs from what the current website says.</p>
+        ) : null}
         {fact.fact.source ? <p className="text-sm">Source: <ExternalLink href={fact.fact.source}>{fact.fact.source}</ExternalLink></p> : null}
       </header>
       <p className="text-sm"><span className="text-muted-foreground">Question asked: </span>“{fact.question}”</p>
       {c === null ? (
-        fact.latest === null ? <p className="text-sm text-muted-foreground">Not checked yet.</p> : <Step label="Latest check" answer={fact.latest} />
+        fact.samples.length === 0 ? <p className="text-sm text-muted-foreground">Not checked yet.</p> : <Step label="Latest check" answers={fact.samples} summary={fact.summary} />
       ) : (
         <section className="space-y-4" aria-label="Weekly comparison">
-          <Step label="Before" answer={c.before} />
+          <Step label="Before" answers={c.before.samples} summary={c.before.summary} />
           <Actions actions={c.actions} title="Agency action" />
-          <Step label="After" answer={c.after} />
+          <Step label="After" answers={c.after.samples} summary={c.after.summary} />
           <div className={cn("rounded-lg bg-muted/40 px-4 py-3", outcomeTone[c.outcome])}>
             <p className="font-semibold">{OUTCOME_LABELS[c.outcome]}</p>
             <p className="text-sm">{c.explanation}</p>

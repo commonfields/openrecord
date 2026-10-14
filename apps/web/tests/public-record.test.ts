@@ -19,24 +19,38 @@ const answered = (answer: string, decision: "MATCHES" | "CONTRADICTS" | "UNKNOWN
   citations: [{ url: "https://old-listing.test/acme", title: "old-listing.test" }], evidenceDigest: "a".repeat(64),
   judgment: { decision, label: decision === "MATCHES" ? "Matches the approved fact" : decision === "CONTRADICTS" ? "Contradicts the approved fact" : "Unknown — the answer could not be judged against the approved fact", reviewedAt: "2026-10-08T12:00:00.000Z", reviewedBy: "Reviewed by the agency" },
 })
+const summaryOf = (answers: PublicAnswer[]) => {
+  const reviewed = answers.filter(a => a.status === "ANSWERED")
+  const contradict = reviewed.filter(a => a.judgment.decision === "CONTRADICTS").length
+  const matches = reviewed.filter(a => a.judgment.decision === "MATCHES").length
+  const unknown = reviewed.filter(a => a.judgment.decision === "UNKNOWN").length
+  return { total: answers.length, reviewed: reviewed.length, contradict, matches, unknown, statement: `${contradict} contradicted, ${matches} matched.` }
+}
 const record: PublicRecord = {
   client: { name: "TEST Acme Hotel", website: "https://acme-hotel.test/" },
   checkedBy: "OpenRecord", fixture: true, lastCheckedAt: "2026-10-15T10:00:00.000Z",
   surface: { name: "Gemini API", model: "gemini-2.5-flash", retrievalTool: "Google Search grounding" },
   disclosure: DISCLOSURE,
   facts: [
-    { position: 1, fact: { label: "Breakfast included", subject: "TEST Acme Hotel", value: "Yes", source: "https://acme-hotel.test/rooms", approvedAt: "2026-10-01T00:00:00.000Z" },
-      question: "Is breakfast included at TEST Acme Hotel?", latest: answered("Yes — breakfast is included.", "MATCHES"), pendingActions: [],
-      comparison: { before: answered("Breakfast is available for an additional €20 <script>alert(1)</script>", "CONTRADICTS"),
+    { position: 1, fact: { label: "Breakfast included", subject: "TEST Acme Hotel", value: "Yes", source: "https://acme-hotel.test/rooms", approvedAt: "2026-10-01T00:00:00.000Z", sourceKind: "BUSINESS_APPROVED" },
+      question: "Is breakfast included at TEST Acme Hotel?",
+      samples: [answered("Yes — breakfast is included.", "MATCHES")], summary: summaryOf([answered("Yes — breakfast is included.", "MATCHES")]), pendingActions: [],
+      comparison: { before: { samples: [answered("Breakfast is available for an additional €20 <script>alert(1)</script>", "CONTRADICTS")],
+          summary: summaryOf([answered("x", "CONTRADICTS")]) },
         actions: [{ performedAt: "2026-10-10T12:00:00.000Z", note: "Agency updated /rooms on 10 Oct.", links: ["https://acme-hotel.test/rooms"] }],
-        after: answered("Yes — breakfast is included.", "MATCHES"), outcome: "OBSERVED_CORRECTION",
-        explanation: "Observed correction. The earlier answer contradicted the approved fact; the later answer matches it." } },
-    { position: 2, fact: { label: "Check-in time", subject: "TEST Acme Hotel", value: "3:00 PM", source: null, approvedAt: "2026-10-01T00:00:00.000Z" },
-      question: "What time is check-in at TEST Acme Hotel?", latest: answered("Check-in is at 3 PM.", "MATCHES", false), pendingActions: [],
-      comparison: { before: answered("Check-in is at noon.", "CONTRADICTS"), actions: [], after: answered("Check-in is at 3 PM.", "MATCHES", false), outcome: "INDETERMINATE",
+        after: { samples: [answered("Yes — breakfast is included.", "MATCHES")], summary: summaryOf([answered("x", "MATCHES")]) },
+        outcome: "OBSERVED_CORRECTED",
+        explanation: "Observed corrected. The earlier answers contradicted the approved fact; the later answers match it." } },
+    { position: 2, fact: { label: "Check-in time", subject: "TEST Acme Hotel", value: "3:00 PM", source: null, approvedAt: "2026-10-01T00:00:00.000Z", sourceKind: "PUBLIC_SOURCE_UNAPPROVED" },
+      question: "What time is check-in at TEST Acme Hotel?",
+      samples: [answered("Check-in is at 3 PM.", "MATCHES", false)], summary: summaryOf([answered("x", "MATCHES")]), pendingActions: [],
+      comparison: { before: { samples: [answered("Check-in is at noon.", "CONTRADICTS")], summary: summaryOf([answered("x", "CONTRADICTS")]) },
+        actions: [], after: { samples: [answered("Check-in is at 3 PM.", "MATCHES", false)], summary: summaryOf([answered("x", "MATCHES")]) },
+        outcome: "INDETERMINATE",
         explanation: "Indeterminate — this answer did not use live web retrieval." } },
-    { position: 3, fact: { label: "Airport shuttle", subject: "TEST Acme Hotel", value: "Yes", source: null, approvedAt: "2026-10-01T00:00:00.000Z" },
-      question: "Does TEST Acme Hotel have an airport shuttle?", latest: answered("It is unclear.", "UNKNOWN"), comparison: null, pendingActions: [] },
+    { position: 3, fact: { label: "Airport shuttle", subject: "TEST Acme Hotel", value: "Yes", source: null, approvedAt: "2026-10-01T00:00:00.000Z", sourceKind: "BUSINESS_APPROVED" },
+      question: "Does TEST Acme Hotel have an airport shuttle?",
+      samples: [answered("It is unclear.", "UNKNOWN")], summary: summaryOf([answered("x", "UNKNOWN")]), comparison: null, pendingActions: [] },
   ],
 }
 
@@ -73,13 +87,17 @@ describe("public client record", () => {
     expect(html).toContain("UNKNOWN")
     expect(html).toContain("Reviewed by the agency")
     expect(html).toContain("Agency updated /rooms on 10 Oct.")
-    expect(html).toContain("Observed correction")
+    expect(html).toContain("Observed corrected")
     expect(html).toContain("Is breakfast included at TEST Acme Hotel?")
   })
   it("keeps INDETERMINATE and missing retrieval visible", () => {
     expect(html).toContain("Indeterminate")
     expect(html).toContain("Indeterminate — this answer did not use live web retrieval.")
     expect(html).toContain("Requested, but this answer did not use it")
+  })
+  it("labels unapproved public-source facts without calling them wrong", () => {
+    expect(html).toContain("Public source, not business-approved: this differs from what the current website says.")
+    expect(html).not.toMatch(/this is wrong|AI is wrong/i)
   })
   it("has no score, chart, navigation or account controls", () => {
     expect(html).not.toMatch(/score|percent|%|<nav|sign out|dashboard/i)

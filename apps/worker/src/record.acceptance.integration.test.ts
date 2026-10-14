@@ -146,7 +146,7 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     expect(raw).toContain("Breakfast is available for an additional €20 per person.")
 
     // Before review, nothing is public: answers are drafts.
-    expect(publicRecord(s).facts.every(f => f.latest === null)).toBe(true)
+    expect(publicRecord(s).facts.every(f => f.samples.length === 0)).toBe(true)
     await review(session, a, initial.id, { 1: "MATCHES", 2: "CONTRADICTS", 3: "UNKNOWN" })
     await records(r => r.share(session, a))
     s = await snapshot(a)
@@ -154,14 +154,20 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     expect(page.client).toEqual({ name: "TEST Acme Hotel", website: "https://acme-hotel.test/" })
     expect(page.fixture).toBe(true)
     expect(page.surface).toEqual({ name: "Gemini API", model: MODEL, retrievalTool: "Google Search grounding" })
-    expect(page.facts.map(f => f.latest?.status === "ANSWERED" ? f.latest.judgment.decision : null)).toEqual(["MATCHES", "CONTRADICTS", "UNKNOWN"])
+    expect(page.facts.map(f => f.samples[0]?.status === "ANSWERED" ? f.samples[0].judgment.decision : null)).toEqual(["MATCHES", "CONTRADICTS", "UNKNOWN"])
+    expect(page.facts.map(f => f.summary.statement)).toEqual([
+      "1 matched.",
+      "1 of 1 reviewed observation contradicted this fact.",
+      "1 could not be determined.",
+    ])
     const fact2 = page.facts[1]!
     expect(fact2.fact).toMatchObject({ label: "Breakfast included", value: "Yes, breakfast is included", source: "https://acme-hotel.test/rooms" })
     expect(fact2.question).toBe("Is breakfast included at TEST Acme Hotel?")
-    expect(fact2.latest).toMatchObject({ status: "ANSWERED", answer: "Breakfast is available for an additional €20 per person.",
+    expect(fact2.samples[0]).toMatchObject({ status: "ANSWERED", answer: "Breakfast is available for an additional €20 per person.",
       retrieval: { requested: true, observed: true, tool: "Google Search grounding" }, citations: [{ url: "https://old-listing.test/acme", title: "old-listing.test" }],
       judgment: { label: "Contradicts the approved fact", reviewedBy: "Reviewed by the agency" } })
-    expect(page.facts[2]!.latest).toMatchObject({ judgment: { decision: "UNKNOWN" } })
+    expect(fact2.samples).toHaveLength(1)
+    expect(page.facts[2]!.samples[0]).toMatchObject({ judgment: { decision: "UNKNOWN" } })
     // No score of any kind, no internal identity, note, key or raw payload.
     const text = JSON.stringify(page)
     expect(text).not.toMatch(/score|percent|%/i)
@@ -184,10 +190,10 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     await review(session, a, followUp.id, { 1: "MATCHES", 2: "MATCHES", 3: "UNKNOWN" })
     const after = publicRecord(await snapshot(a))
     const corrected = after.facts[1]!
-    expect(corrected.comparison).toMatchObject({ outcome: "OBSERVED_CORRECTION",
-      before: { judgment: { decision: "CONTRADICTS" }, answer: "Breakfast is available for an additional €20 per person." },
+    expect(corrected.comparison).toMatchObject({ outcome: "OBSERVED_CORRECTED",
+      before: { samples: [{ judgment: { decision: "CONTRADICTS" }, answer: "Breakfast is available for an additional €20 per person." }] },
       actions: [{ note: "Updated the client pricing/service page." }],
-      after: { judgment: { decision: "MATCHES" }, answer: "Yes — breakfast is included in every room rate at TEST Acme Hotel." } })
+      after: { samples: [{ judgment: { decision: "MATCHES" }, answer: "Yes — breakfast is included in every room rate at TEST Acme Hotel." }] } })
     expect(corrected.pendingActions).toEqual([])
     expect(after.facts[0]!.comparison).toMatchObject({ outcome: "INDETERMINATE", explanation: "The earlier answer already matched the approved fact, so there was no contradiction to verify a correction against. Both answers match." })
     expect(after.facts[2]!.comparison).toMatchObject({ outcome: "INDETERMINATE", explanation: "The earlier answer could not be judged against the approved fact." })
@@ -225,9 +231,9 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     const page = publicRecord(await snapshot(a))
     expect(page.facts.map(f => f.comparison?.outcome)).toEqual(["INDETERMINATE", "INDETERMINATE", "INDETERMINATE"])
     expect(page.facts[0]!.comparison!.explanation).toBe("Indeterminate — this answer did not use live web retrieval.")
-    expect(page.facts[0]!.comparison!.after).toMatchObject({ retrieval: { requested: true, observed: false }, judgment: { decision: "MATCHES" } })
+    expect(page.facts[0]!.comparison!.after.samples[0]).toMatchObject({ retrieval: { requested: true, observed: false }, judgment: { decision: "MATCHES" } })
     expect(page.facts[1]!.comparison!.explanation).toBe("The later check could not be completed (the AI provider was unavailable), so there is no later answer to compare.")
-    expect(page.facts[1]!.comparison!.after).toMatchObject({ status: "CHECK_FAILED" })
+    expect(page.facts[1]!.comparison!.after.samples[0]).toMatchObject({ status: "CHECK_FAILED" })
     expect(page.facts[2]!.comparison!.explanation).toBe("The later answer could not be judged against the approved fact.")
     // Record-level actions appear on every fact's comparison.
     expect(page.facts.every(f => f.comparison!.actions.some(x => x.note === "Agency updated /rooms."))).toBe(true)
@@ -262,7 +268,7 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     const followUp = await run(session, a)
     await review(session, a, followUp.id, { 1: "CONTRADICTS", 2: "MATCHES", 3: "MATCHES" })
     const page = publicRecord(await snapshot(a))
-    expect(page.facts[0]!.comparison).toMatchObject({ outcome: "NO_OBSERVED_CHANGE", explanation: "No observed change. Both answers contradict the approved fact." })
+    expect(page.facts[0]!.comparison).toMatchObject({ outcome: "NO_OBSERVED_CHANGE", explanation: "No observed change. The later answers still contradict the approved fact." })
     expect(page.facts[1]!.comparison).toMatchObject({ outcome: "INDETERMINATE", explanation: "The question changed between the two checks, so the answers are not compared." })
     expect(page.facts[2]!.comparison).toMatchObject({ outcome: "INDETERMINATE", explanation: "The approved fact changed between the two checks, so the answers are not compared." })
     // The earlier question is preserved exactly as asked.
@@ -287,7 +293,7 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     expect(corrected.supersedesId).toBe(first.id)
     const chain = (await snapshot(a)).checks[0]!.judgments
     expect(chain.map(j => j.decision)).toEqual(["CONTRADICTS", "MATCHES"])
-    expect(publicRecord(await snapshot(a)).facts[0]!.latest).toMatchObject({ judgment: { decision: "MATCHES" } })
+    expect(publicRecord(await snapshot(a)).facts[0]!.samples[0]).toMatchObject({ judgment: { decision: "MATCHES" } })
     await expect(pool.query("UPDATE record_judgments SET decision = 'UNKNOWN' WHERE id = $1", [first.id])).rejects.toThrow(/append-only/)
     await expect(pool.query("DELETE FROM record_judgments WHERE id = $1", [first.id])).rejects.toThrow(/append-only/)
     await expect(pool.query("UPDATE observations SET answer_text = 'rewritten' WHERE id = $1", [obs.id])).rejects.toThrow()
@@ -297,7 +303,9 @@ suite("client record acceptance (TEST agency, TEST clients, TEST reviewer)", () 
     await expect(pool.query("UPDATE check_runs SET requested_model = 'another-model' WHERE record_run_id = $1", [queued.id])).rejects.toThrow(/immutable/)
     // A reviewer outside the agency cannot be recorded, even directly.
     const outsider = await agency()
-    await expect(pool.query("INSERT INTO record_judgments (business_id, observation_id, item_id, decision, reviewed_by_user_id) SELECT business_id, $1, record_item_id, 'MATCHES', $2 FROM check_runs WHERE id = $3",
+    await expect(pool.query(`INSERT INTO record_judgments (business_id, observation_id, item_id, decision, fact_id, fact_version, reviewed_by_user_id)
+      SELECT c.business_id, $1, c.record_item_id, 'MATCHES', i.fact_id, f.version, $2 FROM check_runs c
+      JOIN record_items i ON i.id = c.record_item_id JOIN authoritative_facts f ON f.id = i.fact_id WHERE c.id = $3`,
       [obs.id, outsider.userId, (await snapshot(a)).checks[0]!.id])).rejects.toThrow(/account user/)
     // Finished checks are not re-opened by a repeated finalization.
     await pool.query("UPDATE check_runs SET status = 'SUCCEEDED' WHERE id = $1 AND status = 'RUNNING'", [(await snapshot(a)).checks[0]!.id])

@@ -745,18 +745,20 @@ const outcomeToneDot = { supported: "bg-supported", unknown: "bg-unknown", revie
 function RecordOutcomesCard({ businessId }: { businessId: string }) {
   const rec = useApi(`record:${businessId}`, () => Records.get(businessId))
   const slots = rec.data?.record.slots ?? []
-  const counts = { correction: 0, noChange: 0, indeterminate: 0, awaiting: 0, pending: 0, none: 0 }
+  const counts = { corrected: 0, resolved: 0, noChange: 0, indeterminate: 0, awaiting: 0, pending: 0, none: 0 }
   for (const s of slots) {
     const cmp = s.comparison
     if (!cmp) counts.none++
     else if (cmp.state === "PENDING_CHECK") counts.pending++
     else if (cmp.state === "AWAITING_REVIEW") counts.awaiting++
-    else if (cmp.outcome === "OBSERVED_CORRECTION") counts.correction++
+    else if (cmp.outcome === "OBSERVED_CORRECTED") counts.corrected++
+    else if (cmp.outcome === "RESOLVED_EXTERNALLY") counts.resolved++
     else if (cmp.outcome === "NO_OBSERVED_CHANGE") counts.noChange++
     else counts.indeterminate++
   }
   const rows: Array<{ label: string; value: number; tone?: keyof typeof outcomeToneDot }> = [
-    { label: OUTCOME_LABELS.OBSERVED_CORRECTION, value: counts.correction, tone: "supported" as const },
+    { label: OUTCOME_LABELS.OBSERVED_CORRECTED, value: counts.corrected, tone: "supported" as const },
+    { label: OUTCOME_LABELS.RESOLVED_EXTERNALLY, value: counts.resolved, tone: "supported" as const },
     { label: OUTCOME_LABELS.NO_OBSERVED_CHANGE, value: counts.noChange },
     { label: "Indeterminate", value: counts.indeterminate, tone: "unknown" as const },
     { label: "Awaiting review", value: counts.awaiting, tone: "review" as const },

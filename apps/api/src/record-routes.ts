@@ -33,10 +33,14 @@ const SaveSlotRequest = Schema.Struct({
   subject: Text(200), predicate: Text(200), valueText: Text(500),
   valueType: Schema.Literal("TEXT", "NUMBER", "CURRENCY", "BOOLEAN", "DATE", "URL", "ENUM"),
   validFrom: Schema.optional(IsoTime), validUntil: Schema.optional(Schema.NullOr(IsoTime)),
+  sourceKind: Schema.optional(Schema.Literal("WEBSITE", "BUSINESS_APPROVED", "PUBLIC_SOURCE_UNAPPROVED")),
   sourceUrl: PublicUrl, question: Text(500),
 })
-const StartRunRequest = Schema.Struct({ kind: Schema.optional(Schema.Literal("INITIAL", "FOLLOW_UP")) })
-const JudgeRequest = Schema.Struct({ observationId: Schema.UUID, decision: Schema.Literal("MATCHES", "CONTRADICTS", "UNKNOWN"), note: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(2000)))) })
+const StartRunRequest = Schema.Struct({ kind: Schema.optional(Schema.Literal("INITIAL", "FOLLOW_UP")),
+  samples: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1), Schema.lessThanOrEqualTo(5))) })
+const ClaimRequest = Schema.Struct({ text: Text(2000), span: Schema.optional(Schema.String.pipe(Schema.maxLength(2000))) })
+const JudgeRequest = Schema.Struct({ observationId: Schema.UUID, decision: Schema.Literal("MATCHES", "CONTRADICTS", "UNKNOWN"), note: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(2000)))),
+  claim: Schema.optional(ClaimRequest) })
 const ActionRequest = Schema.Struct({
   slot: Schema.NullOr(Schema.Literal(1, 2, 3)),
   type: Schema.optional(Schema.Literal("SOURCE_UPDATED", "SOURCE_PUBLISHED", "STRUCTURED_DATA_UPDATED", "THIRD_PARTY_CORRECTION_REQUESTED", "OTHER")),
@@ -130,7 +134,8 @@ export const recordApi = (withSession: WithSession) => {
       if (validFrom !== undefined && validUntil != null && Date.parse(validUntil) <= Date.parse(validFrom)) return yield* json(422, { _tag: "InvalidRequest", reason: "validUntil must follow validFrom" })
       const item = yield* (yield* RecordRepository).saveSlot(session, businessId, {
         slot, subject: body.subject.trim(), predicate: body.predicate.trim(), valueText: body.valueText.trim(), valueType: body.valueType,
-        ...(validFrom === undefined ? {} : { validFrom }), ...(validUntil === undefined ? {} : { validUntil }), sourceUrl: body.sourceUrl, question: body.question.trim(),
+        ...(validFrom === undefined ? {} : { validFrom }), ...(validUntil === undefined ? {} : { validUntil }),
+        ...(body.sourceKind === undefined ? {} : { sourceKind: body.sourceKind }), sourceUrl: body.sourceUrl, question: body.question.trim(),
       })
       return yield* json(200, { item })
     }))),
@@ -143,14 +148,19 @@ export const recordApi = (withSession: WithSession) => {
       if (!body) return yield* json(422, { _tag: "InvalidRequest" })
       const surface = yield* RecordSurfaceConfig
       if (surface.provider === "mock" && !recordFixtureAllowed()) return yield* json(409, { _tag: "RecordRefused", reason: "FixtureProviderDisabled" })
-      const run = yield* (yield* RecordRepository).startRun(session, businessId, { kind: body.kind ?? null, provider: surface.provider, requestedModel: surface.provider === "gemini" ? surface.model : null })
+      const run = yield* (yield* RecordRepository).startRun(session, businessId, { kind: body.kind ?? null, provider: surface.provider, requestedModel: surface.provider === "gemini" ? surface.model : null,
+        samples: body.samples ?? null })
       return yield* json(200, { run })
     }))),
     HttpRouter.post("/api/record/clients/:id/judgments", client((session, businessId) => Effect.gen(function*() {
       const body = decode(JudgeRequest, yield* readJson)
       if (!body) return yield* json(422, { _tag: "InvalidRequest" })
       const note = body.note?.trim() ? body.note.trim() : null
-      const judgment = yield* (yield* RecordRepository).judge(session, businessId, { observationId: body.observationId, decision: body.decision, note })
+      const text = body.claim?.text.trim() ? body.claim.text.trim() : null
+      if (body.claim && text === null) return yield* json(422, { _tag: "InvalidRequest" })
+      const span = body.claim?.span?.trim() ? body.claim.span.trim() : null
+      const judgment = yield* (yield* RecordRepository).judge(session, businessId, { observationId: body.observationId, decision: body.decision, note,
+        claim: text === null ? null : { text, span } })
       return yield* json(200, { judgment })
     }))),
     HttpRouter.post("/api/record/clients/:id/actions", client((session, businessId) => Effect.gen(function*() {

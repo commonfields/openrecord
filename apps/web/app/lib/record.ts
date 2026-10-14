@@ -3,10 +3,11 @@
 import { api } from "./api"
 
 export type Decision = "MATCHES" | "CONTRADICTS" | "UNKNOWN"
-export type Outcome = "OBSERVED_CORRECTION" | "NO_OBSERVED_CHANGE" | "INDETERMINATE"
+export type Outcome = "OBSERVED_CORRECTED" | "NO_OBSERVED_CHANGE" | "INDETERMINATE" | "RESOLVED_EXTERNALLY"
 export type RunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED"
 export type ValueType = "TEXT" | "NUMBER" | "CURRENCY" | "BOOLEAN" | "DATE" | "URL" | "ENUM"
 export type Engagement = "CLIENT" | "DOGFOOD" | "FIXTURE"
+export type SourceKind = "WEBSITE" | "BUSINESS_APPROVED" | "PUBLIC_SOURCE_UNAPPROVED"
 
 export type ClientSummary = { businessId: string; name: string; websiteUrl: string; engagement: Engagement; createdAt: string; hasActiveShare: boolean; lastCheckedAt: string | null }
 
@@ -18,10 +19,22 @@ export type RecordItem = {
   createdAt: string
   sourceUrl: string
   approval: { approvedAt: string; approvedByUserId: string } | null
-  fact: { id: string; subject: string; predicate: string; valueText: string; valueType: ValueType; version: number; status: string; validFrom: string; validUntil: string | null }
+  fact: { id: string; subject: string; predicate: string; valueText: string; valueType: ValueType; version: number; status: string; sourceKind: string; validFrom: string; validUntil: string | null }
   question: { id: string; prompt: string }
 }
-export type Judgment = { id: string; decision: Decision; note: string | null; supersedesId: string | null; reviewedByUserId: string; reviewedAt: string }
+export type Judgment = { id: string; decision: Decision; note: string | null; supersedesId: string | null; claimId: string | null;
+  factId: string; factVersion: number; reviewedByUserId: string; reviewedAt: string }
+export type RecordClaim = {
+  id: string
+  factKey: string
+  claimText: string
+  supportingSpan: string | null
+  normalizedValue: string | null
+  extractionMethod: "MANUAL_TRANSCRIPTION" | "MANUAL_EXACT_SPAN"
+  extractorVersion: string | null
+  createdByUserId: string
+  createdAt: string
+}
 export type RecordObservation = {
   id: string
   provider: string
@@ -41,6 +54,7 @@ export type RecordCheck = {
   id: string
   runId: string
   itemId: string
+  sample: number
   questionId: string
   status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED"
   failureClass: string | null
@@ -48,21 +62,27 @@ export type RecordCheck = {
   queuedAt: string
   completedAt: string | null
   observation: RecordObservation | null
+  claims: RecordClaim[]
   judgments: Judgment[]
   judgment: Judgment | null
   retrievalRequested: boolean | null
   retrievalObserved: boolean | null
   surface: string | null
 }
-export type RecordRun = { id: string; kind: "INITIAL" | "FOLLOW_UP"; baselineRunId: string | null; provider: string; requestedModel: string | null; createdAt: string; status: RunStatus; checks: RecordCheck[] }
+export type RecordRun = { id: string; kind: "INITIAL" | "FOLLOW_UP"; baselineRunId: string | null; provider: string; requestedModel: string | null; sampleCount: number; createdAt: string; status: RunStatus; checks: RecordCheck[] }
 export type RecordAction = { id: string; slot: number | null; type: string; note: string | null; links: string[]; performedAt: string; createdAt: string }
 export type Comparison =
   | { state: "PENDING_CHECK" }
   | { state: "AWAITING_REVIEW" }
   | { state: "DERIVED"; outcome: Outcome; reason: string | null; text: string }
+export type FindingKind = "CONTRADICTION" | "AGREEMENT" | "UNDETERMINED" | "UNREVIEWED"
+export type FindingState = "NEEDS_REVIEW" | "OPEN" | "ACTION_RECORDED" | "FOLLOW_UP_PENDING" | "AGREEMENT"
+  | "OBSERVED_CORRECTED" | "NO_OBSERVED_CHANGE" | "INDETERMINATE" | "RESOLVED_EXTERNALLY"
+export type SampleSummary = { total: number; reviewed: number; contradict: number; matches: number; unknown: number; statement: string }
 export type OperatorRecord = {
   profile: { businessId: string; name: string; websiteUrl: string; engagement: Engagement; createdAt: string }
-  slots: Array<{ slot: 1 | 2 | 3; item: RecordItem; history: RecordItem[]; baselineCheckId: string | null; latestFollowUpCheckId: string | null; comparison: Comparison | null; actions: RecordAction[] }>
+  slots: Array<{ slot: 1 | 2 | 3; item: RecordItem; history: RecordItem[]; baselineCheckIds: string[]; latestFollowUpCheckIds: string[];
+    finding: { kind: FindingKind; state: FindingState; samples: SampleSummary }; comparison: Comparison | null; actions: RecordAction[] }>
   runs: RecordRun[]
   actions: RecordAction[]
   share: { id: string; publicId: string; status: "ACTIVE" | "REVOKED"; createdAt: string; revokedAt: string | null } | null
@@ -71,7 +91,7 @@ export type OperatorRecord = {
 }
 export type RecordResponse = { record: OperatorRecord; surface: { provider: string; model: string } }
 
-export type SlotInput = { subject: string; predicate: string; valueText: string; valueType: ValueType; sourceUrl: string; question: string; validFrom?: string; validUntil?: string | null }
+export type SlotInput = { subject: string; predicate: string; valueText: string; valueType: ValueType; sourceUrl: string; question: string; validFrom?: string; validUntil?: string | null; sourceKind?: SourceKind }
 export type ActionInput = { slot: 1 | 2 | 3 | null; note: string; links: string[]; performedAt?: string }
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
@@ -85,9 +105,9 @@ export const Records = {
   update: (id: string, input: { name: string; websiteUrl: string }) => api<RecordResponse>(base(id), { method: "PUT", ...json(input) }),
   saveSlot: (id: string, slot: number, input: SlotInput) => api<{ item: RecordItem }>(`${base(id)}/slots/${slot}`, { method: "PUT", ...json(input) }),
   approve: (id: string, itemId: string) => api<RecordResponse>(`${base(id)}/items/${encodeURIComponent(itemId)}/approve`, { method: "POST" }),
-  run: (id: string, kind?: "INITIAL" | "FOLLOW_UP") => api<{ run: { id: string; kind: string } }>(`${base(id)}/runs`, { method: "POST", ...json(kind ? { kind } : {}) }),
-  judge: (id: string, observationId: string, decision: Decision, note: string | null) =>
-    api<{ judgment: Judgment }>(`${base(id)}/judgments`, { method: "POST", ...json({ observationId, decision, note }) }),
+  run: (id: string, kind?: "INITIAL" | "FOLLOW_UP", samples?: number) => api<{ run: { id: string; kind: string } }>(`${base(id)}/runs`, { method: "POST", ...json(kind || samples ? { ...(kind ? { kind } : {}), ...(samples ? { samples } : {}) } : {}) }),
+  judge: (id: string, observationId: string, decision: Decision, note: string | null, claim?: { text: string; span?: string | null }) =>
+    api<{ judgment: Judgment }>(`${base(id)}/judgments`, { method: "POST", ...json({ observationId, decision, note, ...(claim ? { claim } : {}) }) }),
   action: (id: string, input: ActionInput) => api<{ action: RecordAction }>(`${base(id)}/actions`, { method: "POST", ...json(input) }),
   share: (id: string) => api<{ share: { publicId: string } }>(`${base(id)}/share`, { method: "POST" }),
   revoke: (id: string) => api<{ revoked: true }>(`${base(id)}/share/revoke`, { method: "POST" }),
@@ -113,10 +133,11 @@ export type PublicAnswer = { question: string; fact: { label: string; value: str
 export type PublicAction = { performedAt: string; note: string | null; links: string[] }
 export type PublicFact = {
   position: number
-  fact: { label: string; subject: string; value: string; source: string | null; approvedAt: string }
+  fact: { label: string; subject: string; value: string; source: string | null; approvedAt: string; sourceKind: string }
   question: string
-  latest: PublicAnswer | null
-  comparison: { before: PublicAnswer | null; actions: PublicAction[]; after: PublicAnswer; outcome: Outcome; explanation: string } | null
+  samples: PublicAnswer[]
+  summary: SampleSummary
+  comparison: { before: { samples: PublicAnswer[]; summary: SampleSummary }; actions: PublicAction[]; after: { samples: PublicAnswer[]; summary: SampleSummary }; outcome: Outcome; explanation: string } | null
   pendingActions: PublicAction[]
 }
 export type PublicRecord = {
@@ -142,9 +163,21 @@ export const fetchPublicRecord = async (publicId: string): Promise<PublicRecord 
 }
 
 export const OUTCOME_LABELS: Record<Outcome, string> = {
-  OBSERVED_CORRECTION: "Observed correction",
+  OBSERVED_CORRECTED: "Observed corrected",
   NO_OBSERVED_CHANGE: "No observed change",
   INDETERMINATE: "Indeterminate",
+  RESOLVED_EXTERNALLY: "Resolved externally",
+}
+export const FINDING_STATE_LABELS: Record<FindingState, string> = {
+  NEEDS_REVIEW: "Needs review",
+  OPEN: "Open",
+  ACTION_RECORDED: "Action recorded",
+  FOLLOW_UP_PENDING: "Re-check pending",
+  AGREEMENT: "Agreement on record",
+  OBSERVED_CORRECTED: "Observed corrected",
+  NO_OBSERVED_CHANGE: "No observed change",
+  INDETERMINATE: "Indeterminate",
+  RESOLVED_EXTERNALLY: "Resolved externally",
 }
 export const DECISION_LABELS: Record<Decision, string> = { MATCHES: "Matches", CONTRADICTS: "Contradicts", UNKNOWN: "Unknown" }
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {

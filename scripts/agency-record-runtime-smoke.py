@@ -90,13 +90,14 @@ try:
         initial = completed(operator, path, ok(operator, path + "/runs", {})["run"]["id"])
         share = ok(operator, path + "/share", {})["share"]["publicId"]
         public_path = f"/api/public/records/{share}"
-        assert all(f["latest"] is None for f in ok(public, public_path)["record"]["facts"]), "unreviewed evidence leaked"
+        assert all(f["samples"] == [] for f in ok(public, public_path)["record"]["facts"]), "unreviewed evidence leaked"
         for check, decision in zip(initial["checks"], ("MATCHES", "CONTRADICTS", "UNKNOWN")):
             assert check["observation"]["synthetic"], "fixture classification lost"
             ok(operator, path + "/judgments", {"observationId": check["observation"]["id"], "decision": decision, "note": "TEST internal review"})
         first_page = ok(public, public_path)["record"]
         assert first_page["fixture"] and len(first_page["facts"]) == 3
-        assert all(f["latest"]["answer"] for f in first_page["facts"]), "raw answer missing"
+        assert all(len(f["samples"]) == 1 and f["samples"][0]["answer"] for f in first_page["facts"]), "raw answer missing"
+        assert all("contradicted this fact" in f["summary"]["statement"] or "matched." in f["summary"]["statement"] or "could not be determined." in f["summary"]["statement"] for f in first_page["facts"]), "evidence statement missing"
         assert "TEST internal review" not in json.dumps(first_page), "private review note leaked"
         ok(operator, path + "/actions", {"slot": None, "note": "TEST agency updated the source", "links": []})
         follow_up = completed(operator, path, ok(operator, path + "/runs", {"kind": "FOLLOW_UP"})["run"]["id"])

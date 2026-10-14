@@ -117,6 +117,24 @@ suite("client record HTTP (TEST fixtures only)", () => {
     expect((await call("POST", `/api/record/clients/${otherClient}/judgments`, other.session, { observationId: check.observation!.id, decision: "MATCHES" })).status).toBe(404)
   })
 
+  it("truth authority labels default to WEBSITE and never impersonate approval", async () => {
+    const a = await agency()
+    const businessId = await client(a.session)
+    type ItemView = { item: { id: string; fact: { sourceKind: string; version: number } } }
+    const get = async (n: number) => (await ok<View>(call("GET", `/api/record/clients/${businessId}`, a.session))).record.slots.find(s => s.slot === n)!.item as unknown as ItemView["item"]
+    // Slots saved without a label keep the historical default.
+    expect((await get(1)).fact.sourceKind).toBe("WEBSITE")
+    const path = `/api/record/clients/${businessId}/slots/1`
+    const marked = await ok<ItemView>(call("PUT", path, a.session, { ...slotBody(1), sourceKind: "PUBLIC_SOURCE_UNAPPROVED" }))
+    expect(marked.item.fact.sourceKind).toBe("PUBLIC_SOURCE_UNAPPROVED")
+    expect(marked.item.fact.version).toBe(2)
+    const approved = await ok<ItemView>(call("PUT", path, a.session, { ...slotBody(1), sourceKind: "BUSINESS_APPROVED" }))
+    expect(approved.item.fact.sourceKind).toBe("BUSINESS_APPROVED")
+    expect(approved.item.fact.version).toBe(3)
+    for (const body of [{ ...slotBody(1), sourceKind: "BUSINESS_WRONG" }, { ...slotBody(1), sourceKind: "" }]) {
+      expect((await call("PUT", path, a.session, body)).status, JSON.stringify(body)).toBe(422)
+    }
+  })
   it("rejects unsafe or malformed input", async () => {
     const a = await agency()
     const businessId = await client(a.session)
@@ -206,9 +224,10 @@ suite("client record HTTP (TEST fixtures only)", () => {
     expect(res.headers.get("x-robots-tag")).toContain("noindex")
     expect(res.headers.get("referrer-policy")).toBe("no-referrer")
     const text = await res.text()
-    const { record } = JSON.parse(text) as { record: { facts: Array<{ latest: { answer: string; judgment: { decision: string } } }>; disclosure: string } }
+    const { record } = JSON.parse(text) as { record: { facts: Array<{ samples: Array<{ answer: string; judgment: { decision: string }; status: string }>; summary: { statement: string } }>; disclosure: string } }
     expect(record.facts).toHaveLength(3)
-    expect(record.facts.every(f => f.latest.judgment.decision === "CONTRADICTS" && f.latest.answer.startsWith("TEST answer for check"))).toBe(true)
+    expect(record.facts.every(f => f.samples.length === 1 && f.samples[0]!.status === "ANSWERED" && f.samples[0]!.judgment.decision === "CONTRADICTS" && f.samples[0]!.answer.startsWith("TEST answer for check"))).toBe(true)
+    expect(record.facts.every(f => f.summary.statement === "1 of 1 reviewed observation contradicted this fact.")).toBe(true)
     expect(record.disclosure).toContain("does not prove that the edit caused")
     for (const hidden of [p.businessId, p.account, p.user, p.session, "TEST internal reviewer note", "TEST-internal-response", "gemini-test-key",
       ...p.view.record.runs.flatMap(r => [r.id, ...r.checks.flatMap(c => [c.id, c.observation!.id])]), ...p.view.record.slots.map(s => s.item.id)]) {
