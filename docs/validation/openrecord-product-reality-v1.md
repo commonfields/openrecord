@@ -9,15 +9,18 @@ The official dictionary needs a request form, so this document reports
 
 ## Executive summary
 
-OpenRecord runs. The product path works end to end in tests. The live path does
-not work yet. One grounded call failed at the provider with HTTP 429
-`RESOURCE_EXHAUSTED`. The same model answers a plain call with HTTP 200.
-Therefore the project cannot use Google Search grounding.
+OpenRecord runs. The product path works end to end. G1 passes. One real,
+retrieval-backed Gemini observation is stored, with citations, raw bytes and a
+matching digest. Section 3.6 holds the evidence.
 
-G1 is `BLOCKED_BILLING_AUTHORIZATION`. G2 to G5 did not start, because each one
-needs a real observation. Preparation work for G2, G3 and G5 is complete.
-No customer, review, or payment was invented. No engineering change is
-necessary to unblock the work.
+The first attempt failed with HTTP 429 `RESOURCE_EXHAUSTED`, because Google
+Search grounding needs a paid-tier project. The operator enabled access. The
+retry then succeeded on the same key, model, fact and question.
+
+G1 is `PASS`. G2 awaits operator approval, because the operator limited this
+execution to one smoke test. G3 to G5 did not start. Preparation work for G2,
+G3 and G5 is complete. No customer, review, or payment was invented. No
+engineering change was necessary.
 
 ## 1. Starting state
 
@@ -37,11 +40,14 @@ Verification commands: `git log --oneline -3 origin/main` and
 
 | Gate | State | Evidence | Human dependency | Next action |
 |---|---|---|---|---|
-| G1 Live execution | BLOCKED | Grounded call HTTP 429; stored attempt evidence `8de9461a…` | Paid-tier access for the Gemini project | Enable billing, then repeat one smoke test |
-| G2 Evidence quality | BLOCKED | G1 not passed. Cohort prep below | Reviewer decisions for 105 samples | Start after G1 passes and budget approval |
+| G1 Live execution | PASS | Observation stored with `PROVIDER_GROUNDING`; check run `7b7dccd6…`; digest `8073697f…` | None. Paid-tier access is active | None. G1 is complete |
+| G2 Evidence quality | BLOCKED | G1 passed. Cohort prep below | An approved budget of $5 and real reviewer decisions | Ask the operator to authorize G2, then sample 105 times |
 | G3 Product delivery | BLOCKED | No authorized customer | One real agency and one real client | Confirm a customer, then deliver |
 | G4 Repeat value | NOT_STARTED | Depends on G3 | Agency action and a second check | Start after G3 passes |
 | G5 Payment | BLOCKED | No customer, no offer sent | Operator confirms the offer | Send the offer after approval |
+
+G2 is blocked only by an approval, not by a defect. The operator stopped the
+work after one smoke test on purpose.
 
 Each gate is independent. No gate was reported from a lower gate.
 
@@ -95,7 +101,7 @@ queries. Google does not bill a failed request.
 The 2.5 tier has free grounding on the free tier. Google blocks that tier for
 this project, so the free path is closed.
 
-### 3.4 Live smoke test
+### 3.4 Live smoke test, first attempt (blocked)
 
 Method: the real product path.
 
@@ -143,28 +149,83 @@ One bounded diagnostic call separated model access from grounding access.
 
 Token use of the diagnostic: 7 input tokens, 1 output token.
 
-Conclusion: the project can call the model. The project cannot use grounding.
-This matches the Google tier table: grounding is not available on the free tier
-for Gemini 3 models.
+Conclusion: on the free tier, the project can call the model but cannot use
+grounding. This matches the Google tier table: grounding is not available on the
+free tier for Gemini 3 models. The operator then enabled paid-tier access, and
+section 3.6 records the result.
 
-### 3.6 G1 verdict
+### 3.6 Live smoke test, retry (passed)
 
-`BLOCKED_BILLING_AUTHORIZATION`
+The operator enabled paid-tier access and supplied a new `GEMINI_API_KEY`. The
+API and the worker restarted on Node 24 with the new environment. The retry used
+the same business, the same approved fact, the same buyer question, the same
+model, and one sample. The measurement conditions did not change.
 
-The blocker is provider entitlement, not code, not the key, and not the model
-name. The operator's instruction was to verify paid-tier access before the call.
-The evidence shows the project does not have grounding access.
+Command: `node /tmp/or-smoke-retry.mjs`. The script signs in, starts one
+`INITIAL` run through the HTTP API, and polls the operator view.
 
-### 3.7 Cost of G1
+The check succeeded. Every acceptance item below is verified against stored
+evidence, not against the provider response alone.
+
+| Acceptance item | Result |
+|---|---|
+| Request succeeded | Yes. Check status `SUCCEEDED`; the worker logged "check succeeded" |
+| Correct model answered | Yes. Requested model and observed model are both `gemini-3.5-flash-lite` |
+| Response has grounding metadata | Yes. `retrieval_requested = true`, `retrieval_observed = true`, `retrieval_mode = PROVIDER_GROUNDING` |
+| Retrieval tool recorded | Yes. `retrieval_tool = google_search`, with 2 web search queries stored |
+| Raw response stored | Yes. 9,499 bytes, content type `application/json; charset=UTF-8`, limit 2,097,152 bytes |
+| Evidence digest stored | Yes. Digest `8073697fe968cc518b352f137ec69219dd9dea0501b1785b4084ad32100720ae` |
+| Digest matches the stored bytes | Yes. `observation.raw_digest = raw_evidence.digest` |
+| Citations preserved | Yes. 4 citations, all attributed. Hosts: `loewshotels.com` twice, `airportparkingreservations.com`, `parksleepfly.com` |
+| Observation is not synthetic | Yes. `synthetic = false` |
+| No provider substitution | Yes. Provider `gemini`; requested model equals observed model |
+| Public evidence rules intact | Yes. 0 shares. 0 judgments. An unreviewed answer is not public |
+
+| Field | Value |
+|---|---|
+| Business | `2183713a-7ec0-483f-9a3d-ec3d18bd8b93` |
+| Record run | `7300c4b3-f2c3-42e1-9687-432b98311295` |
+| Check run | `7b7dccd6-38e5-4099-ad37-630bf37c02af` |
+| Run status | `SUCCEEDED` |
+| Observations stored | 1 |
+| Answer text | "Yes, the Loews Chicago O'Hare Hotel runs a complimentary airport shuttle service to and from Chicago O'Hare International Airport (ORD)." |
+| Token use | 23 input tokens, 161 output tokens, 184 total |
+| Service tier | `standard` |
+| Finish reason | `STOP` |
+
+The answer states a shuttle frequency, "every 15 minutes". The first-party page
+in section 4 does not state that frequency. The answer cites `loewshotels.com`.
+This is an observation for the reviewer. This document does not judge it.
+Section 6 holds the rule: only a human decides.
+
+### 3.7 G1 verdict
+
+`PASS` — `LIVE_GROUNDED_OBSERVATION_VERIFIED`
+
+One real, retrieval-backed observation is stored with raw bytes, a matching
+digest, preserved citations, the requested model, and `synthetic = false`. The
+public evidence rules remain intact.
+
+The first attempt failed because the project had no grounding entitlement. That
+was an entitlement problem, not a code problem. No code changed to pass this
+gate.
+
+### 3.8 Cost of G1
 
 | Item | Result |
 |---|---|
-| Grounded attempts | 4 requests, all rejected with HTTP 429. Not billed |
-| Diagnostic call | 8 tokens total. Under $0.00001 on the paid rate. $0 on the free tier |
-| Observations stored | 0 |
-| Total estimated charge | Under $0.00001. The approved cap was $1 |
+| Successful grounded call | 23 input tokens, 161 output tokens. About $0.00041 |
+| Search queries | 2, inside the 5,000-per-month free allowance. $0 |
+| First attempt | 4 requests, all rejected with HTTP 429. Not billed |
+| Diagnostic call | 8 tokens total. Under $0.00001 |
+| Observations stored | 1 |
+| Total estimated charge | About $0.00043. The approved cap was $1 |
 
-### 3.8 Cost estimates for later work
+The rate card: `gemini-3.5-flash-lite` input $0.30 per million tokens, output
+$2.50 per million tokens. Search grounding: 5,000 free requests per month, then
+$14 per 1,000 queries.
+
+### 3.9 Cost estimates for later work
 
 One smoke test: tokens only, about $0.001 at most. Search stays inside the
 monthly free allowance. Expected cost: near zero.
@@ -178,13 +239,28 @@ requests. Three queries each equals 1,260 queries. If the free monthly
 allowance is used, cost is 1,260 times $0.014, or $17.64. Token worst case adds
 about $0.65. Absolute ceiling: about $18.29. Failed requests add no charge.
 
-Authorization needed to continue: enable billing on the project behind
-`GEMINI_API_KEY`, set a hard budget cap, and approve the G2 budget of $5. A
-billing alert is not a hard spending limit.
+Authorization needed to continue: approve the G2 budget of $5 for the frozen
+cohort. The project now has grounding access. A billing alert is not a hard
+spending limit, so set a hard cap too.
+
+Approval request, ready to send:
+
+| Item | Value |
+|---|---|
+| Cohort | 7 businesses, unchanged, from `docs/validation/record-integrity-real-business-v1.md` |
+| Facts | 3 per business, 21 total |
+| Buyer questions | 3 per business, 21 total |
+| Samples per fact | 5 |
+| Planned samples | 105 |
+| Retries | No selective retries. Every failed sample stays in the denominator |
+| Stop rule | Report the precision ledger at 3 of 7 businesses with promising yield |
+| Budget | $5. Normal case about $0.30 |
+| Model | `gemini-3.5-flash-lite`, `google_search` grounding |
 
 ## 4. G2 — Evidence quality
 
-State: `BLOCKED`. G1 did not pass, so no sampling started. No provider spend.
+State: `BLOCKED_AWAITING_AUTHORIZATION`. The operator limited this execution to
+one smoke test. G2 did not start. No cohort spend.
 
 Safe preparation is complete. First-party pages were fetched on 2026-10-17.
 
@@ -221,7 +297,7 @@ State: `BLOCKED_REAL_CUSTOMER`.
 No authorized agency or client exists. No link was sent. No test account was
 presented as a customer.
 
-Prepared delivery package, ready to use after G1 passes:
+Prepared delivery package, ready to use after operator approval:
 
 | Item | Content |
 |---|---|
@@ -271,15 +347,17 @@ OpenRecord does not change an external provider answer, and this is not a
 failure. The agency controls its own website and content. OpenRecord keeps the
 evidence, records the work, and measures the observed result.
 
-The manual step did not block this execution. The blocker is provider access.
-The current product gives the agency a complete manual loop. Source:
+The manual step did not block this execution. Provider access did block the
+first attempt, and paid-tier access solved it. The current product gives the
+agency a complete manual loop. Source:
 `packages/db/src/record-view.ts` (`CAUSALITY_DISCLOSURE`, `RESOLVED_EXTERNALLY`).
 
 No autonomous correction was added. The Search Operator was not expanded.
 
 ## 9. Engineering changes
 
-No change is necessary to unblock G1. The blocker is billing entitlement.
+No change was necessary to unblock G1. The blocker was provider entitlement.
+Paid-tier access solved it. No code was changed in this execution.
 
 One candidate defect is recorded for owner review, not fixed here:
 
@@ -296,34 +374,35 @@ authorization. No code was changed in this execution.
 
 | Change | Detail |
 |---|---|
-| `.env` | `GEMINI_MODEL` changed from `gemini-2.5-flash` to `gemini-3.5-flash-lite`. No secret changed |
+| `.env` | `GEMINI_MODEL` changed from `gemini-2.5-flash` to `gemini-3.5-flash-lite`. `GEMINI_API_KEY` replaced by the operator with a paid-tier key. This document does not print or store the secret |
 | API | Stopped and restarted with Node 24.3.0. Listening on port 3001 |
 | Worker | Two worker instances were running. Both stopped. One worker restarted with Node 24.3.0 |
 | Web | Left running on port 3000 |
-| Database | Not changed. No volume deleted. No migration added |
+| Database | Not changed. No volume deleted. No migration added. 0 shares. 0 judgments |
 | PostgreSQL 14 (Homebrew) | Not touched |
-| Provider calls | One grounded run, 4 attempts, all HTTP 429. One diagnostic call, HTTP 200 |
-| Backups | The previous `.env` was copied to a local temporary file |
+| Provider calls | First attempt: 4 requests, all HTTP 429. Diagnostic: 1 request, HTTP 200. Retry: 1 grounded request, HTTP 200 |
+| Backups | The previous `.env` was copied to a local temporary file. The secret file stays out of git |
 
 ## 11. Final report
 
 | Gate | Result | Evidence | Next action |
 |---|---|---|---|
-| G1 Live | BLOCKED | Checks `d91577be-…`, run `9d2f2d7b-…`, attempt digest `8de9461a…`, HTTP 429 `RESOURCE_EXHAUSTED` | Enable paid-tier access, then repeat one smoke test |
-| G2 Evidence | BLOCKED | G1 failed. Cohort prep table above | Freeze corrected facts, then sample 105 times |
+| G1 Live | PASS | Check `7b7dccd6-…`, run `7300c4b3-…`, digest `8073697f…`, `PROVIDER_GROUNDING`, 4 citations | None. G1 is complete |
+| G2 Evidence | BLOCKED | G1 passed. Cohort prep table above | Authorize $5, freeze corrected facts, then sample 105 times |
 | G3 Delivery | BLOCKED | No authorized customer | Confirm one agency and one client |
 | G4 Repeat | NOT_STARTED | Depends on G3 | Record one real action, then re-check |
 | G5 Payment | BLOCKED | No customer, no offer sent | Confirm and send the offer |
 
 Questions:
 
-1. Can OpenRecord execute one genuine live observation? No. The provider
-   rejected every grounded call with HTTP 429.
+1. Can OpenRecord execute one genuine live observation? Yes. One retrieval-backed
+   observation is stored, with citations, raw bytes and a matching digest.
 2. Can it find useful discrepancies in real business information? Not tested.
-   G2 did not start.
+   G2 did not start. One early signal exists: the answer states a shuttle
+   frequency that the first-party page does not state.
 3. Can an agency deliver the result to a real client? The product can. No real
    client exists.
-4. Does the client or agency use the result? No observation exists.
+4. Does the client or agency use the result? No delivered record exists.
 5. Does the customer request another check? No.
 6. Has anyone paid? No.
 7. What work is still manual? The agency changes its own website and content.
@@ -332,10 +411,11 @@ Questions:
 8. Which engineering changes are genuinely necessary? None for this blocker.
    One candidate evidence-semantics defect is recorded for review.
 
-Product verdict: `TECHNICALLY_BLOCKED`
+Product verdict: `LIVE_PRODUCT_VERIFIED`
 
-The highest milestone with genuine evidence is technical blockage. No live
-observation is stored. No customer, review, or payment exists.
+The highest milestone with genuine evidence is live product verification. One
+real, retrieval-backed observation is stored. No discovery result, customer,
+review, or payment exists.
 
-The smallest next step: enable paid-tier access on the Gemini project, set a
-hard budget cap, and authorize $5 for G2. Then repeat one grounded smoke test.
+The smallest next step: authorize the G2 budget of $5 for the frozen cohort.
+Then freeze the two corrected Loews facts and start sampling.
