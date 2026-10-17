@@ -109,6 +109,7 @@ import { assayApi, assaySyntheticEnabled } from "./assay-routes.js"
 import { agentProposalApi } from "./agent-proposals.js"
 import { siteApi } from "./site-routes.js"
 import { recordApi, recordFixtureAllowed } from "./record-routes.js"
+import { acquisitionApi } from "./acquisition-routes.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 
 const json = (status: number, body: unknown, headers?: Record<string, string>) =>
@@ -1471,7 +1472,7 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(recordApi(withSession), agentProposalApi(withSession))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), agentProposalApi(withSession))),
   )
 }
 

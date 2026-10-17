@@ -10,14 +10,14 @@ import { AuthRepository, BusinessRepository, operatorView, publicRecord, RecordR
 import { decodeRouteId } from "@openrecord/contracts"
 import { RecordSurfaceConfig } from "@openrecord/config"
 
-const json = (status: number, body: unknown, headers: Record<string, string> = {}) => HttpServerResponse.json(body, { status, headers })
-const readJson = Effect.flatMap(HttpServerRequest.HttpServerRequest, req => req.json).pipe(Effect.catchAll(() => Effect.succeed(null)))
-const decode = <A, I>(schema: Schema.Schema<A, I>, raw: unknown): A | null => {
+export const json = (status: number, body: unknown, headers: Record<string, string> = {}) => HttpServerResponse.json(body, { status, headers })
+export const readJson = Effect.flatMap(HttpServerRequest.HttpServerRequest, req => req.json).pipe(Effect.catchAll(() => Effect.succeed(null)))
+export const decode = <A, I>(schema: Schema.Schema<A, I>, raw: unknown): A | null => {
   const decoded = Schema.decodeUnknownEither(schema, { onExcessProperty: "error" })(raw)
   return decoded._tag === "Right" ? decoded.right : null
 }
 
-const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.filter(s => s.trim().length > 0, { message: () => "required" }))
+export const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.filter(s => s.trim().length > 0, { message: () => "required" }))
 /** Absolute http(s) URL without credentials. */
 export const PublicUrl = Schema.String.pipe(Schema.maxLength(2000), Schema.filter(s => {
   try {
@@ -55,7 +55,7 @@ const PUBLIC_ID = /^[A-Za-z0-9_-]{43}$/
 /** A capability URL: never cached, never indexed, never leaked via Referer. */
 const PUBLIC_HEADERS = { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer" }
 
-type WithSession = <A, E, R>(run: (session: Session) => Effect.Effect<A, E, R>) =>
+export type WithSession = <A, E, R>(run: (session: Session) => Effect.Effect<A, E, R>) =>
   Effect.Effect<A, E | SqlError | RowDecodeError | { readonly _tag: "NotAuthenticated" }, R | AuthRepository | HttpServerRequest.HttpServerRequest>
 
 const failure = (e: unknown) => {
@@ -71,24 +71,26 @@ const failure = (e: unknown) => {
   return json(500, { _tag: "RecordRequestFailed" })
 }
 
-export const recordApi = (withSession: WithSession) => {
-  // SameSite cookies do not isolate a hostile sibling subdomain. Browser
-  // writes must come from the configured application origin. Non-browser
-  // clients without Origin still need their authenticated session.
-  const operatorSession = <E, R>(run: (s: Session) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
-    Effect.gen(function*() {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        const origin = request.headers["origin"]
-        const app = yield* Config.string("APP_BASE_URL").pipe(Config.withDefault("http://localhost:3000"))
-        let allowed = false
-        try { allowed = origin === new URL(app).origin } catch { /* bad configuration fails closed */ }
-        if ((origin !== undefined && !allowed) || (origin === undefined && ["cross-site", "same-site"].includes(request.headers["sec-fetch-site"] ?? ""))) {
-          return yield* json(403, { _tag: "OriginRefused" })
-        }
+// SameSite cookies do not isolate a hostile sibling subdomain. Browser
+// writes must come from the configured application origin. Non-browser
+// clients without Origin still need their authenticated session.
+export const operatorSessionFor = (withSession: WithSession) => <E, R>(run: (s: Session) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  Effect.gen(function*() {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const origin = request.headers["origin"]
+      const app = yield* Config.string("APP_BASE_URL").pipe(Config.withDefault("http://localhost:3000"))
+      let allowed = false
+      try { allowed = origin === new URL(app).origin } catch { /* bad configuration fails closed */ }
+      if ((origin !== undefined && !allowed) || (origin === undefined && ["cross-site", "same-site"].includes(request.headers["sec-fetch-site"] ?? ""))) {
+        return yield* json(403, { _tag: "OriginRefused" })
       }
-      return yield* withSession(run)
-    })
+    }
+    return yield* withSession(run)
+  })
+
+export const recordApi = (withSession: WithSession) => {
+  const operatorSession = operatorSessionFor(withSession)
   /** Business scoped to the session's agency account and carrying a record profile. */
   const client = <E, R>(run: (s: Session, businessId: string, p: Record<string, string>) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
     operatorSession((session: Session) => Effect.gen(function*() {
