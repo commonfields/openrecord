@@ -1,3 +1,4 @@
+import { AgentChat } from "@/components/agent-chat"
 // One client's record, operated by the agency: identity, three approved
 // facts with one question each, checks on the live surface, human review,
 // agency actions, the weekly re-check and its outcome, and the share URL.
@@ -698,6 +699,7 @@ export function ClientRecordPage() {
   const { id = "" } = useParams()
   const [poll, setPoll] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [chatting, setChatting] = useState(false)
   const res = useApi<RecordResponse>(`record:${id}`, async () => {
     const r = await Records.get(id)
     setPoll(r.record.activeRun)
@@ -791,6 +793,10 @@ export function ClientRecordPage() {
         }
       />
 
+      <details className="rounded-xl border p-4" open={chatting || undefined}>
+        <summary className="cursor-pointer text-xs font-medium">Investigate with the agent</summary>
+        <div className="pt-4"><AgentChat businessId={id} businessName={record.profile.name} onConversationChange={setChatting} /></div>
+      </details>
       <Steps steps={steps} />
 
       {record.activeRun ? (

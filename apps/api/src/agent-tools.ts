@@ -13,7 +13,7 @@
 // unknown and foreign ids both read as "not in scope" without leaking which.
 // Untrusted content: answer/source/fact text is operator-owned data. It is
 // returned verbatim as cited data and never interpreted as instructions.
-import { Data, Effect, Schema } from "effect"
+import { Data, Effect, JSONSchema, Schema } from "effect"
 import { SqlClient } from "@effect/sql"
 import {
   AgentProposalRepository,
@@ -64,6 +64,7 @@ export interface AgentToolDef {
   readonly name: string
   readonly description: string
   /** Raw decode; runAgentTool maps any failure to AgentInvalidInput. */
+  readonly parameters: unknown
   readonly decode: (input: unknown) => Effect.Effect<unknown, unknown, never>
   readonly run: (
     accountId: string,
@@ -81,13 +82,15 @@ const scoped = (accountId: string, businessId: string) =>
     if (!(yield* biz.getScoped(accountId, businessId))) return yield* Effect.fail(new AgentNotInScope())
   })
 
-const decodeWith = <A, I>(schema: Schema.Schema<A, I>) => (input: unknown) =>
-  Schema.decodeUnknown(schema, { onExcessProperty: "error" })(input)
+const inputContract = <A, I>(schema: Schema.Schema<A, I>) => ({
+  parameters: JSONSchema.make(schema),
+  decode: (input: unknown) => Schema.decodeUnknown(schema, { onExcessProperty: "error" })(input),
+})
 
 const readBusinessTruth: AgentToolDef = {
   name: "read_business_truth",
   description: "Read the business's approved facts (authoritative truth). Read-only.",
-  decode: decodeWith(Schema.Struct({ limit: Limit })),
+  ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
       yield* scoped(accountId, businessId)
@@ -115,7 +118,7 @@ const readBusinessTruth: AgentToolDef = {
 const discoverBuyerQuestions: AgentToolDef = {
   name: "discover_buyer_questions",
   description: "List the buyer questions tracked for the business. Read-only.",
-  decode: decodeWith(Schema.Struct({ limit: Limit })),
+  ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
       yield* scoped(accountId, businessId)
@@ -137,7 +140,7 @@ const discoverBuyerQuestions: AgentToolDef = {
 const readOpenIssues: AgentToolDef = {
   name: "read_open_issues",
   description: "Read unresolved issues (claims disagreeing with approved truth). Read-only.",
-  decode: decodeWith(Schema.Struct({ limit: Limit })),
+  ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
       yield* scoped(accountId, businessId)
@@ -170,7 +173,7 @@ const readOpenIssues: AgentToolDef = {
 const readRepresentations: AgentToolDef = {
   name: "read_representations",
   description: "Read tracked owned-source representations and their sync findings. Read-only.",
-  decode: decodeWith(Schema.Struct({ limit: Limit })),
+  ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
       const representations = (yield* loadRepresentations(accountId, businessId)) ?? []
@@ -208,7 +211,7 @@ const readRepresentations: AgentToolDef = {
 const readDiscoveryScopes: AgentToolDef = {
   name: "read_discovery_scopes",
   description: "List owned-site discovery scopes. Read-only; starting a run needs a human click.",
-  decode: decodeWith(Schema.Struct({ limit: Limit })),
+  ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
       const scopes = ((yield* loadDiscoveryScopes(accountId, businessId)) ?? []) as ReadonlyArray<{
@@ -228,7 +231,7 @@ const readDiscoveryScopes: AgentToolDef = {
 const readObservation: AgentToolDef = {
   name: "read_observation",
   description: "Fetch one collected AI answer with its citations. Read-only; raw provider payloads are excluded.",
-  decode: decodeWith(Schema.Struct({ observationId: Schema.UUID })),
+  ...inputContract(Schema.Struct({ observationId: Schema.UUID })),
   run: (accountId, businessId, input: { readonly observationId: string }) =>
     Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient
@@ -264,7 +267,7 @@ const readObservation: AgentToolDef = {
 const readIssue: AgentToolDef = {
   name: "read_issue",
   description: "Read one issue with its verdict, linked facts, and citation evidence. Private review notes are excluded. Read-only.",
-  decode: decodeWith(Schema.Struct({ claimId: Schema.UUID })),
+  ...inputContract(Schema.Struct({ claimId: Schema.UUID })),
   run: (accountId, businessId, input: { readonly claimId: string }) =>
     Effect.gen(function*() {
       const detail = yield* loadIssueDetail(accountId, businessId, input.claimId)
@@ -293,8 +296,8 @@ const readIssue: AgentToolDef = {
 
 const readRecordOutcomes: AgentToolDef = {
   name: "read_record_outcomes",
-  description: "Read before/after record comparisons and their outcomes. Review notes stay private. Read-only.",
-  decode: decodeWith(Schema.Struct({})),
+  description: "Read client record findings, approved facts, recent samples with human judgments, and deterministic before/after comparisons. Use for client problems and evidence. Review and action notes stay private. Read-only.",
+  ...inputContract(Schema.Struct({})),
   run: (accountId, businessId) =>
     Effect.gen(function*() {
       yield* scoped(accountId, businessId)
@@ -306,12 +309,25 @@ const readRecordOutcomes: AgentToolDef = {
       const view = operatorView(snapshot)
       return {
         summary: `${view.slots.length} record slots read`,
-        citations: [],
+        citations: [{ kind: "record", id: businessId, text: "Client record evidence" }],
         data: {
           hasRecord: true,
           disclosure: view.disclosure,
+          recentRuns: view.runs.slice(-3).map(r => ({ id: r.id, kind: r.kind, status: r.status, createdAt: r.createdAt,
+            attempted: r.checks.length, successful: r.checks.filter(c => c.observation !== null && c.status === "SUCCEEDED").length,
+            reviewed: r.checks.filter(c => c.judgment !== null).length,
+            samples: r.checks.slice(0, 15).map(c => ({ questionId: c.questionId, sample: c.sample, status: c.status,
+              observation: c.observation === null ? null : { id: c.observation.id, provider: c.observation.provider,
+                requestedModel: c.observation.requestedModel, observedModel: c.observation.observedModel,
+                collectedAt: c.observation.collectedAt, answerText: c.observation.answerText.slice(0, 1200), answerTruncated: c.observation.answerText.length > 1200,
+                synthetic: c.observation.synthetic, retrievalMode: c.observation.retrievalMode, rawDigest: c.observation.rawDigest },
+              judgment: c.judgment === null ? null : { id: c.judgment.id, decision: c.judgment.decision, reviewedAt: c.judgment.reviewedAt },
+            })),
+          })),
           slots: view.slots.map((s) => ({
             slot: s.slot,
+            fact: { id: s.item.fact.id, predicate: s.item.fact.predicate, valueText: s.item.fact.valueText, version: s.item.fact.version, approved: s.item.approval !== null },
+            question: s.item.question, sourceUrl: s.item.sourceUrl, finding: s.finding,
             comparison:
               s.comparison === null
                 ? null
@@ -355,7 +371,7 @@ export const runAgentTool = (accountId: string, businessId: string, tool: string
   Effect.gen(function*() {
     const def = yield* findAgentTool(tool)
     const decoded = yield* decodeAgentInput(def, input)
-    yield* Effect.logInfo("agent tool invoked").pipe(Effect.annotateLogs({ tool, business_id: businessId }))
+    yield* Effect.logInfo("agent tool invoked").pipe(Effect.annotateLogs({ tool, account_id: accountId, business_id: businessId, invoked_at: new Date().toISOString() }))
     return yield* def.run(accountId, businessId, decoded).pipe(
       Effect.mapError((e) => (e instanceof AgentNotInScope ? e : new AgentToolFailed({ tool }))),
     )

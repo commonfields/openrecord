@@ -327,21 +327,12 @@ export const CreateReobservationRequest = Schema.Struct({
 })
 export type CreateReobservationRequest = typeof CreateReobservationRequest.Type
 
-// Agent assistance (read-only V1). The message is untrusted operator input:
-// bounded length, no prompt/model/provider fields, no autonomous writes.
-// The server answers only from account-scoped repositories and cites the
-// rows it read. Anything that would write (run check, discovery run,
-// intervention, recheck) is returned as a plan with a UI deep link; the
-// human clicks to execute. Publishing stays manual by design.
-export const AgentHistoryEntry = Schema.Struct({
-  role: Schema.Literal("user", "agent"),
-  text: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4000)),
-})
-export type AgentHistoryEntry = typeof AgentHistoryEntry.Type
-
+// Conversation identity and history are server-owned. Client history is not trusted.
 export const AgentMessageRequest = Schema.Struct({
   message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4000)),
-  history: Schema.optional(Schema.Array(AgentHistoryEntry).pipe(Schema.maxItems(10))),
+  requestId: Schema.UUID,
+  conversationId: Schema.optional(Schema.UUID),
+  revision: Schema.NonNegativeInt,
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
 

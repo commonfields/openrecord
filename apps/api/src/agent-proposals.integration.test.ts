@@ -2,9 +2,9 @@
 // Disposable PostgreSQL fixtures. No provider calls (approvals enqueue
 // QUEUED runs; no worker drains them here).
 import { randomUUID } from "node:crypto"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { HttpApp } from "@effect/platform"
-import { Effect, Layer, Redacted } from "effect"
+import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
   AgentProposalRepositoryLive,
@@ -13,7 +13,7 @@ import {
   RecordRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
 import pg from "pg"
-import { handleAgentMessage } from "./agent.js"
+import { dispatchAgentTool, runConversation } from "./agent.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { makeRouter, RepoLayers } from "./router.js"
 
@@ -55,7 +55,8 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
   ).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
   )
-  const web = HttpApp.toWebHandlerLayer(makeRouter(), repos)
+  const fixtureConfig = ConfigProvider.fromMap(new Map([["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"]]))
+  const web = HttpApp.toWebHandlerLayer(makeRouter(), Layer.merge(repos, Layer.setConfigProvider(fixtureConfig)))
   const run = <A, E>(effect: Effect.Effect<A, E, AgentToolDeps>) => Effect.runPromise(Effect.either(effect.pipe(Effect.provide(repos))))
   beforeAll(() => {
     pool = new pg.Pool({ connectionString: url })
@@ -176,16 +177,21 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
 
   it("assistant compare answers include live record outcomes", async () => {
     const f = await fixture()
-    const reply = await run(handleAgentMessage(f.account, f.user, f.business, "compare before and after"))
+    const reply = await run(dispatchAgentTool(f.account, f.user, f.business, "read_record_outcomes", {}))
     expect(reply._tag).toBe("Right")
     if (reply._tag !== "Right") return
-    expect(reply.right.reply).toContain("Record outcomes: this business has no client record yet.")
-    expect(reply.right.toolCalls.map((t) => t.tool)).toContain("read_record_outcomes")
+    expect(reply.right.data).toEqual({ hasRecord: false })
   })
 
   it("assistant drafts a proposal for a named question; approval still runs as the human", async () => {
     const f = await fixture()
-    const reply = await run(handleAgentMessage(f.account, f.user, f.business, `Please recheck ${f.question}`))
+    let round = 0
+    const reply = await run(runConversation({ message: `Please recheck ${f.question}`, history: [],
+      model: () => Effect.succeed({ candidates: [{ content: { role: "model", parts: round++ === 0
+        ? [{ functionCall: { name: "propose_check_run", args: { questionId: f.question } } }]
+        : [{ text: "Proposed re-check; approval required." }] }, finishReason: "STOP" }] }),
+      dispatch: (name, args) => dispatchAgentTool(f.account, f.user, f.business, name, args).pipe(Effect.provide(repos)),
+    }))
     expect(reply._tag).toBe("Right")
     if (reply._tag !== "Right") return
     expect(reply.right.reply).toContain("Proposed re-check")
@@ -203,4 +209,62 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     const done = (await approved.json()) as { proposal: Record<string, unknown> }
     expect(done.proposal).toMatchObject({ status: "EXECUTED", decidedByUserId: f.user })
   })
+  it("completes the HTTP conversation, evidence follow-up and proposal scenario without execution", async () => {
+    const f = await fixture()
+    const responses = [
+      [{ functionCall: { name: "discover_buyer_questions", args: {} } }],
+      [{ text: "One stored buyer question is available. No reviewed evidence yet." }],
+      [{ functionCall: { name: "read_record_outcomes", args: {} } }],
+      [{ text: "This client has no record evidence. A missing record is not a positive finding." }],
+      [{ functionCall: { name: "propose_check_run", args: { questionId: f.question } } }],
+      [{ text: "A re-check is proposed. Review and approve it before execution." }],
+    ]
+    let round = 0
+    const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { contents: Array<{ parts: Array<{ text?: string }> }> }
+      if (round === 2) expect(JSON.stringify(body.contents)).toContain("One stored buyer question")
+      return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: responses[round++] }, finishReason: "STOP" }], modelVersion: "fixture-model", usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }))
+    })
+    try {
+      let revision = 0
+      let conversationId: string | undefined
+      for (const message of ["What problems does this client have?", "Show me the evidence", "Run another check"]) {
+        const response = await call("POST", `/api/businesses/${f.business}/agent/messages`, f.session, { message, requestId: randomUUID(), revision, conversationId })
+        expect(response.status).toBe(200)
+        const answer = await response.json() as { revision: number; conversationId: string; citations: Array<{ id: string }>; requestedModel: string }
+        revision = answer.revision; conversationId = answer.conversationId
+        expect(answer.requestedModel).toBe("fixture-model")
+      }
+      expect(revision).toBe(3)
+      expect(transport).toHaveBeenCalledTimes(6)
+      expect(await checksOf(f.business)).toBe(0)
+      const saved = await (await call("GET", `/api/businesses/${f.business}/agent/conversation`, f.session)).json() as { conversation: { messages: unknown[] } }
+      expect(saved.conversation.messages).toHaveLength(6)
+      const foreign = await fixture()
+      expect((await call("GET", `/api/businesses/${f.business}/agent/conversation`, foreign.session)).status).toBe(404)
+      const proposal = (await (await call("GET", `/api/businesses/${f.business}/agent/proposals`, f.session)).json()) as { proposals: Array<{ id: string }> }
+      expect(proposal.proposals).toHaveLength(1)
+      const approve = () => call("POST", `/api/businesses/${f.business}/agent/proposals/${proposal.proposals[0]!.id}/approve`, f.session, { provider: "mock" })
+      expect((await approve()).status).toBe(200)
+      expect((await approve()).status).toBe(200)
+      expect(await checksOf(f.business)).toBe(1)
+    } finally { transport.mockRestore() }
+  })
+
+  it("rejects hostile browser origins before inference or proposal writes", async () => {
+    const f = await fixture()
+    for (const path of [`/api/businesses/${f.business}/agent/messages`, `/api/businesses/${f.business}/agent/proposals`]) {
+      const res = await web.handler(new Request(`http://localhost${path}`, { method: "POST", headers: { cookie: `or_session=${f.session}`, origin: "https://hostile.example.test", "content-type": "application/json" }, body: JSON.stringify({ message: "Read", requestId: randomUUID(), revision: 0, kind: "REQUEST_CHECK", questionId: f.question }) }))
+      expect(res.status).toBe(403)
+    }
+    expect(await checksOf(f.business)).toBe(0)
+  })
+
+  it("refuses stale pending proposals without starting a measurement", async () => {
+    const f = await fixture()
+    const id = (await pool.query("INSERT INTO agent_proposals(business_id,kind,question_id,message,proposer,proposed_by_user_id,created_at) VALUES ($1,'REQUEST_CHECK',$2,'TEST stale proposal','operator',$3,now()-interval '25 hours') RETURNING id", [f.business, f.question, f.user])).rows[0].id as string
+    expect((await call("POST", `/api/businesses/${f.business}/agent/proposals/${id}/approve`, f.session, { provider: "mock" })).status).toBe(422)
+    expect(await checksOf(f.business)).toBe(0)
+  })
+
 })
