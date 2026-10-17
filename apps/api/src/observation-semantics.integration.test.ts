@@ -7,7 +7,7 @@ import { PgClient } from "@effect/sql-pg"
 import {
   AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive,
-  RecordRepositoryLive, SourceTargetRepositoryLive,
+  RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
 import { ProviderCatalogResponse, ProviderDailyAnswer } from "@openrecord/contracts"
 import pg from "pg"
@@ -19,7 +19,7 @@ const suite = url ? describe : describe.skip
 suite("hosted observation semantics (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    AuthRepositoryLive, RecordRepositoryLive,
+    AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AgentProposalRepositoryLive,
