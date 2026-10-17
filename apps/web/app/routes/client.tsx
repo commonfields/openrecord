@@ -769,6 +769,9 @@ export function ClientRecordPage() {
             <button className="font-medium text-foreground hover:underline" onClick={() => setEditOpen(true)}>
               Edit client
             </button>
+            <Link className="font-medium text-foreground hover:underline" to={`/clients/${encodeURIComponent(id)}/discovery`}>
+              AI Discovery
+            </Link>
           </>
         }
         actions={

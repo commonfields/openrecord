@@ -10,7 +10,7 @@ import {
   AgentProposalRepositoryLive,
   AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive,
-  RecordRepositoryLive, SourceTargetRepositoryLive,
+  RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
 import pg from "pg"
 import { dispatchAgentTool, runConversation } from "./agent.js"
@@ -24,7 +24,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
     AgentProposalRepositoryLive,
-    AuthRepositoryLive, RecordRepositoryLive,
+    AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AssayRepositoryLive,

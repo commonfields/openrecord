@@ -38,12 +38,14 @@ import {
   ReobservationIntentRepositoryLive,
   ReobservationRepositoryLive,
   RecordRepositoryLive,
+  AcquisitionRepositoryLive,
 } from "@openrecord/db"
 import { makeRouter } from "./router.js"
 
 const Repos = Layer.mergeAll(
   AgentProposalRepositoryLive,
   RecordRepositoryLive,
+  AcquisitionRepositoryLive,
   AssayRepositoryLive,
   AssayReviewRepositoryLive,
   AuthRepositoryLive,
