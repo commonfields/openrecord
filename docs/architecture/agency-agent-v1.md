@@ -62,3 +62,17 @@ The saved payload contains readable report text, evidence IDs, approved fact ver
 The assistant receives a short saved-draft receipt. It cannot override the saved numerical sections with prose. Operators can read, copy, accept or reject the snapshot inside the existing chat. Draft acceptance never grants publication or delivery permission. There is no public report endpoint, no external site edit, and no automatic creation of completed agency work. Accepted drafts remain private authenticated proposal records and survive conversation deletion.
 
 Acquisition observations and referrals require the independent acquisition workstream's published contracts. Until integrated, reports explicitly label those capabilities unavailable instead of inventing measurements or signups.
+
+## Acquisition tools and measurement proposals (P1)
+
+P1 consumes the committed Acquisition Pilot contract from PR #55. `AcquisitionRepository.snapshot` owns the data snapshot. `acquisitionView`, `batchMetrics` and `configurationDifferences` own measurement calculations. The agent adds five scoped read tools: acquisition overview, buyer-question results, competitor appearances, citation evidence and batch comparison. Private acquisition reviewer notes are excluded.
+
+Recommendation counts retain the reviewed-eligible denominator. Mentions retain the acquisition contract's eligible-answer denominator, with review completeness reported separately. Competitor appearances are exact-name candidates, not independently verified aliases, human-reviewed recommendations or market share. Batch comparison additionally requires a single known matching observed model, correct time order and observed grounding when grounding was requested. Different, unknown or incomplete conditions produce NOT_COMPARABLE with reasons.
+
+`propose_question_set` saves exact question text, intent groups, target, samples and a measurement plan. Accepting the text does not freeze a set or claim client authorization. The operator selects the authorization basis and freezes the reviewed set through the existing AI Discovery process.
+
+`propose_acquisition_measurement` accepts only an existing frozen set. It records provider, exact requested model, samples, frozen-set digest and maximum calls including all four allowed provider attempts per sample. `AGENT_MEASUREMENT_MAX_USD_PER_ATTEMPT` is an optional deployment-supplied upper cost estimate including inference, grounding and retries. It is not a live provider quote. The proposal's estimate rounds up to cents. Missing or invalid pricing blocks approval. Synthetic fixture plans state that basis explicitly and still require the existing fixture gate.
+
+The operator approves the exact saved plan and estimate through the authenticated UI. The server checks the current surface, frozen-set digest, budget, proposal age and scope before calling the existing `startBatch` API in the same decision transaction. Concurrent approvals and retries return the same batch. The model has no approval tool. A changed model or missing cost cannot silently substitute a provider or create a batch. Migration `0029_agent_acquisition_proposals.sql` preserves this execution identity and its business-scoped foreign key.
+
+Stack order is #55 acquisition dependency, #54 core, #56 draft/report infrastructure, then P1 and P3. P2 preceded P1 because the acquisition contract was still being completed while the independent report infrastructure was built.

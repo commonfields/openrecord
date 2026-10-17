@@ -122,6 +122,7 @@ function ScopedAgentChat({
 
   const proposalCards = proposals.filter(p => p.status === "PROPOSED" || (p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")).map(p => p.kind === "REQUEST_CHECK"
         ? <CheckProposal key={p.id} businessId={businessId} businessName={businessName} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />
+        : p.kind === "REQUEST_ACQUISITION_BATCH" ? <AcquisitionProposal key={p.id} businessId={businessId} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />
         : <SavedDraft key={p.id} businessId={businessId} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />)
 
   if (!active) {
@@ -400,7 +401,7 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
     finally { setWorking(false) }
   }
   return <section aria-label="Saved private draft" className="group/msg mb-3 space-y-3 rounded-xl border p-4 text-xs">
-    <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
+    <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : proposal.kind === "PROPOSE_QUESTION_SET" ? "Buyer-question proposal" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
     <p>{proposal.message}</p>
     {proposal.payload ? <>
       <p className="text-muted-foreground">Snapshot prepared {proposal.payload.generatedAt}. Accepting this draft does not publish, deliver, execute or record completed work.</p>
@@ -412,6 +413,25 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
       })}</ul>
     </> : <p>Draft evidence unavailable</p>}
     {proposal.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><Button variant="outline" size="sm" disabled={working} onClick={() => void decide(false)}>Reject</Button></div> : null}
+    {error ? <p role="alert">{error}</p> : null}
+  </section>
+}
+
+function AcquisitionProposal({ businessId, proposal, onDone }: { businessId: string; proposal: AgentProposal; onDone: () => void }) {
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const plan = proposal.payload?.measurementPlan
+  const cost = plan?.estimatedMaxCostUsd
+  const decide = async (approve: boolean) => {
+    setWorking(true); setError(null)
+    try { if (approve && cost !== null && cost !== undefined) await Agent.approveAcquisition(businessId, proposal.id, cost); else if (!approve) await Agent.reject(businessId, proposal.id); onDone() }
+    catch { setError("The measurement was not approved here. Its configuration, cost or status may have changed. Reload before retrying.") }
+    finally { setWorking(false) }
+  }
+  return <section aria-label="Acquisition measurement proposal" className="mb-3 space-y-3 rounded-xl border p-4 text-xs">
+    <p className="font-medium">Proposed acquisition measurement</p><p className="max-h-80 overflow-auto whitespace-pre-wrap">{proposal.payload?.text ?? "Measurement plan unavailable"}</p>
+    {cost === null || cost === undefined ? <p>Approval is blocked until a measurement cost bound is configured and a new proposal is prepared.</p> : null}
+    <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }

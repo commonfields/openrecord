@@ -352,6 +352,7 @@ export const CreateAgentProposalRequest = Schema.Struct({
 export type CreateAgentProposalRequest = typeof CreateAgentProposalRequest.Type
 
 export const ApproveAgentProposalRequest = Schema.Union(
+  Schema.Struct({ approveAcquisition: Schema.Literal(true), maxCostUsd: Schema.Number.pipe(Schema.between(0, 10000)) }),
   Schema.Struct({ draftOnly: Schema.Literal(true) }),
   Schema.Struct({ provider: Schema.Literal("mock", "9router"), requestedModel: Schema.optional(Schema.NullOr(Schema.String)) }),
 )
