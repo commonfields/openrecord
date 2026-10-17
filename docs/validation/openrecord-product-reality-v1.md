@@ -17,10 +17,12 @@ The first attempt failed with HTTP 429 `RESOURCE_EXHAUSTED`, because Google
 Search grounding needs a paid-tier project. The operator enabled access. The
 retry then succeeded on the same key, model, fact and question.
 
-G1 is `PASS`. G2 awaits operator approval, because the operator limited this
-execution to one smoke test. G3 to G5 did not start. Preparation work for G2,
-G3 and G5 is complete. No customer, review, or payment was invented. No
-engineering change was necessary.
+G1 is `PASS`. G2 ran on 2026-10-17 inside the approved $5 budget. G2 is
+`G2_PARTIAL_COHORT`: 5 of 7 businesses, 75 of 105 samples, all grounded, no
+failures. Two businesses are `SOURCE_BLOCKED`. Every observation awaits human
+review. No judgment exists, so no precision and no finding exists yet. G3 to G5
+did not start. No customer, review, or payment was invented. No engineering
+change was necessary.
 
 ## 1. Starting state
 
@@ -41,13 +43,13 @@ Verification commands: `git log --oneline -3 origin/main` and
 | Gate | State | Evidence | Human dependency | Next action |
 |---|---|---|---|---|
 | G1 Live execution | PASS | Observation stored with `PROVIDER_GROUNDING`; check run `7b7dccd6…`; digest `8073697f…` | None. Paid-tier access is active | None. G1 is complete |
-| G2 Evidence quality | BLOCKED | G1 passed. Cohort prep below | An approved budget of $5 and real reviewer decisions | Ask the operator to authorize G2, then sample 105 times |
+| G2 Evidence quality | PARTIAL_COHORT | 75 of 105 samples collected, 75 grounded, 0 failed. Section 4 | Real reviewer decisions on 75 observations | Operator reviews the queue. VB-06 and VB-07 need first-party sources |
 | G3 Product delivery | BLOCKED | No authorized customer | One real agency and one real client | Confirm a customer, then deliver |
 | G4 Repeat value | NOT_STARTED | Depends on G3 | Agency action and a second check | Start after G3 passes |
 | G5 Payment | BLOCKED | No customer, no offer sent | Operator confirms the offer | Send the offer after approval |
 
-G2 is blocked only by an approval, not by a defect. The operator stopped the
-work after one smoke test on purpose.
+G2 collection is done for every business with verifiable sources. G2 now
+waits for human review, not for a defect.
 
 Each gate is independent. No gate was reported from a lower gate.
 
@@ -259,36 +261,84 @@ Approval request, ready to send:
 
 ## 4. G2 — Evidence quality
 
-State: `BLOCKED_AWAITING_AUTHORIZATION`. The operator limited this execution to
-one smoke test. G2 did not start. No cohort spend.
+State: `G2_PARTIAL_COHORT`. Collection ran on 2026-10-17. All observations
+await human review.
 
-Safe preparation is complete. First-party pages were fetched on 2026-10-17.
+### 4.1 Result
 
-| ID | Business | Fact checked against the first-party page | Source URL | Verified on 2026-10-17 |
-|---|---|---|---|---|
-| VB-01 | Loews Chicago O'Hare | Pet fee $120 per stay | `https://www.loewshotels.com/chicago-ohare` | Confirmed |
-| VB-01 | Loews Chicago O'Hare | Complimentary airport shuttle exists | same | Confirmed, but the page does not state "every 15 minutes, 24/7". That frequency needs a different first-party source |
-| VB-01 | Loews Chicago O'Hare | Check-in 4 PM | same | Confirmed. The cohort draft said 3 PM |
-| VB-02 | Hotel Edison NYC | Check-in 3:00 PM, check-out 12:00 PM | `https://www.edisonhotelnyc.com/faqs` | Confirmed |
-| VB-02 | Hotel Edison NYC | Cancellation varies from 24 hours before arrival to non-refundable | same | Confirmed |
-| VB-03 | GoCare Urgent Care Newark | Saturday hours 8:00 AM to 6:00 PM | `https://gocaredelaware.com/` | Confirmed |
-| VB-03 | GoCare Urgent Care Newark | X-ray available | same | Confirmed |
-| VB-03 | GoCare Urgent Care Newark | Walk-in, no appointment | same | Confirmed |
-| VB-04 | Urgent Care Plus Wilmington | Sports and work physicals $45 | `https://urgentcareplusmd.com/` | Confirmed |
-| VB-04 | Urgent Care Plus Wilmington | TB/PPD testing $35 | same | Confirmed |
-| VB-04 | Urgent Care Plus Wilmington | X-ray on site | same | Confirmed |
-| VB-05 | Amazon | Return window and free returns | `https://www.amazon.com/gp/help/customer/display.html` | Not verified. The help page is script-rendered |
-| VB-06 | At Home | Receiptless returns, 60 days | `https://help.athome.com` | Not verified. The site answered HTTP 403 and 410 |
-| VB-07 | Target | General return window 90 days | `https://www.target.com/help/article/returns` | Not verified. The help page is script-rendered |
+| Item | Value |
+|---|---|
+| Businesses evaluated | 5 of 7 |
+| Facts frozen | 15 of 21 |
+| Samples attempted | 75 of 105 |
+| Samples completed | 75 |
+| Failed attempts | 0 |
+| Retries | 0. Every provider attempt succeeded on attempt 1 |
+| Grounded observations | 75 of 75, `PROVIDER_GROUNDING` |
+| Synthetic observations | 0 |
+| Citations | 239 |
+| Human judgments | 0 |
+| Confirmed meaningful findings | 0. Review is not done |
+| Question binding mismatches | 0 of 75 |
 
-Every fact keeps the label `PUBLIC_SOURCE_UNAPPROVED`. No business approved
-these facts. No business was contacted.
+The 3-of-7 stop rule did not apply. Two businesses could not be evaluated.
+Selection limitation: both blocked businesses are large retailers with bot
+protection. The evaluated set is four small businesses and Amazon.
 
-Two facts need a wording change before the freeze: the Loews shuttle frequency,
-and the Loews check-in time. Both changes come from the current page.
+### 4.2 Per business
 
-Reviewers must supply every judgment. The agent prepares a queue only. The
-review protocol is in `docs/validation/record-integrity-real-business-v1.md`.
+| ID | Business | Run | Facts | Attempted | Completed | Failed | Grounded | Awaiting review | Reviewed |
+|---|---|---|---|---|---|---|---|---|---|
+| VB-01 | Loews Chicago O'Hare | `75bd3faa…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-02 | Hotel Edison NYC | `1d1dcaa6…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-03 | Go-Care Urgent Care Newark | `85fe9ae6…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-04 | Urgent Care Plus Wilmington | `98e50628…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-05 | Amazon | `8cbbe599…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-06 | At Home | — | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| VB-07 | Target | — | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### 4.3 Source truth
+
+Every fact was frozen from a first-party page fetched on 2026-10-17, before
+the first sample of its business. Every fact keeps `PUBLIC_SOURCE_UNAPPROVED`.
+No business approved a fact. No business was contacted.
+
+| ID | Frozen facts | Source | Note |
+|---|---|---|---|
+| VB-01 | Pet fee $120 per stay. Check-in 4:00 PM. Shuttle every 15 minutes, 24/7 | `loewshotels.com/chicago-ohare` | Check-in is 4 PM, not the 3 PM draft. The 12:54 fetch states the shuttle frequency. The earlier cohort-prep fetch did not show it |
+| VB-02 | Check-in 3:00 PM. Check-out 12:00 PM. Cancellation varies from 24 hours to non-refundable | `edisonhotelnyc.com/faqs` | The cancellation fact is a range |
+| VB-03 | Saturday 8:00 AM to 6:00 PM. Walk-in, no appointment. X-ray available | `gocaredelaware.com` | None |
+| VB-04 | Work and sports physicals $45. TB/PPD $35. X-ray on site, hours vary | `urgentcareplusmd.com` | The homepage and the `/physicals` page give different prices for work physicals. The frozen fact came from the homepage. It was not changed after sampling |
+| VB-05 | Most items 30 days from delivery. Free returns for eligible items. New Apple products 15 days | Amazon help, `nodeId=GKM69DUUYKQWKWX7` | The first fetch had no policy text. A retry with `Accept-Language` and compression returned it |
+| VB-06 | None | `athome.com`, `help.athome.com` | `SOURCE_BLOCKED`. HTTP 403 and a bot challenge. No fact was guessed |
+| VB-07 | None | `target.com/help`, `help.target.com` | `SOURCE_BLOCKED`. HTTP 429 on three tries. No fact was guessed |
+
+### 4.4 Cost
+
+| Item | Value |
+|---|---|
+| Provider calls | 75, all HTTP 200 |
+| Search queries | 105. Maximum 3 in one check |
+| Tokens | 1,325 input, 12,819 output. Maximum 762 output in one check |
+| Token charge, estimated | About $0.03 |
+| Search charge, estimated | $0 inside the free monthly allowance. $1.50 if every query is billed |
+| Total, estimated | About $0.03 likely. About $1.53 at most |
+| Remaining of $5 | At least about $3.47 |
+| Incomplete batches | 0. VB-06 and VB-07 did not start |
+
+These values are estimates from response metadata, not an invoice. The code sets
+no output-token limit, and the worker allows 4 attempts for each check. No hard
+spending cap exists in code. Each batch started only when a conservative upper
+bound fit the remaining budget: 15 checks, 4 attempts each, output and queries
+above the observed maximums.
+
+### 4.5 Review
+
+Reviewers supply every judgment. The agent prepared a review queue only. The
+queue, the raw operator views and the source pages are in a private evidence
+folder, not in this repository. Raw provider bytes and digests are in
+OpenRecord. The review protocol is in
+`docs/validation/record-integrity-real-business-v1.md`.
 
 ## 5. G3 — Delivery
 
@@ -388,7 +438,7 @@ authorization. No code was changed in this execution.
 | Gate | Result | Evidence | Next action |
 |---|---|---|---|
 | G1 Live | PASS | Check `7b7dccd6-…`, run `7300c4b3-…`, digest `8073697f…`, `PROVIDER_GROUNDING`, 4 citations | None. G1 is complete |
-| G2 Evidence | BLOCKED | G1 passed. Cohort prep table above | Authorize $5, freeze corrected facts, then sample 105 times |
+| G2 Evidence | PARTIAL_COHORT | 75 of 105 samples, 75 grounded, 0 failed, 0 reviewed. Section 4 | Operator reviews 75 observations |
 | G3 Delivery | BLOCKED | No authorized customer | Confirm one agency and one client |
 | G4 Repeat | NOT_STARTED | Depends on G3 | Record one real action, then re-check |
 | G5 Payment | BLOCKED | No customer, no offer sent | Confirm and send the offer |
@@ -397,9 +447,10 @@ Questions:
 
 1. Can OpenRecord execute one genuine live observation? Yes. One retrieval-backed
    observation is stored, with citations, raw bytes and a matching digest.
-2. Can it find useful discrepancies in real business information? Not tested.
-   G2 did not start. One early signal exists: the answer states a shuttle
-   frequency that the first-party page does not state.
+2. Can it find useful discrepancies in real business information? Not known
+   yet. 75 grounded observations exist for 15 frozen facts. No human review
+   exists, so no discrepancy is confirmed. The earlier shuttle signal does not
+   hold: the current first-party page states the frequency.
 3. Can an agency deliver the result to a real client? The product can. No real
    client exists.
 4. Does the client or agency use the result? No delivered record exists.
@@ -417,5 +468,5 @@ The highest milestone with genuine evidence is live product verification. One
 real, retrieval-backed observation is stored. No discovery result, customer,
 review, or payment exists.
 
-The smallest next step: authorize the G2 budget of $5 for the frozen cohort.
-Then freeze the two corrected Loews facts and start sampling.
+The smallest next step: the operator reviews the 75 G2 observations. Precision
+and evidence cards come only after that review.
