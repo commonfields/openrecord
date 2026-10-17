@@ -24,7 +24,7 @@ import { useSettings } from "@/components/settings-dialog"
 import { IssueStateBadge } from "@/components/status"
 import { Facts, Issues, type IssueState } from "@/lib/api"
 import { groupClaims } from "@/lib/issues"
-import { initial, sentenceCase } from "@/lib/format"
+import { initial, markColor, sentenceCase } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
@@ -140,7 +140,7 @@ function Palette({ close }: { close: () => void }) {
         id: `business:${b.id}`,
         group: "Switch business",
         label: b.name,
-        icon: <span className="flex size-4 items-center justify-center rounded bg-primary text-[9px] font-semibold text-primary-foreground">{initial(b.name)}</span>,
+        icon: <span className={`flex size-4 items-center justify-center rounded text-[9px] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
         run: go(`/businesses/${b.id}/overview`),
       })
     }
