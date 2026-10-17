@@ -33,10 +33,18 @@ change was necessary.
 | Working tree | Clean |
 | PR #49 (`OPENRECORD_RECORD_INTEGRITY_V1`) on main | Yes. Merge commit `decb5fe` |
 | PR #51 (product map STE100 v1) on main | Yes. Merge commit `6a37ea4`. File `docs/product/openrecord-product-map-ste100.md` present |
-| Branch for this work | `docs/openrecord-product-reality-v1` |
+| Branch for this work | `docs/openrecord-product-reality-v1`. Merged through PR #52, merge commit `37cb33d` |
 
 Verification commands: `git log --oneline -3 origin/main` and
 `git cat-file -e origin/main:docs/product/openrecord-product-map-ste100.md`.
+
+PR #52 also carried one unrelated web commit, `fa0c626` (business mark colors).
+It is not part of this validation work.
+
+Public-text cleanup: a later documentation change removed business-level source
+details, local identifiers and commercial terms from this document. Earlier
+versions remain in the public git history. Removed details are kept in the
+operator's private evidence folder.
 
 ## 2. Acceptance gates
 
@@ -68,7 +76,7 @@ Each gate is independent. No gate was reported from a lower gate.
 | API and worker model config | Shared, one source | Both read `RecordSurfaceConfig` and `GeminiModel` from `packages/config/src/index.ts` |
 
 The API stores the requested model when it starts a run.
-Source: `apps/api/src/record-routes.ts` (`startRun`, `requestedModel: surface.model`).
+Source: `apps/api/src/record-routes.ts` (`startRun`, `requestedModel` set from the configured surface model).
 The worker sends that model to the provider.
 Source: `apps/worker/src/check-runner.ts` (`providers.observe({ requestedModel: claimed.requestedModel })`).
 
@@ -123,16 +131,13 @@ Result: the check failed.
 
 | Field | Value |
 |---|---|
-| Business | `2183713a-7ec0-483f-9a3d-ec3d18bd8b93` |
-| Record run | `9d2f2d7b-c59c-416e-bd28-d3e8921235c3` |
-| Check run | `d91577be-9de6-479e-b481-613d5619754e` |
 | Requested model | `gemini-3.5-flash-lite` |
 | Run status | `FAILED` |
 | Failure class | `PROVIDER_RATE_LIMITED` |
 | Provider status | HTTP 429 |
 | Provider body | "You exceeded your current quota, please check your plan and billing details." Status `RESOURCE_EXHAUSTED` |
 | Attempts | 4, all HTTP 429 |
-| Attempt evidence | 1,234 bytes per attempt, digest `8de9461ae629ada766d5286342cde59bbe8f2680fe0ea604463983c4e67e5757`, content type `application/json; charset=UTF-8` |
+| Attempt evidence | 1,234 bytes per attempt, stored with a digest, content type `application/json; charset=UTF-8` |
 | Observations stored | 0 |
 | Provider substitution | None |
 
@@ -163,8 +168,8 @@ API and the worker restarted on Node 24 with the new environment. The retry used
 the same business, the same approved fact, the same buyer question, the same
 model, and one sample. The measurement conditions did not change.
 
-Command: `node /tmp/or-smoke-retry.mjs`. The script signs in, starts one
-`INITIAL` run through the HTTP API, and polls the operator view.
+A local script signed in, started one `INITIAL` run through the HTTP API, and
+polled the operator view.
 
 The check succeeded. Every acceptance item below is verified against stored
 evidence, not against the provider response alone.
@@ -176,29 +181,31 @@ evidence, not against the provider response alone.
 | Response has grounding metadata | Yes. `retrieval_requested = true`, `retrieval_observed = true`, `retrieval_mode = PROVIDER_GROUNDING` |
 | Retrieval tool recorded | Yes. `retrieval_tool = google_search`, with 2 web search queries stored |
 | Raw response stored | Yes. 9,499 bytes, content type `application/json; charset=UTF-8`, limit 2,097,152 bytes |
-| Evidence digest stored | Yes. Digest `8073697fe968cc518b352f137ec69219dd9dea0501b1785b4084ad32100720ae` |
+| Evidence digest stored | Yes. Digest prefix `8073697f` |
 | Digest matches the stored bytes | Yes. `observation.raw_digest = raw_evidence.digest` |
-| Citations preserved | Yes. 4 citations, all attributed. Hosts: `loewshotels.com` twice, `airportparkingreservations.com`, `parksleepfly.com` |
+| Citations preserved | Yes. 4 citations, all attributed. 2 from the business's own domain, 2 from third-party sites |
 | Observation is not synthetic | Yes. `synthetic = false` |
 | No provider substitution | Yes. Provider `gemini`; requested model equals observed model |
 | Public evidence rules intact | Yes. 0 shares. 0 judgments. An unreviewed answer is not public |
 
 | Field | Value |
 |---|---|
-| Business | `2183713a-7ec0-483f-9a3d-ec3d18bd8b93` |
-| Record run | `7300c4b3-f2c3-42e1-9687-432b98311295` |
-| Check run | `7b7dccd6-38e5-4099-ad37-630bf37c02af` |
+| Business | One hotel from the cohort (VB-01) |
+| Check run | Prefix `7b7dccd6` |
 | Run status | `SUCCEEDED` |
 | Observations stored | 1 |
-| Answer text | "Yes, the Loews Chicago O'Hare Hotel runs a complimentary airport shuttle service to and from Chicago O'Hare International Airport (ORD)." |
+| Answer | Stored in OpenRecord and in the private evidence folder |
 | Token use | 23 input tokens, 161 output tokens, 184 total |
 | Service tier | `standard` |
 | Finish reason | `STOP` |
 
-The answer states a shuttle frequency, "every 15 minutes". The first-party page
-in section 4 does not state that frequency. The answer cites `loewshotels.com`.
-This is an observation for the reviewer. This document does not judge it.
-Section 6 holds the rule: only a human decides.
+The G1 answer is an observation for the reviewer. This document does not judge
+it. Only a human decides. Section 4.5 refers to the review protocol.
+
+An earlier version of this section compared the answer with a first-party page
+fetched for cohort preparation. A later fetch of the same page, on the same day,
+showed different content. G2 froze the later content. That early comparison is
+not a finding.
 
 ### 3.7 G1 verdict
 
@@ -241,11 +248,11 @@ requests. Three queries each equals 1,260 queries. If the free monthly
 allowance is used, cost is 1,260 times $0.014, or $17.64. Token worst case adds
 about $0.65. Absolute ceiling: about $18.29. Failed requests add no charge.
 
-Authorization needed to continue: approve the G2 budget of $5 for the frozen
-cohort. The project now has grounding access. A billing alert is not a hard
-spending limit, so set a hard cap too.
+The operator approved the G2 budget of $5 on 2026-10-17. A billing alert is
+not a hard spending limit. A provider-side quota is the only hard cap; section
+4.4 records how G2 stayed inside the budget.
 
-Approval request, ready to send:
+Approved G2 plan:
 
 | Item | Value |
 |---|---|
@@ -255,7 +262,7 @@ Approval request, ready to send:
 | Samples per fact | 5 |
 | Planned samples | 105 |
 | Retries | No selective retries. Every failed sample stays in the denominator |
-| Stop rule | Report the precision ledger at 3 of 7 businesses with promising yield |
+| Stop rule | Report the precision ledger at 3 of 7 businesses with promising yield, only after all 7 are evaluated. Section 4.1 records why it did not apply |
 | Budget | $5. Normal case about $0.30 |
 | Model | `gemini-3.5-flash-lite`, `google_search` grounding |
 
@@ -282,36 +289,38 @@ await human review.
 | Question binding mismatches | 0 of 75 |
 
 The 3-of-7 stop rule did not apply. Two businesses could not be evaluated.
-Selection limitation: both blocked businesses are large retailers with bot
-protection. The evaluated set is four small businesses and Amazon.
+Selection limitation: the two blocked businesses are large retailers. The
+evaluated set is four small service businesses and one large retailer.
 
 ### 4.2 Per business
 
-| ID | Business | Run | Facts | Attempted | Completed | Failed | Grounded | Awaiting review | Reviewed |
-|---|---|---|---|---|---|---|---|---|---|
-| VB-01 | Loews Chicago O'Hare | `75bd3faa…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
-| VB-02 | Hotel Edison NYC | `1d1dcaa6…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
-| VB-03 | Go-Care Urgent Care Newark | `85fe9ae6…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
-| VB-04 | Urgent Care Plus Wilmington | `98e50628…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
-| VB-05 | Amazon | `8cbbe599…` | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
-| VB-06 | At Home | — | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| VB-07 | Target | — | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ID | Sector | Facts | Attempted | Completed | Failed | Grounded | Awaiting review | Reviewed |
+|---|---|---|---|---|---|---|---|---|
+| VB-01 | Hotel | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-02 | Hotel | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-03 | Urgent care | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-04 | Urgent care | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-05 | Online retail | 3 | 15 | 15 | 0 | 15 | 15 | 0 |
+| VB-06 | Retail | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| VB-07 | Retail | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ### 4.3 Source truth
 
 Every fact was frozen from a first-party page fetched on 2026-10-17, before
 the first sample of its business. Every fact keeps `PUBLIC_SOURCE_UNAPPROVED`.
-No business approved a fact. No business was contacted.
+No business approved a fact. No business was contacted. No frozen fact was
+changed after sampling.
 
-| ID | Frozen facts | Source | Note |
-|---|---|---|---|
-| VB-01 | Pet fee $120 per stay. Check-in 4:00 PM. Shuttle every 15 minutes, 24/7 | `loewshotels.com/chicago-ohare` | Check-in is 4 PM, not the 3 PM draft. The 12:54 fetch states the shuttle frequency. The earlier cohort-prep fetch did not show it |
-| VB-02 | Check-in 3:00 PM. Check-out 12:00 PM. Cancellation varies from 24 hours to non-refundable | `edisonhotelnyc.com/faqs` | The cancellation fact is a range |
-| VB-03 | Saturday 8:00 AM to 6:00 PM. Walk-in, no appointment. X-ray available | `gocaredelaware.com` | None |
-| VB-04 | Work and sports physicals $45. TB/PPD $35. X-ray on site, hours vary | `urgentcareplusmd.com` | The homepage and the `/physicals` page give different prices for work physicals. The frozen fact came from the homepage. It was not changed after sampling |
-| VB-05 | Most items 30 days from delivery. Free returns for eligible items. New Apple products 15 days | Amazon help, `nodeId=GKM69DUUYKQWKWX7` | The first fetch had no policy text. A retry with `Accept-Language` and compression returned it |
-| VB-06 | None | `athome.com`, `help.athome.com` | `SOURCE_BLOCKED`. HTTP 403 and a bot challenge. No fact was guessed |
-| VB-07 | None | `target.com/help`, `help.target.com` | `SOURCE_BLOCKED`. HTTP 429 on three tries. No fact was guessed |
+Fact types: prices, hours, check-in and check-out times, return windows,
+cancellation terms, and service availability.
+
+| Item | Value |
+|---|---|
+| Facts frozen | 15, from 5 first-party sources |
+| Facts with a source flag for the reviewer | 4. Flags describe the source, not the answer |
+| Businesses `SOURCE_BLOCKED` | 2. No first-party page could be retrieved. No fact was guessed |
+
+Fact values, source pages and flags are in the private evidence folder.
 
 ### 4.4 Cost
 
@@ -334,9 +343,9 @@ above the observed maximums.
 
 ### 4.5 Review
 
-Reviewers supply every judgment. The agent prepared a review queue only. The
-queue, the raw operator views and the source pages are in a private evidence
-folder, not in this repository. Raw provider bytes and digests are in
+Reviewers supply every judgment. The agent prepared a review package only and
+submitted no judgment. The package, the raw operator views and the source pages
+are in a private evidence folder, not in this repository. Raw provider bytes and digests are in
 OpenRecord. The review protocol is in
 `docs/validation/record-integrity-real-business-v1.md`.
 
@@ -360,7 +369,8 @@ Prepared delivery package, ready to use after operator approval:
 
 The public projection hides unreviewed answers, internal notes, database ids and
 raw payloads. Source: `packages/db/src/record-view.ts` (`publicRecord`). Test:
-`packages/db/src/record-view.test.ts` line 170.
+`packages/db/src/record-view.test.ts` ("keeps drafts private and drops unsafe
+links, ids, notes and provider internals").
 Revocation is permanent. Source: `apps/api/src/record-routes.ts` (`share/revoke`).
 
 Outreach draft, not sent: one short message to one agency, offering one free
@@ -383,8 +393,7 @@ Prepared offer, not sent:
 |---|---|
 | Scope | One pilot, three client records, four weekly checks |
 | Deliverable | Three share links with facts, answers, judgments and outcomes |
-| Price | $300 per client per month. This is a hypothesis, not a market price |
-| Pilot total | $900 for the pilot period, subject to operator confirmation |
+| Price | A hypothesis held by the operator, not in this document |
 | Evidence ledger | Customer, scope, price, payment date, payment status, delivery commitment |
 | Renewal test | Does the agency request a fifth check without prompting? |
 
@@ -413,12 +422,13 @@ One candidate defect is recorded for owner review, not fixed here:
 
 Some local rows have `provider = 'mock'` and `synthetic = false`. They predate
 the `synthetic` column. The evidence read layer normalizes them as fixtures.
-Source: `packages/db/src/evidence.ts` line 826. The record read path selects the
-stored flag directly. Source: `packages/db/src/record.ts` line 444. No record run
+Source: `packages/db/src/evidence.ts` (observation read, `synthetic`). The record
+read path selects the stored flag directly. Source: `packages/db/src/record.ts`
+(record check query). No record run
 holds these rows today, so the product cannot misreport them now.
 
 Fixing this would change evidence semantics. The task forbids that without
-authorization. No code was changed in this execution.
+authorization. No product code was changed by this validation work.
 
 ## 10. Environment changes
 
@@ -428,16 +438,16 @@ authorization. No code was changed in this execution.
 | API | Stopped and restarted with Node 24.3.0. Listening on port 3001 |
 | Worker | Two worker instances were running. Both stopped. One worker restarted with Node 24.3.0 |
 | Web | Left running on port 3000 |
-| Database | Not changed. No volume deleted. No migration added. 0 shares. 0 judgments |
+| Database | G1: one client record and one observation. G2: five client records, 15 facts and 75 observations, all through the product API. No volume deleted. No migration added. 0 shares. 0 judgments |
 | PostgreSQL 14 (Homebrew) | Not touched |
-| Provider calls | First attempt: 4 requests, all HTTP 429. Diagnostic: 1 request, HTTP 200. Retry: 1 grounded request, HTTP 200 |
-| Backups | The previous `.env` was copied to a local temporary file. The secret file stays out of git |
+| Provider calls | G1 first attempt: 4 requests, all HTTP 429. Diagnostic: 1 request, HTTP 200. G1 retry: 1 grounded request, HTTP 200. G2: 75 grounded requests, all HTTP 200 |
+| Backups | The previous `.env` was backed up locally. Secret files stay out of git |
 
 ## 11. Final report
 
 | Gate | Result | Evidence | Next action |
 |---|---|---|---|
-| G1 Live | PASS | Check `7b7dccd6-…`, run `7300c4b3-…`, digest `8073697f…`, `PROVIDER_GROUNDING`, 4 citations | None. G1 is complete |
+| G1 Live | PASS | Check `7b7dccd6…`, digest `8073697f…`, `PROVIDER_GROUNDING`, 4 citations | None. G1 is complete |
 | G2 Evidence | PARTIAL_COHORT | 75 of 105 samples, 75 grounded, 0 failed, 0 reviewed. Section 4 | Operator reviews 75 observations |
 | G3 Delivery | BLOCKED | No authorized customer | Confirm one agency and one client |
 | G4 Repeat | NOT_STARTED | Depends on G3 | Record one real action, then re-check |
@@ -449,8 +459,8 @@ Questions:
    observation is stored, with citations, raw bytes and a matching digest.
 2. Can it find useful discrepancies in real business information? Not known
    yet. 75 grounded observations exist for 15 frozen facts. No human review
-   exists, so no discrepancy is confirmed. The earlier shuttle signal does not
-   hold: the current first-party page states the frequency.
+   exists, so no discrepancy is confirmed. The early G1 signal did not hold
+   against the current first-party source.
 3. Can an agency deliver the result to a real client? The product can. No real
    client exists.
 4. Does the client or agency use the result? No delivered record exists.
@@ -464,9 +474,10 @@ Questions:
 
 Product verdict: `LIVE_PRODUCT_VERIFIED`
 
-The highest milestone with genuine evidence is live product verification. One
-real, retrieval-backed observation is stored. No discovery result, customer,
-review, or payment exists.
+The highest milestone with genuine evidence is live product verification. 76
+real, retrieval-backed observations are stored: 1 from G1 and 75 from G2. No
+human judgment, confirmed finding, customer, or payment exists. G3 to G5 are
+not validated.
 
 The smallest next step: the operator reviews the 75 G2 observations. Precision
 and evidence cards come only after that review.
