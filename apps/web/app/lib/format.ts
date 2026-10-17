@@ -44,6 +44,21 @@ export function initial(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "?"
 }
 
+const MARK_COLORS = [
+  { bg: "bg-blue-500", text: "text-white" },
+  { bg: "bg-primary", text: "text-primary-foreground" },
+  { bg: "bg-[#e58ca1]", text: "text-white" },
+] as const
+
+export function markColor(name: string) {
+  const key = name.trim().toLowerCase()
+  let hash = 0
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  }
+  return MARK_COLORS[hash % MARK_COLORS.length] ?? { bg: "bg-primary", text: "text-primary-foreground" }
+}
+
 export function errorMessage(err: unknown): string {
   const e = err as { status?: number; tag?: string }
   if (e?.tag === "FactAuthorityConflict") return "An active fact already covers this subject and predicate. Supersede it instead of adding a second one."

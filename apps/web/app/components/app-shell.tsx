@@ -39,7 +39,7 @@ import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth } from "@/lib/api"
-import { initial } from "@/lib/format"
+import { initial, markColor } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -282,10 +282,13 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
 }
 
 function BusinessMark({ name, className }: { name: string | null; className?: string }) {
+  const color = name ? markColor(name) : { bg: "bg-primary", text: "text-primary-foreground" }
   return (
     <span
       className={cn(
-        "flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground",
+        "flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
+        color.bg,
+        color.text,
         className,
       )}
     >

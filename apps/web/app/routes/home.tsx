@@ -9,7 +9,7 @@ import { Sparkline } from "@/components/charts"
 import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { EmptyState, PageHeader, Panel, StatStrip } from "@/components/page"
 import { AnalyticsApi, Issues, type Analytics, type Business, type Overview, type VerdictCounts } from "@/lib/api"
-import { initial, relativeTime } from "@/lib/format"
+import { initial, markColor, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -184,7 +184,7 @@ function PortfolioRow({ row }: { row: Row }) {
         className="grid items-center gap-x-4 gap-y-2 px-4 py-2.5 text-xs transition-colors hover:bg-muted/40 md:grid-cols-[minmax(0,1.4fr)_7rem_minmax(0,1fr)_6rem_6rem_7rem_1rem]"
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">{initial(b.name)}</span>
+          <span className={`flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>
           <span className="min-w-0">
             <span className="block truncate font-medium">{b.name}</span>
             <span className="block text-[11px] text-muted-foreground">{loading ? "Loading…" : o ? `${Number(o.completed).toLocaleString()} checks done` : "No data"}</span>
