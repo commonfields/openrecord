@@ -1,3 +1,4 @@
+import { DraftPayload } from "./agent-drafts.js"
 // Agent proposals: the only agent write path, gated by human approval.
 // A proposal records what was suggested, by whom (assistant draft vs
 // operator), and for which business; nothing executes until the operator
@@ -22,8 +23,8 @@ export type ProposalEffect<A> = Effect.Effect<A, SqlError | RowDecodeError | Age
 
 export class AgentProposalRefused extends Data.TaggedError("AgentProposalRefused")<{ readonly reason: string }> {}
 
-export type AgentProposalKind = "REQUEST_CHECK"
-export type AgentProposalStatus = "PROPOSED" | "EXECUTED" | "REJECTED"
+export type AgentProposalKind = "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT"
+export type AgentProposalStatus = "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"
 export type AgentProposer = "assistant-v1" | "operator"
 
 export interface AgentProposal {
@@ -32,6 +33,7 @@ export interface AgentProposal {
   readonly kind: AgentProposalKind
   readonly questionId: string | null
   readonly message: string
+  readonly payload: DraftPayload | null
   readonly proposer: AgentProposer
   readonly proposedByUserId: string
   readonly status: AgentProposalStatus
@@ -47,6 +49,7 @@ const ProposalSchema = Schema.Struct({
   kind: TextField,
   question_id: NullableUuidField,
   message: TextField,
+  payload: Schema.NullOr(DraftPayload),
   proposer: TextField,
   proposed_by_user_id: UuidField,
   status: TextField,
@@ -64,6 +67,7 @@ const toProposal = (r: typeof ProposalSchema.Type): AgentProposal => ({
   kind: r.kind as AgentProposalKind,
   questionId: r.question_id,
   message: r.message,
+  payload: r.payload,
   proposer: r.proposer as AgentProposer,
   proposedByUserId: r.proposed_by_user_id,
   status: r.status as AgentProposalStatus,
@@ -80,6 +84,7 @@ export class AgentProposalRepository extends Context.Tag("AgentProposalRepositor
       accountId: string
       businessId: string
       kind: AgentProposalKind
+      payload?: DraftPayload | undefined
       questionId: string | null
       message: string
       proposer: AgentProposer
@@ -91,8 +96,8 @@ export class AgentProposalRepository extends Context.Tag("AgentProposalRepositor
       businessId: string,
       proposalId: string,
       approverUserId: string,
-      check: { provider: string; requestedModel: string | null },
-    ) => ProposalEffect<{ proposal: AgentProposal; checkRunId: string }>
+      check: { provider: string; requestedModel: string | null } | null,
+    ) => ProposalEffect<{ proposal: AgentProposal; checkRunId: string | null }>
     readonly reject: (accountId: string, businessId: string, proposalId: string, approverUserId: string) => ProposalEffect<AgentProposal>
   }
 >() {}
@@ -116,20 +121,25 @@ export const AgentProposalRepositoryLive = Layer.effect(
             const scoped = yield* sql`SELECT 1 FROM buyer_questions WHERE id = ${input.questionId} AND business_id = ${input.businessId}`
             if (scoped.length === 0) return yield* refuse("QuestionNotFound")
           }
+          if (input.kind !== "REQUEST_CHECK") {
+            if (!input.payload || input.payload.kind !== input.kind || input.payload.businessId !== input.businessId) return yield* refuse("DraftRequired")
+            const valid = Schema.decodeUnknownEither(DraftPayload)(input.payload)
+            if (valid._tag === "Left") return yield* refuse("InvalidDraft")
+          }
           // Re-proposing the same pending check returns the pending row
           // instead of spamming duplicates.
-          const existing = (yield* sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+          const existing = (yield* sql`SELECT id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
             WHERE business_id = ${input.businessId} AND kind = ${input.kind}
               AND question_id IS NOT DISTINCT FROM ${input.questionId}::uuid AND status = 'PROPOSED'
             ORDER BY created_at LIMIT 1`) as Array<unknown>
           if (existing[0] !== undefined) return yield* decodeProposal(existing[0])
-          return yield* sql`INSERT INTO agent_proposals (business_id, kind, question_id, message, proposer, proposed_by_user_id)
-            VALUES (${input.businessId}, ${input.kind}, ${input.questionId}::uuid, ${input.message}, ${input.proposer}, ${input.proposedByUserId})
-            RETURNING id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`.pipe(
+          return yield* sql`INSERT INTO agent_proposals (business_id, kind, question_id, message, payload, proposer, proposed_by_user_id)
+            VALUES (${input.businessId}, ${input.kind}, ${input.questionId}::uuid, ${input.message}, ${input.payload === undefined ? null : JSON.stringify(input.payload)}::jsonb, ${input.proposer}, ${input.proposedByUserId})
+            RETURNING id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`.pipe(
             Effect.flatMap((rows) => decodeProposal((rows as Array<unknown>)[0])),
             Effect.catchTag("SqlError", (e) =>
               /duplicate key|unique/i.test(e.message)
-                ? sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+                ? sql`SELECT id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
                     WHERE business_id = ${input.businessId} AND kind = ${input.kind}
                       AND question_id IS NOT DISTINCT FROM ${input.questionId}::uuid AND status = 'PROPOSED'
                     ORDER BY created_at LIMIT 1`.pipe(
@@ -143,7 +153,7 @@ export const AgentProposalRepositoryLive = Layer.effect(
       listByBusiness: (accountId, businessId, status) =>
         Effect.gen(function*() {
           if (!(yield* scopedBusiness(accountId, businessId))) return []
-          const rows = (yield* sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+          const rows = (yield* sql`SELECT id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
             WHERE business_id = ${businessId} AND (${status}::text IS NULL OR status = ${status}::text)
             ORDER BY created_at DESC LIMIT 100`) as Array<unknown>
           return yield* Effect.forEach(rows, decodeProposal)
@@ -152,16 +162,34 @@ export const AgentProposalRepositoryLive = Layer.effect(
       approve: (accountId, businessId, proposalId, approverUserId, check) =>
         sql.withTransaction(
           Effect.gen(function*() {
-            const locked = (yield* sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+            const locked = (yield* sql`SELECT id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
               WHERE id = ${proposalId} AND business_id = ${businessId} FOR UPDATE`) as Array<unknown>
             if (locked[0] === undefined) return yield* refuse("ProposalNotFound")
             if (!(yield* scopedBusiness(accountId, businessId))) return yield* refuse("ProposalNotFound")
             const current = yield* decodeProposal(locked[0])
             // Idempotent replay: an executed proposal returns its run.
             if (current.status === "EXECUTED") return { proposal: current, checkRunId: current.executedCheckRunId! }
+            if (current.status === "APPROVED") return { proposal: current, checkRunId: null }
             if (current.status === "REJECTED") return yield* refuse("ProposalDecided")
             if (Date.now() - Date.parse(current.createdAt) > 24 * 60 * 60 * 1000) return yield* refuse("ProposalExpired")
+            if (current.kind !== "REQUEST_CHECK") {
+              if (check !== null) return yield* refuse("DraftApprovalRequired")
+              if (current.kind === "DRAFT_SOURCE_ACTION") {
+                // Use the same client lock as saveSlot/approveItem to fence concurrent edits.
+                yield* sql`SELECT business_id FROM record_profiles WHERE business_id = ${businessId} FOR UPDATE`
+                const draftContext = yield* Schema.decodeUnknown(Schema.parseJson(Schema.Struct({ recordItemId: Schema.UUID })))(current.payload?.evidenceJson).pipe(
+                  Effect.mapError(() => new AgentProposalRefused({ reason: "DraftStale" })))
+                const currentItem = yield* sql`SELECT i.id FROM record_items i JOIN record_item_approvals a ON a.item_id = i.id AND a.business_id = i.business_id
+                  WHERE i.business_id = ${businessId} AND i.id = ${draftContext.recordItemId}::uuid
+                  AND NOT EXISTS (SELECT 1 FROM record_items successor WHERE successor.supersedes_id = i.id)`
+                if (!currentItem.length) return yield* refuse("DraftStale")
+              }
+              const updated = yield* sql`UPDATE agent_proposals SET status = 'APPROVED', decided_by_user_id = ${approverUserId}, decided_at = now()
+                WHERE id = ${proposalId} RETURNING id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`
+              return { proposal: yield* decodeProposal(updated[0]), checkRunId: null }
+            }
             if (current.kind === "REQUEST_CHECK") {
+              if (check === null) return yield* refuse("MeasurementRequired")
               if (current.questionId === null) return yield* refuse("QuestionRequired")
               const scoped = yield* sql`SELECT 1 FROM buyer_questions WHERE id = ${current.questionId} AND business_id = ${businessId}`
               if (scoped.length === 0) return yield* refuse("QuestionNotFound")
@@ -170,7 +198,7 @@ export const AgentProposalRepositoryLive = Layer.effect(
               const checkRunId = String(runs[0]!["id"])
               const updated = (yield* sql`UPDATE agent_proposals
                 SET status = 'EXECUTED', decided_by_user_id = ${approverUserId}, decided_at = now(), executed_check_run_id = ${checkRunId}
-                WHERE id = ${proposalId} RETURNING id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`) as Array<unknown>
+                WHERE id = ${proposalId} RETURNING id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`) as Array<unknown>
               return { proposal: yield* decodeProposal(updated[0]), checkRunId }
             }
             return yield* refuse("UnknownKind")
@@ -180,16 +208,16 @@ export const AgentProposalRepositoryLive = Layer.effect(
       reject: (accountId, businessId, proposalId, approverUserId) =>
         sql.withTransaction(
           Effect.gen(function*() {
-            const locked = (yield* sql`SELECT id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
+            const locked = (yield* sql`SELECT id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at FROM agent_proposals
               WHERE id = ${proposalId} AND business_id = ${businessId} FOR UPDATE`) as Array<unknown>
             if (locked[0] === undefined) return yield* refuse("ProposalNotFound")
             if (!(yield* scopedBusiness(accountId, businessId))) return yield* refuse("ProposalNotFound")
             const current = yield* decodeProposal(locked[0])
-            if (current.status === "EXECUTED") return yield* refuse("ProposalDecided")
+            if (current.status === "EXECUTED" || current.status === "APPROVED") return yield* refuse("ProposalDecided")
             if (current.status === "REJECTED") return current
             const updated = (yield* sql`UPDATE agent_proposals
               SET status = 'REJECTED', decided_by_user_id = ${approverUserId}, decided_at = now()
-              WHERE id = ${proposalId} RETURNING id, business_id, kind, question_id, message, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`) as Array<unknown>
+              WHERE id = ${proposalId} RETURNING id, business_id, kind, question_id, message, payload, proposer, proposed_by_user_id, status, decided_by_user_id, decided_at, executed_check_run_id, created_at`) as Array<unknown>
             return yield* decodeProposal(updated[0])
           }),
         ),

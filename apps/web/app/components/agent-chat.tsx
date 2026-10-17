@@ -120,6 +120,10 @@ function ScopedAgentChat({
     }).catch(e => { if (mounted.current) setFailed(errorText(e)) }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
   }
 
+  const proposalCards = proposals.filter(p => p.status === "PROPOSED" || (p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")).map(p => p.kind === "REQUEST_CHECK"
+        ? <CheckProposal key={p.id} businessId={businessId} businessName={businessName} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />
+        : <SavedDraft key={p.id} businessId={businessId} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />)
+
   if (!active) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center pb-[12vh]">
@@ -129,6 +133,7 @@ function ScopedAgentChat({
           </h1>
           {failed ? <p role="alert" className="text-xs text-wrong">{failed}</p> : null}
           <p className="text-center text-xs text-muted-foreground">Private conversation for {businessName}. Attachments are unavailable.</p>
+          {proposalCards}
           <Composer onSend={send} disabled={!ready || busy} placeholder={`Ask about stored evidence for ${businessName}`} />
         </div>
       </div>
@@ -163,7 +168,7 @@ function ScopedAgentChat({
           </li>
         ))}
       </ol>
-      {proposals.filter(p => p.status === "PROPOSED").map(p => <CheckProposal key={p.id} businessId={businessId} businessName={businessName} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />)}
+      {proposalCards}
       {failed ? <p role="alert" className="pb-2 text-xs text-wrong">{failed}</p> : null}
       <div ref={endRef} />
 
@@ -381,6 +386,32 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     <Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Measurement model"><SelectValue placeholder="Choose a measurement model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
     {!models.length ? <p>No supported measurement model is configured. This proposal cannot run here.</p> : null}
     <div className="flex gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    {error ? <p role="alert">{error}</p> : null}
+  </section>
+}
+
+function SavedDraft({ businessId, proposal, onDone }: { businessId: string; proposal: AgentProposal; onDone: () => void }) {
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const decide = async (accept: boolean) => {
+    setWorking(true); setError(null)
+    try { if (accept) await Agent.acceptDraft(businessId, proposal.id); else await Agent.reject(businessId, proposal.id); onDone() }
+    catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
+    finally { setWorking(false) }
+  }
+  return <section aria-label="Saved private draft" className="group/msg mb-3 space-y-3 rounded-xl border p-4 text-xs">
+    <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
+    <p>{proposal.message}</p>
+    {proposal.payload ? <>
+      <p className="text-muted-foreground">Snapshot prepared {proposal.payload.generatedAt}. Accepting this draft does not publish, deliver, execute or record completed work.</p>
+      <p className="max-h-96 overflow-auto whitespace-pre-wrap leading-relaxed">{proposal.payload.text}</p>
+      <CopyButton text={proposal.payload.text} />
+      <ul className="flex flex-wrap gap-2" aria-label="Draft evidence">{proposal.payload.references.map(c => {
+        const path = agentEvidencePath(businessId, c)
+        return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : <span>Evidence unavailable</span>}</li>
+      })}</ul>
+    </> : <p>Draft evidence unavailable</p>}
+    {proposal.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><Button variant="outline" size="sm" disabled={working} onClick={() => void decide(false)}>Reject</Button></div> : null}
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
