@@ -233,12 +233,21 @@ export const Packets = {
 export type AgentToolCall = { tool: string; summary: string }
 export type AgentCitation = { kind: string; id: string; text: string }
 
+export type AgentMessage = { role: "user" | "agent"; text: string; citations?: AgentCitation[]; toolCalls?: AgentToolCall[] }
+export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
+export type AgentProposal = { id: string; questionId: string | null; message: string; status: "PROPOSED" | "EXECUTED" | "REJECTED" }
 export const Agent = {
-  send: (businessId: string, message: string) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[] }>(Routes.sendAgentMessage(businessId).path, {
-      method: "POST",
-      body: JSON.stringify({ message }),
+  load: (businessId: string) => api<{ conversation: AgentConversation | null }>(`/api/businesses/${businessId}/agent/conversation`),
+  clear: (businessId: string) => api(`/api/businesses/${businessId}/agent/conversation`, { method: "DELETE" }),
+  send: (businessId: string, message: string, requestId: string, revision: number, conversationId?: string) =>
+    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number }>(Routes.sendAgentMessage(businessId).path, {
+      method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId }),
     }),
+  proposals: (businessId: string) => api<{ proposals: AgentProposal[] }>(Routes.listAgentProposals(businessId).path),
+  reject: (businessId: string, proposalId: string) => api(Routes.rejectAgentProposal(businessId, proposalId).path, { method: "POST", body: "{}" }),
+  approve: (businessId: string, proposalId: string, requestedModel: string) => api(Routes.approveAgentProposal(businessId, proposalId).path, {
+    method: "POST", body: JSON.stringify({ provider: "9router", requestedModel }),
+  }),
 }
 
 export const Observations = {

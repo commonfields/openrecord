@@ -160,6 +160,7 @@ export const AgentProposalRepositoryLive = Layer.effect(
             // Idempotent replay: an executed proposal returns its run.
             if (current.status === "EXECUTED") return { proposal: current, checkRunId: current.executedCheckRunId! }
             if (current.status === "REJECTED") return yield* refuse("ProposalDecided")
+            if (Date.now() - Date.parse(current.createdAt) > 24 * 60 * 60 * 1000) return yield* refuse("ProposalExpired")
             if (current.kind === "REQUEST_CHECK") {
               if (current.questionId === null) return yield* refuse("QuestionRequired")
               const scoped = yield* sql`SELECT 1 FROM buyer_questions WHERE id = ${current.questionId} AND business_id = ${businessId}`

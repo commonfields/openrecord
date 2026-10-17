@@ -1,4 +1,5 @@
 import "./globals.css"
+import { EvidenceRoutePatterns } from "./lib/route-patterns"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router"
@@ -70,10 +71,10 @@ function App() {
               <Route path="issues" element={<IssuesPage />} />
               <Route path="issues/:claimId" element={<IssueDetailPage />} />
               <Route path="representations" element={<RepresentationsPage />} />
-              <Route path="representations/discovery" element={<DiscoveryPage />} />
+              <Route path={EvidenceRoutePatterns.sourceDiscovery} element={<DiscoveryPage />} />
               <Route path="representations/:bindingId" element={<RepresentationDetailPage />} />
             </Route>
-            <Route path="/observations/:observationId" element={<ObservationPage />} />
+            <Route path={EvidenceRoutePatterns.observation} element={<ObservationPage />} />
           </Route>
         </Routes>
         <Toaster position="bottom-right" />

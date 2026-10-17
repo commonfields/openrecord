@@ -1,3 +1,4 @@
+import { agentOriginAllowed } from "./agent-origin.js"
 // Effect API server: HttpRouter + HttpServer over Node.
 // One typed contract (packages/contracts) shared with apps/web.
 // Typed failures map deterministically to HTTP statuses (see domain/errors).
@@ -85,7 +86,7 @@ import {
   loadRepresentations,
 } from "./reads.js"
 import { loadInterventions, recordIntervention } from "./interventions.js"
-import { handleAgentMessage } from "./agent.js"
+import { deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
 import { createBinding, createTarget } from "./tracking.js"
 import { loadIssueLoop } from "./issue-loop.js"
 import { loadIssuePacket } from "./packet-read.js"
@@ -1271,9 +1272,7 @@ export const makeRouter = () => {
         }),
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
-    // Agent assistance V1: deterministic read-only answers. The body carries
-    // only the operator message (+ short history); writes are never
-    // performed here, only planned with UI deep links.
+    // Private, scoped conversation. Provider failures never expose raw payloads.
     HttpRouter.post(
       "/api/businesses/:id/agent/messages",
       withSession((session) =>
@@ -1285,13 +1284,37 @@ export const makeRouter = () => {
           if (!(yield* biz.getScoped(session.accountId, businessId))) {
             return yield* json(404, { _tag: "BusinessNotFound" })
           }
+          if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
           const body = decodeRequest(AgentMessageRequest, (yield* readJson) as unknown)
           if (!body) return yield* json(422, malformed)
-          const reply = yield* handleAgentMessage(session.accountId, session.userId, businessId, body.message)
+          const reply = yield* sendConversation({ accountId: session.accountId, userId: session.userId, businessId }, body)
           return yield* json(200, reply)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll((e) => {
+        if (typeof e === "object" && e !== null && "_tag" in e) {
+          if (e._tag === "NotAuthenticated") return json(401, { _tag: "NotAuthenticated" })
+          if (e._tag === "AgentModelError" && "reason" in e) return json(503, { _tag: "AgentUnavailable", reason: e.reason })
+          if (e._tag === "AgentConversationRefused" && "reason" in e) return json(e.reason === "NOT_FOUND" ? 404 : 409, { _tag: "ConversationUnavailable", reason: e.reason })
+        }
+        return json(500, { _tag: "AgentRequestFailed" })
+      })),
     ),
+    HttpRouter.get("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? ""
+      if (!isRouteId(businessId)) return yield* json(422, malformed)
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
+      return yield* json(200, { conversation: yield* loadConversation({ accountId: session.accountId, userId: session.userId, businessId }) })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
+    HttpRouter.del("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? ""
+      if (!isRouteId(businessId)) return yield* json(422, malformed)
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
+      if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
+      yield* deleteConversation({ accountId: session.accountId, userId: session.userId, businessId })
+      return yield* json(200, { deleted: true })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
   )
   // Discovery V1 lives in a third chain for the same HttpRouter arity
   // reason: scopes, runs (QUEUED immediately, 409 on duplicate active),
