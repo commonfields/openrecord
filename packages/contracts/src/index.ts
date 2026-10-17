@@ -351,10 +351,10 @@ export const CreateAgentProposalRequest = Schema.Struct({
 })
 export type CreateAgentProposalRequest = typeof CreateAgentProposalRequest.Type
 
-export const ApproveAgentProposalRequest = Schema.Struct({
-  provider: Schema.Literal("mock", "9router"),
-  requestedModel: Schema.optional(Schema.NullOr(Schema.String)),
-})
+export const ApproveAgentProposalRequest = Schema.Union(
+  Schema.Struct({ draftOnly: Schema.Literal(true) }),
+  Schema.Struct({ provider: Schema.Literal("mock", "9router"), requestedModel: Schema.optional(Schema.NullOr(Schema.String)) }),
+)
 export type ApproveAgentProposalRequest = typeof ApproveAgentProposalRequest.Type
 
 // SEARCH_OPERATOR_V1 write-boundary contracts. URLs are untrusted operator

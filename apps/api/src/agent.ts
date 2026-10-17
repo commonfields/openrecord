@@ -1,3 +1,4 @@
+import { dispatchDraftTool, draftDeclarations } from "./agent-drafts.js"
 import { Effect, Schema } from "effect"
 import { AgentProposalRepository } from "@openrecord/db"
 import { AGENT_TOOLS, runAgentTool, type AgentToolResult } from "./agent-tools.js"
@@ -13,6 +14,7 @@ export interface AgentReply {
 export type AgentHistory = ReadonlyArray<{ readonly role: "user" | "agent"; readonly text: string; readonly citations?: ReadonlyArray<AgentCitation> | undefined }>
 const proposeInput = Schema.Struct({ questionId: Schema.UUID })
 export const agentDeclarations = [
+  ...draftDeclarations,
   ...AGENT_TOOLS.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })),
   { name: "propose_check_run", description: "Prepare a REQUEST_CHECK proposal for a stored question. Never executes. Human approval and provider/model selection required.",
     parametersJsonSchema: { type: "object", properties: { questionId: { type: "string", format: "uuid" } }, required: ["questionId"], additionalProperties: false } },
@@ -23,7 +25,7 @@ Use tools for factual claims. Preserve ordered lists and their evidence referenc
 Distinguish approved truth, observations, machine interpretation, human judgments, proposed actions, completed human actions, and outcomes.
 UNKNOWN is unknown. Missing or failed evidence is not a positive finding. Synthetic answers are never customer proof.
 Give exact counts with denominators only from deterministic tool results. A mention is not a recommendation; observation is not causality.
-Never claim to approve facts, judgments, publication, payment, or execution. You can only draft a re-check proposal using propose_check_run.
+Never claim to approve facts, judgments, publication, payment, or execution. You may draft a re-check proposal, a source action hypothesis, or a private client report through the registered draft tools. Approval is never completion or publication.
 No network browsing, shell, SQL, website publishing, analytics account access, or automatic checks are available.
 Acquisition metrics, competitor analysis and referral imports are unavailable unless exposed by registered tools. Admit missing capabilities.
 Never invent URLs or evidence IDs. The application renders evidence references from actual tools separately. Do not output raw private notes or internal IDs in prose.
@@ -92,6 +94,7 @@ export const handleAgentMessage = (accountId: string, userId: string, businessId
   }).pipe(Effect.timeoutFail({ duration: 90000, onTimeout: () => new AgentModelError({ reason: "TIMEOUT" }) }))
 
 export const dispatchAgentTool = (accountId: string, userId: string, businessId: string, name: string, args: unknown) => Effect.gen(function*() {
+      if (name === "draft_source_action" || name === "prepare_client_report") return yield* dispatchDraftTool(accountId, userId, businessId, name, args)
       if (name !== "propose_check_run") return yield* runAgentTool(accountId, businessId, name, args)
       yield* Effect.logInfo("agent proposal invoked").pipe(Effect.annotateLogs({ account_id: accountId, business_id: businessId, tool: name, invoked_at: new Date().toISOString() }))
       const parsed = yield* Schema.decodeUnknown(proposeInput, { onExcessProperty: "error" })(args)

@@ -14,3 +14,5 @@ export * from "./assay.js"
 export * from "./record.js"
 export * from "./record-view.js"
 export * from "./agent-proposals.js"
+
+export * from "./agent-drafts.js"

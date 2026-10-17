@@ -71,7 +71,7 @@ export const agentProposalApi = (withSession: WithSession) => {
         Effect.gen(function*() {
           const request = yield* HttpServerRequest.HttpServerRequest
           const statusParam = new URL(request.url, "http://localhost").searchParams.get("status")
-          const statuses = ["PROPOSED", "EXECUTED", "REJECTED"] as const
+          const statuses = ["PROPOSED", "APPROVED", "EXECUTED", "REJECTED"] as const
           const status = statusParam === null ? null : statuses.find((s) => s === statusParam) ?? null
           if (statusParam !== null && status === null) return yield* json(422, { _tag: "InvalidRequest" })
           const proposals = yield* (yield* AgentProposalRepository).listByBusiness(session.accountId, businessId, status as AgentProposalStatus | null)
@@ -102,7 +102,11 @@ export const agentProposalApi = (withSession: WithSession) => {
         Effect.gen(function*() {
           const body = decode(ApproveAgentProposalRequest, yield* readJson)
           if (!body) return yield* json(422, { _tag: "InvalidRequest" })
-          if (body.provider === "9router") {
+          const pId = p["proposalId"]!
+          const pending = (yield* (yield* AgentProposalRepository).listByBusiness(session.accountId, businessId, null)).find(p => p.id === pId)
+          if (!pending) return yield* json(404, { _tag: "AgentProposalRefused", reason: "ProposalNotFound" })
+          if ((pending.kind === "REQUEST_CHECK") === ("draftOnly" in body)) return yield* json(422, { _tag: "InvalidRequest" })
+          if ("provider" in body && body.provider === "9router") {
             const catalog = yield* loadProviderCatalog(false, false)
             const provider = catalog.providers.find(p => p.id === "9router" && p.enabled)
             if (!body.requestedModel || !provider?.models.includes(body.requestedModel)) return yield* json(422, { _tag: "AgentProposalRefused", reason: "ModelUnavailable" })
@@ -112,7 +116,7 @@ export const agentProposalApi = (withSession: WithSession) => {
             businessId,
             p["proposalId"]!,
             session.userId,
-            { provider: body.provider, requestedModel: body.requestedModel ?? null },
+            "draftOnly" in body ? null : { provider: body.provider, requestedModel: body.requestedModel ?? null },
           )
           return yield* json(200, { proposal, checkRunId })
         })),
