@@ -5,7 +5,7 @@
 // imports an optional GA4 export, and opens the agency report.
 // Detection only highlights candidates; every confirmed count is a human review.
 import { useState, type ReactNode } from "react"
-import { Link, useParams } from "react-router"
+import { Link, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
 import { ChevronDownIcon, FileTextIcon, LoaderCircleIcon, PlayIcon, TriangleAlertIcon, UploadIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -416,7 +416,9 @@ export function ClientDiscoveryPage() {
   const [editing, setEditing] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const [batchId, setBatchId] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const batchId = params.get("batchId")
+  const setBatchId = (value: string) => { const next = new URLSearchParams(params); next.set("batchId", value); setParams(next) }
   const [openKey, setOpenKey] = useState<string | null>(null)
 
   if (res.loading && !res.data) return <div className="space-y-4"><Skeleton className="h-14 w-72" /><Skeleton className="h-64 rounded-xl" /></div>
@@ -427,7 +429,7 @@ export function ClientDiscoveryPage() {
   const { view, surface, maxAttemptsPerCheck } = res.data
   const set = view.sets.at(-1) ?? null
   const surfaceLabel = `${surface.provider === "gemini" ? "Gemini API with Google Search grounding" : surface.provider} (${surface.model})`
-  const batch: Batch | null = view.batches.find(b => b.id === batchId) ?? view.batches.at(-1) ?? null
+  const batch: Batch | null = batchId ? view.batches.find(b => b.id === batchId) ?? null : view.batches.at(-1) ?? null
   const batchSet = batch ? view.sets.find(s => s.id === batch.setId) ?? null : null
   const checks = batch ? view.checks.filter(c => c.batchId === batch.id) : []
   const m = batch?.metrics
@@ -436,6 +438,7 @@ export function ClientDiscoveryPage() {
 
   return (
     <div className="space-y-5 pb-4">
+      {batchId && !batch ? <p role="alert" className="text-xs text-wrong">The linked measurement is unavailable in this client record.</p> : null}
       <PageHeader
         back={{ to: `/clients/${id}`, label: view.profile.name }}
         title="AI Discovery"

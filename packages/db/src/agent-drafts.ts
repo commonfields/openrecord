@@ -10,8 +10,10 @@ export const ActionDraftInput = Schema.Struct({
 })
 export const ReportDraftInput = Schema.Struct({ start: Schema.String, end: Schema.String })
 export const DraftPayload = Schema.Struct({
-  kind: Schema.Literal("DRAFT_SOURCE_ACTION", "PREPARE_CLIENT_REPORT"),
+  kind: Schema.Literal("DRAFT_SOURCE_ACTION", "PREPARE_CLIENT_REPORT", "PROPOSE_QUESTION_SET", "REQUEST_ACQUISITION_BATCH"),
   generatedAt: Schema.String, businessId: Schema.UUID, evidenceJson: Text(180000), evidenceDigest: Text(64),
+  measurementPlan: Schema.optional(Schema.Struct({ setId: Schema.NullOr(Schema.UUID), provider: Schema.String, requestedModel: Schema.NullOr(Schema.String), questions: Schema.Int, samples: Schema.Int,
+    maxProviderCalls: Schema.Int, estimatedMaxCostUsd: Schema.NullOr(Schema.Number), costBasis: Schema.String, missingRequirements: Schema.Array(Schema.String) })),
   text: Text(60000), references: Schema.Array(Schema.Struct({ kind: Schema.String, id: Schema.UUID, text: Schema.String })).pipe(Schema.maxItems(1000)),
 })
 export type DraftPayload = typeof DraftPayload.Type
@@ -19,7 +21,7 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex")
 export const sealDraft = (input: Omit<DraftPayload, "evidenceJson" | "evidenceDigest"> & { readonly evidence: unknown }): DraftPayload => {
   const evidenceJson = JSON.stringify(input.evidence)
   return { kind: input.kind, businessId: input.businessId, generatedAt: input.generatedAt, text: input.text,
-    references: input.references, evidenceJson, evidenceDigest: sha(evidenceJson) }
+    references: input.references, evidenceJson, evidenceDigest: sha(evidenceJson), ...(input.measurementPlan ? { measurementPlan: input.measurementPlan } : {}) }
 }
 
 export const buildActionDraft = (snapshot: RecordSnapshot, input: typeof ActionDraftInput.Type, generatedAt: string): DraftPayload | null => {

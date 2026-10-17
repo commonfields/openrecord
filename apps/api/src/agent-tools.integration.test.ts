@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
+  AcquisitionRepositoryLive,
   AgentProposalRepositoryLive,
   BusinessRepositoryLive,
   DiscoveryScopeRepositoryLive,
@@ -23,6 +24,7 @@ const suite = url ? describe : describe.skip
 suite("agent tool tenancy (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
+    AcquisitionRepositoryLive,
     AgentProposalRepositoryLive,
     BusinessRepositoryLive,
     DiscoveryScopeRepositoryLive,

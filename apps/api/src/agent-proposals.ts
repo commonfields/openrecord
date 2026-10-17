@@ -3,6 +3,8 @@ import { agentOriginAllowed } from "./agent-origin.js"
 // Creation records intent and never executes; approval executes exactly once
 // with the approver's session attribution; rejection decides without executing.
 // Unknown and foreign ids both read as 404 without leaking which.
+import { RecordSurfaceConfig } from "@openrecord/config"
+import { recordFixtureAllowed } from "./record-routes.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import type { SqlError } from "@effect/sql/SqlError"
@@ -35,6 +37,7 @@ type WithSession = <A, E, R>(run: (session: Session) => Effect.Effect<A, E, R>) 
 const failure = (e: unknown) => {
   const tag = (e as { _tag?: string })?._tag
   if (tag === "NotAuthenticated") return json(401, { _tag: "NotAuthenticated" })
+  if (tag === "AcquisitionRefused" && typeof e === "object" && e !== null && "reason" in e) return json(409, { _tag: "AcquisitionRefused", reason: e.reason })
   if (tag === "AgentProposalRefused") {
     const reason = String((e as { reason?: unknown }).reason ?? "")
     if (reason === "ProposalNotFound" || reason === "BusinessNotFound" || reason === "QuestionNotFound") {
@@ -105,6 +108,15 @@ export const agentProposalApi = (withSession: WithSession) => {
           const pId = p["proposalId"]!
           const pending = (yield* (yield* AgentProposalRepository).listByBusiness(session.accountId, businessId, null)).find(p => p.id === pId)
           if (!pending) return yield* json(404, { _tag: "AgentProposalRefused", reason: "ProposalNotFound" })
+          if ("approveAcquisition" in body) {
+            if (pending.kind !== "REQUEST_ACQUISITION_BATCH") return yield* json(422, { _tag: "InvalidRequest" })
+            const surface = yield* RecordSurfaceConfig
+            if (surface.provider === "mock" && !recordFixtureAllowed()) return yield* json(422, { _tag: "FixtureDisabled" })
+            const proposal = yield* (yield* AgentProposalRepository).approveAcquisition(session.accountId, businessId, pId, session.userId,
+              { provider: surface.provider, model: surface.provider === "mock" ? null : surface.model }, body.maxCostUsd)
+            return yield* json(200, { proposal, acquisitionBatchId: proposal.executedAcquisitionBatchId })
+          }
+          if (pending.kind === "REQUEST_ACQUISITION_BATCH") return yield* json(422, { _tag: "InvalidRequest" })
           if ((pending.kind === "REQUEST_CHECK") === ("draftOnly" in body)) return yield* json(422, { _tag: "InvalidRequest" })
           if ("provider" in body && body.provider === "9router") {
             const catalog = yield* loadProviderCatalog(false, false)

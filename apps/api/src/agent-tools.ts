@@ -1,3 +1,4 @@
+import { ACQUISITION_AGENT_TOOLS } from "./agent-acquisition-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
 // read-only tools for operator assistance.
 //
@@ -16,6 +17,7 @@
 import { Data, Effect, JSONSchema, Schema } from "effect"
 import { SqlClient } from "@effect/sql"
 import {
+  AcquisitionRepository,
   AgentProposalRepository,
   BusinessRepository,
   DiscoveryScopeRepository,
@@ -31,7 +33,8 @@ import { loadDiscoveryScopes } from "./discovery-reads.js"
 
 export class AgentUnknownTool extends Data.TaggedError("AgentUnknownTool")<{ readonly tool: string }> {}
 export class AgentInvalidInput extends Data.TaggedError("AgentInvalidInput")<{ readonly tool: string }> {}
-export class AgentNotInScope extends Data.TaggedError("AgentNotInScope") {}
+export { AgentNotInScope } from "./agent-tool-errors.js"
+import { AgentNotInScope } from "./agent-tool-errors.js"
 export class AgentToolFailed extends Data.TaggedError("AgentToolFailed")<{ readonly tool: string }> {}
 /** Opaque tool failure: repository/decoder detail never escapes the harness,
  * mirroring the API rule that errors expose no database failure details. */
@@ -51,6 +54,7 @@ export interface AgentToolResult {
  * that needs a new service extends this union, which the compiler checks
  * at every call site. */
 export type AgentToolDeps =
+  | AcquisitionRepository
   | AgentProposalRepository
   | BusinessRepository
   | DiscoveryScopeRepository
@@ -344,6 +348,7 @@ const readRecordOutcomes: AgentToolDef = {
  * proposal/approval boundary review and an update to agent-tools.test.ts,
  * which asserts this exact list. */
 export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
+  ...ACQUISITION_AGENT_TOOLS,
   readBusinessTruth,
   discoverBuyerQuestions,
   readOpenIssues,

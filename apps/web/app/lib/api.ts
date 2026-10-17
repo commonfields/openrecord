@@ -235,7 +235,7 @@ export type AgentCitation = { kind: string; id: string; text: string }
 
 export type AgentMessage = { role: "user" | "agent"; text: string; citations?: AgentCitation[]; toolCalls?: AgentToolCall[] }
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
-export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[] } | null }
+export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
 export const Agent = {
   load: (businessId: string) => api<{ conversation: AgentConversation | null }>(`/api/businesses/${businessId}/agent/conversation`),
   clear: (businessId: string) => api(`/api/businesses/${businessId}/agent/conversation`, { method: "DELETE" }),
@@ -245,6 +245,7 @@ export const Agent = {
     }),
   proposals: (businessId: string) => api<{ proposals: AgentProposal[] }>(Routes.listAgentProposals(businessId).path),
   reject: (businessId: string, proposalId: string) => api(Routes.rejectAgentProposal(businessId, proposalId).path, { method: "POST", body: "{}" }),
+  approveAcquisition: (businessId: string, proposalId: string, maxCostUsd: number) => api(Routes.approveAgentProposal(businessId, proposalId).path, { method: "POST", body: JSON.stringify({ approveAcquisition: true, maxCostUsd }) }),
   acceptDraft: (businessId: string, proposalId: string) => api(Routes.approveAgentProposal(businessId, proposalId).path, { method: "POST", body: JSON.stringify({ draftOnly: true }) }),
   approve: (businessId: string, proposalId: string, requestedModel: string) => api(Routes.approveAgentProposal(businessId, proposalId).path, {
     method: "POST", body: JSON.stringify({ provider: "9router", requestedModel }),
