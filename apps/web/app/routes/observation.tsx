@@ -110,7 +110,7 @@ export function ObservationPage() {
             <ProviderChip provider={observation.provider} model={observation.observed_model} />
             <span title={formatDateTime(observation.collected_at)}>{relativeTime(observation.collected_at)}</span>
             {queue.length > 0 ? (
-              <span className="rounded-full bg-review-soft px-2 py-0.5 text-[11px] font-medium text-review shadow-(--badge-shadow)">
+              <span className="rounded-full bg-review-soft px-2 py-0.5 text-[0.6875rem] font-medium text-review shadow-(--badge-shadow)">
                 {queue.length} answer{queue.length === 1 ? "" : "s"} in the review queue
               </span>
             ) : null}
@@ -305,13 +305,13 @@ function CitationRow({
       ) : (
         <p className="truncate text-xs font-medium">{citation.title ?? "Untitled source"}</p>
       )}
-      <p className="truncate text-[11px] text-muted-foreground">
+      <p className="truncate text-[0.6875rem] text-muted-foreground">
         {citation.uri ? domainOf(citation.uri) : "No URI"}
         {citation.position !== null && citation.position !== undefined ? <span> · position {citation.position}</span> : null}
         {citation.attributed ? <span> · attributed</span> : null}
       </p>
       {match ? (
-        <Link to={`/businesses/${businessId}/representations/${match.binding_id}`} className="mt-0.5 inline-block text-[11px] font-medium text-primary hover:underline">
+        <Link to={`/businesses/${businessId}/representations/${match.binding_id}`} className="mt-0.5 inline-block text-[0.6875rem] font-medium text-primary hover:underline">
           View tracked representation
         </Link>
       ) : null}
@@ -441,7 +441,7 @@ function ClaimReview({
                       <span className={cn("size-2 shrink-0 rounded-full", toneDot[v.tone])} />
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-medium">{v.label}</span>
-                        <span className="block text-[11px] text-muted-foreground">{v.hint}</span>
+                        <span className="block text-[0.6875rem] text-muted-foreground">{v.hint}</span>
                       </span>
                       <Kbd>{i + 1}</Kbd>
                     </button>
@@ -495,7 +495,7 @@ function ClaimReview({
             </div>
           </div>
           <div className="flex items-center justify-between gap-2 border-t bg-muted/30 px-4 py-2.5">
-            <span className="text-[11px] text-muted-foreground">Press 1–4 to pick a verdict</span>
+            <span className="text-[0.6875rem] text-muted-foreground">Press 1–4 to pick a verdict</span>
             <div className="flex gap-2">
               {state && state !== "NEEDS_REVIEW" ? (
                 <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setOpen(false)}>

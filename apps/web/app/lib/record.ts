@@ -4,7 +4,7 @@ import { api } from "./api"
 
 export type Decision = "MATCHES" | "CONTRADICTS" | "UNKNOWN"
 export type Outcome = "OBSERVED_CORRECTED" | "NO_OBSERVED_CHANGE" | "INDETERMINATE" | "RESOLVED_EXTERNALLY"
-export type RunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED"
+export type RunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED" | "CANCELLED"
 export type ValueType = "TEXT" | "NUMBER" | "CURRENCY" | "BOOLEAN" | "DATE" | "URL" | "ENUM"
 export type Engagement = "CLIENT" | "DOGFOOD" | "FIXTURE"
 export type SourceKind = "WEBSITE" | "BUSINESS_APPROVED" | "PUBLIC_SOURCE_UNAPPROVED"
@@ -106,6 +106,8 @@ export const Records = {
   saveSlot: (id: string, slot: number, input: SlotInput) => api<{ item: RecordItem }>(`${base(id)}/slots/${slot}`, { method: "PUT", ...json(input) }),
   approve: (id: string, itemId: string) => api<RecordResponse>(`${base(id)}/items/${encodeURIComponent(itemId)}/approve`, { method: "POST" }),
   run: (id: string, kind?: "INITIAL" | "FOLLOW_UP", samples?: number) => api<{ run: { id: string; kind: string } }>(`${base(id)}/runs`, { method: "POST", ...json(kind || samples ? { ...(kind ? { kind } : {}), ...(samples ? { samples } : {}) } : {}) }),
+  cancelRun: (id: string, runId: string) =>
+    api<{ cancelled: number; stillRunning: number }>(`${base(id)}/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }),
   judge: (id: string, observationId: string, decision: Decision, note: string | null, claim?: { text: string; span?: string | null }) =>
     api<{ judgment: Judgment }>(`${base(id)}/judgments`, { method: "POST", ...json({ observationId, decision, note, ...(claim ? { claim } : {}) }) }),
   action: (id: string, input: ActionInput) => api<{ action: RecordAction }>(`${base(id)}/actions`, { method: "POST", ...json(input) }),
@@ -181,5 +183,5 @@ export const FINDING_STATE_LABELS: Record<FindingState, string> = {
 }
 export const DECISION_LABELS: Record<Decision, string> = { MATCHES: "Matches", CONTRADICTS: "Contradicts", UNKNOWN: "Unknown" }
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
-  QUEUED: "Queued", RUNNING: "Running", SUCCEEDED: "Succeeded", PARTIALLY_SUCCEEDED: "Partially succeeded", FAILED: "Failed",
+  QUEUED: "Queued", RUNNING: "Running", SUCCEEDED: "Succeeded", PARTIALLY_SUCCEEDED: "Partially succeeded", FAILED: "Failed", CANCELLED: "Cancelled",
 }

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest"
 import { hostedMeasurementContext } from "./evidence.js"
 import {
-  compareSlot, countSamples, currentJudgment, findingFor, publicRecord, runStatus, sampleStatement, type SlotEvidence,
+  compareSlot, countSamples, currentJudgment, findingFor, operatorView, publicRecord, RECORD_CANCELLED, runStatus, sampleStatement, type SlotEvidence,
 } from "./record-view.js"
 import type { RecordCheck, RecordItem, RecordJudgment, RecordObservation, RecordSnapshot } from "./record.js"
 
@@ -118,6 +118,32 @@ describe("record comparison rules", () => {
     expect(runStatus([ok, check(null, "RUNNING")])).toBe("RUNNING")
     expect(runStatus([check(null, "QUEUED")])).toBe("QUEUED")
     expect(runStatus([])).toBe("FAILED")
+  })
+  it("a run stopped before any check started is cancelled; a partly run one is not", () => {
+    const stopped = () => check(null, "FAILED", [], { failureClass: RECORD_CANCELLED, failureDetailSafe: "Cancelled by the operator before it started." })
+    expect(runStatus([stopped(), stopped()])).toBe("CANCELLED")
+    expect(runStatus([check(observation(T1)), stopped()])).toBe("PARTIALLY_SUCCEEDED")
+    expect(runStatus([check(null, "FAILED"), stopped()])).toBe("FAILED")
+    expect(runStatus([check(null, "RUNNING"), stopped()])).toBe("RUNNING")
+  })
+  it("a cancelled re-check is kept in history but never compared or treated as the latest answers", () => {
+    const base = check(observation(T1), "SUCCEEDED", [judgment("MATCHES")], { runId: "r1" })
+    const stopped = check(null, "FAILED", [], { runId: "r2", failureClass: RECORD_CANCELLED, completedAt: T2 })
+    const view = operatorView({
+      profile: { businessId: BIZ, name: "TEST Hotel", websiteUrl: "https://client.test/", engagement: "CLIENT", createdAt: T1 },
+      items: [item()],
+      runs: [
+        { id: "r1", kind: "INITIAL", baselineRunId: null, provider: "gemini", requestedModel: "gemini-2.5-flash", retrievalRequired: true, sampleCount: 1, createdAt: T1 },
+        { id: "r2", kind: "FOLLOW_UP", baselineRunId: "r1", provider: "gemini", requestedModel: "gemini-2.5-flash", retrievalRequired: true, sampleCount: 1, createdAt: T2 },
+      ],
+      checks: [base, stopped], actions: [], share: null,
+    })
+    expect(view.runs.map(r => r.status)).toEqual(["SUCCEEDED", "CANCELLED"])
+    expect(view.activeRun).toBe(false)
+    expect(view.slots[0]!.baselineCheckIds).toEqual([base.id])
+    expect(view.slots[0]!.latestFollowUpCheckIds).toEqual([])
+    expect(view.slots[0]!.comparison).toBeNull()
+    expect(view.slots[0]!.finding.state).toBe("AGREEMENT")
   })
 })
 

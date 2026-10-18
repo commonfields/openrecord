@@ -135,7 +135,7 @@ export function Home() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="hidden grid-cols-[minmax(0,1.4fr)_7rem_minmax(0,1fr)_6rem_6rem_7rem_1rem] gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground md:grid">
+            <div className="hidden grid-cols-[minmax(0,1.4fr)_7rem_minmax(0,1fr)_6rem_6rem_7rem_1rem] gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[0.6875rem] text-muted-foreground md:grid">
               <span>Business</span>
               <span>Supported, 30 days</span>
               <span>Answers collected per day</span>
@@ -187,7 +187,7 @@ function PortfolioRow({ row }: { row: Row }) {
           <span className={`flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>
           <span className="min-w-0">
             <span className="block truncate font-medium">{b.name}</span>
-            <span className="block text-[11px] text-muted-foreground">{loading ? "Loading…" : o ? `${Number(o.completed).toLocaleString()} checks done` : "No data"}</span>
+            <span className="block text-[0.6875rem] text-muted-foreground">{loading ? "Loading…" : o ? `${Number(o.completed).toLocaleString()} checks done` : "No data"}</span>
           </span>
         </span>
         <span className="flex items-baseline gap-1.5">
@@ -197,7 +197,7 @@ function PortfolioRow({ row }: { row: Row }) {
             <>
               <span className="font-semibold tabular-nums">{acc === null ? "—" : `${Math.round(acc * 100)}%`}</span>
               {pts !== null && pts !== 0 ? (
-                <span className={cn("inline-flex items-center text-[11px] tabular-nums", pts > 0 ? "text-supported" : "text-wrong")}>
+                <span className={cn("inline-flex items-center text-[0.6875rem] tabular-nums", pts > 0 ? "text-supported" : "text-wrong")}>
                   {pts > 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
                   {Math.abs(pts)} pts
                 </span>
@@ -205,7 +205,7 @@ function PortfolioRow({ row }: { row: Row }) {
             </>
           )}
         </span>
-        <span>{loading ? <Skeleton className="h-4 w-full" /> : answers.length > 1 ? <Sparkline values={answers} cssVar="--chart-primary" className="h-6" /> : <span className="text-[11px] text-muted-foreground">No answers collected yet</span>}</span>
+        <span>{loading ? <Skeleton className="h-4 w-full" /> : answers.length > 1 ? <Sparkline values={answers} cssVar="--chart-primary" className="h-6" /> : <span className="text-[0.6875rem] text-muted-foreground">No answers collected yet</span>}</span>
         <span className={cn("text-right font-medium tabular-nums", attention > 0 && "text-wrong")}>{loading ? "" : attention.toLocaleString()}</span>
         <span className={cn("text-right font-medium tabular-nums", unreviewed > 0 && "text-review")}>{loading ? "" : unreviewed.toLocaleString()}</span>
         <span className="text-right text-muted-foreground">{loading ? "" : o?.last_checked ? relativeTime(o.last_checked) : "Never"}</span>

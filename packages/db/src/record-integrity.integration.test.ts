@@ -92,6 +92,9 @@ suite("record integrity v1 (TEST Northstar agency, TEST clients, TEST reviewer)"
     await pool.query(`UPDATE check_runs SET status='FAILED', failure_class='PROVIDER_UNAVAILABLE', failure_detail_safe='provider unavailable', completed_at=now() WHERE id=$1`, [checkId])
   }
 
+  const refusal = (fx: (r: Context.Tag.Service<typeof RecordRepository>) => Effect.Effect<unknown, unknown>) =>
+    runFx(Effect.flip(Effect.flatMap(RecordRepository, fx)).pipe(Effect.map(e => String((e as { reason?: unknown }).reason ?? (e as { _tag?: unknown })._tag))))
+
   const PRICE_Q = "How much does Example Pro cost?"
   const HOURS_Q = "Is Example Clinic open on Saturday?"
   const APPT_Q = "Does Example Studio offer same-day appointments?"
@@ -130,6 +133,60 @@ suite("record integrity v1 (TEST Northstar agency, TEST clients, TEST reviewer)"
     expect(claims.every(k => k.supportingSpan === "$49 per month" && k.extractionMethod === "MANUAL_EXACT_SPAN")).toBe(true)
     expect(reviewed.every(c => c.judgments.length === 1 && c.judgments[0]!.factVersion === 1)).toBe(true)
     expect(JSON.stringify(view)).not.toMatch(/score|percent/i)
+  })
+
+  it("cancel: stopping a re-check cancels only unsent questions, keeps history and frees the next run", async () => {
+    const session = await agency()
+    const businessId = await client(session, "TEST Example Stop", [
+      { slot: 1, predicate: "Monthly price", value: "$79", valueType: "CURRENCY", validFrom: "2026-01-01T00:00:00.000Z", question: PRICE_Q },
+    ])
+    const first = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: null, provider: "gemini", requestedModel: MODEL, samples: 3 })))
+    for (const { check } of await slotOf(businessId, first.id)) {
+      const obs = await answer(businessId, check.id, "Example Pro costs $79 per month.", "2026-10-01T10:00:00.000Z")
+      await judge(session, businessId, obs.id, "MATCHES")
+    }
+    // An accidental re-check: one question is already in flight, two wait.
+    const accidental = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: "FOLLOW_UP", provider: "gemini", requestedModel: MODEL, samples: 3 })))
+    const queued = await slotOf(businessId, accidental.id)
+    await pool.query(`UPDATE check_runs SET status='RUNNING', started_at=now(), heartbeat_at=now() WHERE id=$1`, [queued[0]!.check.id])
+    // Another agency cannot stop it.
+    const stranger = await agency()
+    expect(await refusal(r => r.cancelRun(stranger, randomUUID(), accidental.id))).toBe("RecordNotFound")
+    const result = await runFx(Effect.flatMap(RecordRepository, r => r.cancelRun(session, businessId, accidental.id)))
+    expect(result).toEqual({ cancelled: 2, stillRunning: 1 })
+    const rows = (await pool.query(`SELECT status, failure_class, completed_at FROM check_runs WHERE record_run_id=$1 ORDER BY record_sample`, [accidental.id])).rows
+    expect(rows.map(r => [r.status, r.failure_class])).toEqual([["RUNNING", null], ["FAILED", "CANCELLED"], ["FAILED", "CANCELLED"]])
+    // A worker cannot claim a cancelled check.
+    const claimable = (await pool.query(`SELECT count(*)::int AS n FROM check_runs WHERE record_run_id=$1 AND status='QUEUED'`, [accidental.id])).rows[0].n
+    expect(claimable).toBe(0)
+    // The in-flight question finishes and is kept; the run is partial, not cancelled.
+    await answer(businessId, queued[0]!.check.id, "Example Pro costs $79 per month.", "2026-10-08T10:00:00.000Z")
+    let view = operatorView(await snapshot(businessId))
+    expect(view.runs.find(r => r.id === accidental.id)!.status).toBe("PARTIALLY_SUCCEEDED")
+    expect(view.activeRun).toBe(false)
+
+    // A re-check stopped before anything started is CANCELLED: it is kept in
+    // history, is not compared, and does not lock the first check.
+    const second = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: "FOLLOW_UP", provider: "gemini", requestedModel: MODEL, samples: 3 })))
+    expect(await runFx(Effect.flatMap(RecordRepository, r => r.cancelRun(session, businessId, second.id)))).toEqual({ cancelled: 3, stillRunning: 0 })
+    view = operatorView(await snapshot(businessId))
+    expect(view.runs.find(r => r.id === second.id)!.status).toBe("CANCELLED")
+    expect(view.slots[0]!.latestFollowUpCheckIds).toEqual(queued.map(q => q.check.id))
+    expect(await refusal(r => r.cancelRun(session, businessId, second.id))).toBe("RunNotActive")
+    expect(await refusal(r => r.cancelRun(session, businessId, randomUUID()))).toBe("RunNotFound")
+  })
+
+  it("cancel: a first re-check cancelled before it started does not lock the first check", async () => {
+    const session = await agency()
+    const businessId = await client(session, "TEST Example Undo", [
+      { slot: 1, predicate: "Monthly price", value: "$79", valueType: "CURRENCY", validFrom: "2026-01-01T00:00:00.000Z", question: PRICE_Q },
+    ])
+    const first = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: null, provider: "gemini", requestedModel: MODEL, samples: 1 })))
+    for (const { check } of await slotOf(businessId, first.id)) await answer(businessId, check.id, "Example Pro costs $79 per month.", "2026-10-01T10:00:00.000Z")
+    const accidental = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: "FOLLOW_UP", provider: "gemini", requestedModel: MODEL, samples: 1 })))
+    await runFx(Effect.flatMap(RecordRepository, r => r.cancelRun(session, businessId, accidental.id)))
+    const redo = await runFx(Effect.flatMap(RecordRepository, r => r.startRun(session, businessId, { kind: "INITIAL", provider: "gemini", requestedModel: MODEL, samples: 1 })))
+    expect(redo.kind).toBe("INITIAL")
   })
 
   it("case B — agreement: matching evidence is kept, no issue is manufactured", async () => {

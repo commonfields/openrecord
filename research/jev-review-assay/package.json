@@ -1,0 +1,11 @@
+{
+  "name": "openrecord-jev-review-assay",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "test": "node --test assay.test.mjs",
+    "fixtures": "node run-fixtures.mjs"
+  },
+  "dependencies": { "@typesafe-ai/sdk": "0.7.0" }
+}

@@ -198,7 +198,7 @@ export function RepresentationsPage() {
               <CoverageMatrix businessId={id} rows={visible} />
             ) : view === "facts" ? (
               <>
-                <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_6.5rem_5.5rem] gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground md:grid">
+                <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_6.5rem_5.5rem] gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[0.6875rem] text-muted-foreground md:grid">
                   <span>Approved fact</span>
                   <span>Published value</span>
                   <span>Source</span>
@@ -222,7 +222,7 @@ export function RepresentationsPage() {
                         <span className="text-muted-foreground">{pathOf(url)}</span>
                       </a>
                       <ControlBadge control={list[0]!.source.control} />
-                      <span className="ml-auto text-[11px] text-muted-foreground">
+                      <span className="ml-auto text-[0.6875rem] text-muted-foreground">
                         {list.length} fact{list.length === 1 ? "" : "s"} watched
                       </span>
                     </div>
@@ -272,7 +272,7 @@ export function RepresentationsPage() {
                 )}
               </div>
             </Panel>
-            <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="px-1 text-[0.6875rem] leading-relaxed text-muted-foreground">
               A check fetches the configured URL with the safe collector and compares the extracted value with the approved one. A failed check never erases the last good observation.
             </p>
           </div>
@@ -292,13 +292,13 @@ function CoverageMatrix({ businessId, rows }: { businessId: string; rows: Repres
       <table className="w-full border-separate border-spacing-0 text-xs">
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 bg-card px-2 pb-2 text-left text-[11px] font-normal text-muted-foreground">Approved fact</th>
+            <th className="sticky left-0 z-10 bg-card px-2 pb-2 text-left text-[0.6875rem] font-normal text-muted-foreground">Approved fact</th>
             {sources.map((src) => (
               <th key={src.url} className="min-w-[10rem] px-2 pb-2 text-left align-bottom font-normal">
-                <a href={src.url} target="_blank" rel="noreferrer" className="block truncate text-[11px] font-medium text-foreground hover:underline">
+                <a href={src.url} target="_blank" rel="noreferrer" className="block truncate text-[0.6875rem] font-medium text-foreground hover:underline">
                   {domainOf(src.url)}
                 </a>
-                <span className="block truncate text-[11px] text-muted-foreground">
+                <span className="block truncate text-[0.6875rem] text-muted-foreground">
                   {pathOf(src.url)} · {src.control === "OWNED" ? "owned" : src.control === "THIRD_PARTY" ? "third party" : "unknown control"}
                 </span>
               </th>
@@ -310,7 +310,7 @@ function CoverageMatrix({ businessId, rows }: { businessId: string; rows: Repres
             <tr key={f.id}>
               <td className="sticky left-0 z-10 border-t bg-card px-2 py-2 align-middle">
                 <span className="block font-medium">{sentenceCase(f.predicate)}</span>
-                <span className="block text-[11px] text-muted-foreground">
+                <span className="block text-[0.6875rem] text-muted-foreground">
                   Approved {f.valueText} · v{f.version}
                 </span>
               </td>
@@ -318,7 +318,7 @@ function CoverageMatrix({ businessId, rows }: { businessId: string; rows: Repres
                 const r = cell.get(`${f.id}|${src.url}`)
                 if (!r)
                   return (
-                    <td key={src.url} className="border-t px-2 py-2 text-[11px] text-muted-foreground/60">
+                    <td key={src.url} className="border-t px-2 py-2 text-[0.6875rem] text-muted-foreground/60">
                       Not watched
                     </td>
                   )
@@ -346,7 +346,7 @@ function CoverageMatrix({ businessId, rows }: { businessId: string; rows: Repres
           ))}
         </tbody>
       </table>
-      <div className="mt-3 flex flex-wrap gap-4 px-2 text-[11px] text-muted-foreground">
+      <div className="mt-3 flex flex-wrap gap-4 px-2 text-[0.6875rem] text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-supported" />In sync</span>
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-wrong" />Drift, page differs from approved</span>
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-unknown" />Unknown, could not compare</span>
@@ -364,7 +364,7 @@ function ValuePair({ approved, observed, drift }: { approved: string; observed: 
       ) : (
         <span className={cn("truncate font-medium", drift && "text-wrong")}>{observed}</span>
       )}
-      {drift ? <span className="truncate text-[11px] text-muted-foreground">approved {approved}</span> : null}
+      {drift ? <span className="truncate text-[0.6875rem] text-muted-foreground">approved {approved}</span> : null}
     </span>
   )
 }
@@ -377,7 +377,7 @@ function RepresentationListRow({ businessId, row: r, checking, onCheck }: { busi
     <li className="group relative grid items-center gap-x-4 gap-y-1.5 px-4 py-2.5 text-xs transition-colors hover:bg-muted/40 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_6.5rem_5.5rem]">
       <Link to={href} className="min-w-0 after:absolute after:inset-0" aria-label={`Open representation for ${sentenceCase(r.fact.predicate)}`}>
         <span className="block truncate font-medium">{sentenceCase(r.fact.predicate)}</span>
-        <span className="block truncate text-[11px] text-muted-foreground">
+        <span className="block truncate text-[0.6875rem] text-muted-foreground">
           Approved {r.fact.valueText} · v{r.fact.version}
         </span>
       </Link>
@@ -388,12 +388,12 @@ function RepresentationListRow({ businessId, row: r, checking, onCheck }: { busi
           <span className="text-muted-foreground">Not observed yet</span>
         )}
         {failedLatest && !effectiveFailed ? (
-          <span className="flex items-center gap-1 text-[11px] text-partial">
+          <span className="flex items-center gap-1 text-[0.6875rem] text-partial">
             <TriangleAlertIcon className="size-3" />
             Latest check failed
           </span>
         ) : (
-          <span className="block truncate text-[11px] text-muted-foreground">{r.finding.reason}</span>
+          <span className="block truncate text-[0.6875rem] text-muted-foreground">{r.finding.reason}</span>
         )}
       </span>
       <span className="relative z-10 flex min-w-0 items-center gap-1.5">

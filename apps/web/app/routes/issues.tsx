@@ -224,7 +224,7 @@ export function IssuesPage() {
         )}
 
         {!loading && filtered && visible.length > 0 ? (
-          <div className="flex items-center justify-between border-t px-4 py-2 text-[11px] text-muted-foreground">
+          <div className="flex items-center justify-between border-t px-4 py-2 text-[0.6875rem] text-muted-foreground">
             <span>
               Showing {visible.length.toLocaleString()} of {issues.length.toLocaleString()} open answers
             </span>
@@ -408,16 +408,16 @@ function ClaimGroupRow({
             <span className="flex flex-wrap items-center gap-2">
               <IssueStateBadge state={g.state} />
               {g.state !== "NEEDS_REVIEW" && toReview.length > 0 ? (
-                <span className="text-[11px] font-medium text-review">{toReview.length} need review</span>
+                <span className="text-[0.6875rem] font-medium text-review">{toReview.length} need review</span>
               ) : null}
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[0.6875rem] text-muted-foreground">
                 · {g.providers.length} model{g.providers.length === 1 ? "" : "s"}
               </span>
             </span>
             <span className="block text-xs leading-snug font-medium group-hover/claim:underline group-hover/claim:decoration-muted-foreground/40 group-hover/claim:underline-offset-4">
               {g.text}
             </span>
-            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground">
               {g.facts.length > 0 ? (
                 g.facts.map((f) => (
                   <span key={f.id} className="inline-flex items-center gap-1">
@@ -460,7 +460,7 @@ function ClaimGroupRow({
               <Sparkline values={trend} cssVar={tone} className="w-12" />
               <span className="w-[4.5rem] text-right leading-tight">
                 <span className="block text-xs font-semibold tabular-nums">{g.occurrences.length}×</span>
-                <span className="block text-[11px] whitespace-nowrap text-muted-foreground">{relativeTime(g.lastSeen)}</span>
+                <span className="block text-[0.6875rem] whitespace-nowrap text-muted-foreground">{relativeTime(g.lastSeen)}</span>
               </span>
             </div>
           </TooltipTrigger>
@@ -516,7 +516,7 @@ function ClaimGroupRow({
             ))}
           </ul>
           {g.occurrences.length > shown.length ? (
-            <button type="button" onClick={() => setShowAll(true)} className="mt-2 text-[11px] font-medium text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={() => setShowAll(true)} className="mt-2 text-[0.6875rem] font-medium text-muted-foreground hover:text-foreground">
               Show all {g.occurrences.length} answers
             </button>
           ) : null}
@@ -560,7 +560,7 @@ function ModelStack({ providers, max = 5 }: { providers: string[]; max?: number 
             <ProviderLogo key={p} provider={p} className="size-5 ring-2 ring-card" />
           ))}
           {providers.length > max ? (
-            <span className="flex size-5 items-center justify-center rounded-[5px] bg-muted text-[9px] font-semibold text-muted-foreground ring-2 ring-card">
+            <span className="flex size-5 items-center justify-center rounded-[5px] bg-muted text-[0.5625rem] font-semibold text-muted-foreground ring-2 ring-card">
               +{providers.length - max}
             </span>
           ) : null}
@@ -592,7 +592,7 @@ function AnswersTable({
 
   return (
     <>
-      <div className="hidden grid-cols-[9rem_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_3rem_5rem] gap-x-4 border-b bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[9rem_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_3rem_5rem] gap-x-4 border-b bg-muted/30 px-4 py-1.5 text-[0.6875rem] text-muted-foreground lg:grid">
         <span>State</span>
         <span>AI said</span>
         <span>Your approved fact</span>
@@ -612,7 +612,7 @@ function AnswersTable({
               </span>
               <span className="min-w-0">
                 <span className="block truncate font-medium">{i.claim_text}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">
+                <span className="block truncate text-[0.6875rem] text-muted-foreground">
                   {i.question_prompt ? <>Asked &ldquo;{i.question_prompt}&rdquo;</> : "Question not recorded"}
                 </span>
               </span>
@@ -621,7 +621,7 @@ function AnswersTable({
                   i.facts.map((f) => (
                     <span key={f.id} className="mr-2">
                       <span className="text-muted-foreground">{sentenceCase(f.predicate)} </span>
-                      <span className="font-medium">{f.valueText}</span> <span className="text-[11px] text-muted-foreground tabular-nums">v{f.version}</span>
+                      <span className="font-medium">{f.valueText}</span> <span className="text-[0.6875rem] text-muted-foreground tabular-nums">v{f.version}</span>
                     </span>
                   ))
                 ) : (
@@ -647,7 +647,7 @@ function AnswersTable({
         ))}
       </ul>
       {pages > 1 ? (
-        <div className="flex items-center justify-between border-t px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between border-t px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span className="tabular-nums">
             {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, rows.length)} of {rows.length}
           </span>
@@ -670,7 +670,7 @@ function AnswersTable({
 
 function Count({ n }: { n: number | null }) {
   if (n === null) return null
-  return <span className="rounded-full bg-muted px-1.5 text-[11px] leading-4 font-medium text-muted-foreground tabular-nums in-data-[state=active]:bg-secondary">{n}</span>
+  return <span className="rounded-full bg-muted px-1.5 text-[0.6875rem] leading-4 font-medium text-muted-foreground tabular-nums in-data-[state=active]:bg-secondary">{n}</span>
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-")

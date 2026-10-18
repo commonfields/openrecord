@@ -97,7 +97,7 @@ function SeverityDot({ severity }: { severity: string }) {
   const s = severity.toUpperCase()
   const tone = s.includes("CRIT") || s.includes("HIGH") ? "bg-wrong" : s.includes("MED") ? "bg-partial" : "bg-muted-foreground/50"
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+    <span className="inline-flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
       <span aria-hidden className={cn("size-1.5 rounded-full", tone)} />
       {sentenceCase(severity)}
     </span>
@@ -274,7 +274,7 @@ export function SearchOverviewPage() {
                 ) : (
                   byCategory.map(([category, items]) => (
                     <div key={category} className="pb-2">
-                      <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[11px] text-muted-foreground">
+                      <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[0.6875rem] text-muted-foreground">
                         <span className="font-medium">{sentenceCase(category)}</span>
                         <span className="tabular-nums">{items.length}</span>
                       </div>
@@ -286,7 +286,7 @@ export function SearchOverviewPage() {
                         >
                           <span className="min-w-0">
                             <span className="block truncate font-medium">{findingKindLabel(f.findingKind)}</span>
-                            <span className="block truncate text-[11px] text-muted-foreground">
+                            <span className="block truncate text-[0.6875rem] text-muted-foreground">
                               {domainOf(f.url)}
                               {pathOf(f.url)}
                             </span>
@@ -332,17 +332,17 @@ export function SearchOverviewPage() {
                           <span className="bg-wrong" style={{ width: `${(latest.urlsFailed / (latest.urlsInspected + latest.urlsFailed)) * 100}%` }} />
                         </div>
                       ) : null}
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-[0.6875rem] text-muted-foreground">
                         Queued {relativeTime(latest.queuedAt)}
                         {latest.completedAt ? ` · finished ${formatDateTime(latest.completedAt)}` : ""}
                       </p>
                       {latest.state === "PARTIALLY_SUCCEEDED" ? (
-                        <p className="rounded-md bg-partial-soft px-2.5 py-2 text-[11px] text-partial">
+                        <p className="rounded-md bg-partial-soft px-2.5 py-2 text-[0.6875rem] text-partial">
                           Inspection incomplete: {latest.urlsFailed} {latest.urlsFailed === 1 ? "URL" : "URLs"} could not be inspected. Listed problems reflect what was reached, not the whole site.
                         </p>
                       ) : null}
                       {latest.state === "FAILED" ? (
-                        <p className="rounded-md bg-wrong-soft px-2.5 py-2 text-[11px] text-wrong">
+                        <p className="rounded-md bg-wrong-soft px-2.5 py-2 text-[0.6875rem] text-wrong">
                           Inspection failed: {latest.failureDetailSafe ?? latest.failureClass ?? "No evidence was collected."}
                         </p>
                       ) : null}
@@ -366,7 +366,7 @@ export function SearchOverviewPage() {
                         <Link to={`/businesses/${id}/search/sites/${siteId}/runs/${r.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted/50">
                           <RunBadge state={r.state} />
                           <span className="flex-1 text-muted-foreground tabular-nums">{r.findingsProduced} problems</span>
-                          <span className="text-[11px] text-muted-foreground">{relativeTime(r.queuedAt)}</span>
+                          <span className="text-[0.6875rem] text-muted-foreground">{relativeTime(r.queuedAt)}</span>
                         </Link>
                       </li>
                     ))}
@@ -391,7 +391,7 @@ function SearchConsoleCard({ status, loading }: { status: string | null; loading
       <PanelHeader title="Search Console" description="Kept separate from what OpenRecord observed">
         {loading ? null : status === "CONNECTED" ? <Badge variant="supported">Connected</Badge> : <Badge variant="secondary">Not connected</Badge>}
       </PanelHeader>
-      <p className="p-4 pt-2 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="p-4 pt-2 text-[0.6875rem] leading-relaxed text-muted-foreground">
         {status === "CONNECTED"
           ? "Connected to Google Search Console."
           : "OpenRecord reports what it observed on the site (indexable or blocked); it never claims Google indexed a page without Search Console evidence."}
@@ -459,7 +459,7 @@ function SearchOnboarding({ businessId, onCreated, gscStatus }: { businessId: st
                   {g.icon}
                   {g.title}
                 </div>
-                <ul className="space-y-0.5 pl-5 text-[11px] text-muted-foreground">
+                <ul className="space-y-0.5 pl-5 text-[0.6875rem] text-muted-foreground">
                   {g.kinds.map((k) => (
                     <li key={k}>{findingKindLabel(k)}</li>
                   ))}

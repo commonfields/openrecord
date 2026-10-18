@@ -107,27 +107,27 @@ export function RepresentationDetailPage() {
             <PanelHeader title="Current representation" description="Derived from the last successful observation. A failed check never erases it." />
             <div className="grid gap-px p-4 pt-3 md:grid-cols-2 md:gap-4">
               <div className="relative rounded-lg bg-muted/40 p-4">
-                <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                   <BookCheckIcon className="size-3.5" />
                   Approved value
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-xs font-semibold">{d.fact.valueText}</span>
-                  <span className="text-[11px] text-muted-foreground tabular-nums">v{d.fact.version}</span>
+                  <span className="text-[0.6875rem] text-muted-foreground tabular-nums">v{d.fact.version}</span>
                 </div>
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-[0.6875rem] text-muted-foreground">
                   {sentenceCase(d.fact.valueType)} · status {sentenceCase(d.fact.status).toLowerCase()}
                 </p>
               </div>
               <div className="relative rounded-lg bg-muted/40 p-4">
-                <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                   <GlobeIcon className="size-3.5" />
                   Published at {domainOf(d.source.url)}
                 </div>
                 <div className={cn("text-xs font-semibold", state === "DRIFT" && "text-wrong", !effective && "text-muted-foreground")}>
                   {effective?.extracted_value ?? "Not observed yet"}
                 </div>
-                <p className="mt-1 text-[11px] text-muted-foreground">{d.current?.finding.reason ?? "No observation yet."}</p>
+                <p className="mt-1 text-[0.6875rem] text-muted-foreground">{d.current?.finding.reason ?? "No observation yet."}</p>
               </div>
             </div>
             {failedLatest && latest ? (
@@ -170,15 +170,15 @@ export function RepresentationDetailPage() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs font-medium">{failed ? "Check failed" : (h.extracted_value ?? "—")}</span>
-                              {changed ? <span className="rounded-full bg-review-soft px-1.5 text-[10px] font-medium text-review shadow-(--badge-shadow)">Value changed from {older?.extracted_value}</span> : null}
+                              {changed ? <span className="rounded-full bg-review-soft px-1.5 text-[0.625rem] font-medium text-review shadow-(--badge-shadow)">Value changed from {older?.extracted_value}</span> : null}
                             </div>
-                            <p className="text-[11px] text-muted-foreground">
+                            <p className="text-[0.6875rem] text-muted-foreground">
                               {sentenceCase(h.collection_state)} · {h.reason}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 sm:justify-end">
                             <RepresentationStateBadge state={h.state} />
-                            <span className="w-28 text-right text-[11px] whitespace-nowrap text-muted-foreground tabular-nums">{formatDateTime(h.completed_at)}</span>
+                            <span className="w-28 text-right text-[0.6875rem] whitespace-nowrap text-muted-foreground tabular-nums">{formatDateTime(h.completed_at)}</span>
                           </div>
                         </div>
                       </li>
@@ -215,7 +215,7 @@ export function RepresentationDetailPage() {
                   ))}
                 </ul>
               )}
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
                 Citation shows that the source was referenced in this observation. It does not prove the source caused the answer.
               </p>
             </div>

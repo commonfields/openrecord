@@ -8,6 +8,7 @@ import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import type { Session } from "./auth.js"
 import { decodeRow, iso, type RowDecodeError } from "./row-codecs.js"
+import { RECORD_CANCELLED } from "./record-view.js"
 
 export const RECORD_SLOTS = [1, 2, 3] as const
 export type RecordSlot = (typeof RECORD_SLOTS)[number]
@@ -194,6 +195,8 @@ export class RecordRepository extends Context.Tag("RecordRepository")<RecordRepo
   readonly approveItem: (session: Session, businessId: string, itemId: string) => RecordEffect<void>
   readonly startRun: (session: Session, businessId: string, input: { kind: RecordRunKind | null; provider: string; requestedModel: string | null; samples?: number | null }) => RecordEffect<RecordRun>
   readonly judge: (session: Session, businessId: string, input: RecordJudgeInput) => RecordEffect<RecordJudgment>
+  /** Stops the run's checks that have not started. Checks already running finish normally. */
+  readonly cancelRun: (session: Session, businessId: string, runId: string) => RecordEffect<{ readonly cancelled: number; readonly stillRunning: number }>
   readonly recordAction: (session: Session, businessId: string, input: RecordActionInput) => RecordEffect<RecordAction>
   readonly share: (session: Session, businessId: string) => RecordEffect<RecordShare>
   readonly revokeShare: (session: Session, businessId: string) => RecordEffect<void>
@@ -330,7 +333,13 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
       yield* lockClient(businessId)
       const active = yield* sql`SELECT 1 FROM check_runs WHERE business_id = ${businessId} AND record_run_id IS NOT NULL AND status IN ('QUEUED','RUNNING') LIMIT 1`
       if (active.length > 0) return yield* refuse("RunInProgress")
-      const runs = (yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, sample_count, created_at FROM record_runs WHERE business_id = ${businessId} ORDER BY created_at, id`.pipe(
+      // A run cancelled before any check started never executed: it neither
+      // serves as a baseline nor locks one.
+      const runs = (yield* sql`SELECT id, kind, baseline_run_id, provider, requested_model, retrieval_required, sample_count, created_at FROM record_runs r
+        WHERE r.business_id = ${businessId}
+          AND NOT (EXISTS (SELECT 1 FROM check_runs c WHERE c.record_run_id = r.id)
+            AND NOT EXISTS (SELECT 1 FROM check_runs c WHERE c.record_run_id = r.id AND (c.status <> 'FAILED' OR c.failure_class IS DISTINCT FROM ${RECORD_CANCELLED})))
+        ORDER BY created_at, id`.pipe(
         Effect.flatMap(rows => Effect.forEach(rows, r => decodeRow(RunSchema, "record_runs", r).pipe(Effect.map(toRun))))))
       const baseline = [...runs].reverse().find(r => r.kind === "INITIAL") ?? null
       const kind: RecordRunKind = input.kind ?? (baseline === null ? "INITIAL" : "FOLLOW_UP")
@@ -399,6 +408,22 @@ export const RecordRepositoryLive = Layer.effect(RecordRepository, Effect.map(Pg
           ${item.fact.id}, ${item.fact.version}, ${session.userId})
         RETURNING id, decision, note, supersedes_id, claim_id, fact_id, fact_version, reviewed_by_user_id, reviewed_at`
       return toJudgment(yield* decodeRow(JudgmentSchema, "record_judgments", rows[0]))
+    }).pipe(sql.withTransaction),
+
+    cancelRun: (_session, businessId, runId) => Effect.gen(function*() {
+      yield* lockClient(businessId)
+      const run = yield* sql`SELECT 1 FROM record_runs WHERE id = ${runId} AND business_id = ${businessId}`
+      if (run.length !== 1) return yield* refuse("RunNotFound")
+      // Only checks still QUEUED are stopped. The worker's claim re-checks
+      // status = 'QUEUED' under a row lock, so a check is either claimed and
+      // finishes, or cancelled and never sent to a provider; never both.
+      const cancelled = yield* sql`UPDATE check_runs SET status = 'FAILED', completed_at = now(), failure_class = ${RECORD_CANCELLED},
+          failure_detail_safe = 'Cancelled by the operator before it started.'
+        WHERE record_run_id = ${runId} AND business_id = ${businessId} AND status = 'QUEUED' RETURNING id`
+      const running = yield* sql`SELECT count(*)::int AS n FROM check_runs WHERE record_run_id = ${runId} AND business_id = ${businessId} AND status = 'RUNNING'`
+      const stillRunning = Number(running[0]!["n"])
+      if (cancelled.length === 0 && stillRunning === 0) return yield* refuse("RunNotActive")
+      return { cancelled: cancelled.length, stillRunning }
     }).pipe(sql.withTransaction),
 
     recordAction: (session, businessId, input) => Effect.gen(function*() {

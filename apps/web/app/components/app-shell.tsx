@@ -205,7 +205,7 @@ function SidebarGroup({ label, children }: { label: string; children: ReactNode 
   const { collapsed } = useContext(SidebarStateContext)
   return (
     <div className="flex flex-col">
-      {collapsed ? null : <div className="px-2 pb-1 text-[10px] font-medium text-muted-foreground">{label}</div>}
+      {collapsed ? null : <div className="px-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{label}</div>}
       <div className="flex flex-col gap-px">{children}</div>
     </div>
   )
@@ -228,7 +228,7 @@ function FindButton() {
       {collapsed ? null : (
         <>
           <span className="flex-1 text-left">Find…</span>
-          <kbd className="shrink-0 whitespace-nowrap font-sans text-[9px] leading-none text-muted-foreground">F</kbd>
+          <kbd className="shrink-0 whitespace-nowrap font-sans text-[0.5625rem] leading-none text-muted-foreground">F</kbd>
         </>
       )}
     </button>
@@ -266,7 +266,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
         <>
           <span className="truncate">{label}</span>
           {count ? (
-            <span className="ml-auto rounded-full bg-wrong-soft px-1.5 py-px text-[10px] font-medium tabular-nums text-wrong shadow-(--badge-shadow)">{count}</span>
+            <span className="ml-auto rounded-full bg-wrong-soft px-1.5 py-px text-[0.625rem] font-medium tabular-nums text-wrong shadow-(--badge-shadow)">{count}</span>
           ) : null}
         </>
       )}
@@ -319,7 +319,7 @@ function BusinessSwitcher() {
               <>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-[0.6875rem] text-muted-foreground">
                     {activeBusiness ? "Business" : "Choose a business"}
                   </span>
                 </span>

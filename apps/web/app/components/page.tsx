@@ -145,7 +145,7 @@ export function StatStrip({ stats, className }: { stats: Stat[]; className?: str
               {s.delta ? <span className="shrink-0 text-xs font-medium tabular-nums">{s.delta}</span> : null}
             </span>
             <span className="mt-1.5 text-sm leading-none font-semibold tracking-tight tabular-nums">{s.value}</span>
-            {s.hint ? <span className="mt-1.5 w-full truncate text-[11px] text-muted-foreground">{s.hint}</span> : null}
+            {s.hint ? <span className="mt-1.5 w-full truncate text-[0.6875rem] text-muted-foreground">{s.hint}</span> : null}
           </>
         )
         const cell = cn(
@@ -200,7 +200,7 @@ export function EmptyState({
 export function Field({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) {
   return (
     <div className={cn("grid min-w-0 gap-0.5", className)}>
-      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dt className="text-[0.6875rem] text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-xs font-medium break-words">{children}</dd>
     </div>
   )
@@ -266,7 +266,7 @@ export function StepFlow({ steps, className }: { steps: FlowStep[]; className?: 
         >
           <span
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold [&_svg]:size-3.5",
+              "flex size-7 shrink-0 items-center justify-center rounded-lg text-[0.6875rem] font-semibold [&_svg]:size-3.5",
               s.state === "done" ? "bg-supported-soft text-supported" : s.state === "current" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
             )}
           >
@@ -277,7 +277,7 @@ export function StepFlow({ steps, className }: { steps: FlowStep[]; className?: 
               <span className={cn("text-xs font-medium", s.state === "todo" && "text-muted-foreground")}>{s.label}</span>
               {s.value !== undefined ? <span className="text-xs font-semibold tabular-nums">{s.value}</span> : null}
             </span>
-            {s.hint ? <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{s.hint}</span> : null}
+            {s.hint ? <span className="mt-0.5 block text-[0.6875rem] leading-snug text-muted-foreground">{s.hint}</span> : null}
           </span>
         </li>
       ))}

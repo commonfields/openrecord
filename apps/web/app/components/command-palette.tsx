@@ -140,7 +140,7 @@ function Palette({ close }: { close: () => void }) {
         id: `business:${b.id}`,
         group: "Switch business",
         label: b.name,
-        icon: <span className={`flex size-4 items-center justify-center rounded text-[9px] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
+        icon: <span className={`flex size-4 items-center justify-center rounded text-[0.5625rem] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
         run: go(`/businesses/${b.id}/overview`),
       })
     }
@@ -232,7 +232,7 @@ function Palette({ close }: { close: () => void }) {
         ) : (
           groups.map(([group, list]) => (
             <div key={group} className="pb-1">
-              <div className="px-2.5 pt-2 pb-1 text-[10px] font-medium text-muted-foreground">{group}</div>
+              <div className="px-2.5 pt-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{group}</div>
               {list.map((item) => (
                 <button
                   key={item.id}
@@ -256,7 +256,7 @@ function Palette({ close }: { close: () => void }) {
           ))
         )}
       </div>
-      <div className="flex items-center gap-3 border-t border-sidebar-border bg-sidebar-accent/40 px-4 py-2 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-3 border-t border-sidebar-border bg-sidebar-accent/40 px-4 py-2 text-[0.6875rem] text-muted-foreground">
         <span className="flex items-center gap-1">
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> move

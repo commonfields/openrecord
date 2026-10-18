@@ -94,7 +94,7 @@ export const recordApi = (withSession: WithSession) => {
     operatorSession((session: Session) => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext
       const p = params as Record<string, string>
-      for (const key of ["id", "itemId"]) if (p[key] !== undefined && decodeRouteId(p[key])._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" })
+      for (const key of ["id", "itemId", "runId"]) if (p[key] !== undefined && decodeRouteId(p[key])._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" })
       const business = yield* (yield* BusinessRepository).getScoped(session.accountId, p["id"]!)
       if (!business) return yield* json(404, { _tag: "ClientNotFound" })
       return yield* run(session, business.id, p)
@@ -151,6 +151,10 @@ export const recordApi = (withSession: WithSession) => {
       const run = yield* (yield* RecordRepository).startRun(session, businessId, { kind: body.kind ?? null, provider: surface.provider, requestedModel: surface.provider === "gemini" ? surface.model : null,
         samples: body.samples ?? null })
       return yield* json(200, { run })
+    }))),
+    HttpRouter.post("/api/record/clients/:id/runs/:runId/cancel", client((session, businessId, p) => Effect.gen(function*() {
+      const result = yield* (yield* RecordRepository).cancelRun(session, businessId, p["runId"]!)
+      return yield* json(200, result)
     }))),
     HttpRouter.post("/api/record/clients/:id/judgments", client((session, businessId) => Effect.gen(function*() {
       const body = decode(JudgeRequest, yield* readJson)

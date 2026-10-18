@@ -223,14 +223,14 @@ function ComparisonCard({ issue, reviewHref }: { issue: IssueDetail; reviewHref:
       <PanelHeader title="AI said vs Approved truth" description="The transcribed claim beside what the business stands behind" />
       <div className="grid md:grid-cols-2">
         <div className="relative border-b p-4 md:border-r md:border-b-0">
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <div className="mb-2 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
             <MessageSquareQuoteIcon className="size-3.5" />
             AI said
           </div>
           <p className="text-xs leading-relaxed font-medium">{issue.claim_text}</p>
         </div>
         <div className="relative p-4">
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <div className="mb-2 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
             <BookCheckIcon className="size-3.5" />
             Approved truth
           </div>
@@ -241,7 +241,7 @@ function ComparisonCard({ issue, reviewHref }: { issue: IssueDetail; reviewHref:
                   <dt className="text-xs text-muted-foreground">{sentenceCase(f.predicate)}</dt>
                   <dd className="flex flex-wrap items-baseline gap-x-2">
                     <span className="text-xs font-semibold">{f.valueText}</span>
-                    <span className="text-[11px] text-muted-foreground tabular-nums">v{f.version}</span>
+                    <span className="text-[0.6875rem] text-muted-foreground tabular-nums">v{f.version}</span>
                     {f.status !== "ACTIVE" ? <Badge variant="secondary">{sentenceCase(f.status)}</Badge> : null}
                   </dd>
                 </div>
@@ -255,7 +255,7 @@ function ComparisonCard({ issue, reviewHref }: { issue: IssueDetail; reviewHref:
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-muted/30 px-4 py-2.5">
-        <span className="text-[11px] font-medium text-muted-foreground">Reviewer decision</span>
+        <span className="text-[0.6875rem] font-medium text-muted-foreground">Reviewer decision</span>
         <VerdictBadge verdict={issue.verdict} />
         {issue.notes ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">&ldquo;{issue.notes}&rdquo;</span> : <span className="flex-1" />}
         <Button asChild variant={reviewed ? "ghost" : "default"} size="sm">
@@ -354,7 +354,7 @@ export function CitationCard({ businessId, citation: c }: { businessId: string; 
           Representation <span className="font-medium text-foreground">Not tracked</span> — OpenRecord does not observe this URL, so there is no finding for it.
         </p>
       )}
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
         The AI cited a source{c.tracked ? " that OpenRecord also observed" : ""}. Citation shows the source was referenced; it does not prove the source caused the
         answer.
       </p>
@@ -365,7 +365,7 @@ export function CitationCard({ businessId, citation: c }: { businessId: string; 
 function MiniStat({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="rounded-md bg-muted/50 px-3 py-2">
-      <div className="mb-1 text-[11px] text-muted-foreground">{label}</div>
+      <div className="mb-1 text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="text-xs font-medium">{children}</div>
     </div>
   )
@@ -393,7 +393,7 @@ function SameClaimCard({ businessId, items, search }: { businessId: string; item
         ))}
       </ul>
       {items.length > shown.length ? (
-        <button type="button" onClick={() => setAll(true)} className="border-t px-4 py-2 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={() => setAll(true)} className="border-t px-4 py-2 text-left text-[0.6875rem] font-medium text-muted-foreground hover:text-foreground">
           Show all {items.length}
         </button>
       ) : null}
@@ -449,7 +449,7 @@ function RecordedActionsCard({
                   <span className="min-w-0 text-xs font-medium break-words">{a.target}</span>
                   {a.supersedesId ? <span className="text-xs text-muted-foreground">superseded — history only</span> : null}
                 </div>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">{formatDateTime(a.performedAt)}</p>
+                <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">{formatDateTime(a.performedAt)}</p>
                 {a.notes ? <p className="mt-1 text-xs">{a.notes}</p> : null}
               </li>
             ))}
@@ -756,7 +756,7 @@ function IssueLoopSection({
               ))}
             </ol>
           )}
-          <p className="mt-4 border-t pt-3 text-[11px] leading-relaxed text-muted-foreground">New observations never rewrite earlier stages.</p>
+          <p className="mt-4 border-t pt-3 text-[0.6875rem] leading-relaxed text-muted-foreground">New observations never rewrite earlier stages.</p>
         </div>
       </Card>
 
@@ -804,7 +804,7 @@ function IssueLoopSection({
             {recheckPending ? <Spinner /> : <RefreshCwIcon />}
             {recheckPending ? "Requesting recheck…" : "Recheck AI"}
           </Button>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
             A recheck only adds a new observation for review; it changes no verdict and no recorded action. Every rechecked answer waits for a reviewer before it can
             be compared: unreviewed rechecks stay at Needs review.
           </p>
@@ -812,7 +812,7 @@ function IssueLoopSection({
       </Card>
 
       {source && source.bindingId === null ? (
-        <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="px-1 text-[0.6875rem] leading-relaxed text-muted-foreground">
           <ScanSearchIcon className="mr-1 inline size-3.5 align-[-2px]" />
           Verify source: this action is not linked to a tracked representation, so OpenRecord cannot verify the source automatically.
         </p>
@@ -914,7 +914,7 @@ function BeforeAfterCompare({ loop, loading }: { loop: IssueLoop | null; loading
           <>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{comparison.displayCopy}</Badge>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[0.6875rem] text-muted-foreground">
                 {sentenceCase(comparison.matchClassification)} · {sentenceCase(comparison.observedChange)} · {sentenceCase(comparison.outcome)}
               </span>
             </div>
@@ -935,7 +935,7 @@ function BeforeAfterCompare({ loop, loading }: { loop: IssueLoop | null; loading
                 ] as const
               ).map(([label, side]) => (
                 <div key={label} className="space-y-2 rounded-lg border p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[0.6875rem] text-muted-foreground">
                     <span className="font-semibold tracking-wide text-foreground uppercase">{label}</span>
                     <span>{formatDateTime(side.collectedAt)}</span>
                   </div>
@@ -948,7 +948,7 @@ function BeforeAfterCompare({ loop, loading }: { loop: IssueLoop | null; loading
                 </div>
               ))}
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-[0.6875rem] text-muted-foreground">
               Comparison is derived at read time. Causal attribution: unknown. OpenRecord observes what changed; it does not claim why.
             </p>
           </>
