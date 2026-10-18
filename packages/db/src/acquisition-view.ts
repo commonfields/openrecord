@@ -314,8 +314,11 @@ export type AcquisitionView = ReturnType<typeof acquisitionView>
  * authenticated operator document, never a public page. */
 export const acquisitionReport = (s: AcqSnapshot) => {
   const view = acquisitionView(s)
-  const set = s.sets.at(-1) ?? null
-  const periods = view.batches.filter(b => b.status !== "QUEUED" && b.status !== "RUNNING").map(b => {
+  const done = view.batches.filter(b => b.status !== "QUEUED" && b.status !== "RUNNING")
+  const set = s.sets.find(x => x.id === done.at(-1)?.setId) ?? s.sets.at(-1) ?? null
+  const measuredSetIds = new Set(done.map(b => b.setId))
+  const bases = new Set((done.length ? s.sets.filter(x => measuredSetIds.has(x.id)) : set ? [set] : []).map(x => x.basis))
+  const periods = done.map(b => {
     const own = view.checks.filter(c => c.batchId === b.id && c.eligible && c.judgment !== null)
     const pick = (pred: (c: DerivedCheck) => boolean, n: number) => own.filter(pred).slice(0, n)
     const representative = [
@@ -342,8 +345,8 @@ export const acquisitionReport = (s: AcqSnapshot) => {
     `Competitor appearances are exact-name detections (${DETECTOR_VERSION}), not human-reviewed, and are not market share.`,
     "Owned-domain citations use the source domain the provider reported for each grounding source. Redirect links were not followed, and whether a cited source supports the answer was not verified.",
     ...(failed ? [`${failed} of ${planned} planned samples failed. They remain in the attempt counts and are not retried selectively.`] : []),
-    ...(set?.basis === "PUBLIC_RESEARCH" ? [`Public research pilot: ${s.profile.name} is not an OpenRecord customer and did not authorize or review this measurement.`] : []),
-    ...(set?.basis === "FIXTURE" ? ["Fixture pilot: every figure comes from test fixtures."] : []),
+    ...(bases.has("PUBLIC_RESEARCH") ? [`Public research pilot: ${s.profile.name} is not an OpenRecord customer and did not authorize or review this measurement.`] : []),
+    ...(bases.has("FIXTURE") ? [bases.size === 1 ? "Fixture pilot: every figure comes from test fixtures." : "Fixture periods contain test fixtures."] : []),
     ...(changed.length ? [`The measurement configuration changed between periods (${changed.join(", ")}). Periods are shown separately and are not compared.`] : []),
     realReferrals.length
       ? "Referral totals come from a manually supplied GA4 export: a separate source and method. An AI-attributed session is not evidence that any sampled answer produced it."

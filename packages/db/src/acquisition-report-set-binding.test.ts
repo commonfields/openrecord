@@ -59,4 +59,35 @@ describe("agency report set binding", () => {
     expect(report.ownedDomains).toEqual(["supportly.test"])
     expect(report.competitors).toEqual(["HelpHub"])
   })
+  it("ignores a queued period when selecting the header", () => {
+    const batch = { ...BATCH, id: "queued-v2", setId: V2.id }
+    const queued: AcqCheck = { ...CHECK, id: "queued", batchId: batch.id, questionId: "q2", status: "QUEUED", observation: null, judgments: [] }
+    const result = acquisitionReport({ ...SNAPSHOT, batches: [BATCH, batch], checks: [CHECK, queued] })
+    expect(result.periods).toHaveLength(1)
+    expect(result.questionSet?.specDigest).toBe(V1.specDigest)
+  })
+  it("keeps disclosures for older periods when the latest period has a different basis", () => {
+    const fixture = { ...V2, basis: "FIXTURE" as const }
+    const batch = { ...BATCH, id: "batch-v2", setId: V2.id }
+    const check = { ...CHECK, id: "c2", batchId: batch.id, questionId: "q2" }
+    const result = acquisitionReport({ ...SNAPSHOT, sets: [V1, fixture], batches: [BATCH, batch], checks: [CHECK, check] })
+    expect(result.questionSet?.specDigest).toBe(V2.specDigest)
+    expect(result.limitations.some(l => l.startsWith("Public research pilot:"))).toBe(true)
+    expect(result.limitations).toContain("Fixture periods contain test fixtures.")
+    expect(result.limitations).not.toContain("Fixture pilot: every figure comes from test fixtures.")
+  })
+  it("uses the latest completed batch even when it remeasures an older set", () => {
+    const batch = { ...BATCH, id: "batch-v2", setId: V2.id }
+    const check = { ...CHECK, id: "c2", batchId: batch.id, questionId: "q2" }
+    const rerun = { ...BATCH, id: "rerun-v1" }
+    const result = acquisitionReport({ ...SNAPSHOT, batches: [BATCH, batch, rerun], checks: [CHECK, check, { ...CHECK, id: "c3", batchId: rerun.id }] })
+    expect(result.questionSet?.specDigest).toBe(V1.specDigest)
+    expect(result.periods.map(p => p.setVersion)).toEqual([1, 2, 1])
+  })
+  it("preserves the latest configured set before any period completes", () => {
+    const result = acquisitionReport({ ...SNAPSHOT, batches: [], checks: [] })
+    expect(result.questionSet?.specDigest).toBe(V2.specDigest)
+    expect(result.periods).toEqual([])
+    expect(acquisitionReport({ ...SNAPSHOT, sets: [], batches: [], checks: [] }).questionSet).toBeNull()
+  })
 })
