@@ -1,4 +1,5 @@
 import { agentOriginAllowed } from "./agent-origin.js"
+import { runtimeDiagnostic } from "./runtime.js"
 // Effect API server: HttpRouter + HttpServer over Node.
 // One typed contract (packages/contracts) shared with apps/web.
 // Typed failures map deterministically to HTTP statuses (see domain/errors).
@@ -370,6 +371,15 @@ export const requireSession = Effect.flatMap(HttpServerRequest.HttpServerRequest
 
 export const makeRouter = () => {
   const router = HttpRouter.empty
+  const runtimeApi = router.pipe(
+    HttpRouter.get("/api/dev/runtime", Effect.gen(function*() {
+      if (process.env["NODE_ENV"] === "production") return yield* json(404, { _tag: "NotFound" })
+      // Runtime metadata is operator-only, using the same session boundary as other private API reads.
+      yield* requireSession
+      return yield* json(200, yield* runtimeDiagnostic, { "Cache-Control": "no-store" })
+    }).pipe(Effect.catchAll(e => json(e._tag === "NotAuthenticated" ? 401 : 500,
+      { _tag: e._tag === "NotAuthenticated" ? "NotAuthenticated" : "RuntimeUnavailable" })))),
+  )
 
   const withSession = <A, E, R>(
     run: (session: Session) => Effect.Effect<A, E, R>,
@@ -1493,10 +1503,10 @@ export const makeRouter = () => {
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
   )
-  return HttpRouter.concat(
+  return HttpRouter.concat(runtimeApi, HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
     HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), agentProposalApi(withSession))),
-  )
+  ))
 }
 
 export const RepoLayers = {

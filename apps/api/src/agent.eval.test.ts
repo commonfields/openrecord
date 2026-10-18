@@ -11,6 +11,74 @@ const result = { summary: "One UNKNOWN judgment", citations: [{ kind: "issue", i
 const fixture = (responses: ModelResponse[]): AgentModel => () => Effect.succeed(responses.shift() ?? text("No more evidence"))
 
 describe("deterministic conversational contract evaluations (not live model accuracy)", () => {
+  it.each([
+    ["None recorded (`totalActive: 0`).", "None recorded."],
+    ["Unknown (`REFERRAL_DATA_UNAVAILABLE`, `SIGNUPS_NOT_MEASURED`).", "Unknown (referral data unavailable, signups not measured)."],
+    ["A private report draft awaits approval (`PROPOSED`).", "A private report draft awaits approval (proposed)."],
+    ["`APPROVED`, `EXECUTED`, `REJECTED`.", "approved, executed, rejected."],
+    ["There are `totalActive: 0` active proposals.", "There are active proposals."],
+    ["Review (`totalActive: 0`) before approval.", "Review before approval."],
+    ["Review (`totalActive: 0`, `PROPOSED`).", "Review (proposed)."],
+    ["Status: `EVIDENCE_UNAVAILABLE`.", "Status: evidence unavailable."],
+  ])("uses plain language for tool fields and codes: %s", async (raw, expected) => {
+    const receipt = { ...result, data: { totalActive: 0, status: "PROPOSED", limitation: "EVIDENCE_UNAVAILABLE" } }
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
+      model: fixture([tool("read_open_issues"), text(raw)]), dispatch: () => Effect.succeed(receipt) }))
+    expect(answer.reply).toBe(expected)
+    expect(answer.citations).toEqual(receipt.citations)
+  })
+  it("preserves ordinary counts, quotations, unknown code snippets and internal-looking prose", async () => {
+    const normal = 'There are 42 sessions and 0 signups. The website says "Open 24 hours". `opening: 24` is a website quote. UNKNOWN remains unknown.  Keep spacing.'
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
+      model: fixture([tool("read_open_issues"), text(normal)]),
+      dispatch: () => Effect.succeed({ ...result, data: { id: 42, totalActive: 0, text: "OPEN_24_HOURS" } }) }))
+    expect(answer.reply).toBe(normal)
+  })
+  it("rejects a reply made empty by removing internal annotations", async () => {
+    const answer = await Effect.runPromise(Effect.either(runConversation({ message: "Explain", history: [],
+      model: fixture([tool("read_open_issues"), text("(`totalActive: 0`)")]),
+      dispatch: () => Effect.succeed({ ...result, data: { totalActive: 0 } }) })))
+    expect(answer).toMatchObject({ _tag: "Left", left: { reason: "MALFORMED" } })
+  })
+  it("redacts proposal and nested tool identifiers only from prose, preserving structured evidence", async () => {
+    const receipt = { summary: "Re-check proposed; approval required", citations: [{ kind: "question", id: "question-fixture", text: "Opening hours" }],
+      data: { proposalId: "proposal-fixture", questionId: "question-fixture", observations: [{ id: "observation-fixture", issue_id: "issue-fixture", citationIds: ["citation-fixture"] }] } }
+    const before = JSON.stringify(receipt)
+    const answer = await Effect.runPromise(runConversation({ message: "Re-check opening hours", history: [],
+      model: fixture([tool("propose_check_run"), text("Opening hours (proposal-fixture) awaits approval. question-fixture observation-fixture issue-fixture citation-fixture.")]),
+      dispatch: () => Effect.succeed(receipt) }))
+    expect(answer.reply).toBe("Opening hours (the referenced item) awaits approval. the referenced item the referenced item the referenced item the referenced item.")
+    expect(answer.reply).not.toMatch(/\(\)| {2}/)
+    expect(answer.citations).toEqual(receipt.citations)
+    expect(answer.toolCalls).toEqual([{ tool: "propose_check_run", summary: receipt.summary }])
+    expect(JSON.stringify(receipt)).toBe(before)
+  })
+  it("redacts UUIDs of any case, with or without braces, even without tools", async () => {
+    const id = "abcdef01-2345-6789-abcd-ef0123456789"
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
+      model: fixture([text(`Review ${id}, {${id.toUpperCase()}}, ${id.toUpperCase()} and {${id}}.`)]), dispatch: () => Effect.succeed(result) }))
+    expect(answer.reply).toBe("Review the referenced item, the referenced item, the referenced item and the referenced item.")
+  })
+  it("also redacts compact variants of UUIDs returned by tools", async () => {
+    const id = "abcdef01-2345-6789-abcd-ef0123456789"
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
+      model: fixture([tool("propose_check_run"), text(`Review {${id.replaceAll("-", "").toUpperCase()}}.`)]),
+      dispatch: () => Effect.succeed({ ...result, data: { proposalId: id } }) }))
+    expect(answer.reply).toBe("Review the referenced item.")
+  })
+  it("removes whole internal URLs and link destinations while preserving ordinary quoted URLs", async () => {
+    const id = "abcdef01-2345-6789-abcd-ef0123456789"
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [], model: fixture([tool("read_issue"),
+      text(`See https://example.test/proposals/${id}. [Review opening hours](https://example.test/proposals/%7B${id}%7D). [ ](https://example.test/proposals/${id}). https://example.test/questions/question-fixture?view=details and https://docs.example.test/help?a=1&b=2#guide.`)]),
+      dispatch: () => Effect.succeed({ ...result, data: { questionId: "question-fixture" } }) }))
+    expect(answer.reply).toBe("See the referenced item. Review opening hours. the referenced item. the referenced item and https://docs.example.test/help?a=1&b=2#guide.")
+  })
+  it("preserves normal prose, spacing and URLs exactly, including substrings of tool IDs", async () => {
+    const normal = `Opening hours are UNKNOWN.\n\nReview the proposals at https://docs.example.test/help. Uncertainty  remains. Assets: https://docs.example.test/assets/${"a".repeat(64)}.png https://docs.example.test/assets/${"a".repeat(32)}.png`
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [], model: fixture([tool("read_issue"), text(normal)]),
+      dispatch: () => Effect.succeed({ ...result, data: { id: "proposal" } }) }))
+    expect(answer.reply).toBe(normal)
+  })
   it("passes bounded ordered context and server references to the next turn", async () => {
     const model: AgentModel = input => {
       expect(JSON.stringify(input.contents)).toContain("second question")

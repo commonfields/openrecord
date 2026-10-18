@@ -11,6 +11,7 @@
 // otherwise, like the other DB tests).
 import { describe, expect, it } from "vitest"
 import pg from "pg"
+import { readdirSync } from "node:fs"
 import { migrate } from "./migrate.js"
 
 const url = process.env["DATABASE_URL"] ?? process.env["TEST_DATABASE_URL"] ?? ""
@@ -29,6 +30,8 @@ run("migrate concurrency", () => {
         `SELECT tgname FROM pg_trigger WHERE tgname IN ('trg_observations_no_update','trg_raw_evidence_no_update','trg_human_judgments_no_update','trg_human_judgment_facts_no_update','trg_observation_citations_no_update')`,
       )
       expect(triggers.rows.length).toBe(5)
+      const applied = await pool.query<{ filename: string }>("SELECT filename FROM public.schema_migrations ORDER BY filename")
+      expect(applied.rows.map(row => row.filename)).toEqual(readdirSync(new URL("../migrations", import.meta.url)).filter(file => file.endsWith(".sql")).sort())
       // No leaked session locks: every migrate() released the batch lock.
       const locks = await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`)
       expect(Number(locks.rows[0]["n"])).toBe(0)

@@ -23,6 +23,8 @@ export async function migrate(databaseUrl: string): Promise<void> {
   // Blocks until any concurrent migrate() finishes its batch.
   await client.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_ADVISORY_LOCK])
   try {
+    // Diagnostic bookkeeping only: keep replay order, locking and SQL execution unchanged.
+    await client.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (filename TEXT PRIMARY KEY)`)
     // CITEXT is optional (may be missing in minimal images); tolerate it.
     try {
       await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`)
@@ -40,6 +42,7 @@ export async function migrate(databaseUrl: string): Promise<void> {
       // Graceful CITEXT fallback: plain TEXT UNIQUE keeps V1 working.
       sql = sql.replace("email CITEXT UNIQUE", "email TEXT UNIQUE")
       await client.query(sql)
+      await client.query(`INSERT INTO public.schema_migrations(filename) VALUES ($1) ON CONFLICT DO NOTHING`, [f])
       console.log(`applied ${f}`)
     }
   } finally {
