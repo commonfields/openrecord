@@ -173,3 +173,15 @@ test('CLI refuses live flags and preserves an existing report directory', async 
     assert.equal(await readFile(join(out, 'receipts.jsonl'), 'utf8'), first)
   } finally { await rm(temp, { recursive: true, force: true }) }
 })
+
+test('citation URL without preserved content abstains before SDK request or budget consumption', async () => {
+  const base = cases.find(c => c.input.id === 'citation-support').input
+  let consumed = 0
+  const receipt = await runOfflineCase({ ...base, sourceText: 'https://example.invalid/source', quotation: '' }, {},
+    { budget: { consume() { consumed++ } } })
+  assert.equal(receipt.status, 'SKIPPED')
+  assert.equal(receipt.errorClass, 'URL_IS_NOT_SOURCE_CONTENT')
+  assert.equal(receipt.sdkRequests, 0)
+  assert.equal(receipt.decision, null)
+  assert.equal(consumed, 0)
+})

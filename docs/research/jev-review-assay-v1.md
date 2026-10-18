@@ -9,9 +9,11 @@ CITATION CONTENT   = 0 citations with preserved source text
 RECOMMENDATION     = DEFER (no production integration)
 ```
 
-Every number in this document comes from **synthetic constructed cases** or
-**authored fixture responses**. None is a Jev result. None is a measure of
-real-world accuracy. The research package is
+Offline performance numbers come from synthetic constructed cases or
+authored fixture responses. Reference-label counts come from the private G2
+closeout and a read-only current-head query on 2026-10-18. A frozen reference
+corpus and provenance audit remain missing. None of these
+numbers measures live Jev accuracy. The research package is
 [`research/jev-review-assay`](../../research/jev-review-assay/README.md).
 
 ## 1. Question and boundary
@@ -65,7 +67,7 @@ judgment. Local preflight refuses inputs before transport in these cases:
 - The fact was not valid at observation time.
 - Retrieval was not observed.
 - The supporting span is not verbatim.
-- Task B source text is empty.
+- Task B source text is empty or consists only of an HTTP URL.
 - The input is malformed or too large.
 
 **Mapping to OpenRecord (`jev-openrecord-label-map-v1`) is explicit and many-to-one:**
@@ -114,7 +116,8 @@ Known limitations, kept visible in tests and results:
 1. **Units.** The observation is the receipt unit. The **fact** is the
    independent unit for inference. Repeated samples of one fact are
    correlated. Report observations, distinct facts, and distinct businesses.
-   The conservative effective n is the number of distinct facts; the optimistic
+   The fact count is a clustering proxy, not proof of independence between
+   facts from one business. Report the business count alongside it. The optimistic
    bound is the observation count. Intervals are reported at the observation
    level and fact-clustered.
 2. **Reference labels.** Labels must be genuine human `record_judgments` (the
@@ -277,6 +280,39 @@ after `npm ci`.
 
 ```sh
 npm ci --prefix research/jev-review-assay --ignore-scripts --no-audit --no-fund
-npm test --prefix research/jev-review-assay          # 41 tests
+npm test --prefix research/jev-review-assay          # 44 tests
 npm run fixtures --prefix research/jev-review-assay -- reports/new-run
 ```
+
+
+## 11. Offline safeguards in protocol v1.1
+
+The completion pass reuses commit `babd80e`. It adds no production imports,
+provider transport, or dependencies. No live holdout response exists, so these
+corrections precede empirical evaluation.
+
+- Split manifests bind sorted complete input rows, including evidence and
+  reference labels, as well as split membership. Evidence edits, label edits,
+  modified manifest fields, duplicate IDs, and invalid split fractions fail.
+  Validate the frozen manifest with `assertSplitIntegrity` before future
+  evaluation. Freeze canonical source rows before adding predictions or metrics.
+- Citation URL-only input abstains locally without consuming a request budget.
+  Preserved text still requires human verification of provenance and relevance.
+- Spending bounds require finite nonnegative prices and request fees, and safe
+  nonnegative integer token limits. Unknown values and overflow block execution.
+  The bound assumes the provider contract actually enforces those token limits.
+- Request plans reject missing, fractional, or negative counts. Zero planned
+  requests are valid for an empty eligible set. Mixed reported model identities
+  invalidate a run even if the changed model's decision failed validation.
+
+The committed `reports/offline-v2` remains the historical v1 artifact. New v1.1
+runs use a separate output directory. Their digests differ by design. The 44
+research tests include three new regression tests that fail on the prior code.
+The fixture runner retains 20 adapter cases and 225 authored pipeline responses;
+it makes zero provider requests. Neither synthetic holdouts nor authored oracle
+responses establish generalization, real-world calibration, or human time savings.
+
+The live checklist is a preparation aid, not an execution authorization system.
+No live executor exists here. A future executor needs separate review, a private
+immutable manifest covering source and label digests, model discovery receipts,
+explicit approval for that corpus and spend, token limits, and completion receipts.

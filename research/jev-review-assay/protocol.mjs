@@ -4,7 +4,7 @@
 // no network, database, credential, or production import.
 import { createHash } from 'node:crypto'
 
-export const PROTOCOL_VERSION = 'openrecord-jev-shadow-protocol-v1'
+export const PROTOCOL_VERSION = 'openrecord-jev-shadow-protocol-v1.1'
 const sha = s => createHash('sha256').update(s).digest('hex')
 const fail = errorClass => { throw Object.assign(new Error(errorClass), { errorClass }) }
 
@@ -14,8 +14,12 @@ const fail = errorClass => { throw Object.assign(new Error(errorClass), { errorC
 // holdout. Deterministic and independent of item order.
 export function groupedSplit(items, { salt, holdoutFraction = 1 / 3 } = {}) {
   if (typeof salt !== 'string' || !salt) fail('SPLIT_SALT_REQUIRED')
+  if (!Number.isFinite(holdoutFraction) || holdoutFraction <= 0 || holdoutFraction >= 1) fail('INVALID_HOLDOUT_FRACTION')
+  const idsSeen = new Set()
   const factOwner = new Map()
   for (const i of items) {
+    if (typeof i.id !== 'string' || !i.id || idsSeen.has(i.id)) fail('INVALID_OR_DUPLICATE_ITEM_ID')
+    idsSeen.add(i.id)
     if (!i.businessId || !i.factId) fail('SPLIT_GROUP_MISSING')
     const owner = factOwner.get(i.factId)
     if (owner && owner !== i.businessId) fail('FACT_SPANS_BUSINESSES')
@@ -28,6 +32,7 @@ export function groupedSplit(items, { salt, holdoutFraction = 1 / 3 } = {}) {
   const ids = set => items.filter(i => set.includes(i.businessId)).map(i => i.id).sort()
   const manifest = {
     protocol: PROTOCOL_VERSION, groupBy: 'businessId', salt, holdoutFraction, frozen: true,
+    itemsDigest: sha(JSON.stringify([...items].sort((a, b) => a.id.localeCompare(b.id)))),
     dev: { businesses: dev, items: ids(dev).length, digest: sha(JSON.stringify(ids(dev))) },
     holdout: { businesses: holdout, items: ids(holdout).length, digest: sha(JSON.stringify(ids(holdout))) },
   }
@@ -45,7 +50,8 @@ export function assertSplitIntegrity(manifest, items) {
   const overlap = manifest.dev.businesses.filter(b => manifest.holdout.businesses.includes(b))
   if (overlap.length) fail('SPLIT_OVERLAP')
   const recomputed = groupedSplit(items, { salt: manifest.salt, holdoutFraction: manifest.holdoutFraction })
-  if (recomputed.digest !== manifest.digest) fail('SPLIT_DRIFT')
+  const suppliedDigest = sha(JSON.stringify({ ...manifest, digest: undefined }))
+  if (suppliedDigest !== manifest.digest || recomputed.digest !== manifest.digest) fail('SPLIT_DRIFT')
   return true
 }
 
@@ -146,9 +152,12 @@ export function liveReadiness(checklist) {
 // prices block paid execution rather than defaulting to zero.
 export function spendingBound({ requests, maxInputTokensPerRequest, maxOutputTokensPerRequest, inputUsdPerMillion, outputUsdPerMillion, perRequestUsd = 0 }) {
   if (!Number.isSafeInteger(requests) || requests < 1) fail('INVALID_REQUEST_COUNT')
-  const prices = [inputUsdPerMillion, outputUsdPerMillion, maxOutputTokensPerRequest]
-  if (prices.some(p => typeof p !== 'number' || !Number.isFinite(p) || p < 0)) return { usd: null, status: 'COST_UNKNOWN_BLOCKS_PAID_EXECUTION' }
+  const limits = [maxInputTokensPerRequest, maxOutputTokensPerRequest]
+  const prices = [inputUsdPerMillion, outputUsdPerMillion, perRequestUsd]
+  if (limits.some(p => !Number.isSafeInteger(p) || p < 0)
+    || prices.some(p => typeof p !== 'number' || !Number.isFinite(p) || p < 0)) return { usd: null, status: 'COST_UNKNOWN_BLOCKS_PAID_EXECUTION' }
   const usd = requests * ((maxInputTokensPerRequest * inputUsdPerMillion + maxOutputTokensPerRequest * outputUsdPerMillion) / 1e6 + perRequestUsd)
+  if (!Number.isFinite(usd)) return { usd: null, status: 'COST_UNKNOWN_BLOCKS_PAID_EXECUTION' }
   return { usd, status: 'BOUNDED' }
 }
 
@@ -157,6 +166,7 @@ export function spendingBound({ requests, maxInputTokensPerRequest, maxOutputTok
 export class RequestBudget {
   constructor(maxRequests, plannedRequests) {
     if (!Number.isSafeInteger(maxRequests) || maxRequests < 1) fail('INVALID_REQUEST_BUDGET')
+    if (!Number.isSafeInteger(plannedRequests) || plannedRequests < 0) fail('INVALID_REQUEST_PLAN')
     if (plannedRequests > maxRequests) fail('INSUFFICIENT_REQUEST_BUDGET')
     this.max = maxRequests; this.used = 0
   }
@@ -166,6 +176,6 @@ export class RequestBudget {
 // Every receipt in a run must report the same provider model; otherwise the
 // run is invalid (historical RUN_INVALIDATED_MODEL_DRIFT rule).
 export function driftCheck(receipts) {
-  const models = [...new Set(receipts.filter(r => r.status === 'OK').map(r => r.observedModel))]
+  const models = [...new Set(receipts.map(r => r.observedModel).filter(m => typeof m === 'string' && m.trim()))]
   return { observedModels: models, verdict: models.length > 1 ? 'RUN_INVALIDATED_MODEL_DRIFT' : 'NO_DRIFT' }
 }

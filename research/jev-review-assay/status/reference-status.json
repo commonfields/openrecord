@@ -1,7 +1,7 @@
 {
   "description": "Counts-only status of genuine human reference labels available to the Jev shadow assay. Contains no business names, identifiers, answers, facts, URLs, or evidence. Source material stays in private validation storage.",
   "asOf": "2026-10-18",
-  "basis": "Last verified G2 closeout count (2026-10-17). A parallel reconciliation may change these counts; re-run the readiness gate when it lands.",
+  "basis": "G2 read-only compute-findings query on 2026-10-18 confirms 15 current judgment heads, all MATCHES, and 60 unreviewed observations; the closeout aggregate agrees. The db-obs export predates review. No genuine labels are loaded by the offline fixture runner; a frozen evaluation corpus and provenance audit remain missing.",
   "taskA": {
     "task": "A",
     "provenance": "HUMAN",

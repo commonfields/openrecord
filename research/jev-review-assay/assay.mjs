@@ -51,6 +51,7 @@ export function prepare(input) {
   } else {
     if (!text(input.claim) || typeof input.sourceText !== 'string' || typeof input.quotation !== 'string') fail('INVALID_INPUT')
     if (!input.sourceText.trim()) return { blocked: 'SOURCE_TEXT_MISSING' }
+    if (/^https?:\/\/\S+$/i.test(input.sourceText.trim())) return { blocked: 'URL_IS_NOT_SOURCE_CONTENT' }
     if (input.quotation && !input.sourceText.includes(input.quotation)) return { blocked: 'EXACT_QUOTE_NOT_FOUND' }
     state = { claim: input.claim, sourceText: input.sourceText, context: input.context }
   }

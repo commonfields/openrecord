@@ -179,3 +179,36 @@ test('every corpus row is labelled synthetic and uses fictional names', () => {
     assert.ok(r.citationUrl.endsWith('.invalid/source'))
   }
 })
+
+test('frozen split rejects changed evidence, labels, manifest fields, and duplicate IDs', () => {
+  const rows = factCentricA()
+  const manifest = groupedSplit(rows, { salt: 'integrity' })
+  for (const patch of [{ reference: 'CONTRADICTS' }, { input: { answer: 'changed evidence' } }]) {
+    assert.throws(() => assertSplitIntegrity(manifest, [{ ...rows[0], ...patch }, ...rows.slice(1)]), /SPLIT_DRIFT/)
+  }
+  const changed = structuredClone(manifest)
+  changed.dev.businesses.pop()
+  assert.throws(() => assertSplitIntegrity(changed, rows), /SPLIT_DRIFT/)
+  assert.throws(() => groupedSplit([...rows, rows[0]], { salt: 's' }), /INVALID_OR_DUPLICATE_ITEM_ID/)
+  for (const holdoutFraction of [0, 1, -1, NaN, Infinity]) {
+    assert.throws(() => groupedSplit(rows, { salt: 's', holdoutFraction }), /INVALID_HOLDOUT_FRACTION/)
+  }
+})
+
+test('spending and request plans fail closed on unknown, negative, and overflowing limits', () => {
+  const plan = { requests: 2, maxInputTokensPerRequest: 1000, maxOutputTokensPerRequest: 10,
+    inputUsdPerMillion: 2, outputUsdPerMillion: 4, perRequestUsd: 0 }
+  for (const key of ['maxInputTokensPerRequest', 'maxOutputTokensPerRequest', 'perRequestUsd']) {
+    for (const value of [undefined, null, -1, NaN, Infinity]) {
+      // Omitted request fees explicitly default to zero; token limits never do.
+      if (key === 'perRequestUsd' && value === undefined) continue
+      assert.equal(spendingBound({ ...plan, [key]: value }).status, 'COST_UNKNOWN_BLOCKS_PAID_EXECUTION')
+    }
+  }
+  assert.equal(spendingBound({ ...plan, inputUsdPerMillion: Number.MAX_VALUE }).usd, null)
+  for (const count of [undefined, null, -1, NaN, 0.5]) {
+    assert.throws(() => new RequestBudget(5, count), /INVALID_REQUEST_PLAN/)
+  }
+  assert.equal(driftCheck([{ status: 'OK', observedModel: 'pinned' },
+    { status: 'ERROR', observedModel: 'changed' }]).verdict, 'RUN_INVALIDATED_MODEL_DRIFT')
+})
