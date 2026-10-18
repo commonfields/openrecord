@@ -1,29 +1,22 @@
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, MicIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, MicIcon, SquareIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useChrome } from "@/components/app-shell"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { modKey } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
-import { Agent } from "@/lib/api"
+import { Link } from "react-router"
+import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentProposal } from "@/lib/api"
+import { agentEvidencePath } from "@/lib/agent-evidence"
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
-type Attachment = { id: string; file: File; previewUrl: string | null }
-type Message = {
-  id: string
-  role: "user" | "agent"
-  text: string
-  attachments: Array<{ name: string; size: number }>
-  tools?: Array<{ tool: string; summary: string }>
-  pending?: boolean
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean }
+const errorText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
+  ? "The assistant is not configured. Ask your administrator to enable external processing and set the agent model and key."
+  : e instanceof ApiError && e.status === 409 ? "This conversation changed in another tab. Reload before continuing."
+  : "The assistant could not complete this request. A draft proposal may have been saved. Review proposals before retrying."
 
 let nextId = 0
 const uid = () => `m${Date.now()}-${nextId++}`
@@ -46,7 +39,11 @@ function createRecognition(): Recognition | null {
   return Ctor ? new Ctor() : null
 }
 
-export function AgentChat({
+export function AgentChat(props: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+  return <ScopedAgentChat key={props.businessId} {...props} />
+}
+
+function ScopedAgentChat({
   businessId,
   businessName,
   onConversationChange,
@@ -56,6 +53,13 @@ export function AgentChat({
   onConversationChange: (active: boolean) => void
 }) {
   const [messages, setMessages] = useState<Message[]>([])
+  const [conversationId, setConversationId] = useState<string | undefined>()
+  const [revision, setRevision] = useState(0)
+  const [ready, setReady] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const pending = useRef(false)
+  const mounted = useRef(true)
+  const [proposals, setProposals] = useState<AgentProposal[]>([])
   const [failed, setFailed] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const active = messages.length > 0
@@ -72,33 +76,48 @@ export function AgentChat({
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [messages])
 
-  const send = (text: string, attachments: Attachment[]) => {
-    const user: Message = {
-      id: uid(),
-      role: "user",
-      text,
-      attachments: attachments.map((a) => ({ name: a.file.name, size: a.file.size })),
-    }
-    const thinking: Message = { id: uid(), role: "agent", text: "Reading your workspace evidence…", attachments: [], pending: true }
-    setMessages((m) => [...m, user, thinking])
-    setFailed(null)
-    // Read-only V1: the server answers from account-scoped evidence and
-    // cites it. Writes are never performed; the reply plans them with UI links.
-    void Agent.send(businessId, text)
-      .then((r) => {
-        const answer: Message = {
-          id: uid(),
-          role: "agent",
-          text: r.reply,
-          attachments: [],
-          tools: r.toolCalls.map((t) => ({ tool: t.tool, summary: t.summary })),
+  useEffect(() => {
+    mounted.current = true
+    let live = true
+    void Agent.load(businessId).then(r => {
+      if (!live) return
+      if (r.conversation) {
+        setConversationId(r.conversation.id); setRevision(r.conversation.revision)
+        setMessages(r.conversation.messages.map(m => ({ ...m, id: uid(), ...(m.toolCalls ? { tools: m.toolCalls } : {}) })))
+      }
+      setReady(true)
+    }).catch(e => { if (live) setFailed(errorText(e)) })
+    void Agent.proposals(businessId).then(r => { if (live) setProposals(r.proposals) }).catch(() => {})
+    return () => { live = false; mounted.current = false }
+  }, [businessId])
+
+  const send = (text: string) => {
+    if (pending.current || !ready) return
+    pending.current = true; setBusy(true); setFailed(null)
+    setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Investigating stored evidence…", pending: true }])
+    void Agent.send(businessId, text, crypto.randomUUID(), revision, conversationId).then(r => {
+      if (!mounted.current) return
+      setConversationId(r.conversationId); setRevision(r.revision)
+      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations }])
+      void Agent.proposals(businessId).then(p => { if (mounted.current) setProposals(p.proposals) }).catch(() => {})
+    }).catch((e: unknown) => {
+      if (!mounted.current) return
+      setMessages(m => m.slice(0, -1)); setFailed(errorText(e))
+      void Agent.proposals(businessId).then(p => { if (mounted.current) setProposals(p.proposals) }).catch(() => {})
+      void Agent.load(businessId).then(r => {
+        if (mounted.current && r.conversation && r.conversation.revision > revision) {
+          setConversationId(r.conversation.id); setRevision(r.conversation.revision)
+          setMessages(r.conversation.messages.map(m => ({ ...m, id: uid(), ...(m.toolCalls ? { tools: m.toolCalls } : {}) })))
         }
-        setMessages((m) => [...m.slice(0, -1), answer])
-      })
-      .catch((err: unknown) => {
-        setMessages((m) => m.slice(0, -1))
-        setFailed(err instanceof Error ? err.message : "The agent could not answer right now.")
-      })
+      }).catch(() => {})
+    }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
+  }
+  const clear = () => {
+    if (pending.current) return
+    pending.current = true; setBusy(true)
+    void Agent.clear(businessId).then(() => {
+      if (mounted.current) { setMessages([]); setConversationId(undefined); setRevision(0); setFailed(null); setReady(true) }
+    }).catch(e => { if (mounted.current) setFailed(errorText(e)) }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
   }
 
   if (!active) {
@@ -108,7 +127,9 @@ export function AgentChat({
           <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
             What should we look into for {businessName}?
           </h1>
-          <Composer onSend={send} placeholder={`Ask anything about ${businessName}`} />
+          {failed ? <p role="alert" className="text-xs text-wrong">{failed}</p> : null}
+          <p className="text-center text-xs text-muted-foreground">Private conversation for {businessName}. Attachments are unavailable.</p>
+          <Composer onSend={send} disabled={!ready || busy} placeholder={`Ask about stored evidence for ${businessName}`} />
         </div>
       </div>
     )
@@ -116,22 +137,12 @@ export function AgentChat({
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-      <ol className="flex-1 space-y-3 pb-8">
+      <div className="mb-4 flex items-center justify-between gap-3 text-xs"><span>Investigating {businessName}</span><Button variant="ghost" size="sm" disabled={busy} onClick={clear}>Delete conversation</Button></div>
+      <ol aria-live="polite" className="flex-1 space-y-3 pb-8">
         {messages.map((m) => (
           <li key={m.id} className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
             {m.role === "user" ? (
               <>
-                {m.attachments.length > 0 ? (
-                  <div className="flex max-w-[80%] flex-wrap justify-end gap-2">
-                    {m.attachments.map((a, i) => (
-                      <span key={i} className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-xs">
-                        <FileTextIcon className="size-3.5 text-muted-foreground" />
-                        <span className="max-w-40 truncate">{a.name}</span>
-                        <span className="text-muted-foreground">{formatSize(a.size)}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
                 {m.text ? (
                   <p className="max-w-[80%] rounded-2xl bg-muted px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap">{m.text}</p>
                 ) : null}
@@ -139,8 +150,12 @@ export function AgentChat({
             ) : (
               <div className="max-w-[90%] space-y-1.5">
                 <p className={cn("text-xs leading-relaxed whitespace-pre-wrap text-foreground/80", m.pending && "animate-pulse")}>{m.text}</p>
+                {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
+                  const path = agentEvidencePath(businessId, c)
+                  return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link> : <span>Evidence unavailable</span>}</li>
+                })}</ul> : null}
                 {m.tools && m.tools.length > 0 ? (
-                  <p className="text-xs text-muted-foreground">Tools: {m.tools.map((t) => t.tool).join(" · ")}</p>
+                  <p className="text-xs text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
                 ) : null}
               </div>
             )}
@@ -148,11 +163,12 @@ export function AgentChat({
           </li>
         ))}
       </ol>
-      {failed ? <p className="pb-2 text-xs text-wrong">{failed}</p> : null}
+      {proposals.filter(p => p.status === "PROPOSED").map(p => <CheckProposal key={p.id} businessId={businessId} businessName={businessName} proposal={p} onDone={() => void Agent.proposals(businessId).then(r => setProposals(r.proposals))} />)}
+      {failed ? <p role="alert" className="pb-2 text-xs text-wrong">{failed}</p> : null}
       <div ref={endRef} />
 
       <div className="sticky bottom-0 z-10 -mx-2 bg-gradient-to-t from-background from-70% to-transparent px-2 pt-6 pb-1">
-        <Composer onSend={send} placeholder="Reply to the agent" autoFocus />
+        <Composer onSend={send} disabled={busy || !ready} placeholder="Reply to the agent" autoFocus />
       </div>
     </div>
   )
@@ -189,52 +205,31 @@ function Composer({
   onSend,
   placeholder,
   autoFocus,
+  disabled,
 }: {
-  onSend: (text: string, attachments: Attachment[]) => void
+  onSend: (text: string) => void
+  disabled: boolean
   placeholder: string
   autoFocus?: boolean
 }) {
   const { preferences } = usePreferences()
   const [text, setText] = useState("")
-  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [listening, setListening] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<Recognition | null>(null)
   const baseTextRef = useRef("")
 
   useEffect(() => () => recognitionRef.current?.stop(), [])
 
-  const canSend = text.trim().length > 0 || attachments.length > 0
+  const canSend = !disabled && text.trim().length > 0 && text.trim().length <= 4000
 
   const submit = () => {
     if (!canSend) return
     recognitionRef.current?.stop()
-    onSend(text.trim(), attachments)
-    for (const a of attachments) if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+    onSend(text.trim())
     setText("")
-    setAttachments([])
     textRef.current?.focus()
   }
-
-  const addFiles = (files: FileList | File[] | null) => {
-    if (!files) return
-    const next = Array.from(files).map((file) => ({
-      id: uid(),
-      file,
-      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-    }))
-    if (next.length) setAttachments((a) => [...a, ...next])
-    textRef.current?.focus()
-  }
-
-  const removeAttachment = (id: string) =>
-    setAttachments((list) => {
-      const gone = list.find((a) => a.id === id)
-      if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl)
-      return list.filter((a) => a.id !== id)
-    })
 
   const toggleMic = () => {
     if (listening) {
@@ -278,58 +273,10 @@ function Composer({
         // The whole box behaves like the input: clicking padding focuses it.
         if (e.target === e.currentTarget) textRef.current?.focus()
       }}
-      onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes("Files")) setDragging(true)
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        setDragging(false)
-        addFiles(e.dataTransfer.files)
-      }}
-      className={cn(
-        "relative cursor-text rounded-3xl border border-border bg-background shadow-(--float-shadow) transition-shadow duration-200",
-        "focus-within:shadow-(--float-shadow-strong)",
-        dragging && "shadow-(--float-shadow-strong)",
-      )}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") }}
+      className="relative cursor-text rounded-3xl border border-border bg-background shadow-(--float-shadow)"
     >
-      {dragging ? (
-        <div className="pointer-events-none absolute inset-1.5 z-10 flex items-center justify-center rounded-[1.25rem] border border-dashed border-foreground/20 bg-background/90 text-xs text-muted-foreground">
-          Drop files to attach
-        </div>
-      ) : null}
-
-      {attachments.length > 0 ? (
-        <div className="flex flex-wrap gap-2 px-4 pt-4">
-          {attachments.map((a) => (
-            <div key={a.id} className="relative flex items-center gap-2 rounded-xl border bg-muted/40 py-1.5 pr-8 pl-1.5">
-              {a.previewUrl ? (
-                <img src={a.previewUrl} alt="" className="size-8 rounded-lg object-cover" />
-              ) : (
-                <span className="flex size-8 items-center justify-center rounded-lg bg-background text-muted-foreground">
-                  <FileTextIcon className="size-4" />
-                </span>
-              )}
-              <span className="grid">
-                <span className="max-w-40 truncate text-xs font-medium">{a.file.name}</span>
-                <span className="text-xs text-muted-foreground">{formatSize(a.file.size)}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => removeAttachment(a.id)}
-                aria-label={`Remove ${a.file.name}`}
-                className="absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-background hover:text-foreground"
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       <label htmlFor="agent-input" className="sr-only">
         Message the agent
       </label>
@@ -340,13 +287,9 @@ function Composer({
         rows={1}
         value={text}
         onChange={(e) => setText(e.currentTarget.value)}
-        onPaste={(e) => {
-          const files = Array.from(e.clipboardData.files)
-          if (files.length) {
-            e.preventDefault()
-            addFiles(files)
-          }
-        }}
+        disabled={disabled}
+        maxLength={4000}
+        onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") } }}
         onKeyDown={(e) => {
           const sendCombo = preferences.enterToSend ? !e.shiftKey && !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey
           if (e.key === "Enter" && sendCombo && !e.nativeEvent.isComposing) {
@@ -361,32 +304,7 @@ function Composer({
       />
 
       <div className="flex items-center gap-1 px-3 pb-3">
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          className="sr-only"
-          tabIndex={-1}
-          onChange={(e) => {
-            addFiles(e.currentTarget.files)
-            e.currentTarget.value = ""
-          }}
-        />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="rounded-full text-muted-foreground"
-              onClick={() => fileRef.current?.click()}
-              aria-label="Attach files"
-            >
-              <PaperclipIcon />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Attach files, or drop or paste them here</TooltipContent>
-        </Tooltip>
+        <span className="text-xs text-muted-foreground">Text only</span>
         {preferences.voiceInput ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -436,4 +354,33 @@ function Composer({
       </div>
     </form>
   )
+}
+
+function CheckProposal({ businessId, businessName, proposal, onDone }: { businessId: string; businessName: string; proposal: AgentProposal; onDone: () => void }) {
+  const [models, setModels] = useState<readonly string[]>([])
+  const [model, setModel] = useState("")
+  const [prompt, setPrompt] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    void Providers.list().then(r => { if (live) setModels(r.providers.find(p => p.id === "9router" && p.enabled)?.models ?? []) }).catch(() => {})
+    void Questions.list(businessId).then(r => { if (live) setPrompt(r.questions.find(q => q.id === proposal.questionId)?.prompt ?? null) }).catch(() => {})
+    return () => { live = false }
+  }, [businessId, proposal.questionId])
+  const decide = async (approve: boolean) => {
+    setWorking(true); setError(null)
+    try { if (approve) await Agent.approve(businessId, proposal.id, model); else await Agent.reject(businessId, proposal.id); onDone() }
+    catch { setError("The proposal could not be updated. Reload its current status before trying again.") }
+    finally { setWorking(false) }
+  }
+  return <section className="mb-3 space-y-2 rounded-xl border p-4 text-xs" aria-label="Re-check proposal">
+    <p className="font-medium">Proposed re-check for {businessName}</p>
+    <p>{prompt ?? "Question unavailable"}</p><p>{proposal.message}</p>
+    <p>Approval queues one external measurement call using 9Router and the exact model you select. Estimated cost is unavailable; provider charges may apply. No fact or judgment is approved.</p>
+    <Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Measurement model"><SelectValue placeholder="Choose a measurement model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+    {!models.length ? <p>No supported measurement model is configured. This proposal cannot run here.</p> : null}
+    <div className="flex gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    {error ? <p role="alert">{error}</p> : null}
+  </section>
 }

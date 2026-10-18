@@ -1,7 +1,9 @@
+import { agentOriginAllowed } from "./agent-origin.js"
 // Agent proposal HTTP surface: human-gated execution of agent-suggested writes.
 // Creation records intent and never executes; approval executes exactly once
 // with the approver's session attribution; rejection decides without executing.
 // Unknown and foreign ids both read as 404 without leaking which.
+import { loadProviderCatalog } from "./provider-catalog.js"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import type { SqlError } from "@effect/sql/SqlError"
 import { Effect, Schema } from "effect"
@@ -51,6 +53,8 @@ export const agentProposalApi = (withSession: WithSession) => {
   const scoped = <E, R>(run: (s: Session, businessId: string, p: Record<string, string>) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
     withSession((session: Session) =>
       Effect.gen(function*() {
+        const request = yield* HttpServerRequest.HttpServerRequest
+        if (request.method !== "GET" && !(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
         const { params } = yield* HttpRouter.RouteContext
         const p = params as Record<string, string>
         if (decodeRouteId(p["id"]!)._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" })
@@ -98,6 +102,11 @@ export const agentProposalApi = (withSession: WithSession) => {
         Effect.gen(function*() {
           const body = decode(ApproveAgentProposalRequest, yield* readJson)
           if (!body) return yield* json(422, { _tag: "InvalidRequest" })
+          if (body.provider === "9router") {
+            const catalog = yield* loadProviderCatalog(false, false)
+            const provider = catalog.providers.find(p => p.id === "9router" && p.enabled)
+            if (!body.requestedModel || !provider?.models.includes(body.requestedModel)) return yield* json(422, { _tag: "AgentProposalRefused", reason: "ModelUnavailable" })
+          }
           const { proposal, checkRunId } = yield* (yield* AgentProposalRepository).approve(
             session.accountId,
             businessId,

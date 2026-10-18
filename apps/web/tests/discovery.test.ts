@@ -1,3 +1,4 @@
+import { EvidenceRoutePatterns } from "../app/lib/route-patterns"
 import { describe, expect, it } from "vitest"
 
 // Representation Discovery V1 UX contracts, asserted without a browser:
@@ -35,7 +36,8 @@ describe("candidate tracking is deliberate action only", () => {
 describe("discovery route", () => {
   it("lives under representations without disturbing the search section", async () => {
     const main = await readAppFile("main.tsx")
-    expect(main).toContain('path="representations/discovery"')
+    expect(EvidenceRoutePatterns.sourceDiscovery).toBe("representations/discovery")
+    expect(main).toContain("path={EvidenceRoutePatterns.sourceDiscovery}")
     expect(main).toContain("DiscoveryPage")
     expect(workspaceNavOrder).toEqual(["overview", "assay", "search", "issues", "representations", "truth", "checks"])
     expect(workspaceNav("/businesses/b1").map((i) => i.id)).toEqual(workspaceNavOrder)
