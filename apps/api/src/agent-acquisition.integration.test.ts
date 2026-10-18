@@ -4,7 +4,7 @@ import { ConfigProvider, Context, Effect, Exit, Layer, Redacted, Scope } from "e
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import { AcquisitionRepository, AcquisitionRepositoryLive, AgentProposalRepository, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepository, RecordRepositoryLive, ObservationRepository, ObservationRepositoryLive, acquisitionView, hostedMeasurementContext, type Session } from "@openrecord/db"
-import { migrate } from "../../../packages/db/src/migrate.js"
+import { migrate } from "@openrecord/db/migrate"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
 import { compareAgentBatches } from "./agent-acquisition-tools.js"
 import { dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
