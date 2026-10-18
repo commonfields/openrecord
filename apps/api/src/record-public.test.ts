@@ -17,7 +17,7 @@ describe("public record revocation during evidence loading", () => {
     const unused = () => Effect.die("unexpected operator repository call")
     const layer = Layer.succeed(RecordRepository, {
       listClients: unused, createClient: unused, updateClient: unused, saveSlot: unused, approveItem: unused,
-      startRun: unused, judge: unused, recordAction: unused, share: unused, revokeShare: unused,
+      startRun: unused, cancelRun: unused, judge: unused, recordAction: unused, share: unused, revokeShare: unused,
       snapshot: () => Effect.succeed(loaded),
       businessForPublicId: () => Effect.sync(() => ++lookups > 1 && revokedDuringLoad ? null : "TEST-business"),
     })

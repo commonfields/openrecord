@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 // Pills: fully rounded, a hairline ring in the status hue and a soft drop
 // shadow so verdicts read as objects sitting on the surface, not flat text.
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border px-1.5 py-px text-[11px] leading-4 font-medium whitespace-nowrap shadow-(--badge-shadow) [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border px-1.5 py-px text-[0.6875rem] leading-4 font-medium whitespace-nowrap shadow-(--badge-shadow) [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {

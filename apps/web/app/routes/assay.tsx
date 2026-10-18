@@ -32,7 +32,7 @@ function Review({ label, choices, save }: { label: string; choices: readonly [st
   }
   return (
     <div className="space-y-2 border-t bg-muted/30 px-4 py-3">
-      <Label htmlFor={`reason-${label}`} className="text-[11px] text-muted-foreground">Review reason (required)</Label>
+      <Label htmlFor={`reason-${label}`} className="text-[0.6875rem] text-muted-foreground">Review reason (required)</Label>
       <Textarea id={`reason-${label}`} rows={2} value={reason} onChange={e => setReason(e.target.value)} maxLength={4000} disabled={busy} placeholder="Why you made this call, in one line." />
       <div className="flex flex-wrap items-center gap-1.5">
         {choices.map(([decision, title], i) => (
@@ -54,8 +54,8 @@ function FactEvidence({ fact }: { fact: AssayFact }) {
         <span className="text-xs font-medium">{fact.subject}</span>
         <Badge variant="outline">{human(fact.fact_type)}</Badge>
       </div>
-      <blockquote className="rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap">{fact.supporting_span}</blockquote>
-      <div className="space-y-0.5 text-[11px] text-muted-foreground">
+      <blockquote className="rounded-lg bg-muted/40 px-3 py-2 text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{fact.supporting_span}</blockquote>
+      <div className="space-y-0.5 text-[0.6875rem] text-muted-foreground">
         <a className="flex items-center gap-1 break-all text-foreground hover:underline" href={fact.final_url ?? fact.source_url} target="_blank" rel="noreferrer">
           <GlobeIcon className="size-3 shrink-0" />
           {fact.final_url ?? fact.source_url}
@@ -64,7 +64,7 @@ function FactEvidence({ fact }: { fact: AssayFact }) {
         <p>Page snapshot: {fact.valid_from ? formatDateTime(fact.valid_from) : "unavailable"}</p>
       </div>
       {fact.source_links.length > 1 ? (
-        <details className="group text-[11px]">
+        <details className="group text-[0.6875rem]">
           <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />All source evidence ({fact.source_links.length})</summary>
           <div className="mt-2 space-y-2">
             {fact.source_links.map(s => (
@@ -76,9 +76,9 @@ function FactEvidence({ fact }: { fact: AssayFact }) {
           </div>
         </details>
       ) : null}
-      <details className="group text-[11px]">
+      <details className="group text-[0.6875rem]">
         <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />Normalized value</summary>
-        <pre className="mt-2 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-[11px] whitespace-pre-wrap">{JSON.stringify(fact.normalized, null, 2)}</pre>
+        <pre className="mt-2 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-[0.6875rem] whitespace-pre-wrap">{JSON.stringify(fact.normalized, null, 2)}</pre>
       </details>
     </div>
   )
@@ -102,7 +102,7 @@ function FindingEvidence({ finding }: { finding: AssayFinding }) {
           <Badge variant="outline">{sentenceCase(finding.retrieval_class)}</Badge>
           <Badge variant="outline">{sentenceCase(finding.group_status)}</Badge>
         </div>
-        <p className="text-[13px] font-medium">&ldquo;{finding.question}&rdquo;</p>
+        <p className="text-[0.8125rem] font-medium">&ldquo;{finding.question}&rdquo;</p>
       </div>
 
       <div className="space-y-1.5 rounded-lg bg-muted/40 p-3">
@@ -110,7 +110,7 @@ function FindingEvidence({ finding }: { finding: AssayFinding }) {
           <span>
             <span className="font-semibold tabular-nums">{finding.contradict_count}/{finding.sample_count}</span> successful samples contradicted
           </span>
-          <span className="text-[11px] text-muted-foreground">{finding.requested_n} requested · {finding.unclear_count} unclear</span>
+          <span className="text-[0.6875rem] text-muted-foreground">{finding.requested_n} requested · {finding.unclear_count} unclear</span>
         </div>
         <div className="flex flex-wrap gap-1" aria-label="Samples">
           {finding.samples.map(s => (
@@ -124,37 +124,37 @@ function FindingEvidence({ finding }: { finding: AssayFinding }) {
           ))}
           {finding.missing_samples.map(s => <span key={`m-${s.sampleNumber}`} title={`Sample ${s.sampleNumber} missing: ${s.failureClass}`} className="size-3.5 rounded-[4px] border border-dashed border-muted-foreground/50" />)}
         </div>
-        <p className="text-[11px] text-muted-foreground">{finding.verification_eligible ? "Eligible for retrieval verification." : "Not eligible for retrieval verification."}</p>
+        <p className="text-[0.6875rem] text-muted-foreground">{finding.verification_eligible ? "Eligible for retrieval verification." : "Not eligible for retrieval verification."}</p>
         {finding.retrieval_class !== "RETRIEVAL_ENABLED" ? <p className="text-xs text-muted-foreground">{ASSAY_RETRIEVAL_LIMITATION}</p> : null}
       </div>
 
       <FactEvidence fact={finding.fact} />
 
       <div className="space-y-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground">Samples</span>
+        <span className="text-[0.6875rem] font-medium text-muted-foreground">Samples</span>
         <ul className="divide-y overflow-hidden rounded-lg bg-muted/30">
           {finding.samples.map(sample => (
             <li key={sample.sampleNumber} className={cn("space-y-1.5 px-3 py-2", openSample === sample.sampleNumber && "bg-review-soft/60")}>
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-2 text-[0.6875rem]">
                 <span aria-hidden className={cn("size-2 rounded-full", sampleTone(sample))} />
                 <span className="font-medium">Sample {sample.sampleNumber}{sample.synthetic ? " (synthetic fixture)" : ""}</span>
                 <ProviderChip provider={sample.provider} model={sample.observedModel} />
                 <span className="text-muted-foreground">{sample.comparison ? human(sample.comparison) : human(sample.status)} · retrieval: {sample.retrievalMode ? human(sample.retrievalMode) : "unknown"}</span>
               </div>
-              {sample.failureClass ? <p className="text-[11px] text-partial">Missing sample: {sample.failureClass}</p> : null}
+              {sample.failureClass ? <p className="text-[0.6875rem] text-partial">Missing sample: {sample.failureClass}</p> : null}
               <p className="text-xs leading-relaxed whitespace-pre-wrap">{sample.supportingSpan || sample.answer}</p>
               <details className="group">
-                <summary className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />Full answer and provenance</summary>
-                <pre className="mt-1.5 overflow-auto rounded-md bg-card p-2 font-mono text-[11px] whitespace-pre-wrap">{JSON.stringify(sample, null, 2)}</pre>
+                <summary className="flex cursor-pointer items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />Full answer and provenance</summary>
+                <pre className="mt-1.5 overflow-auto rounded-md bg-card p-2 font-mono text-[0.6875rem] whitespace-pre-wrap">{JSON.stringify(sample, null, 2)}</pre>
               </details>
             </li>
           ))}
         </ul>
       </div>
 
-      <details className="group text-[11px]">
+      <details className="group text-[0.6875rem]">
         <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />Source diagnosis (likely sources)</summary>
-        <pre className="mt-1.5 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-[11px] whitespace-pre-wrap">{JSON.stringify(finding.source_diagnosis, null, 2)}</pre>
+        <pre className="mt-1.5 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-[0.6875rem] whitespace-pre-wrap">{JSON.stringify(finding.source_diagnosis, null, 2)}</pre>
       </details>
       {finding.verdict === "OBSERVED_INTERMITTENT" ? <p className="text-xs text-muted-foreground">Intermittent observation. Human review only; no automatic outreach eligibility.</p> : null}
     </div>
@@ -267,13 +267,13 @@ export function AssayPage() {
           <Panel>
             <PanelHeader title="Approve a public source for fetching" icon={<GlobeIcon />} />
             <form className="grid gap-2.5 p-4 pt-3" onSubmit={e => { e.preventDefault(); void action("source", () => Assay.registerSource(id, { url, subject, planTerms: terms(plans), capabilityTerms: terms(capabilities) })) }}>
-              <div className="grid gap-1"><Label htmlFor="source-url" className="text-[11px]">Public source URL</Label><Input id="source-url" type="url" placeholder="https://competitor.com/pricing" value={url} onChange={e => setUrl(e.target.value)} /></div>
-              <div className="grid gap-1"><Label htmlFor="source-subject" className="text-[11px]">Price subject (business or plan)</Label><Input id="source-subject" value={subject} onChange={e => setSubject(e.target.value)} /></div>
+              <div className="grid gap-1"><Label htmlFor="source-url" className="text-[0.6875rem]">Public source URL</Label><Input id="source-url" type="url" placeholder="https://competitor.com/pricing" value={url} onChange={e => setUrl(e.target.value)} /></div>
+              <div className="grid gap-1"><Label htmlFor="source-subject" className="text-[0.6875rem]">Price subject (business or plan)</Label><Input id="source-subject" value={subject} onChange={e => setSubject(e.target.value)} /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div className="grid gap-1"><Label htmlFor="plan-terms" className="text-[11px]">Plan names</Label><Input id="plan-terms" placeholder="Pro, Team" value={plans} onChange={e => setPlans(e.target.value)} /></div>
-                <div className="grid gap-1"><Label htmlFor="capability-terms" className="text-[11px]">Capabilities</Label><Input id="capability-terms" placeholder="SSO, API" value={capabilities} onChange={e => setCapabilities(e.target.value)} /></div>
+                <div className="grid gap-1"><Label htmlFor="plan-terms" className="text-[0.6875rem]">Plan names</Label><Input id="plan-terms" placeholder="Pro, Team" value={plans} onChange={e => setPlans(e.target.value)} /></div>
+                <div className="grid gap-1"><Label htmlFor="capability-terms" className="text-[0.6875rem]">Capabilities</Label><Input id="capability-terms" placeholder="SSO, API" value={capabilities} onChange={e => setCapabilities(e.target.value)} /></div>
               </div>
-              <p className="text-[11px] text-muted-foreground">Comma separated. Only this URL is fetched.</p>
+              <p className="text-[0.6875rem] text-muted-foreground">Comma separated. Only this URL is fetched.</p>
               <Button type="submit" size="sm" disabled={busy !== null || !url.trim() || !subject.trim()}>
                 {busy === "source" ? <Spinner /> : <FileSearchIcon />}
                 Queue source fetch
@@ -287,14 +287,14 @@ export function AssayPage() {
                       <span className="min-w-0 flex-1 truncate text-xs font-medium">{domainOf(source.url)}</span>
                       <Badge variant={statusTone(source.status)}>{sentenceCase(source.status)}</Badge>
                     </div>
-                    <p className="truncate text-[11px] text-muted-foreground">
+                    <p className="truncate text-[0.6875rem] text-muted-foreground">
                       {source.failure_class ? `${source.failure_class} · ` : ""}
                       {source.fetched_at ? `Fetched ${formatDateTime(source.fetched_at)} from ${source.final_url ?? source.url}` : source.url}
                     </p>
                     {source.fetched_text ? (
-                      <details className="group text-[11px]">
+                      <details className="group text-[0.6875rem]">
                         <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground hover:text-foreground"><ChevronDownIcon className="size-3 group-open:rotate-180" />Fetched public text</summary>
-                        <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-muted/50 p-2 text-[11px] whitespace-pre-wrap">{source.fetched_text}</pre>
+                        <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-muted/50 p-2 text-[0.6875rem] whitespace-pre-wrap">{source.fetched_text}</pre>
                       </details>
                     ) : null}
                   </li>
@@ -306,14 +306,14 @@ export function AssayPage() {
           <Panel>
             <PanelHeader title="Run repeated observations" icon={<FlaskConicalIcon />} />
             <div className="grid gap-2.5 p-4 pt-3">
-              <div className="grid gap-1"><Label className="text-[11px]">Buyer question</Label><Select value={questionId} onValueChange={setQuestionId}><SelectTrigger aria-label="Buyer question" className="w-full"><SelectValue placeholder="Choose an existing question" /></SelectTrigger><SelectContent>{questions.data?.questions.map(q => <SelectItem key={q.id} value={q.id}>{q.prompt}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-1"><Label className="text-[0.6875rem]">Buyer question</Label><Select value={questionId} onValueChange={setQuestionId}><SelectTrigger aria-label="Buyer question" className="w-full"><SelectValue placeholder="Choose an existing question" /></SelectTrigger><SelectContent>{questions.data?.questions.map(q => <SelectItem key={q.id} value={q.id}>{q.prompt}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid grid-cols-2 gap-2">
-                <div className="grid gap-1"><Label className="text-[11px]">Provider</Label><Select value={provider} onValueChange={v => { setProvider(v as "mock" | "9router"); setModel(""); setRetrieval("NONE") }}><SelectTrigger aria-label="Provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{enabledProviders.map(p => <SelectItem key={p.id} value={p.id}>{p.id === "9router" ? "9Router" : sentenceCase(p.id)}</SelectItem>)}</SelectContent></Select></div>
-                <div className="grid gap-1"><Label htmlFor="sample-count" className="text-[11px]">Samples (1–20)</Label><Input id="sample-count" type="number" min={1} max={20} value={n} onChange={e => setN(e.target.value)} /></div>
+                <div className="grid gap-1"><Label className="text-[0.6875rem]">Provider</Label><Select value={provider} onValueChange={v => { setProvider(v as "mock" | "9router"); setModel(""); setRetrieval("NONE") }}><SelectTrigger aria-label="Provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{enabledProviders.map(p => <SelectItem key={p.id} value={p.id}>{p.id === "9router" ? "9Router" : sentenceCase(p.id)}</SelectItem>)}</SelectContent></Select></div>
+                <div className="grid gap-1"><Label htmlFor="sample-count" className="text-[0.6875rem]">Samples (1–20)</Label><Input id="sample-count" type="number" min={1} max={20} value={n} onChange={e => setN(e.target.value)} /></div>
               </div>
-              {provider === "9router" ? <div className="grid gap-1"><Label className="text-[11px]">Model</Label><Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Model" className="w-full"><SelectValue placeholder="Choose a model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div> : <p className="text-xs text-muted-foreground">Mock observations are synthetic fixtures.</p>}
-              <div className="grid gap-1"><Label className="text-[11px]">Requested retrieval</Label><Select value={retrieval} onValueChange={v => setRetrieval(v as typeof AssayRetrievalMode.Type)}><SelectTrigger aria-label="Requested retrieval" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{(provider === "mock" ? ["NONE", "WEB_SEARCH", "PROVIDER_GROUNDING", "MANUAL_CAPTURE"] : ["NONE"]).map(m => <SelectItem key={m} value={m}>{human(m)}</SelectItem>)}</SelectContent></Select></div>
-              {enabledProviders.length === 0 && !providers.loading ? <p className="text-[11px] text-partial">No provider is enabled on this server.</p> : null}
+              {provider === "9router" ? <div className="grid gap-1"><Label className="text-[0.6875rem]">Model</Label><Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Model" className="w-full"><SelectValue placeholder="Choose a model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div> : <p className="text-xs text-muted-foreground">Mock observations are synthetic fixtures.</p>}
+              <div className="grid gap-1"><Label className="text-[0.6875rem]">Requested retrieval</Label><Select value={retrieval} onValueChange={v => setRetrieval(v as typeof AssayRetrievalMode.Type)}><SelectTrigger aria-label="Requested retrieval" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{(provider === "mock" ? ["NONE", "WEB_SEARCH", "PROVIDER_GROUNDING", "MANUAL_CAPTURE"] : ["NONE"]).map(m => <SelectItem key={m} value={m}>{human(m)}</SelectItem>)}</SelectContent></Select></div>
+              {enabledProviders.length === 0 && !providers.loading ? <p className="text-[0.6875rem] text-partial">No provider is enabled on this server.</p> : null}
               <Button size="sm" disabled={busy !== null || !questionId || !enabledProviders.some(p => p.id === provider) || (provider === "9router" && !model) || !Number.isInteger(Number(n)) || Number(n) < 1 || Number(n) > 20} onClick={() => void action("run", () => Assay.run(id, { questionId, provider, requestedModel: provider === "9router" ? model : null, retrievalMode: retrieval, n: Number(n) }))}>
                 {busy === "run" ? <Spinner /> : <PlayIcon />}
                 Queue observations
@@ -326,7 +326,7 @@ export function AssayPage() {
                     {statusTone(group.status) === "review" ? <LoaderCircleIcon className="size-3.5 animate-spin text-review" /> : <FlaskConicalIcon className="size-3.5 text-muted-foreground" />}
                     <span className="flex-1">{group.n} samples</span>
                     <Badge variant={statusTone(group.status)}>{sentenceCase(group.status)}</Badge>
-                    {group.missing_samples.length ? <span className="text-[11px] text-partial" title={group.missing_samples.map(s => `Sample ${s.sampleNumber}: ${s.failureClass}`).join("; ")}>{group.missing_samples.length} missing</span> : null}
+                    {group.missing_samples.length ? <span className="text-[0.6875rem] text-partial" title={group.missing_samples.map(s => `Sample ${s.sampleNumber}: ${s.failureClass}`).join("; ")}>{group.missing_samples.length} missing</span> : null}
                   </li>
                 ))}
               </ul>

@@ -243,7 +243,7 @@ export function SeriesMark({ series }: { series: Pick<ModelSeries, "cssVar"> }) 
 
 export function SeriesLogo({ series, className }: { series: ModelSeries; className?: string }) {
   return series.key === OTHER_KEY ? (
-    <span aria-hidden className={cn("flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-[9px] font-semibold text-muted-foreground ring-1 ring-border", className)}>
+    <span aria-hidden className={cn("flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-[0.5625rem] font-semibold text-muted-foreground ring-1 ring-border", className)}>
       +{series.members.length}
     </span>
   ) : (
@@ -307,12 +307,12 @@ export function ModelTrendChart({
               const total = visible.reduce((n, s) => n + raw(s.key), 0)
               return (
                 <div className="min-w-44 rounded-lg bg-popover px-2.5 py-2 text-popover-foreground shadow-(--float-shadow-strong)">
-                  <div className="pb-1 text-[11px] font-medium">
+                  <div className="pb-1 text-[0.6875rem] font-medium">
                     {formatDate(String(label))} <span className="font-normal text-muted-foreground">· {total.toLocaleString()} {valueLabel}</span>
                   </div>
                   <div className="space-y-1">
                     {ranked.map((s) => (
-                      <div key={s.key} className={cn("flex items-center gap-2 text-[11px]", focus && focus !== s.key && "opacity-40")}>
+                      <div key={s.key} className={cn("flex items-center gap-2 text-[0.6875rem]", focus && focus !== s.key && "opacity-40")}>
                         <SeriesMark series={s} />
                         <span className="flex-1 text-muted-foreground">{s.label}</span>
                         <span className="font-medium tabular-nums">{raw(s.key).toLocaleString()}</span>
@@ -420,7 +420,7 @@ export function AreaTrendChart({
               const c = compareKey ? row[compareKey] : undefined
               return (
                 <div className="min-w-40 rounded-lg bg-popover px-3 py-2 text-popover-foreground shadow-(--float-shadow-strong)">
-                  <div className="pb-1 text-[11px] text-muted-foreground">{formatDate(String(l))}</div>
+                  <div className="pb-1 text-[0.6875rem] text-muted-foreground">{formatDate(String(l))}</div>
                   <div className="flex items-center gap-2 text-xs">
                     <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: `var(${cssVar})` }} />
                     <span className="flex-1 text-muted-foreground">{label}</span>

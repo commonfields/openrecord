@@ -349,7 +349,7 @@ function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; s
             domain={[0, 100]}
             cssVar={verdictShareMeta[metric as VerdictShareMetric].cssVar}
           />
-          <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-4 text-[0.6875rem] text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span aria-hidden className="size-2 rounded-full" style={{ background: `var(${verdictShareMeta[metric as VerdictShareMetric].cssVar})` }} />
               {verdictShareMeta[metric as VerdictShareMetric].label}
@@ -373,7 +373,7 @@ function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; s
             formatValue={meta.percent ? (v) => `${Math.round(v)}%` : (v) => (Math.round(v * 10) / 10).toLocaleString()}
             {...(meta.percent ? { domain: [0, 100] as [number, number] } : {})}
           />
-          <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-4 text-[0.6875rem] text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span aria-hidden className="size-2 rounded-full bg-chart-primary" />
               {meta.label}
@@ -446,7 +446,7 @@ function AnswerCollectionCard({ stats, loading, days }: { stats: ModelStats | nu
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">No answers in the last {days} days.</p>
         ) : (
           <>
-            <div className="flex justify-between px-2 pb-1 text-[11px] text-muted-foreground">
+            <div className="flex justify-between px-2 pb-1 text-[0.6875rem] text-muted-foreground">
               <span>Provider</span>
               <span>Share · change</span>
             </div>
@@ -462,7 +462,7 @@ function AnswerCollectionCard({ stats, loading, days }: { stats: ModelStats | nu
                   value={
                     <span className="flex items-center gap-3">
                       <span>{pct(share, 1)}</span>
-                      <span className="w-10 text-right text-[11px] text-muted-foreground">
+                      <span className="w-10 text-right text-[0.6875rem] text-muted-foreground">
                         {pts === null ? "New" : `${pts > 0 ? "+" : ""}${pts.toFixed(1)}`}
                       </span>
                     </span>
@@ -475,7 +475,7 @@ function AnswerCollectionCard({ stats, loading, days }: { stats: ModelStats | nu
               )
             })}
             </div>
-            <p className="px-2 pt-2 text-[11px] text-muted-foreground">Share of collected answers, not visibility. Change in share points vs the previous {days} days.</p>
+            <p className="px-2 pt-2 text-[0.6875rem] text-muted-foreground">Share of collected answers, not visibility. Change in share points vs the previous {days} days.</p>
           </>
         )}
       </div>
@@ -495,7 +495,7 @@ function AccuracyByModelCard({ a, stats, loading }: { a: Analytics | null; stats
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">No reviewed claims yet.</p>
         ) : (
           <>
-            <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)_3rem_3.5rem] gap-3 px-2 pb-1 text-[11px] text-muted-foreground">
+            <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)_3rem_3.5rem] gap-3 px-2 pb-1 text-[0.6875rem] text-muted-foreground">
               <span>Provider</span>
               <span>Verdicts</span>
               <span className="text-right">Supported</span>
@@ -631,7 +631,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
             <p className="px-2 py-8 text-center text-xs text-muted-foreground">No buyer questions yet. Add the questions prospects ask, then run checks.</p>
           ) : (
             <>
-              <div className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] gap-3 px-2 pb-1 text-[11px] text-muted-foreground">
+              <div className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] gap-3 px-2 pb-1 text-[0.6875rem] text-muted-foreground">
                 <span>Question</span>
                 <span>Verdicts</span>
                 <span className="text-right">Supported</span>
@@ -641,7 +641,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
                 <div key={q.id} className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-foreground/[0.03]">
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-medium">{q.label || q.prompt}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{q.last_checked_at ? `Last asked ${relativeTime(q.last_checked_at)}` : "Never asked"}</span>
+                    <span className="block truncate text-[0.6875rem] text-muted-foreground">{q.last_checked_at ? `Last asked ${relativeTime(q.last_checked_at)}` : "Never asked"}</span>
                   </span>
                   <VerdictBar counts={q} className="h-1.5" />
                   <span className="text-right text-xs font-medium tabular-nums">{pct(accuracy(q))}</span>
@@ -654,7 +654,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">No reviewed claims were linked to an approved fact in the last {days} days.</p>
         ) : (
           <>
-            <div className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] gap-3 px-2 pb-1 text-[11px] text-muted-foreground">
+            <div className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] gap-3 px-2 pb-1 text-[0.6875rem] text-muted-foreground">
               <span>Approved fact</span>
               <span>Verdicts</span>
               <span className="text-right">Supported</span>
@@ -664,7 +664,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
               <div key={f.id} className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-foreground/[0.03]">
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-medium">{sentenceCase(f.predicate)}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-[0.6875rem] text-muted-foreground">
                     Approved {f.value_text}
                     {f.status !== "ACTIVE" ? ` · ${sentenceCase(f.status).toLowerCase()}` : ""}
                   </span>
@@ -719,7 +719,7 @@ function CitationsCard({ a, loading, days }: { a: Analytics | null; loading: boo
               formatDate={shortDate}
               formatValue={(v) => Math.round(v).toLocaleString()}
             />
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-[11px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-[0.6875rem] text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span aria-hidden className="size-2 rounded-full bg-chart-primary" />
                 Citations per day

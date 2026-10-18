@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { createHash } from "node:crypto"
-import { operatorView } from "./record-view.js"
+import { operatorView, RECORD_CANCELLED } from "./record-view.js"
 import type { RecordSnapshot } from "./record.js"
 import type { AgentReportSupplement } from "./agent-referrals.js"
 
@@ -60,7 +60,10 @@ export const buildClientReport = (snapshot: RecordSnapshot, input: typeof Report
     const successful = r.checks.filter(c => c.status === "SUCCEEDED" && c.observation !== null)
     const real = successful.filter(c => !c.observation!.synthetic)
     const reviewed = real.filter(c => c.judgment !== null)
-    return { id: r.id, kind: r.kind, createdAt: r.createdAt, status: r.status, attempted: r.checks.length,
+    const cancelledBeforeStart = r.checks.filter(c => c.status === "FAILED" && c.failureClass === RECORD_CANCELLED).length
+    const queued = r.checks.filter(c => c.status === "QUEUED").length
+    return { id: r.id, kind: r.kind, createdAt: r.createdAt, status: r.status, attempted: r.checks.length - cancelledBeforeStart - queued,
+      queued, cancelledBeforeStart,
       successful: successful.length, synthetic: successful.length - real.length, reviewed: reviewed.length, eligible: real.length,
       contradictions: reviewed.filter(c => c.judgment!.decision === "CONTRADICTS").length,
       matches: reviewed.filter(c => c.judgment!.decision === "MATCHES").length,
@@ -77,7 +80,7 @@ export const buildClientReport = (snapshot: RecordSnapshot, input: typeof Report
     ...batches.flatMap(b => b.observations.map(o => ({ kind: "observation", id: o.id, text: `Observed ${o.collectedAt}` })))]
   const text = [
     `Private client report draft: ${snapshot.profile.name}`, `Generated: ${generatedAt}\nPeriod: ${input.start} to ${input.end} (end exclusive). Coverage selects runs by creation time.`,
-    "Measurement coverage", ...(batches.length ? batches.map(b => `Batch ${b.kind} (${b.createdAt}): ${b.questions.length} questions, ${b.attempted} attempted, ${b.successful} successful, ${b.synthetic} synthetic and excluded from findings. Human review: ${b.reviewed} of ${b.eligible} eligible real answers.\nSurfaces: ${[...new Set(b.observations.map(o => `${o.provider}; requested ${o.requestedModel ?? "unknown"}; observed ${o.observedModel ?? "unknown"}`))].join("; ") || "No successful observation"}.`) : ["No measurement runs in this period. This is missing evidence, not evidence of no problems."]),
+    "Measurement coverage", ...(batches.length ? batches.map(b => `Batch ${b.kind} (${b.createdAt}): ${b.questions.length} questions, ${b.attempted} attempted, ${b.successful} successful, ${b.synthetic} synthetic and excluded from findings. Human review: ${b.reviewed} of ${b.eligible} eligible real answers. ${b.queued} queued; ${b.cancelledBeforeStart} stopped before starting.\nSurfaces: ${[...new Set(b.observations.map(o => `${o.provider}; requested ${o.requestedModel ?? "unknown"}; observed ${o.observedModel ?? "unknown"}`))].join("; ") || "No successful observation"}.`) : ["No measurement runs in this period. This is missing evidence, not evidence of no problems."]),
     "Findings", ...batches.map(b => `${b.contradictions} reviewed contradictions, ${b.matches} reviewed matches and ${b.unknown} unknown judgments out of ${b.reviewed} reviewed real answers. These are answer-level judgments; they do not establish every supported fact's current state.`),
     supplement?.text ?? "Recommendation observations, competitor appearances and acquisition citations are not included by this report contract.",
     "Agency work", ...(actions.length ? actions.map(a => `${a.performedAt}: human-recorded ${a.type}. Source links: ${a.links.join(", ") || "None recorded"}.`) : ["No completed agency work recorded in this period. Proposals are not completed actions."]),
