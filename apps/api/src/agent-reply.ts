@@ -18,7 +18,9 @@ export const collectReplyInternals = (value: unknown, internals: ReplyInternals)
       internals.fields.add(key)
       if (/^ids?$/i.test(key) || /(?:_[iI][dD][sS]?|Id|Ids|ID|IDs)$/.test(key)) {
         for (const id of Array.isArray(item) ? item : [item]) {
-          if (typeof id === "string" && id.trim()) internals.ids.add(id)
+          // Short or numeric values ("3", "2026") also occur as ordinary words and
+          // counts in prose; only distinctive identifiers are redacted by value.
+          if (typeof id === "string" && id.trim().length >= 8 && !/^\d+$/.test(id.trim())) internals.ids.add(id)
         }
       }
       if (/^(?:status|state|kind|code|reason|limitations?|missingRequirements|availability)$/i.test(key)) {

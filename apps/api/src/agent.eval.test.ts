@@ -53,6 +53,12 @@ describe("deterministic conversational contract evaluations (not live model accu
     expect(answer.toolCalls).toEqual([{ tool: "propose_check_run", summary: receipt.summary }])
     expect(JSON.stringify(receipt)).toBe(before)
   })
+  it("keeps short or numeric tool ids that read as ordinary words and counts", async () => {
+    const prose = "3 of 3 facts were checked in 2026; slot 1 needs review."
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [], model: fixture([tool("read_record_outcomes"), text(prose)]),
+      dispatch: () => Effect.succeed({ ...result, data: { id: "3", slotId: "1", runId: "2026" } }) }))
+    expect(answer.reply).toBe(prose)
+  })
   it("redacts UUIDs of any case, with or without braces, even without tools", async () => {
     const id = "abcdef01-2345-6789-abcd-ef0123456789"
     const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
