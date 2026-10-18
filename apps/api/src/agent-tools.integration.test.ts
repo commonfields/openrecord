@@ -6,7 +6,7 @@ import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
   AcquisitionRepositoryLive,
-  AgentProposalRepositoryLive,
+  GrowthRepositoryLive, AgentProposalRepositoryLive,
   BusinessRepositoryLive,
   DiscoveryScopeRepositoryLive,
   FactRepository,
@@ -25,7 +25,7 @@ suite("agent tool tenancy (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
     AcquisitionRepositoryLive,
-    AgentProposalRepositoryLive,
+    GrowthRepositoryLive, AgentProposalRepositoryLive,
     BusinessRepositoryLive,
     DiscoveryScopeRepositoryLive,
     FactRepositoryLive,

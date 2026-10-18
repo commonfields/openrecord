@@ -1,3 +1,4 @@
+import { GROWTH_AGENT_TOOLS } from "./agent-growth-tools.js"
 import { ACQUISITION_AGENT_TOOLS } from "./agent-acquisition-tools.js"
 import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
@@ -18,6 +19,7 @@ import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 import { Data, Effect, JSONSchema, Schema } from "effect"
 import { SqlClient } from "@effect/sql"
 import {
+  GrowthRepository,
   AcquisitionRepository,
   AgentProposalRepository,
   BusinessRepository,
@@ -55,6 +57,7 @@ export interface AgentToolResult {
  * that needs a new service extends this union, which the compiler checks
  * at every call site. */
 export type AgentToolDeps =
+  | GrowthRepository
   | AcquisitionRepository
   | AgentProposalRepository
   | BusinessRepository
@@ -318,6 +321,7 @@ const readRecordOutcomes: AgentToolDef = {
         data: {
           hasRecord: true,
           disclosure: view.disclosure,
+          actions: snapshot.actions.slice(-5).map(a => ({ id: a.id, type: a.type, slot: a.slot, links: a.links, performedAt: a.performedAt })),
           recentRuns: view.runs.slice(-3).map(r => ({ id: r.id, kind: r.kind, status: r.status, createdAt: r.createdAt,
             attempted: r.checks.length, successful: r.checks.filter(c => c.observation !== null && c.status === "SUCCEEDED").length,
             reviewed: r.checks.filter(c => c.judgment !== null).length,
@@ -349,6 +353,7 @@ const readRecordOutcomes: AgentToolDef = {
  * proposal/approval boundary review and an update to agent-tools.test.ts,
  * which asserts this exact list. */
 export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
+  ...GROWTH_AGENT_TOOLS,
   ...ACQUISITION_AGENT_TOOLS,
   ...REFERRAL_AGENT_TOOLS,
   readBusinessTruth,

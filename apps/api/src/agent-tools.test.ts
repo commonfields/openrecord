@@ -23,6 +23,8 @@ describe("agent tool harness", () => {
       "read_buyer_question_results",
       "read_competitor_appearances",
       "read_discovery_scopes",
+      "read_growth_goal",
+      "read_growth_opportunities",
       "read_issue",
       "read_observation",
       "read_open_issues",

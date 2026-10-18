@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
-import { AcquisitionRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
+import { AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import pg from "pg"
 import { deleteConversation, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
@@ -12,7 +12,7 @@ const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
 suite("private durable conversations (disposable TEST fixtures)", () => {
   let pool: pg.Pool
-  const repos = Layer.mergeAll(AcquisitionRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive)
+  const repos = Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive)
     .pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const run = <A, E>(effect: Effect.Effect<A, E, AgentToolDeps>) => Effect.runPromise(Effect.either(effect.pipe(Effect.provide(repos))))
   const respond = () => Effect.succeed({ reply: "Stored evidence only", citations: [], toolCalls: [], usage: [], provider: "gemini" as const, requestedModel: "fixture" })
