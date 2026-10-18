@@ -1,3 +1,4 @@
+import { acquisitionProposalDeclarations, dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
 import { dispatchDraftTool, draftDeclarations } from "./agent-drafts.js"
 import { Effect, Schema } from "effect"
 import { AgentProposalRepository } from "@openrecord/db"
@@ -15,6 +16,7 @@ export type AgentHistory = ReadonlyArray<{ readonly role: "user" | "agent"; read
 const proposeInput = Schema.Struct({ questionId: Schema.UUID })
 export const agentDeclarations = [
   ...draftDeclarations,
+  ...acquisitionProposalDeclarations,
   ...AGENT_TOOLS.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })),
   { name: "propose_check_run", description: "Prepare a REQUEST_CHECK proposal for a stored question. Never executes. Human approval and provider/model selection required.",
     parametersJsonSchema: { type: "object", properties: { questionId: { type: "string", format: "uuid" } }, required: ["questionId"], additionalProperties: false } },
@@ -94,6 +96,7 @@ export const handleAgentMessage = (accountId: string, userId: string, businessId
   }).pipe(Effect.timeoutFail({ duration: 90000, onTimeout: () => new AgentModelError({ reason: "TIMEOUT" }) }))
 
 export const dispatchAgentTool = (accountId: string, userId: string, businessId: string, name: string, args: unknown) => Effect.gen(function*() {
+      if (name === "propose_question_set" || name === "propose_acquisition_measurement") return yield* dispatchAcquisitionProposal(accountId, userId, businessId, name, args)
       if (name === "draft_source_action" || name === "prepare_client_report") return yield* dispatchDraftTool(accountId, userId, businessId, name, args)
       if (name !== "propose_check_run") return yield* runAgentTool(accountId, businessId, name, args)
       yield* Effect.logInfo("agent proposal invoked").pipe(Effect.annotateLogs({ account_id: accountId, business_id: businessId, tool: name, invoked_at: new Date().toISOString() }))

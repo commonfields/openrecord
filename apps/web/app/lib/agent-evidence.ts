@@ -13,6 +13,8 @@ export const agentEvidencePath = (businessId: string, citation: AgentCitation): 
     case "question": return `${base}/checks`
     case "representation": return `${base}/representations/${citation.id}`
     case "discovery_scope": return `${base}/${EvidenceRoutePatterns.sourceDiscovery}`
+    case "acquisition_batch": return `/clients/${businessId}/discovery?batchId=${citation.id}`
+    case "acquisition": return `/clients/${businessId}/discovery`
     case "record": return `/clients/${businessId}`
     default: return null
   }

@@ -13,6 +13,8 @@ import {
   RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
 import pg from "pg"
+import { AcquisitionRepository } from "@openrecord/db"
+import { dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
 import { dispatchAgentTool, runConversation } from "./agent.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { makeRouter, RepoLayers } from "./router.js"
@@ -55,7 +57,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
   ).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
   )
-  const fixtureConfig = ConfigProvider.fromMap(new Map([["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"]]))
+  const fixtureConfig = ConfigProvider.fromMap(new Map([["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"], ["AGENT_MEASUREMENT_MAX_USD_PER_ATTEMPT", "0.01"]]))
   const web = HttpApp.toWebHandlerLayer(makeRouter(), Layer.merge(repos, Layer.setConfigProvider(fixtureConfig)))
   const run = <A, E>(effect: Effect.Effect<A, E, AgentToolDeps>) => Effect.runPromise(Effect.either(effect.pipe(Effect.provide(repos))))
   beforeAll(() => {
@@ -265,6 +267,23 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     const id = (await pool.query("INSERT INTO agent_proposals(business_id,kind,question_id,message,proposer,proposed_by_user_id,created_at) VALUES ($1,'REQUEST_CHECK',$2,'TEST stale proposal','operator',$3,now()-interval '25 hours') RETURNING id", [f.business, f.question, f.user])).rows[0].id as string
     expect((await call("POST", `/api/businesses/${f.business}/agent/proposals/${id}/approve`, f.session, { provider: "mock" })).status).toBe(422)
     expect(await checksOf(f.business)).toBe(0)
+  })
+
+  it("requires explicit HTTP acquisition budget approval and replays one queued batch", async () => {
+    const f = await fixture()
+    await pool.query("INSERT INTO record_profiles(business_id,website_url,engagement) VALUES ($1,'https://example.test','FIXTURE')", [f.business])
+    const set = await run(Effect.flatMap(AcquisitionRepository, r => r.createQuestionSet({ accountId: f.account, userId: f.user }, f.business, { basis: "FIXTURE", category: "TEST support", target: { name: "TEST Brand", aliases: [], domains: ["example.test"], matchCase: false, ambiguity: null }, competitors: [], questions: [{ group: "CATEGORY_DISCOVERY", prompt: "Which TEST tools help support teams?" }] })))
+    expect(set._tag).toBe("Right")
+    if (set._tag !== "Right") return
+    await run(dispatchAcquisitionProposal(f.account, f.user, f.business, "propose_acquisition_measurement", { setId: set.right.id, samples: 1 }).pipe(Effect.withConfigProvider(fixtureConfig)))
+    const listed = await (await call("GET", `/api/businesses/${f.business}/agent/proposals`, f.session)).json() as { proposals: Array<{ id: string }> }
+    const path = `/api/businesses/${f.business}/agent/proposals/${listed.proposals[0]!.id}/approve`
+    expect((await call("POST", path, f.session, { draftOnly: true })).status).toBe(422)
+    expect(await checksOf(f.business)).toBe(0)
+    const a = await call("POST", path, f.session, { approveAcquisition: true, maxCostUsd: 0.04 })
+    expect(a.status).toBe(200)
+    expect((await call("POST", path, f.session, { approveAcquisition: true, maxCostUsd: 0.04 })).status).toBe(200)
+    expect(await checksOf(f.business)).toBe(1)
   })
 
 })

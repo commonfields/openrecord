@@ -1,13 +1,19 @@
 ALTER TABLE agent_proposals ADD COLUMN IF NOT EXISTS payload JSONB NULL;
+DO $$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'agent_proposals' AND column_name = 'executed_acquisition_batch_id') THEN
 ALTER TABLE agent_proposals DROP CONSTRAINT IF EXISTS agent_proposals_kind_check;
 ALTER TABLE agent_proposals ADD CONSTRAINT agent_proposals_kind_check CHECK (kind IN ('REQUEST_CHECK','DRAFT_SOURCE_ACTION','PREPARE_CLIENT_REPORT'));
+END IF; END $$;
 ALTER TABLE agent_proposals DROP CONSTRAINT IF EXISTS agent_proposals_status_check;
 ALTER TABLE agent_proposals ADD CONSTRAINT agent_proposals_status_check CHECK (status IN ('PROPOSED','APPROVED','EXECUTED','REJECTED'));
+DO $$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'agent_proposals' AND column_name = 'executed_acquisition_batch_id') THEN
 ALTER TABLE agent_proposals DROP CONSTRAINT IF EXISTS agent_proposals_draft_check;
 ALTER TABLE agent_proposals ADD CONSTRAINT agent_proposals_draft_check CHECK (
   (kind = 'REQUEST_CHECK' AND payload IS NULL AND status <> 'APPROVED') OR
   (kind <> 'REQUEST_CHECK' AND payload IS NOT NULL AND payload->>'kind' = kind AND payload->>'businessId' = business_id::text AND status <> 'EXECUTED') IS TRUE
 );
+END IF; END $$;
 DROP INDEX IF EXISTS agent_proposals_pending_unique;
 CREATE UNIQUE INDEX agent_proposals_pending_unique ON agent_proposals(business_id,kind,question_id) NULLS NOT DISTINCT WHERE status='PROPOSED';
 CREATE OR REPLACE FUNCTION guard_agent_proposal_decision() RETURNS trigger AS $$
