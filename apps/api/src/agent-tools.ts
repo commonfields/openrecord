@@ -1,4 +1,5 @@
 import { ACQUISITION_AGENT_TOOLS } from "./agent-acquisition-tools.js"
+import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
 // read-only tools for operator assistance.
 //
@@ -349,6 +350,7 @@ const readRecordOutcomes: AgentToolDef = {
  * which asserts this exact list. */
 export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   ...ACQUISITION_AGENT_TOOLS,
+  ...REFERRAL_AGENT_TOOLS,
   readBusinessTruth,
   discoverBuyerQuestions,
   readOpenIssues,
