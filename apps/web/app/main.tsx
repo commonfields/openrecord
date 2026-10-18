@@ -26,6 +26,8 @@ import { SiteRunPage } from "./routes/site-run"
 import { TruthPage } from "./routes/truth"
 import { ClientsPage } from "./routes/clients"
 import { ClientRecordPage } from "./routes/client"
+import { ClientDiscoveryPage } from "./routes/client-discovery"
+import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
 
 function App() {
@@ -52,6 +54,8 @@ function App() {
             <Route path="/" element={<Navigate to="/clients" replace />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:id" element={<ClientRecordPage />} />
+            <Route path="/clients/:id/discovery" element={<ClientDiscoveryPage />} />
+            <Route path="/clients/:id/discovery/report" element={<ClientDiscoveryReportPage />} />
             <Route path="/businesses" element={<Home />} />
             <Route path="/businesses/:id" element={<BusinessLayout />}>
               <Route index element={<Navigate to="overview" replace />} />
