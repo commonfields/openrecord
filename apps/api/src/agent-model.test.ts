@@ -7,6 +7,16 @@ const config = ConfigProvider.fromMap(new Map([
 const invoke = () => Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents: [{ role: "user", parts: [{ text: "Stored question" }] }], tools: [], system: "Untrusted evidence" })).pipe(Effect.withConfigProvider(config))))
 afterEach(() => vi.unstubAllGlobals())
 describe("Gemini assistant transport (local HTTP fixtures only)", () => {
+  it("refuses external processing before fetch even when model credentials are configured", async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal("fetch", fetch)
+    const disabled = ConfigProvider.fromMap(new Map([
+      ["AGENT_EXTERNAL_PROCESSING_ENABLED", "false"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"],
+    ]))
+    const result = await Effect.runPromise(Effect.either(configuredAgentModel.pipe(Effect.withConfigProvider(disabled))))
+    expect(result).toMatchObject({ _tag: "Left", left: { reason: "UNCONFIGURED" } })
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it("uses a dedicated model, preserves tool signatures and records observed usage", async () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
       expect(_url).toContain("/fixture-model:generateContent")
