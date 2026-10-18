@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { AgentProposalRepository, BusinessRepository, RecordRepository, ActionDraftInput, buildActionDraft, buildClientReport } from "@openrecord/db"
+import { AcquisitionRepository, buildAgentReportSupplement, AgentProposalRepository, BusinessRepository, RecordRepository, ActionDraftInput, buildActionDraft, buildClientReport } from "@openrecord/db"
 import { AgentInvalidInput, AgentNotInScope, type AgentToolResult } from "./agent-tools.js"
 const ReportInput = Schema.Struct({
   start: Schema.optional(Schema.String.pipe(Schema.maxLength(30))),
@@ -8,7 +8,7 @@ const ReportInput = Schema.Struct({
 export const draftDeclarations = [
   { name: "draft_source_action", description: "Draft a source action hypothesis for an approved client-record fact with real observations. Never publishes or records completed work.",
     parametersJsonSchema: { type: "object", properties: { slot: { type: "integer", enum: [1, 2, 3] }, proposedAction: { type: "string", maxLength: 1200 }, assumptions: { type: "array", maxItems: 5, items: { type: "string", maxLength: 300 } }, uncertainty: { type: "string", maxLength: 600 }, verificationPlan: { type: "string", maxLength: 600 } }, required: ["slot", "proposedAction", "assumptions", "uncertainty", "verificationPlan"], additionalProperties: false } },
-  { name: "prepare_client_report", description: "Prepare an immutable, private client-report draft with deterministic counts and evidence provenance. Optional ISO UTC start/end, end exclusive; defaults to last seven days. No publication or delivery.",
+  { name: "prepare_client_report", description: "Prepare an immutable, private client-report draft with deterministic counts and evidence provenance, including separate AI recommendation, website referral, conversion and limitation sections. Optional ISO UTC start/end, end exclusive; defaults to last seven days. No publication or delivery.",
     parametersJsonSchema: { type: "object", properties: { start: { type: "string", format: "date-time" }, end: { type: "string", format: "date-time" } }, additionalProperties: false } },
 ]
 export const dispatchDraftTool = (accountId: string, userId: string, businessId: string, name: string, raw: unknown) => Effect.gen(function*() {
@@ -25,7 +25,12 @@ export const dispatchDraftTool = (accountId: string, userId: string, businessId:
     }
     const input = yield* Schema.decodeUnknown(ReportInput, { onExcessProperty: "error" })(raw)
     const pending = yield* (yield* AgentProposalRepository).listByBusiness(accountId, businessId, "PROPOSED")
-    return buildClientReport(snapshot, { start: input.start ?? new Date(Date.parse(generatedAt) - 7 * 86400000).toISOString(), end: input.end ?? generatedAt }, generatedAt, pending.map(p => ({ id: p.id, kind: p.kind, status: p.status })))
+    const period = { start: input.start ?? new Date(Date.parse(generatedAt) - 7 * 86400000).toISOString(), end: input.end ?? generatedAt }
+    const acquisition = yield* (yield* AcquisitionRepository).snapshot(businessId)
+    // Separate recommendation, referral, conversion and limitation sections from acquisition-owned data.
+    const supplement = buildAgentReportSupplement(acquisition, period.start, period.end)
+    if (supplement === null) return yield* Effect.fail(new AgentInvalidInput({ tool: name }))
+    return buildClientReport(snapshot, period, generatedAt, pending.map(p => ({ id: p.id, kind: p.kind, status: p.status })), supplement)
   }).pipe(Effect.mapError(() => new AgentInvalidInput({ tool: name })))
   if (!payload) return yield* Effect.fail(new AgentInvalidInput({ tool: name }))
   const proposal = yield* (yield* AgentProposalRepository).propose({ accountId, businessId, kind: payload.kind, questionId: payload.kind === "DRAFT_SOURCE_ACTION" ? payload.references.find(ref => ref.kind === "question")?.id ?? null : null,

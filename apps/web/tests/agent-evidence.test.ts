@@ -13,6 +13,9 @@ describe("trusted agent evidence navigation", () => {
     const discoveryMatches = discoveryPath === null ? null : matchRoutes([{ path: "/businesses/:id", children: [{ path: EvidenceRoutePatterns.sourceDiscovery }] }], discoveryPath)
     expect(discoveryMatches?.at(-1)?.params["id"]).toBe(id)
     expect(agentEvidencePath(id, { kind: "record", id, text: "Client" })).toBe(`/clients/${id}`)
+    const referralPath = agentEvidencePath(id, { kind: "referral_import", id, text: "GA4 export" })
+    expect(referralPath).toBe(`/clients/${id}/discovery/report`)
+    expect(matchRoutes([{ path: "/clients/:id/discovery/report" }], referralPath!)?.[0]?.params["id"]).toBe(id)
   })
   it("rejects unknown kinds, URL injection and arbitrary IDs", () => {
     for (const kind of ["https://evil.test", "javascript:alert(1)", "invented"]) expect(agentEvidencePath(id, { kind, id, text: "x" })).toBeNull()

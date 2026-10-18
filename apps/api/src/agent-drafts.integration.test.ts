@@ -1,20 +1,20 @@
 import { createHash, randomUUID } from "node:crypto"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AgentProposalRepository, AgentProposalRepositoryLive, BusinessRepositoryLive, RecordRepository, RecordRepositoryLive, ObservationRepository, ObservationRepositoryLive, hostedMeasurementContext, buildClientReport, type Session } from "@openrecord/db"
+import { AcquisitionRepository, AcquisitionRepositoryLive, AgentProposalRepository, AgentProposalRepositoryLive, BusinessRepositoryLive, RecordRepository, RecordRepositoryLive, ObservationRepository, ObservationRepositoryLive, hostedMeasurementContext, buildClientReport, acquisitionView, REFERRAL_REPORT_SECTIONS, type Ga4ImportMeta, type Session } from "@openrecord/db"
 import { dispatchDraftTool } from "./agent-drafts.js"
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
 suite("evidence-backed private drafts (TEST fixtures, no provider calls)", () => {
-  type Services = AgentProposalRepository | RecordRepository | ObservationRepository | import("@openrecord/db").BusinessRepository
+  type Services = AcquisitionRepository | AgentProposalRepository | RecordRepository | ObservationRepository | import("@openrecord/db").BusinessRepository
   let pool: pg.Pool, scope: Scope.CloseableScope, ctx: Context.Context<Services>
   const run = <A, E>(fx: Effect.Effect<A, E, Services>) => Effect.runPromise(Effect.provide(fx, ctx))
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url })
     scope = await Effect.runPromise(Scope.make())
-    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AgentProposalRepositoryLive, RecordRepositoryLive, ObservationRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))), scope))
+    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AcquisitionRepositoryLive, AgentProposalRepositoryLive, RecordRepositoryLive, ObservationRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))), scope))
   })
   afterAll(async () => { await Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))); await pool.end() })
   const fixture = async () => {
@@ -30,6 +30,17 @@ suite("evidence-backed private drafts (TEST fixtures, no provider calls)", () =>
   }
   const snapshot = (businessId: string) => run(Effect.flatMap(RecordRepository, r => r.snapshot(businessId)))
   const proposals = (f: Awaited<ReturnType<typeof fixture>>) => run(Effect.flatMap(AgentProposalRepository, r => r.listByBusiness(f.session.accountId, f.businessId, null)))
+  const prepareReport = async (f: Awaited<ReturnType<typeof fixture>>, input: { start?: string } = {}) => {
+    // Select a report end after both clocks. Docker's DB clock can run slightly
+    // ahead of the host under load; do not turn that into missing fixture runs.
+    const { rows } = await pool.query<{ now: Date }>("SELECT clock_timestamp() AS now")
+    const end = new Date(Math.max(Date.now(), rows[0]!.now.getTime()) + 1000)
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(end)
+    try { return await run(dispatchDraftTool(f.session.accountId, f.session.userId, f.businessId, "prepare_client_report", { ...input, end: end.toISOString() })) }
+    finally { vi.useRealTimers() }
+  }
+
   it("saves reproducible reports and action hypotheses without publishing, execution or private notes", async () => {
     const f = await fixture()
     const batch = await run(Effect.flatMap(RecordRepository, r => r.startRun(f.session, f.businessId, { kind: null, provider: "gemini", requestedModel: "gemini-2.5-flash", samples: 5 })))
@@ -45,7 +56,7 @@ suite("evidence-backed private drafts (TEST fixtures, no provider calls)", () =>
         measurementContext: hostedMeasurementContext({ businessId: f.businessId, questionId: check.questionId, checkRunId: check.id, prompt: f.item.question.prompt, provider: "gemini", requestedModel: "gemini-2.5-flash", observedModel: "gemini-2.5-flash", observedAt: at }), citations: [] })))
       if (i < 4) await run(Effect.flatMap(RecordRepository, r => r.judge(f.session, f.businessId, { observationId: obs.id, decision: i === 0 ? "CONTRADICTS" : i === 3 ? "UNKNOWN" : "MATCHES", note: "PRIVATE_REVIEW_SENTINEL", claim: null })))
     }
-    await run(dispatchDraftTool(f.session.accountId, f.session.userId, f.businessId, "prepare_client_report", {}))
+    await prepareReport(f)
     const report = (await proposals(f)).find(p => p.kind === "PREPARE_CLIENT_REPORT")!
     expect(report.payload!.text).toContain("5 attempted, 5 successful")
     expect(report.payload!.text).toContain("Human review: 4 of 5")
@@ -75,7 +86,8 @@ suite("evidence-backed private drafts (TEST fixtures, no provider calls)", () =>
     expect(after.share).toBeNull()
     expect(after.checks).toHaveLength(5)
     const original = after.checks[0]!
-    const synthetic = buildClientReport({ ...after, checks: [{ ...original, observation: { ...original.observation!, synthetic: true } }, ...after.checks.slice(1)] }, { start: new Date(Date.now()-86400000).toISOString(), end: new Date().toISOString() }, new Date().toISOString())!
+    const reportAt = report.payload!.generatedAt
+    const synthetic = buildClientReport({ ...after, checks: [{ ...original, observation: { ...original.observation!, synthetic: true } }, ...after.checks.slice(1)] }, { start: new Date(Date.parse(reportAt)-86400000).toISOString(), end: reportAt }, reportAt)!
     expect(synthetic.text).toContain("1 synthetic and excluded")
     expect(synthetic.text).toContain("of 4 eligible real answers")
   })
@@ -86,4 +98,54 @@ suite("evidence-backed private drafts (TEST fixtures, no provider calls)", () =>
     await expect(run(dispatchDraftTool(a.session.accountId, a.session.userId, a.businessId, "draft_source_action", { slot: 1, proposedAction: "Publish", assumptions: [], uncertainty: "Unknown", verificationPlan: "Check" }))).rejects.toThrow()
     expect(await proposals(a)).toHaveLength(0)
   })
+  it("adds distinct recommendation, referral, conversion and limitation sections to private reports without composite scores or sharing", async () => {
+    const f = await fixture()
+    const meta = { dataOrigin: "GA4_EXPORT" as const, propertyRef: "TEST property", dateStart: "2026-10-01", dateEnd: "2026-10-07", timeZone: "UTC", attributionBasis: "SESSION_SOURCE_MEDIUM" as const, conversionEvent: null }
+    const importCsv = (m: Partial<Ga4ImportMeta>, csv: string) => run(Effect.flatMap(AcquisitionRepository, r => r.importReferrals(f.session, f.businessId, { ...meta, ...m }, csv)))
+    await importCsv({ dataOrigin: "SYNTHETIC_FIXTURE" }, "date,session source,session medium,sessions\n20261002,chatgpt.com,referral,777\n")
+    const unmeasured = await importCsv({}, "date,session source,session medium,sessions\n20261002,chatgpt.com,referral,10\n20261003,claude.ai,referral,5\n20261004,(direct),(none),100\n")
+    const signup = await importCsv({ dateStart: "2026-10-08", dateEnd: "2026-10-14", conversionEvent: "sign_up" }, "date,session source,session medium,sessions,key events\n20261008,chatgpt.com,referral,12,2\n20261009,claude.ai,referral,7,3\n20261009,(direct),(none),100,4\n")
+    const set = await run(Effect.flatMap(AcquisitionRepository, r => r.createQuestionSet(f.session, f.businessId, { basis: "FIXTURE", category: "TEST hotels", target: { name: "TEST client", aliases: [], domains: ["example.test"], matchCase: false, ambiguity: null }, competitors: [{ name: "TEST competitor", aliases: [], domains: ["competitor.test"], matchCase: false, ambiguity: null }], questions: [{ group: "CATEGORY_DISCOVERY", prompt: "Which TEST hotel should I consider?" }] })))
+    const batch = await run(Effect.flatMap(AcquisitionRepository, r => r.startBatch(f.session, f.businessId, { setId: set.id, scope: "FULL", questionKeys: null, samples: 5, provider: "gemini", requestedModel: "gemini-fixture", acknowledgedMaxProviderCalls: 20 })))
+    const check = (await pool.query<{ id: string; question_id: string }>("SELECT id, question_id FROM check_runs WHERE acq_batch_id=$1 ORDER BY acq_sample LIMIT 1", [batch.id])).rows[0]!
+    await pool.query("UPDATE check_runs SET status='RUNNING', started_at=now(), heartbeat_at=now(), attempt_count=1 WHERE id=$1", [check.id])
+    const text = "TEST client and TEST competitor are options.", at = new Date().toISOString()
+    const raw = JSON.stringify({ text, fixture: randomUUID() })
+    const observation = await run(Effect.flatMap(ObservationRepository, r => r.create({ businessId: f.businessId, checkRunId: check.id, provider: "gemini", requestedModel: "gemini-fixture", observedModel: "gemini-fixture", collectedAt: at,
+      answerText: text, retrievalMode: "PROVIDER_GROUNDING", modelVersion: "gemini-fixture", retrievalTool: "google_search", requestParameters: { tools: ["google_search"] }, rawResponse: JSON.parse(raw),
+      rawDigest: createHash("sha256").update(raw).digest("hex"), rawBytesHex: Buffer.from(raw).toString("hex"), rawContentType: "application/json", providerMetadata: null, synthetic: false, completeRun: true,
+      measurementContext: hostedMeasurementContext({ businessId: f.businessId, questionId: check.question_id, checkRunId: check.id, prompt: set.questions[0]!.prompt, provider: "gemini", requestedModel: "gemini-fixture", observedModel: "gemini-fixture", observedAt: at }),
+      citations: [{ uri: "https://example.test/rooms", title: "TEST evidence", position: 1, attributed: true }] })))
+    await run(Effect.flatMap(AcquisitionRepository, r => r.judge(f.session, f.businessId, { observationId: observation.id, mention: "MENTIONED", recommendation: "RECOMMENDED", note: "PRIVATE_ACQ_NOTE" })))
+    await prepareReport(f, { start: "2026-10-01T00:00:00.000Z" })
+    const report = (await proposals(f)).find(p => p.kind === "PREPARE_CLIENT_REPORT")!
+    const parts = report.payload!.text.split("\n\n")
+    const headings = REFERRAL_REPORT_SECTIONS.map(h => parts.indexOf(h))
+    expect(headings.every(i => i > 0)).toBe(true)
+    expect([...headings].sort((a, b) => a - b)).toEqual(headings)
+    const body = (k: number) => parts.slice(headings[k]! + 1, headings[k + 1]).join("\n")
+    const acq = acquisitionView((await run(Effect.flatMap(AcquisitionRepository, r => r.snapshot(f.businessId))))!)
+    expect(body(0)).toContain(`Recommended in ${acq.batches[0]!.metrics.recommendationRate.n} of ${acq.batches[0]!.metrics.recommendationRate.d} reviewed answers`)
+    expect(body(0)).toContain("5 planned samples, 4 pending, 1 provider attempts")
+    expect(body(0)).toContain("TEST competitor: 1 of 1")
+    expect(body(0)).toContain("https://example.test/rooms")
+    expect(report.payload!.references).toContainEqual({ kind: "observation", id: observation.id, text: "Acquisition answer evidence" })
+    expect(report.payload!.evidenceJson).toContain(observation.rawDigest)
+    expect(JSON.stringify(report.payload)).not.toContain("PRIVATE_ACQ_NOTE")
+    expect(body(1)).toMatch(/15 AI-attributed sessions out of 115 reported sessions/)
+    expect(body(1)).toMatch(/19 AI-attributed sessions out of 119 reported sessions/)
+    expect(body(1)).toMatch(/1 synthetic referral import is excluded/)
+    expect(body(2)).toMatch(/no conversion event configured; conversions are not measured\. Signups: not measured/)
+    expect(body(2)).toMatch(/configured event "sign_up", 5 events from AI-attributed sessions \(ChatGPT: 2; Claude: 3\)\. Signups: 5/)
+    expect(body(3)).toMatch(/does not claim that any answer produced a visit/)
+    expect(report.payload!.text).not.toContain("777")
+    expect([body(0), body(1), body(2)].join("\n")).not.toMatch(/score|caused|led to|resulted in|uplift|ROI\b/i)
+    expect(report.payload!.text).toContain("does not prove that the edit caused")
+    expect(report.payload!.references.filter(r => r.kind === "referral_import").map(r => r.id).sort()).toEqual([unmeasured.importId, signup.importId].sort())
+    expect(report.payload!.evidenceJson).toContain(signup.importId)
+    expect(createHash("sha256").update(report.payload!.evidenceJson).digest("hex")).toBe(report.payload!.evidenceDigest)
+    expect((await snapshot(f.businessId))!.share).toBeNull()
+    expect((await snapshot(f.businessId))!.actions).toHaveLength(0)
+  })
+
 })
