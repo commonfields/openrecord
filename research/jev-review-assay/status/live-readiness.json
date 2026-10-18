@@ -1,0 +1,39 @@
+{
+  "description": "Checklist that must be fully VERIFIED before any live Jev request. Statuses describe this research branch on the date shown. No live request has been made.",
+  "asOf": "2026-10-18",
+  "API_CONTRACT_VERIFIED": {
+    "status": "UNVERIFIED",
+    "evidence": "Offline only: installed @typesafe-ai/sdk 0.7.0 declarations define systemOne(state, questions, model) and choice(instructions, criteria) returning { choice, confidence, probabilities }, response { model, answers, usage{input_tokens|null, output_tokens|null} }, and models.list() returning { name, description, release_date }. The current hosted API and SDK release were not re-checked against provider documentation on this date.",
+    "required": "Re-read current provider API docs and the latest SDK changelog; confirm the choice response shape, probability semantics, input limits, and error codes; record the doc URL, retrieval date, and SDK version in the run manifest."
+  },
+  "MODEL_IDENTITY_PINNED": {
+    "status": "UNVERIFIED",
+    "evidence": "SDK default model is the alias jev-latest (env TYPESAFE_DEFAULT_MODEL overrides it; the adapter overrides both). A jev-preview model is documented for box questions. ModelCard exposes name/description/release_date only; no immutable version field is documented.",
+    "required": "Snapshot models.list() before the run; send one explicit model string on every request; require response.model to equal it on every receipt; any second identity invalidates the run (RUN_INVALIDATED_MODEL_DRIFT). If no immutable identifier exists, record MODEL_PINNING=UNSUPPORTED_BY_PROVIDER and treat results as alias-scoped."
+  },
+  "PRICING_VERIFIED": {
+    "status": "MISSING",
+    "evidence": "No price is stated in the SDK or in this repository.",
+    "required": "Dated provider price sheet (input/output per-token and any per-request fee) recorded in the manifest. Unknown cost blocks paid execution."
+  },
+  "CREDENTIAL_SCOPE_VERIFIED": {
+    "status": "MISSING",
+    "evidence": "No credential was read, requested, or used. The adapter ignores ambient TYPESAFE_* environment variables.",
+    "required": "Dedicated research-only key, revocable, provider-side spend cap if available, never shared with hosted production, never committed or logged."
+  },
+  "EVIDENCE_TRANSMISSION_PERMITTED": {
+    "status": "NOT_GRANTED",
+    "evidence": "Validation evidence is held privately and the repository is public. Inputs would include business facts, AI answers, and first-party page text.",
+    "required": "Written permission from the evidence owner (and each business where required) to send the specific frozen corpus to the provider; review of provider data-retention and training terms; corpus restricted to approved items."
+  },
+  "SPENDING_BOUND_COMPUTED": {
+    "status": "UNVERIFIED",
+    "evidence": "Formula implemented (protocol.mjs spendingBound): requests x (maxInputTokens x inputPrice + maxOutputTokens x outputPrice) + per-request fees, one request per eligible holdout item, zero retries, hard request cap enforced before each request. Input bound: prepared state <= 24000 characters (<= 96000 UTF-8 bytes) plus the question text. Cannot be evaluated while prices are unknown.",
+    "required": "Compute the bound with verified prices and the frozen holdout size; record it in the manifest."
+  },
+  "OWNER_APPROVAL_RECORDED": {
+    "status": "MISSING",
+    "evidence": "No approval exists.",
+    "required": "Explicit owner approval naming the model string, corpus digest, maximum requests, and maximum USD for one run."
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "description": "Counts-only status of genuine human reference labels available to the Jev shadow assay. Contains no business names, identifiers, answers, facts, URLs, or evidence. Source material stays in private validation storage.",
+  "asOf": "2026-10-18",
+  "basis": "Last verified G2 closeout count (2026-10-17). A parallel reconciliation may change these counts; re-run the readiness gate when it lands.",
+  "taskA": {
+    "task": "A",
+    "provenance": "HUMAN",
+    "synthetic": false,
+    "frozen": false,
+    "blindedToJev": true,
+    "blindedNote": "No Jev output has ever existed, so reviewers could not have seen one.",
+    "reviewComplete": false,
+    "cohort": { "groundedObservations": 75, "facts": 15, "businessesEvaluated": 5 },
+    "judged": {
+      "observations": 15,
+      "decisions": { "MATCHES": 15, "CONTRADICTS": 0, "UNKNOWN": 0 },
+      "factsByClass": { "MATCHES": 3, "CONTRADICTS": 0, "UNKNOWN": 0 },
+      "businesses": 1,
+      "maxBusinessShareByClass": { "MATCHES": 1, "CONTRADICTS": null, "UNKNOWN": null },
+      "unknownReasonSubLabels": 0
+    },
+    "unjudgedObservations": 60
+  },
+  "taskB": {
+    "task": "B",
+    "provenance": "NONE",
+    "synthetic": false,
+    "frozen": false,
+    "blindedToJev": true,
+    "reviewComplete": false,
+    "citationsWithPreservedSourceContent": 0,
+    "citationSupportHumanLabels": 0,
+    "reason": "Provider grounding metadata in the stored raw evidence preserves only a source title and a redirect URI per citation, plus the answer segment it is attached to. The cited source text itself was not preserved, so every Task B item must abstain (SOURCE_TEXT_MISSING). OpenRecord record judgments are answer-versus-fact decisions and are not citation-support labels."
+  }
+}
