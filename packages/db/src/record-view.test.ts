@@ -3,8 +3,9 @@
 // fixtures.
 import { describe, expect, it } from "vitest"
 import { hostedMeasurementContext } from "./evidence.js"
+import { buildClientReport } from "./agent-drafts.js"
 import {
-  compareSlot, countSamples, currentJudgment, findingFor, publicRecord, runStatus, sampleStatement, type SlotEvidence,
+  compareSlot, countSamples, currentJudgment, findingFor, operatorView, publicRecord, RECORD_CANCELLED, runStatus, sampleStatement, type SlotEvidence,
 } from "./record-view.js"
 import type { RecordCheck, RecordItem, RecordJudgment, RecordObservation, RecordSnapshot } from "./record.js"
 
@@ -118,6 +119,48 @@ describe("record comparison rules", () => {
     expect(runStatus([ok, check(null, "RUNNING")])).toBe("RUNNING")
     expect(runStatus([check(null, "QUEUED")])).toBe("QUEUED")
     expect(runStatus([])).toBe("FAILED")
+  })
+  it("a run stopped before any check started is cancelled; a partly run one is not", () => {
+    const stopped = () => check(null, "FAILED", [], { failureClass: RECORD_CANCELLED, failureDetailSafe: "Cancelled by the operator before it started." })
+    expect(runStatus([stopped(), stopped()])).toBe("CANCELLED")
+    expect(runStatus([check(observation(T1)), stopped()])).toBe("PARTIALLY_SUCCEEDED")
+    expect(runStatus([check(null, "FAILED"), stopped()])).toBe("FAILED")
+    expect(runStatus([check(null, "RUNNING"), stopped()])).toBe("RUNNING")
+  })
+  it("a cancelled re-check is kept in history but never compared or treated as the latest answers", () => {
+    const base = check(observation(T1), "SUCCEEDED", [judgment("MATCHES")], { runId: "r1" })
+    const stopped = check(null, "FAILED", [], { runId: "r2", failureClass: RECORD_CANCELLED, completedAt: T2 })
+    const view = operatorView({
+      profile: { businessId: BIZ, name: "TEST Hotel", websiteUrl: "https://client.test/", engagement: "CLIENT", createdAt: T1 },
+      items: [item()],
+      runs: [
+        { id: "r1", kind: "INITIAL", baselineRunId: null, provider: "gemini", requestedModel: "gemini-2.5-flash", retrievalRequired: true, sampleCount: 1, createdAt: T1 },
+        { id: "r2", kind: "FOLLOW_UP", baselineRunId: "r1", provider: "gemini", requestedModel: "gemini-2.5-flash", retrievalRequired: true, sampleCount: 1, createdAt: T2 },
+      ],
+      checks: [base, stopped], actions: [], share: null,
+    })
+    expect(view.runs.map(r => r.status)).toEqual(["SUCCEEDED", "CANCELLED"])
+    expect(view.activeRun).toBe(false)
+    expect(view.slots[0]!.baselineCheckIds).toEqual([base.id])
+    expect(view.slots[0]!.latestFollowUpCheckIds).toEqual([])
+    expect(view.slots[0]!.comparison).toBeNull()
+    expect(view.slots[0]!.finding.state).toBe("AGREEMENT")
+  })
+  it.each([false, true])("private report separates unsent checks from attempts (all stopped: %s)", allStopped => {
+    const stopped = () => check(null, "FAILED", [], { runId: "r1", failureClass: RECORD_CANCELLED })
+    const checks = allStopped ? [stopped(), stopped(), stopped()] : [
+      check(observation(T1), "SUCCEEDED", [], { runId: "r1" }),
+      check(null, "QUEUED", [], { runId: "r1", completedAt: null }), stopped(),
+    ]
+    const snapshot: RecordSnapshot = {
+      profile: { businessId: BIZ, name: "TEST stopped report", websiteUrl: "https://client.test/", engagement: "FIXTURE", createdAt: T1 },
+      items: [item()], actions: [], share: null, checks,
+      runs: [{ id: "r1", kind: "INITIAL", baselineRunId: null, provider: "gemini", requestedModel: "gemini-fixture", retrievalRequired: true, sampleCount: 3, createdAt: T1 }],
+    }
+    const report = buildClientReport(snapshot, { start: "2026-10-01T00:00:00.000Z", end: "2026-10-09T00:00:00.000Z" }, "2026-10-10T00:00:00.000Z")!
+    expect(JSON.parse(report.evidenceJson)).toMatchObject({ batches: [{ attempted: allStopped ? 0 : 1, queued: allStopped ? 0 : 1, cancelledBeforeStart: allStopped ? 3 : 1 }] })
+    expect(report.text).toContain(`${allStopped ? 3 : 1} stopped before starting`)
+    expect(report.text).toContain(`${allStopped ? 0 : 1} queued`)
   })
 })
 

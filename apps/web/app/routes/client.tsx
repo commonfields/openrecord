@@ -2,12 +2,18 @@ import { AgentChat } from "@/components/agent-chat"
 // One client's record, operated by the agency: identity, three approved
 // facts with one question each, checks on the live surface, human review,
 // agency actions, the weekly re-check and its outcome, and the share URL.
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router"
 import { toast } from "sonner"
 import {
+  ArrowRightIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CircleDashedIcon,
+  CircleHelpIcon,
+  CircleStopIcon,
   CopyIcon,
   ExternalLinkIcon,
   GlobeIcon,
@@ -18,6 +24,7 @@ import {
   RefreshCwIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -81,7 +88,6 @@ const decisionTone: Record<Decision, string> = {
   CONTRADICTS: "border-wrong/50 bg-wrong-soft text-wrong",
   UNKNOWN: "border-unknown/50 bg-unknown-soft text-unknown",
 }
-const decisionVariant: Record<Decision, "supported" | "wrong" | "unknown"> = { MATCHES: "supported", CONTRADICTS: "wrong", UNKNOWN: "unknown" }
 
 function useAction(reload: () => Promise<void>) {
   const [busy, setBusy] = useState(false)
@@ -198,7 +204,7 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
             <SelectItem value="PUBLIC_SOURCE_UNAPPROVED">Public source, unapproved</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-[11px] text-muted-foreground">Unapproved public-source facts are never presented as business truth.</p>
+        <p className="text-[0.6875rem] text-muted-foreground">Unapproved public-source facts are never presented as business truth.</p>
       </div>
       <div className="grid gap-1.5"><Label htmlFor={`source-${slot}`} className="text-xs">Source URL (where this fact is published)</Label><Input id={`source-${slot}`} type="url" value={source} onChange={(e) => setSource(e.target.value)} maxLength={2000} /></div>
       <div className="grid gap-1.5"><Label htmlFor={`question-${slot}`} className="text-xs">Question a buyer would ask</Label><Input id={`question-${slot}`} placeholder={`What time is check-in at ${clientName}?`} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} /></div>
@@ -213,7 +219,7 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
           </Button>
         ) : null}
         {item && (current?.history.length ?? 0) > 1 ? (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[0.6875rem] text-muted-foreground">
             Version {current!.history.length}. Earlier checks keep the question and fact they used; a changed question or fact makes the next comparison indeterminate.
           </span>
         ) : null}
@@ -222,106 +228,201 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
   )
 }
 
-function Review({ clientId, check, sampleLabel, reload }: { clientId: string; check: RecordCheck; sampleLabel: string | null; reload: () => Promise<void> }) {
+// Light reading view of a provider answer: bold, italics, bullets and
+// headings. Display only; the exact stored text is one toggle away and is
+// what judgments refer to.
+function inline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+    : part.startsWith("*") && part.endsWith("*") && part.length > 2 ? <em key={i}>{part.slice(1, -1)}</em>
+    : part)
+}
+
+function AnswerText({ text }: { text: string }) {
+  const blocks: Array<{ kind: "p" | "h" | "li"; depth: number; text: string }> = []
+  for (const raw of text.split("\n")) {
+    if (!raw.trim()) continue
+    const bullet = raw.match(/^(\s*)[*-]\s+(.*)$/)
+    const heading = raw.match(/^\s*#{1,6}\s+(.*)$/)
+    if (bullet) blocks.push({ kind: "li", depth: bullet[1]!.length >= 2 ? 1 : 0, text: bullet[2]! })
+    else if (heading) blocks.push({ kind: "h", depth: 0, text: heading[1]! })
+    else blocks.push({ kind: "p", depth: 0, text: raw.trim() })
+  }
+  return (
+    <div className="space-y-2 text-[0.8125rem] leading-relaxed">
+      {blocks.map((b, i) =>
+        b.kind === "li" ? (
+          <div key={i} className={cn("flex gap-2", b.depth ? "pl-5" : "pl-1")}>
+            <span aria-hidden className="mt-[0.6em] size-1 shrink-0 rounded-full bg-muted-foreground/60" />
+            <span className="min-w-0">{inline(b.text)}</span>
+          </div>
+        ) : b.kind === "h" ? (
+          <p key={i} className="pt-1 font-semibold">{inline(b.text)}</p>
+        ) : (
+          <p key={i}>{inline(b.text)}</p>
+        ),
+      )}
+    </div>
+  )
+}
+
+const DECISION_ICONS: Record<Decision, typeof CheckIcon> = { MATCHES: CheckIcon, CONTRADICTS: XIcon, UNKNOWN: CircleHelpIcon }
+const DECISION_HINTS: Record<Decision, string> = {
+  MATCHES: "The answer agrees with the approved value",
+  CONTRADICTS: "The answer states something the approved value rules out",
+  UNKNOWN: "The answer does not let you decide",
+}
+const decisionDot: Record<Decision, string> = { MATCHES: "bg-supported", CONTRADICTS: "bg-wrong", UNKNOWN: "bg-unknown" }
+
+function suggestionsHtml(o: NonNullable<RecordCheck["observation"]>) {
+  return o.provider === "gemini" && o.providerMetadata !== null && typeof o.providerMetadata === "object" && "searchSuggestionsHtml" in o.providerMetadata && typeof o.providerMetadata.searchSuggestionsHtml === "string" ? o.providerMetadata.searchSuggestionsHtml : null
+}
+
+function Review({ clientId, check, approvedValue, reload, onJudged }: {
+  clientId: string; check: RecordCheck; approvedValue: string | null; reload: () => Promise<void>; onJudged?: () => void
+}) {
   const [note, setNote] = useState("")
   const [span, setSpan] = useState("")
+  const [raw, setRaw] = useState(false)
+  const [full, setFull] = useState(false)
   const { busy, run } = useAction(reload)
   if (check.status === "QUEUED" || check.status === "RUNNING")
     return (
-      <p className="flex items-center gap-2 text-xs text-review">
+      <p className="flex items-center gap-2 rounded-lg bg-review-soft/60 px-3 py-2.5 text-review">
         <LoaderCircleIcon className="size-3.5 animate-spin" />
         Check {check.status.toLowerCase()}…
       </p>
     )
   if (check.status === "FAILED" || !check.observation) {
+    const stopped = check.failureClass === "CANCELLED"
     return (
-      <p className="flex items-start gap-2 rounded-md bg-partial-soft px-3 py-2 text-xs text-partial">
-        <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+      <p className={cn("flex items-start gap-2 rounded-lg px-3 py-2.5", stopped ? "bg-muted/60 text-muted-foreground" : "bg-partial-soft text-partial")}>
+        {stopped ? <CircleStopIcon className="mt-0.5 size-3.5 shrink-0" /> : <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />}
         <span>
-          Check failed: {FAILURES[check.failureClass ?? ""] ?? check.failureDetailSafe ?? check.failureClass}. It shows as “could not be completed”; run a new check to try again.
+          {stopped
+            ? "Stopped before it ran. Nothing was asked and nothing was stored."
+            : <>Check failed: {FAILURES[check.failureClass ?? ""] ?? check.failureDetailSafe ?? check.failureClass}. It shows as “could not be completed”; run a new check to try again.</>}
         </span>
       </p>
     )
   }
   const o = check.observation
+  // Long answers start folded so the decision stays close; judgments still
+  // refer to the full stored text.
+  const long = o.answerText.length > 700
+  const folded = long && !full
+  const judge = (d: Decision) => {
+    const claim = span.trim() ? { text: span.trim(), span: span.trim() } : undefined
+    void run(() => Records.judge(clientId, o.id, d, note.trim() || null, claim), `Marked ${DECISION_LABELS[d].toLowerCase()}`).then((saved) => {
+      if (saved) {
+        setNote("")
+        setSpan("")
+        onJudged?.()
+      }
+    })
+  }
   return (
     <div className="space-y-3">
-      {sampleLabel ? <p className="text-[11px] font-medium text-muted-foreground">{sampleLabel}</p> : null}
-      <blockquote className="rounded-lg bg-muted/40 px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap">{o.answerText}</blockquote>
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-        <span>{check.surface}</span>·<span>{o.modelVersion ?? o.observedModel ?? o.requestedModel ?? "model unknown"}</span>·<span>{formatDateTime(o.collectedAt)}</span>·
-        {check.retrievalObserved ? (
-          <span className="text-supported">live web retrieval used</span>
-        ) : (
-          <strong className="font-medium text-partial">{check.retrievalRequested ? "retrieval requested but not used" : "no live web retrieval"}</strong>
-        )}
-        {o.synthetic ? <strong className="font-medium text-partial">· synthetic fixture</strong> : null}
-      </p>
-      {o.citations.length ? (
-        <ol className="list-decimal space-y-0.5 pl-5 text-xs">
-          {o.citations.map((c, i) => {
-            const url = safeRecordUrl(c.uri)
-            return <li key={i}>{url ? <a className="break-all text-primary hover:underline" href={url} target="_blank" rel="noreferrer">{c.title ?? url}</a> : c.title}</li>
-          })}
-        </ol>
-      ) : (
-        <p className="text-xs text-muted-foreground">No sources cited.</p>
-      )}
-      <SearchSuggestions html={o.provider === "gemini" && o.providerMetadata !== null && typeof o.providerMetadata === "object" && "searchSuggestionsHtml" in o.providerMetadata && typeof o.providerMetadata.searchSuggestionsHtml === "string" ? o.providerMetadata.searchSuggestionsHtml : null} />
-      <div className="space-y-2 rounded-lg border p-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+      <article className="rounded-lg border bg-muted/25">
+        <header className="flex items-center justify-between gap-3 border-b px-4 py-2 text-[0.6875rem] text-muted-foreground">
+          <span className="truncate">
+            {o.modelVersion ?? o.observedModel ?? o.requestedModel ?? "model unknown"} · {formatDateTime(o.collectedAt)} ·{" "}
+            {check.retrievalObserved ? (
+              <span className="text-supported">live web</span>
+            ) : (
+              <strong className="font-medium text-partial">{check.retrievalRequested ? "retrieval requested but not used" : "no live web"}</strong>
+            )}
+            {o.synthetic ? <strong className="font-medium text-partial"> · synthetic fixture</strong> : null}
+          </span>
+          <button type="button" className="shrink-0 font-medium hover:text-foreground" onClick={() => setRaw((v) => !v)}>
+            {raw ? "Formatted" : "Exact text"}
+          </button>
+        </header>
+        <div className="px-4 py-3">
+          <div className={cn(folded && "max-h-56 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}>
+            {raw ? <pre className="font-sans text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{o.answerText}</pre> : <AnswerText text={o.answerText} />}
+          </div>
+          {long ? (
+            <button type="button" className="mt-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-muted-foreground hover:text-foreground" onClick={() => setFull((v) => !v)}>
+              <ChevronDownIcon className={cn("size-3 transition-transform", full && "rotate-180")} />
+              {full ? "Show less" : "Show full answer"}
+            </button>
+          ) : null}
+        </div>
+        <footer className="border-t px-4 py-2 text-[0.6875rem] leading-relaxed text-muted-foreground">
+          <span className="font-medium">Sources</span>{" "}
+          {o.citations.length
+            ? o.citations.map((c, i) => {
+                const url = safeRecordUrl(c.uri)
+                const label = c.title ?? (url ? domainOf(url) : "untitled")
+                return (
+                  <span key={i}>
+                    {i > 0 ? <span aria-hidden> · </span> : null}
+                    {url ? <a className="text-foreground/80 hover:text-foreground hover:underline" href={url} target="_blank" rel="noreferrer" title={url}>{label}</a> : label}
+                  </span>
+                )
+              })
+            : "none cited"}
+        </footer>
+      </article>
+
+      <SearchSuggestions html={suggestionsHtml(o)} />
+
+      <div className="space-y-2 pt-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0">
+            <span className="text-muted-foreground">Does it match </span>
+            <span className="font-semibold">{approvedValue ?? "the approved fact"}</span>
+            <span className="text-muted-foreground">?</span>
+          </p>
           {check.judgment ? (
-            <>
-              <span className="text-muted-foreground">Your judgment</span>
-              <Badge variant={decisionVariant[check.judgment.decision]}>{DECISION_LABELS[check.judgment.decision]}</Badge>
-              <span className="text-muted-foreground">
-                {formatDateTime(check.judgment.reviewedAt)}
-                {check.judgments.length > 1 ? ` · corrected ${check.judgments.length - 1}×, history kept` : ""}
-              </span>
-            </>
+            <span className="text-[0.6875rem] text-muted-foreground">
+              {check.judgments.length > 1 ? `Corrected ${check.judgments.length - 1}×` : `Reviewed ${formatDateTime(check.judgment.reviewedAt)}`}
+            </span>
           ) : (
-            <span className="font-medium text-review">Needs your review. It stays private until you judge it.</span>
+            <span className="text-[0.6875rem] font-medium text-review">Not reviewed yet</span>
           )}
         </div>
+        <div className="grid grid-cols-3 gap-2">
+          {(["MATCHES", "CONTRADICTS", "UNKNOWN"] as Decision[]).map((d) => {
+            const Icon = DECISION_ICONS[d]
+            const selected = check.judgment?.decision === d
+            return (
+              <button
+                key={d}
+                type="button"
+                disabled={busy}
+                title={DECISION_HINTS[d]}
+                aria-pressed={selected}
+                onClick={() => judge(d)}
+                className={cn(
+                  "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border font-medium transition-colors hover:bg-muted/60 disabled:opacity-50",
+                  selected && decisionTone[d],
+                )}
+              >
+                {busy ? <Spinner /> : <Icon className="size-3.5" />}
+                {DECISION_LABELS[d]}
+              </button>
+            )
+          })}
+        </div>
         {check.claims.length ? (
-          <ul className="space-y-1 text-[11px] text-muted-foreground">
+          <ul className="space-y-0.5 text-[0.6875rem] text-muted-foreground">
             {check.claims.map((c) => (
-              <li key={c.id}>
-                Claim: “{c.supportingSpan ?? c.claimText}”
-                {c.supportingSpan ? <span> (exact span, {c.extractionMethod === "MANUAL_EXACT_SPAN" ? "quoted" : "transcribed"} by reviewer)</span> : null}
-              </li>
+              <li key={c.id}>Quoted: “{c.supportingSpan ?? c.claimText}”</li>
             ))}
           </ul>
         ) : null}
-        <Textarea placeholder="Internal note (never shown to the client)" className="text-xs" rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
-        <Input
-          placeholder="Exact quoted span from the answer (optional)"
-          aria-label="Exact quoted span"
-          className="text-xs"
-          value={span}
-          onChange={(e) => setSpan(e.target.value)}
-          maxLength={2000}
-        />
-        <div className="flex flex-wrap gap-1.5">
-          {(["MATCHES", "CONTRADICTS", "UNKNOWN"] as Decision[]).map((d) => (
-            <button
-              key={d}
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const claim = span.trim() ? { text: span.trim(), span: span.trim() } : undefined
-                void run(() => Records.judge(clientId, o.id, d, note.trim() || null, claim), `Marked ${DECISION_LABELS[d].toLowerCase()}`).then((saved) => { if (saved) { setNote(""); setSpan("") } })
-              }}
-              className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-50",
-                check.judgment?.decision === d && decisionTone[d],
-              )}
-            >
-              {check.judgment?.decision === d ? <CheckIcon className="size-3.5" /> : null}
-              {DECISION_LABELS[d]}
-            </button>
-          ))}
-        </div>
+        <details className="group">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
+            <ChevronRightIcon className="size-3 transition-transform group-open:rotate-90" />
+            Add a private note or the exact words you judged{note.trim() || span.trim() ? " · added" : ""}
+          </summary>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <Input placeholder="Private note (optional)" aria-label="Internal note" className="h-8 text-xs" value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+            <Input placeholder="Exact words from the answer (optional)" aria-label="Exact quoted span" className="h-8 text-xs" value={span} onChange={(e) => setSpan(e.target.value)} maxLength={2000} />
+          </div>
+        </details>
       </div>
     </div>
   )
@@ -375,7 +476,7 @@ function ActionForm({ record, reload }: { record: OperatorRecord; reload: () => 
       <Textarea placeholder="Agency updated /rooms with breakfast details." aria-label="Action note" rows={2} className="text-xs" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
       <Input type="url" placeholder="Link to the changed page (optional)" aria-label="Changed page link" className="text-xs" value={link} onChange={(e) => setLink(e.target.value)} maxLength={2000} />
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">The note and link are shown on the client&apos;s record.</span>
+        <span className="text-[0.6875rem] text-muted-foreground">The note and link are shown on the client&apos;s record.</span>
         <Button type="submit" size="sm" variant="outline" disabled={busy || !note.trim() || !day}>
           {busy ? <Spinner /> : null}
           Record action
@@ -429,52 +530,140 @@ function Share({ record, reload }: { record: OperatorRecord; reload: () => Promi
           Revoke link
         </Button>
       </div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">Anyone with the link can read the reviewed record. Unreviewed answers and internal notes are never shown.</p>
+      <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">Anyone with the link can read the reviewed record. Unreviewed answers and internal notes are never shown.</p>
     </div>
   )
 }
 
 type StepState = "done" | "current" | "todo"
+type StepKey = "facts" | "check" | "review" | "action" | "recheck" | "share"
+type Step = { key: StepKey; label: string; hint: string; state: StepState }
 
-function Steps({ steps }: { steps: Array<{ label: string; hint: string; state: StepState }> }) {
+// The record's workflow. Every step is a shortcut to where that step is done;
+// nothing is locked behind a step.
+function Steps({ steps, onSelect }: { steps: Step[]; onSelect: (key: StepKey) => void }) {
   return (
-    <ol className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-      {steps.map((s, i) => (
-        <li
-          key={s.label}
-          className={cn(
-            "relative flex items-start gap-2.5 rounded-lg px-3 py-2.5",
-            s.state === "current" ? "bg-card shadow-(--card-shadow)" : "",
-          )}
-        >
-          <span
-            className={cn(
-              "mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold shadow-(--badge-shadow) [&_svg]:size-3",
-              s.state === "done" ? "bg-supported-soft text-supported" : s.state === "current" ? "bg-review text-white" : "bg-muted text-muted-foreground shadow-none",
-            )}
-          >
-            {s.state === "done" ? <CheckIcon strokeWidth={3} /> : i + 1}
-          </span>
-          <span className="min-w-0">
-            <span className={cn("block text-xs font-medium", s.state === "todo" && "text-muted-foreground")}>{s.label}</span>
-            <span className="block text-[11px] leading-snug text-muted-foreground">{s.hint}</span>
-          </span>
-        </li>
-      ))}
-    </ol>
+    <nav aria-label="Record progress">
+      <ol className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1 sm:grid-cols-3 lg:grid-cols-6">
+        {steps.map((s, i) => (
+          <li key={s.key} className="min-w-0">
+            <button
+              type="button"
+              onClick={() => onSelect(s.key)}
+              aria-current={s.state === "current" ? "step" : undefined}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-card/60",
+                s.state === "current" && "bg-card shadow-(--card-shadow) hover:bg-card",
+              )}
+            >
+              <span
+                className={cn(
+                  "flex size-[1.125rem] shrink-0 items-center justify-center rounded-full text-[0.625rem] font-semibold tabular-nums [&_svg]:size-2.5",
+                  s.state === "done" ? "bg-supported-soft text-supported" : s.state === "current" ? "bg-review text-white" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {s.state === "done" ? <CheckIcon strokeWidth={3} /> : i + 1}
+              </span>
+              <span className="min-w-0">
+                <span className={cn("block truncate font-medium", s.state === "todo" && "text-muted-foreground")}>{s.label}</span>
+                <span className="block truncate text-[0.6875rem] text-muted-foreground">{s.hint}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
   )
 }
 
-function SampleChecks({ id, checks, total, kindLabel, reload }: {
-  id: string; checks: RecordCheck[]; total: number; kindLabel: string; reload: () => Promise<void>
-}) {
-  if (checks.length === 0) return null
+function NextStep({ title, detail, done, children }: { title: string; detail?: ReactNode; done?: boolean; children?: ReactNode }) {
   return (
-    <div className="space-y-4 border-t pt-4">
-      <p className="text-xs font-medium">{kindLabel}{total > 1 ? ` · ${checks.length} of ${total} samples` : ""}</p>
-      {checks.map((c) => (
-        <Review key={c.id} clientId={id} check={c} sampleLabel={total > 1 ? `Sample ${c.sample} of ${total}` : null} reload={reload} />
-      ))}
+    <div id="record-next" className={cn("flex scroll-mt-4 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-2.5", done ? "bg-muted/30" : "border-review/25 bg-review-soft/40")}>
+      {done ? <CheckIcon className="size-4 shrink-0 text-supported" /> : <ArrowRightIcon className="size-4 shrink-0 text-review" />}
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">
+          {done ? null : <span className="text-review">Next · </span>}
+          {title}
+        </p>
+        {detail ? <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">{detail}</p> : null}
+      </div>
+      {children ? <div className="flex flex-wrap items-center gap-2">{children}</div> : null}
+    </div>
+  )
+}
+
+const needsReview = (c: RecordCheck) => !!c.observation && !c.judgment
+const sampleDot = (c: RecordCheck) =>
+  c.judgment ? decisionDot[c.judgment.decision]
+  : c.observation ? "ring-1 ring-review ring-inset"
+  : c.status === "QUEUED" || c.status === "RUNNING" ? "bg-muted-foreground/30"
+  : c.failureClass === "CANCELLED" ? "bg-muted-foreground/20" : "bg-partial"
+
+// One sample at a time: sample tabs (dot = your decision) with previous/next,
+// then the selected answer. After a judgment the deck moves to the next sample
+// that still needs review; when none is left in this fact it says so.
+function ReviewDeck({ id, checks, total, kindLabel, approvedValue, reload, onAllReviewed }: {
+  id: string; checks: RecordCheck[]; total: number; kindLabel: string; approvedValue: string | null; reload: () => Promise<void>; onAllReviewed?: () => void
+}) {
+  const firstOpen = checks.findIndex(needsReview)
+  const [index, setIndex] = useState(firstOpen >= 0 ? firstOpen : 0)
+  if (checks.length === 0) return null
+  const at = Math.min(index, checks.length - 1)
+  const current = checks[at]!
+  const reviewed = checks.filter((c) => c.judgment).length
+  const answered = checks.filter((c) => c.observation).length
+  const advance = () => {
+    const wasOpen = needsReview(checks[at]!)
+    const order = [...checks.keys()].filter((i) => i !== at)
+    const next = [...order.filter((i) => i > at), ...order.filter((i) => i < at)].find((i) => needsReview(checks[i]!))
+    if (next !== undefined) setIndex(next)
+    else if (wasOpen) onAllReviewed?.()
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <p className="font-medium">
+          {kindLabel}
+          <span className="font-normal text-muted-foreground">
+            {" · "}
+            {reviewed} of {answered} reviewed{total > checks.length ? ` · ${checks.length} of ${total} samples` : ""}
+          </span>
+        </p>
+        {checks.length > 1 ? (
+          <div className="flex items-center gap-0.5">
+            <Button size="icon-sm" variant="ghost" aria-label="Previous sample" disabled={at === 0} onClick={() => setIndex(at - 1)}>
+              <ChevronLeftIcon />
+            </Button>
+            <div role="tablist" aria-label="Samples" className="flex items-center gap-0.5 rounded-lg bg-muted/60 p-0.5">
+              {checks.map((c, i) => {
+                const d = c.judgment?.decision
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={i === at}
+                    aria-label={`Sample ${c.sample}${d ? `, ${DECISION_LABELS[d]}` : c.observation ? ", needs review" : ", no answer"}`}
+                    onClick={() => setIndex(i)}
+                    className={cn(
+                      "inline-flex h-6 min-w-8 items-center justify-center gap-1 rounded-md px-1.5 text-[0.6875rem] font-medium tabular-nums transition-colors",
+                      i === at ? "bg-card text-foreground shadow-(--card-shadow)" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {c.sample}
+                    <span aria-hidden className={cn("size-1.5 rounded-full", sampleDot(c))} />
+                  </button>
+                )
+              })}
+            </div>
+            <Button size="icon-sm" variant="ghost" aria-label="Next sample" disabled={at === checks.length - 1} onClick={() => setIndex(at + 1)}>
+              <ChevronRightIcon />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <Review key={current.id} clientId={id} check={current} approvedValue={approvedValue} reload={reload} onJudged={advance} />
     </div>
   )
 }
@@ -555,8 +744,12 @@ function EvidenceHistory({ record, slot, latest, initial }: {
   )
 }
 
-function FactCard({ id, record, slot, latest, initial, reload }: {
-  id: string; record: OperatorRecord; slot: 1 | 2 | 3; latest: OperatorRecord["runs"][number] | undefined; initial: OperatorRecord["runs"][number] | undefined; reload: () => Promise<void>
+// One fact as a row you can scan: what it is, the approved value, a dot per
+// sample (your decisions) and its state. Opening it shows the question, the
+// answers to review, the comparison and the evidence history.
+function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, onAllReviewed }: {
+  id: string; record: OperatorRecord; slot: 1 | 2 | 3; latest: OperatorRecord["runs"][number] | undefined; initial: OperatorRecord["runs"][number] | undefined
+  reload: () => Promise<void>; open: boolean; onToggle: () => void; onAllReviewed: () => void
 }) {
   const s = record.slots.find((x) => x.slot === slot)
   const [editing, setEditing] = useState(!s)
@@ -565,141 +758,196 @@ function FactCard({ id, record, slot, latest, initial, reload }: {
   const baseline = checksFor(record, initial?.id, slot)
   const item = s?.item
   const finding = s?.finding
+  const reviewed = latestChecks.filter((c) => c.judgment).length
+  const answered = latestChecks.filter((c) => c.observation).length
+  const waiting = latestChecks.filter(needsReview).length
 
   return (
-    <Panel>
-      <PanelHeader
-        title={
-          <span className="flex items-center gap-2">
-            <span className="text-muted-foreground">Fact {slot}</span>
-            {item ? <span>{item.fact.predicate}</span> : <span className="text-muted-foreground">Not set</span>}
-          </span>
-        }
-        description={item ? `“${item.question.prompt}”` : "Add a fact the client stands behind and the question a buyer would ask about it."}
-      >
-        {item ? (
-          item.approval ? (
-            <Badge variant="supported">
-              <ShieldCheckIcon />
-              Approved {formatDate(item.approval.approvedAt)}
-            </Badge>
-          ) : (
-            <Badge variant="partial">Not approved</Badge>
-          )
-        ) : null}
-        {item ? (
-          <Badge variant="outline" title={item.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? "Derived from public pages only; not business truth" : undefined}>
-            {SOURCE_KIND_LABELS[item.fact.sourceKind] ?? item.fact.sourceKind}
-          </Badge>
-        ) : null}
-        {finding ? (
-          <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium", FINDING_TONE[finding.state])}>
-            {FINDING_STATE_LABELS[finding.state]}{finding.samples.reviewed > 0 ? ` · ${finding.samples.statement.replace(/\.$/, "")}` : ""}
-          </span>
-        ) : null}
-        {item && !editing ? (
-          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(true)}>
-            <PenLineIcon />
-            Edit
-          </Button>
-        ) : null}
-      </PanelHeader>
-
-      <div className="space-y-4 p-4 pt-3">
-        {editing ? (
-          <SlotEditor key={item?.id ?? "new"} clientId={id} clientName={record.profile.name} slot={slot} current={s} reload={reload} {...(item ? { onDone: () => setEditing(false) } : {})} />
-        ) : item ? (
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-            <div className="rounded-lg bg-muted/40 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Approved value</div>
-              <div className="text-xs font-semibold">{item.fact.valueText}</div>
-              <div className="text-[11px] text-muted-foreground">
-                {sentenceCase(item.fact.valueType)} · v{item.fact.version} · valid {formatDate(item.fact.validFrom)}
-                {item.fact.validUntil ? ` – ${formatDate(item.fact.validUntil)}` : ""}
-              </div>
-            </div>
-            <div className="rounded-lg bg-muted/40 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Published at</div>
-              <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 truncate text-xs font-medium hover:underline">
-                <GlobeIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{item.sourceUrl}</span>
-              </a>
-            </div>
-          </div>
-        ) : null}
-
-        {item && !item.approval && !editing ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-partial/25 bg-partial-soft/60 px-3 py-2">
-            <span className="min-w-0 flex-1 text-xs">Not approved: it will not be checked or shown to the client.</span>
-            <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => Records.approve(id, item.id), "Fact approved")}>
-              {busy ? <Spinner /> : <ShieldCheckIcon />}
-              Approve fact
-            </Button>
-          </div>
-        ) : null}
-
+    <Panel id={`fact-${slot}`} className="scroll-mt-4">
+      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-[0.6875rem] font-semibold text-muted-foreground tabular-nums">{slot}</span>
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate font-medium", !item && "text-muted-foreground")}>{item ? item.fact.predicate : "Add a fact"}</span>
+          <span className="block truncate text-muted-foreground">{item ? item.fact.valueText : "A fact the client stands behind, and the question a buyer would ask."}</span>
+        </span>
         {latestChecks.length ? (
-          <SampleChecks id={id} checks={latestChecks} total={latest?.sampleCount ?? latestChecks.length} kindLabel={latest?.kind === "FOLLOW_UP" ? "Weekly re-check answers" : "First check answers"} reload={reload} />
+          <span className="hidden shrink-0 items-center gap-2 sm:flex">
+            <span className="flex items-center gap-1" aria-hidden>
+              {latestChecks.map((c) => <span key={c.id} className={cn("size-2 rounded-full", sampleDot(c))} />)}
+            </span>
+            <span className={cn("w-16 text-right text-[0.6875rem] tabular-nums", waiting ? "font-medium text-review" : "text-muted-foreground")}>
+              {waiting ? `${waiting} to review` : `${reviewed}/${answered} done`}
+            </span>
+          </span>
         ) : null}
+        {item && !item.approval ? (
+          <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE["ACTION_RECORDED"])}>Not approved</span>
+        ) : finding ? (
+          <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE[finding.state])}>{FINDING_STATE_LABELS[finding.state]}</span>
+        ) : null}
+        <ChevronDownIcon className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
 
-        {latest?.kind === "FOLLOW_UP" && baseline.length && (latest.id !== initial?.id) ? (
-          <details className="group rounded-lg border px-3 py-2 text-xs">
-            <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
-              First check answers (before){baseline.length > 1 ? ` · ${baseline.length} samples` : ""}
-            </summary>
-            <div className="space-y-4 pt-3">
-              {baseline.map((c) => (
-                <Review key={c.id} clientId={id} check={c} sampleLabel={baseline.length > 1 ? `Sample ${c.sample} of ${baseline.length}` : null} reload={reload} />
-              ))}
+      {open ? (
+        <div className="space-y-4 border-t px-4 py-4">
+          {editing ? (
+            <SlotEditor key={item?.id ?? "new"} clientId={id} clientName={record.profile.name} slot={slot} current={s} reload={reload} {...(item ? { onDone: () => setEditing(false) } : {})} />
+          ) : item ? (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Question </span>“{item.question.prompt}”
+                </p>
+                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.6875rem] text-muted-foreground">
+                  <ShieldCheckIcon className={cn("size-3 shrink-0", item.approval ? "text-supported" : "text-partial")} />
+                  <span title={item.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? "Derived from public pages only; not business truth" : undefined}>
+                    {SOURCE_KIND_LABELS[item.fact.sourceKind] ?? item.fact.sourceKind}
+                  </span>
+                  <span aria-hidden>·</span>
+                  <span>{item.approval ? `approved ${formatDate(item.approval.approvedAt)}` : "not approved"}</span>
+                  <span aria-hidden>·</span>
+                  <span>v{item.fact.version}</span>
+                  <span aria-hidden>·</span>
+                  <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.sourceUrl} className="inline-flex min-w-0 items-center gap-1 hover:text-foreground hover:underline">
+                    <GlobeIcon className="size-3 shrink-0" />
+                    <span className="truncate">{domainOf(item.sourceUrl)}</span>
+                  </a>
+                </p>
+                {finding && finding.samples.reviewed > 0 ? <p className="text-[0.6875rem] text-muted-foreground">{finding.samples.statement}</p> : null}
+              </div>
+              <Button size="icon-sm" variant="ghost" aria-label="Edit fact" title="Edit fact" onClick={() => setEditing(true)}>
+                <PenLineIcon />
+              </Button>
             </div>
-          </details>
-        ) : null}
+          ) : null}
 
-        {s?.comparison ? (
-          <div
-            className={cn(
-              "rounded-lg px-4 py-3 text-xs",
-              s.comparison.state === "DERIVED" && (s.comparison.outcome === "OBSERVED_CORRECTED" || s.comparison.outcome === "RESOLVED_EXTERNALLY") ? "bg-supported-soft" : "bg-muted/50",
-            )}
-          >
-            {s.comparison.state === "DERIVED" ? (
-              <>
-                <p className="text-xs font-semibold">{OUTCOME_LABELS[s.comparison.outcome]}</p>
-                <p className="mt-0.5 text-muted-foreground">{s.comparison.text}</p>
-              </>
-            ) : s.comparison.state === "AWAITING_REVIEW" ? (
-              <p>Review the first check and the re-check samples to derive the outcome.</p>
-            ) : (
-              <p>Re-check in progress.</p>
-            )}
-          </div>
-        ) : null}
+          {item && !item.approval && !editing ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-partial/25 bg-partial-soft/60 px-3 py-2">
+              <span className="min-w-0 flex-1">Not approved: it will not be checked or shown to the client.</span>
+              <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => Records.approve(id, item.id), "Fact approved")}>
+                {busy ? <Spinner /> : <ShieldCheckIcon />}
+                Approve fact
+              </Button>
+            </div>
+          ) : null}
 
-        <EvidenceHistory record={record} slot={slot} latest={latest} initial={initial} />
+          {latestChecks.length ? (
+            <ReviewDeck id={id} checks={latestChecks} total={latest?.sampleCount ?? latestChecks.length} kindLabel={latest?.kind === "FOLLOW_UP" ? "Weekly re-check answers" : "First check answers"} approvedValue={item?.fact.valueText ?? null} reload={reload} onAllReviewed={onAllReviewed} />
+          ) : null}
 
-        {s?.actions.length ? (
-          <ul className="space-y-1 border-t pt-3 text-xs">
-            {s.actions.map((a) => (
-              <li key={a.id} className="flex gap-2">
-                <span className="w-20 shrink-0 text-muted-foreground tabular-nums">{formatDate(a.performedAt)}</span>
-                <span>
-                  {a.note}
-                  {a.slot === null ? <span className="text-muted-foreground"> (all facts)</span> : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
+          {latest?.kind === "FOLLOW_UP" && baseline.length && (latest.id !== initial?.id) ? (
+            <details className="group rounded-lg border px-3 py-2">
+              <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
+                First check answers (before){baseline.length > 1 ? ` · ${baseline.length} samples` : ""}
+              </summary>
+              <div className="pt-3">
+                <ReviewDeck id={id} checks={baseline} total={baseline.length} kindLabel="First check answers" approvedValue={item?.fact.valueText ?? null} reload={reload} />
+              </div>
+            </details>
+          ) : null}
+
+          {s?.comparison ? (
+            <div
+              className={cn(
+                "rounded-lg px-4 py-3",
+                s.comparison.state === "DERIVED" && (s.comparison.outcome === "OBSERVED_CORRECTED" || s.comparison.outcome === "RESOLVED_EXTERNALLY") ? "bg-supported-soft" : "bg-muted/50",
+              )}
+            >
+              {s.comparison.state === "DERIVED" ? (
+                <>
+                  <p className="font-semibold">{OUTCOME_LABELS[s.comparison.outcome]}</p>
+                  <p className="mt-0.5 text-muted-foreground">{s.comparison.text}</p>
+                </>
+              ) : s.comparison.state === "AWAITING_REVIEW" ? (
+                <p>Review the first check and the re-check samples to derive the outcome.</p>
+              ) : (
+                <p>Re-check in progress.</p>
+              )}
+            </div>
+          ) : null}
+
+          {s?.actions.length ? (
+            <ul className="space-y-1">
+              {s.actions.map((a) => (
+                <li key={a.id} className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground tabular-nums">{formatDate(a.performedAt)}</span>
+                  <span>
+                    {a.note}
+                    {a.slot === null ? <span className="text-muted-foreground"> (all facts)</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <EvidenceHistory record={record} slot={slot} latest={latest} initial={initial} />
+        </div>
+      ) : null}
     </Panel>
   )
 }
+
+type RunView = OperatorRecord["runs"][number]
+
+// Stops the questions of a run that have not been sent yet. Questions already
+// in flight finish and their answers are kept, like any other evidence.
+function StopRunButton({ clientId, run, reload, className }: { clientId: string; run: RunView; reload: () => Promise<void>; className?: string }) {
+  const { busy, run: act } = useAction(reload)
+  const label = run.kind === "INITIAL" ? "first check" : "weekly re-check"
+  const stop = () => {
+    if (!window.confirm(`Stop this ${label}?\n\nQuestions that have not been sent are cancelled. Any question already in progress finishes and is kept.`)) return
+    void act(async () => {
+      const r = await Records.cancelRun(clientId, run.id)
+      toast.success(r.cancelled ? `Stopped ${r.cancelled} question${r.cancelled === 1 ? "" : "s"}${r.stillRunning ? `; ${r.stillRunning} in progress will finish` : ""}` : `${r.stillRunning} in progress will finish`)
+    })
+  }
+  return (
+    <Button size="sm" variant="outline" className={cn("border-wrong/40 text-wrong hover:bg-wrong-soft hover:text-wrong", className)} disabled={busy} onClick={stop}>
+      {busy ? <Spinner /> : <CircleStopIcon />}
+      Stop {label}
+    </Button>
+  )
+}
+
+function RunBar({ clientId, run, reload }: { clientId: string; run: RunView; reload: () => Promise<void> }) {
+  const total = run.checks.length
+  const finished = run.checks.filter((c) => c.status !== "QUEUED" && c.status !== "RUNNING").length
+  const started = run.checks.some((c) => c.status !== "QUEUED")
+  const waitingMs = Date.now() - Date.parse(run.createdAt)
+  const stalled = !started && waitingMs > 2 * 60_000
+  return (
+    <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-2.5 text-xs shadow-(--card-shadow)", stalled ? "bg-partial-soft/70 text-partial" : "bg-review-soft/60 text-review")}>
+      {stalled ? <TriangleAlertIcon className="size-4 shrink-0" /> : <LoaderCircleIcon className="size-4 shrink-0 animate-spin" />}
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{run.kind === "INITIAL" ? "First check" : "Weekly re-check"}</span>
+        {" · "}
+        {finished} of {total} done
+        {stalled
+          ? ` · Waiting since ${formatDateTime(run.createdAt)} and no question has started. The check worker may not be running. Stop it if you started it by mistake.`
+          : " · This page updates on its own."}
+      </span>
+      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-current/15" aria-hidden>
+        <div className="h-full rounded-full bg-current transition-[width]" style={{ width: `${total ? (finished / total) * 100 : 0}%` }} />
+      </div>
+      <StopRunButton clientId={clientId} run={run} reload={reload} className="h-7 bg-card text-xs" />
+    </div>
+  )
+}
+
+const reveal = (elementId: string, then?: () => void) =>
+  window.setTimeout(() => {
+    document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    then?.()
+  }, 60)
 
 export function ClientRecordPage() {
   const { id = "" } = useParams()
   const [poll, setPoll] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [chatting, setChatting] = useState(false)
+  // undefined: follow the record (open the fact that needs you); null: all closed.
+  const [openSlot, setOpenSlot] = useState<number | null | undefined>(undefined)
+  const [actionOpen, setActionOpen] = useState(false)
   const res = useApi<RecordResponse>(`record:${id}`, async () => {
     const r = await Records.get(id)
     setPoll(r.record.activeRun)
@@ -711,7 +959,7 @@ export function ClientRecordPage() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-14 w-72" />
-        <Skeleton className="h-20 rounded-xl" />
+        <Skeleton className="h-12 rounded-xl" />
         <Skeleton className="h-64 rounded-xl" />
       </div>
     )
@@ -727,35 +975,90 @@ export function ClientRecordPage() {
     )
   }
   const { record, surface } = res.data
-  const initial = [...record.runs].reverse().find((r) => r.kind === "INITIAL")
-  const latest = record.runs.at(-1)
-  const hasFollowUp = record.runs.some((r) => r.kind === "FOLLOW_UP")
+  // A run stopped before anything ran produced no answers: it stays in the
+  // history but never counts as the first check or the latest answers.
+  const executed = record.runs.filter((r) => r.status !== "CANCELLED")
+  const initial = [...executed].reverse().find((r) => r.kind === "INITIAL")
+  const latest = executed.at(-1)
+  const hasFollowUp = executed.some((r) => r.kind === "FOLLOW_UP")
+  const active = [...record.runs].reverse().find((r) => r.status === "QUEUED" || r.status === "RUNNING")
   const approved = record.slots.filter((s) => s.item.approval).length
-  const checks = latest?.checks ?? []
-  const unreviewed = checks.filter((c) => c.observation && !c.judgment).length
-  const reviewedFirst = initial ? initial.checks.every((c) => !c.observation || c.judgment) : false
+  const facts = ([1, 2, 3] as const).map((slot) => ({
+    slot,
+    item: record.slots.find((s) => s.slot === slot)?.item,
+    waiting: checksFor(record, latest?.id, slot).filter(needsReview).length,
+  }))
+  const unreviewed = facts.reduce((n, f) => n + f.waiting, 0)
+  const waitingFacts = facts.filter((f) => f.waiting > 0)
+  const initialWaiting = initial ? initial.checks.filter(needsReview).length : 0
+  const reviewingFollowUp = latest?.kind === "FOLLOW_UP" && unreviewed > 0
+  const shareActive = record.share?.status === "ACTIVE"
+  const unapprovedSlot = facts.find((f) => !f.item?.approval)?.slot
+  const shownSlot = openSlot === undefined ? (waitingFacts[0]?.slot ?? (approved === 0 ? 1 : null)) : openSlot
 
-  const stepStates: StepState[] = []
-  const done = [approved >= 1, !!initial, !!initial && reviewedFirst, record.actions.length > 0, hasFollowUp, !!record.share && record.share.status === "ACTIVE"]
-  let currentSet = false
-  for (const d of done) {
-    if (d) stepStates.push("done")
-    else if (!currentSet) {
-      stepStates.push("current")
-      currentSet = true
-    } else stepStates.push("todo")
+  const openFact = (slot: number) => {
+    setOpenSlot(slot)
+    reveal(`fact-${slot}`)
   }
-  const steps = [
-    { label: "Approve facts", hint: `${approved} of 3 approved` },
-    { label: "First check", hint: initial ? `${relativeTime(initial.createdAt)}` : "Ask the live AI surface" },
-    { label: "Review answers", hint: unreviewed ? `${unreviewed} waiting` : initial ? "All judged" : "After the check" },
-    { label: "Agency action", hint: record.actions.length ? `${record.actions.length} recorded` : "Log what you changed" },
-    { label: "Weekly re-check", hint: hasFollowUp ? "Compared with first" : "Same questions again" },
-    { label: "Share", hint: record.share?.status === "ACTIVE" ? "Link active" : "Send the record" },
-  ].map((s, i) => ({ ...s, state: stepStates[i] ?? "todo" }))
+  const openAction = () => {
+    setActionOpen(true)
+    reveal("record-action", () => document.querySelector<HTMLTextAreaElement>("#record-action textarea")?.focus({ preventScroll: true }))
+  }
+  // After the last open sample of a fact: go to the next fact that still has
+  // answers to review, or back to the next step when everything is reviewed.
+  const factReviewed = (slot: number) => {
+    const next = [...facts.filter((f) => f.slot > slot), ...facts.filter((f) => f.slot < slot)].find((f) => f.waiting > 0)
+    if (next) openFact(next.slot)
+    else {
+      setOpenSlot(null)
+      reveal("record-next")
+    }
+  }
+  const start = (kind: "INITIAL" | "FOLLOW_UP", label: string) => {
+    const samples = initial?.sampleCount ?? 1
+    const questions = approved * (kind === "FOLLOW_UP" ? samples : 1)
+    const what = kind === "FOLLOW_UP" ? "Run the weekly re-check now?" : initial ? "Redo the first check?" : "Run the first check now?"
+    if (!window.confirm(`${what}\n\nThis asks ${surface.model} ${questions} new question${questions === 1 ? "" : "s"}. You can stop it from this page while questions are still waiting.`)) return
+    void run(() => Records.run(id, kind), label)
+  }
+
+  const next: StepKey | null =
+    approved === 0 ? "facts"
+    : !initial ? "check"
+    : initialWaiting > 0 ? "review"
+    : !hasFollowUp && record.actions.length === 0 ? "action"
+    : !hasFollowUp || reviewingFollowUp ? "recheck"
+    : !shareActive ? "share"
+    : null
+  const current: StepKey | null = active ? (active.kind === "INITIAL" ? "check" : "recheck") : next
+  const done: Record<StepKey, boolean> = {
+    facts: approved >= 1,
+    check: !!initial,
+    review: !!initial && initialWaiting === 0,
+    action: record.actions.length > 0,
+    recheck: hasFollowUp && !reviewingFollowUp,
+    share: shareActive,
+  }
+  const steps: Step[] = ([
+    { key: "facts", label: "Approve facts", hint: `${approved} of 3 approved` },
+    { key: "check", label: "First check", hint: initial ? relativeTime(initial.createdAt) : "Not run yet" },
+    { key: "review", label: "Review answers", hint: !initial ? "After the first check" : initialWaiting ? `${initialWaiting} left to review` : "All reviewed" },
+    { key: "action", label: "Agency action", hint: record.actions.length ? `${record.actions.length} recorded` : "Log what you changed" },
+    { key: "recheck", label: "Weekly re-check", hint: !hasFollowUp ? "Same questions again" : reviewingFollowUp ? `${unreviewed} left to review` : "Compared with first" },
+    { key: "share", label: "Share", hint: shareActive ? "Link active" : "Send the record" },
+  ] as const).map((s) => ({ ...s, state: s.key === current ? "current" : done[s.key] ? "done" : "todo" }))
+  const selectStep = (key: StepKey) => {
+    if (key === "facts") openFact(unapprovedSlot ?? 1)
+    else if (key === "review" || (key === "recheck" && reviewingFollowUp)) openFact(waitingFacts[0]?.slot ?? 1)
+    else if (key === "action") openAction()
+    else if (key === "share") reveal("record-share")
+    else reveal("record-checks")
+  }
+  const reviewFirst = waitingFacts[0]
+  const waitingDetail = waitingFacts.map((f) => `Fact ${f.slot} · ${f.item?.fact.predicate ?? ""} (${f.waiting})`).join("  ·  ")
 
   return (
-    <div className="space-y-5 pb-4">
+    <div className="space-y-4 pb-4">
       <PageHeader
         back={{ to: "/clients", label: "Clients" }}
         title={record.profile.name}
@@ -775,20 +1078,22 @@ export function ClientRecordPage() {
           </>
         }
         actions={
-          !initial ? (
-            <Button size="sm" disabled={busy || record.activeRun} onClick={() => void run(() => Records.run(id, "INITIAL"), "First check started")}>
-              {record.activeRun ? <Spinner /> : <PlayIcon />}
+          active ? (
+            <StopRunButton clientId={id} run={active} reload={reload} />
+          ) : !initial ? (
+            <Button size="sm" disabled={busy || approved === 0} onClick={() => start("INITIAL", "First check started")}>
+              <PlayIcon />
               Run first check
             </Button>
           ) : (
             <>
               {!hasFollowUp ? (
-                <Button size="sm" variant="outline" disabled={busy || record.activeRun} onClick={() => void run(() => Records.run(id, "INITIAL"), "First check started again")}>
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => start("INITIAL", "First check started again")}>
                   Redo first check
                 </Button>
               ) : null}
-              <Button size="sm" disabled={busy || record.activeRun} onClick={() => void run(() => Records.run(id, "FOLLOW_UP"), "Weekly re-check started")}>
-                {record.activeRun ? <Spinner /> : <RefreshCwIcon />}
+              <Button size="sm" variant={next === "recheck" && !reviewingFollowUp ? "default" : "outline"} disabled={busy} onClick={() => start("FOLLOW_UP", "Weekly re-check started")}>
+                <RefreshCwIcon />
                 Run weekly re-check
               </Button>
             </>
@@ -800,36 +1105,76 @@ export function ClientRecordPage() {
         <summary className="cursor-pointer text-xs font-medium">Investigate with the agent</summary>
         <div className="pt-4"><AgentChat businessId={id} businessName={record.profile.name} onConversationChange={setChatting} /></div>
       </details>
-      <Steps steps={steps} />
+      <Steps steps={steps} onSelect={selectStep} />
 
-      {record.activeRun ? (
-        <div className="flex items-center gap-2 rounded-xl border border-review/20 bg-review-soft/60 px-4 py-2.5 text-xs text-review shadow-(--card-shadow)">
-          <LoaderCircleIcon className="size-4 animate-spin" />
-          A check is running on the live surface. This page updates on its own.
-        </div>
-      ) : null}
+      {active ? (
+        <RunBar clientId={id} run={active} reload={reload} />
+      ) : next === "facts" ? (
+        <NextStep title="Approve a fact" detail="Each approved fact gets one question a buyer would ask, sent to the live AI surface.">
+          <Button size="sm" onClick={() => openFact(unapprovedSlot ?? 1)}>Open fact {unapprovedSlot ?? 1}</Button>
+        </NextStep>
+      ) : next === "check" ? (
+        <NextStep title="Run the first check" detail={`Asks ${surface.model} one question for each of the ${approved} approved fact${approved === 1 ? "" : "s"}.`}>
+          <Button size="sm" disabled={busy} onClick={() => start("INITIAL", "First check started")}><PlayIcon />Run first check</Button>
+        </NextStep>
+      ) : (next === "review" || reviewingFollowUp) && reviewFirst ? (
+        <NextStep title={`Review ${unreviewed} more answer${unreviewed === 1 ? "" : "s"}`} detail={waitingDetail}>
+          <Button size="sm" onClick={() => openFact(reviewFirst.slot)}>Review fact {reviewFirst.slot}<ArrowRightIcon /></Button>
+        </NextStep>
+      ) : next === "action" ? (
+        <NextStep title="Log what the agency changed" detail="Every answer is reviewed. Record the change made on the client's pages, then run the weekly re-check to see if the answers moved.">
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => start("FOLLOW_UP", "Weekly re-check started")}>Skip to re-check</Button>
+          <Button size="sm" onClick={openAction}><PenLineIcon />Log agency action</Button>
+        </NextStep>
+      ) : next === "recheck" ? (
+        <NextStep title="Run the weekly re-check" detail="Asks the same questions again and compares the answers with the first check.">
+          <Button size="sm" disabled={busy} onClick={() => start("FOLLOW_UP", "Weekly re-check started")}><RefreshCwIcon />Run weekly re-check</Button>
+        </NextStep>
+      ) : next === "share" ? (
+        <NextStep title="Share the record with the client" detail="The link shows reviewed answers only. Unreviewed answers and internal notes stay private.">
+          <Button size="sm" disabled={busy} onClick={() => void run(() => Records.share(id), "Share link created").then(() => reveal("record-share"))}><LinkIcon />Create share link</Button>
+        </NextStep>
+      ) : (
+        <NextStep done title="The record is up to date" detail="Run another weekly re-check after the agency's next change." />
+      )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-4">
-          {([1, 2, 3] as const).map((slot) => (
-            <FactCard key={slot} id={id} record={record} slot={slot} latest={latest} initial={initial} reload={reload} />
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="min-w-0 space-y-2">
+          {facts.map(({ slot }) => (
+            <FactCard
+              key={slot}
+              id={id}
+              record={record}
+              slot={slot}
+              latest={latest}
+              initial={initial}
+              reload={reload}
+              open={shownSlot === slot}
+              onToggle={() => setOpenSlot(shownSlot === slot ? null : slot)}
+              onAllReviewed={() => factReviewed(slot)}
+            />
           ))}
         </div>
 
-        <div className="space-y-4 lg:sticky lg:top-0">
-          <Panel>
-            <PanelHeader title="Checks" description={`${surface.provider === "gemini" ? "Gemini API with Google Search grounding" : surface.provider} (${surface.model})`} />
+        <div className="space-y-3 lg:sticky lg:top-0">
+          <Panel id="record-checks" className="scroll-mt-4">
+            <PanelHeader title="Checks" description={`${surface.provider === "gemini" ? "Gemini with Google Search" : surface.provider} · ${surface.model}`} />
             <div className="p-2 pt-1">
               {record.runs.length ? (
                 <ul>
                   {[...record.runs].reverse().map((r) => {
-                    const failed = r.checks.filter((c) => c.status === "FAILED").length
+                    const stopped = r.checks.filter((c) => c.status === "FAILED" && c.failureClass === "CANCELLED").length
+                    const failed = r.checks.filter((c) => c.status === "FAILED").length - stopped
+                    const finished = r.checks.filter((c) => c.status !== "QUEUED" && c.status !== "RUNNING").length
+                    const running = r.status === "RUNNING" || r.status === "QUEUED"
                     return (
-                      <li key={r.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs">
-                        {r.status === "RUNNING" || r.status === "QUEUED" ? (
+                      <li key={r.id} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+                        {running ? (
                           <LoaderCircleIcon className="size-3.5 animate-spin text-review" />
                         ) : r.status === "SUCCEEDED" ? (
                           <CheckIcon className="size-3.5 text-supported" />
+                        ) : r.status === "CANCELLED" ? (
+                          <CircleStopIcon className="size-3.5 text-muted-foreground" />
                         ) : r.status === "FAILED" ? (
                           <TriangleAlertIcon className="size-3.5 text-wrong" />
                         ) : (
@@ -837,12 +1182,13 @@ export function ClientRecordPage() {
                         )}
                         <span className="min-w-0 flex-1">
                           <span className="block font-medium">{r.kind === "INITIAL" ? "First check" : "Weekly re-check"}</span>
-                          <span className="block text-[11px] text-muted-foreground">
-                            {RUN_STATUS_LABELS[r.status]}
-                            {r.status === "PARTIALLY_SUCCEEDED" || r.status === "FAILED" ? ` · ${failed} of ${r.checks.length} checks failed` : ""}
+                          <span className="block text-[0.6875rem] text-muted-foreground">
+                            {running ? `${finished} of ${r.checks.length} done` : RUN_STATUS_LABELS[r.status]}
+                            {failed > 0 && !running ? ` · ${failed} failed` : ""}
+                            {stopped > 0 && r.status !== "CANCELLED" ? ` · ${stopped} stopped` : ""}
                           </span>
                         </span>
-                        <span className="text-[11px] text-muted-foreground tabular-nums" title={formatDateTime(r.createdAt)}>
+                        <span className="text-[0.6875rem] text-muted-foreground tabular-nums" title={formatDateTime(r.createdAt)}>
                           {relativeTime(r.createdAt)}
                         </span>
                       </li>
@@ -850,17 +1196,25 @@ export function ClientRecordPage() {
                   })}
                 </ul>
               ) : (
-                <p className="px-2 py-3 text-xs text-muted-foreground">No checks yet. One question per approved fact; re-checks are started by you, nothing runs on a schedule.</p>
+                <p className="px-2 py-3 text-muted-foreground">No checks yet. One question per approved fact; re-checks are started by you, nothing runs on a schedule.</p>
               )}
             </div>
           </Panel>
-          <Panel>
-            <PanelHeader title="Agency action" description="What the agency changed" />
-            <div className="p-4 pt-3">
-              <ActionForm record={record} reload={reload} />
-            </div>
+          <Panel id="record-action" className="scroll-mt-4">
+            <details className="group" open={actionOpen} onToggle={(e) => setActionOpen(e.currentTarget.open)}>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3">
+                <span>
+                  <span className="block font-medium">Agency action</span>
+                  <span className="block text-muted-foreground">{record.actions.length ? `${record.actions.length} recorded · log another` : "Log what the agency changed"}</span>
+                </span>
+                <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
+              </summary>
+              <div className="px-4 pb-4">
+                <ActionForm record={record} reload={reload} />
+              </div>
+            </details>
           </Panel>
-          <Panel>
+          <Panel id="record-share" className="scroll-mt-4">
             <PanelHeader title="Share with the client" />
             <div className="p-4 pt-3">
               <Share record={record} reload={reload} />
@@ -873,4 +1227,3 @@ export function ClientRecordPage() {
     </div>
   )
 }
-

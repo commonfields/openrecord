@@ -13,7 +13,7 @@ import type { RecordAction, RecordCheck, RecordDecision, RecordItem, RecordJudgm
 export const CAUSALITY_DISCLOSURE =
   "This shows what OpenRecord observed before and after the change. It does not prove that the edit caused the model's new answer."
 
-export type RecordRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED"
+export type RecordRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED" | "CANCELLED"
 export type RecordOutcome = "OBSERVED_CORRECTED" | "NO_OBSERVED_CHANGE" | "INDETERMINATE" | "RESOLVED_EXTERNALLY"
 export type IndeterminateReason =
   | "NO_BASELINE" | "BEFORE_CHECK_FAILED" | "AFTER_CHECK_FAILED" | "FACT_CHANGED" | "QUESTION_CHANGED" | "SYNTHETIC_EVIDENCE"
@@ -28,8 +28,15 @@ export const retrievalRequested = (o: RecordObservation): boolean => {
   return Array.isArray(tools) && tools.length > 0
 }
 
+/** Failure class of a check the operator stopped before it started. */
+export const RECORD_CANCELLED = "CANCELLED"
+const cancelled = (c: RecordCheck) => c.status === "FAILED" && c.failureClass === RECORD_CANCELLED
+/** Every check was stopped before it started: the run never executed. */
+export const runCancelled = (checks: ReadonlyArray<RecordCheck>): boolean => checks.length > 0 && checks.every(cancelled)
+
 export const runStatus = (checks: ReadonlyArray<RecordCheck>): RecordRunStatus => {
   if (checks.length === 0) return "FAILED"
+  if (runCancelled(checks)) return "CANCELLED"
   if (checks.some(c => c.status === "QUEUED" || c.status === "RUNNING")) return checks.every(c => c.status === "QUEUED") ? "QUEUED" : "RUNNING"
   const ok = checks.filter(c => c.status === "SUCCEEDED").length
   return ok === checks.length ? "SUCCEEDED" : ok === 0 ? "FAILED" : "PARTIALLY_SUCCEEDED"
@@ -217,6 +224,7 @@ const failureWords = (failureClass: string | null): string => {
     case "PROVIDER_AUTH": return "the AI provider rejected OpenRecord's credentials"
     case "PROVIDER_UNAVAILABLE": return "the AI provider was unavailable"
     case "WORKER_LOST": return "the check was interrupted"
+    case RECORD_CANCELLED: return "the check was cancelled before it started"
     default: return "the AI provider returned an error"
   }
 }
@@ -291,8 +299,11 @@ interface SlotTimeline {
 
 const timelines = (s: RecordSnapshot): SlotTimeline[] => {
   const itemById = new Map(s.items.map(i => [i.id, i]))
-  const baselineRun = [...s.runs].reverse().find(r => r.kind === "INITIAL") ?? null
-  const followUps = baselineRun === null ? [] : s.runs.filter(r => r.kind === "FOLLOW_UP" && r.baselineRunId === baselineRun.id)
+  // A run cancelled before it started produced no evidence and takes no part
+  // in baselines or comparisons. It stays in the run history.
+  const executed = s.runs.filter(r => !runCancelled(s.checks.filter(c => c.runId === r.id)))
+  const baselineRun = [...executed].reverse().find(r => r.kind === "INITIAL") ?? null
+  const followUps = baselineRun === null ? [] : executed.filter(r => r.kind === "FOLLOW_UP" && r.baselineRunId === baselineRun.id)
   const evidence = (check: RecordCheck): SlotEvidence => ({ check, item: itemById.get(check.itemId)!, judgment: currentJudgment(check.judgments),
     runComplete: runStatus(s.checks.filter(c => c.runId === check.runId)) === "SUCCEEDED" })
   const checksFor = (run: RecordRun, slot: number) =>

@@ -232,7 +232,7 @@ export function ChecksPage() {
           </div>
         ) : (
           <>
-            <div className="mt-2 hidden grid-cols-[1rem_minmax(0,1fr)_8rem_4rem_4rem_6rem_7rem_4.5rem] items-center gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground lg:grid">
+            <div className="mt-2 hidden grid-cols-[1rem_minmax(0,1fr)_8rem_4rem_4rem_6rem_7rem_4.5rem] items-center gap-x-4 border-y bg-muted/40 px-4 py-1.5 text-[0.6875rem] text-muted-foreground lg:grid">
               <span />
               <span>Question</span>
               <span>Verdicts, 30 days</span>
@@ -256,12 +256,12 @@ export function ChecksPage() {
                       </button>
                       <button type="button" onClick={() => setExpanded(open ? null : q.id)} className="min-w-0 text-left">
                         <span className="block font-medium">{q.prompt}</span>
-                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[0.6875rem] text-muted-foreground">
                           {q.label ? <span className="rounded-full bg-muted px-1.5 font-medium text-foreground">{q.label}</span> : null}
                           <span>From {sentenceCase(q.origin).toLowerCase()}</span>
                         </span>
                       </button>
-                      <span>{st ? <VerdictBar counts={st} className="h-1.5" /> : <span className="text-[11px] text-muted-foreground">No answers</span>}</span>
+                      <span>{st ? <VerdictBar counts={st} className="h-1.5" /> : <span className="text-[0.6875rem] text-muted-foreground">No answers</span>}</span>
                       <span className="text-right font-medium tabular-nums">{st ? pct(st) : "—"}</span>
                       <span className="text-right text-muted-foreground tabular-nums">{st?.checks ?? 0}</span>
                       <span className="text-muted-foreground" title={last ? formatDateTime(last.queuedAt) : undefined}>
@@ -278,7 +278,7 @@ export function ChecksPage() {
                     {open ? (
                       <div className="px-4 pb-3 lg:pl-12">
                         {qRuns.length === 0 ? (
-                          <p className="text-[11px] text-muted-foreground">Not asked yet. Run it to collect the first answer.</p>
+                          <p className="text-[0.6875rem] text-muted-foreground">Not asked yet. Run it to collect the first answer.</p>
                         ) : (
                           <ul className="overflow-hidden rounded-lg bg-card shadow-(--card-shadow)">
                             {qRuns.slice(0, 6).map((r) => (
@@ -286,7 +286,7 @@ export function ChecksPage() {
                             ))}
                           </ul>
                         )}
-                        <div className="mt-2 flex gap-3 text-[11px]">
+                        <div className="mt-2 flex gap-3 text-[0.6875rem]">
                           <Link to={`/businesses/${id}/issues?view=answers&q=${encodeURIComponent(q.prompt)}`} className="font-medium text-foreground hover:underline">
                             Issues from this question
                           </Link>
@@ -340,7 +340,7 @@ export function ChecksPage() {
             <>
               {days.map(([label, list]) => (
                 <div key={label} className="pb-1">
-                  <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[11px] text-muted-foreground">
+                  <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[0.6875rem] text-muted-foreground">
                     <span className="font-medium">{label}</span>
                     <span className="tabular-nums">{list.length}</span>
                   </div>
@@ -352,7 +352,7 @@ export function ChecksPage() {
                 </div>
               ))}
               {filteredRuns.length > historyShown ? (
-                <div className="flex items-center justify-between px-2 pt-1 text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between px-2 pt-1 text-[0.6875rem] text-muted-foreground">
                   <span>
                     Showing {historyShown} of {filteredRuns.length.toLocaleString()}
                   </span>

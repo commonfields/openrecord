@@ -157,7 +157,7 @@ export function TruthPage() {
           </ul>
         ) : (
         <Panel>
-          <div className="hidden grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_7rem_7.5rem_7.5rem_minmax(0,9rem)_2rem] gap-x-4 border-b bg-muted/40 px-4 py-2 text-[11px] text-muted-foreground lg:grid">
+          <div className="hidden grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_7rem_7.5rem_7.5rem_minmax(0,9rem)_2rem] gap-x-4 border-b bg-muted/40 px-4 py-2 text-[0.6875rem] text-muted-foreground lg:grid">
             <span>Fact</span>
             <span>Value</span>
             <span>Status</span>
@@ -181,7 +181,7 @@ export function TruthPage() {
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{sentenceCase(f.predicate)}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-[0.6875rem] text-muted-foreground">
                       {f.subject} · {sentenceCase(f.valueType)}
                     </span>
                   </span>
@@ -196,7 +196,7 @@ export function TruthPage() {
                   </span>
                   <span className="flex items-center gap-2">
                     <FactStatusBadge status={f.status} />
-                    <span className="text-[11px] text-muted-foreground tabular-nums">v{f.version}</span>
+                    <span className="text-[0.6875rem] text-muted-foreground tabular-nums">v{f.version}</span>
                   </span>
                   <span>
                     {u?.issues ? (
@@ -220,7 +220,7 @@ export function TruthPage() {
                       <span className="text-muted-foreground">Not watched</span>
                     )}
                   </span>
-                  <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                  <span className="min-w-0 truncate text-[0.6875rem] text-muted-foreground">
                     {prov ? (
                       <>
                         Manifest key <span className="font-medium text-foreground">{prov.manifestKey}</span>
@@ -383,7 +383,7 @@ function FactCard({
 
       <div className="mt-3 space-y-3 border-t px-4 py-3">
         <div className="space-y-1.5">
-          <div className="flex items-baseline justify-between text-[11px]">
+          <div className="flex items-baseline justify-between text-[0.6875rem]">
             <span className="text-muted-foreground">In AI answers, 30 days</span>
             {total ? (
               <span className="font-medium tabular-nums">
@@ -394,19 +394,19 @@ function FactCard({
           {verdicts && total ? (
             <>
               <VerdictBar counts={verdicts} className="h-1.5" />
-              <Link to={`/businesses/${businessId}/issues?view=answers&fact=${encodeURIComponent(f.predicate)}`} className="block text-[11px] text-muted-foreground hover:text-foreground hover:underline">
+              <Link to={`/businesses/${businessId}/issues?view=answers&fact=${encodeURIComponent(f.predicate)}`} className="block text-[0.6875rem] text-muted-foreground hover:text-foreground hover:underline">
                 {total} claim{total === 1 ? "" : "s"}
                 {verdicts.wrong ? <span className="text-wrong"> · {verdicts.wrong} wrong</span> : null}
                 {verdicts.partial ? <span className="text-partial"> · {verdicts.partial} partial</span> : null}
               </Link>
             </>
           ) : (
-            <p className="text-[11px] text-muted-foreground">No reviewed claim has cited this fact yet.</p>
+            <p className="text-[0.6875rem] text-muted-foreground">No reviewed claim has cited this fact yet.</p>
           )}
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-baseline justify-between text-[11px]">
+          <div className="flex items-baseline justify-between text-[0.6875rem]">
             <span className="text-muted-foreground">Published at</span>
             {sources.length ? (
               <Link to={`/businesses/${businessId}/representations`} className={cn("font-medium hover:underline", drift && "text-wrong")}>
@@ -418,7 +418,7 @@ function FactCard({
             <ul className="space-y-0.5">
               {sources.slice(0, 3).map((r) => (
                 <li key={r.binding_id}>
-                  <Link to={`/businesses/${businessId}/representations/${r.binding_id}`} className="flex items-center gap-2 rounded-md text-[11px] hover:underline">
+                  <Link to={`/businesses/${businessId}/representations/${r.binding_id}`} className="flex items-center gap-2 rounded-md text-[0.6875rem] hover:underline">
                     <span className="min-w-0 flex-1 truncate">{domainOf(r.source.url)}</span>
                     <RepresentationStateBadge state={r.finding.state} />
                   </Link>
@@ -426,14 +426,14 @@ function FactCard({
               ))}
             </ul>
           ) : (
-            <Link to={`/businesses/${businessId}/representations/discovery`} className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">
+            <Link to={`/businesses/${businessId}/representations/discovery`} className="text-[0.6875rem] text-muted-foreground hover:text-foreground hover:underline">
               Not watched anywhere. Find pages that publish it
             </Link>
           )}
         </div>
       </div>
 
-      <div className="mt-auto border-t px-4 py-2 text-[11px] text-muted-foreground">
+      <div className="mt-auto border-t px-4 py-2 text-[0.6875rem] text-muted-foreground">
         {provenance ? (
           <>
             Manifest key <span className="font-medium text-foreground">{provenance.manifestKey}</span>

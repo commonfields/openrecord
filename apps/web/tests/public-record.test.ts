@@ -65,6 +65,17 @@ describe("public client record", () => {
     expect(widget).not.toContain("<script>")
     expect(renderToStaticMarkup(createElement(SearchSuggestions, { html: null }))).toBe("")
   })
+
+  it("opens suggestion links in a new tab and follows the page color scheme", () => {
+    const widget = renderToStaticMarkup(createElement(SearchSuggestions, { html: '<a class="chip" href="https://www.google.com/search?q=x">x</a>' }))
+    // Google refuses to be framed; following a chip inside the frame fails.
+    expect(widget).toContain("&lt;base target=&quot;_blank&quot;&gt;")
+    expect(widget).not.toMatch(/&lt;base [^&]*href/)
+    expect(widget).toContain("base-uri &#x27;none&#x27;")
+    // Without a declared scheme the frame paints an opaque white canvas in dark mode.
+    expect(widget).toContain("&lt;meta name=&quot;color-scheme&quot; content=&quot;light dark&quot;&gt;")
+    expect(widget).toContain("background:transparent")
+  })
   it("rejects unsafe citation schemes and embedded credentials in operator links", () => {
     for (const url of ["javascript:alert(1)", "data:text/html,hi", "https://secret:credential@source.test/"]) expect(safeRecordUrl(url)).toBeNull()
     expect(safeRecordUrl("https://source.test/page")).toBe("https://source.test/page")
