@@ -1,0 +1,195 @@
+-- P1: Business/record_profiles remain the product and ownership boundary.
+-- Goals are immutable versions. The profile points at exactly one primary
+-- definition; opportunities retain their original definition forever.
+CREATE TABLE IF NOT EXISTS growth_goals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES record_profiles(business_id),
+  version INT NOT NULL CHECK (version > 0),
+  kind TEXT NOT NULL CHECK (kind IN ('TRIAL_SIGNUPS','DEMO_REQUESTS','QUALIFIED_LEADS')),
+  analytics_source TEXT NOT NULL CHECK (analytics_source = 'GA4_AGGREGATE_EXPORT'),
+  event_name TEXT NOT NULL CHECK (event_name ~ '^[A-Za-z][A-Za-z0-9_]{0,39}$'),
+  counting_semantics TEXT NOT NULL CHECK (counting_semantics = 'EVENT_COUNT'),
+  reporting_time_zone TEXT NOT NULL,
+  property_ref TEXT CHECK (property_ref IS NULL OR length(trim(property_ref)) BETWEEN 1 AND 200),
+  created_by_user_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (id, business_id), UNIQUE (business_id, version)
+);
+CREATE TABLE IF NOT EXISTS growth_profiles (
+  business_id UUID PRIMARY KEY REFERENCES record_profiles(business_id),
+  category TEXT NOT NULL CHECK (length(trim(category)) BETWEEN 1 AND 300),
+  audience TEXT NOT NULL CHECK (length(trim(audience)) BETWEEN 1 AND 1000),
+  value_proposition TEXT NOT NULL CHECK (length(trim(value_proposition)) BETWEEN 1 AND 2000),
+  primary_goal_id UUID NOT NULL,
+  updated_by_user_id UUID NOT NULL REFERENCES users(id),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (primary_goal_id, business_id) REFERENCES growth_goals(id, business_id)
+);
+-- Atomic registration reuses RecordRepository.createClient and records a
+-- request identity without adding a parallel product persistence model.
+CREATE TABLE IF NOT EXISTS growth_registrations (
+  account_id UUID NOT NULL REFERENCES accounts(id), request_key UUID NOT NULL,
+  business_id UUID NOT NULL UNIQUE REFERENCES growth_profiles(business_id),
+  PRIMARY KEY (account_id, request_key)
+);
+CREATE TABLE IF NOT EXISTS growth_opportunities (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES growth_profiles(business_id),
+  goal_id UUID NOT NULL,
+  title TEXT NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 200),
+  problem_statement TEXT NOT NULL CHECK (length(trim(problem_statement)) BETWEEN 1 AND 2000),
+  audience TEXT NOT NULL CHECK (length(trim(audience)) BETWEEN 1 AND 1000),
+  buyer_intent TEXT NOT NULL CHECK (length(trim(buyer_intent)) BETWEEN 1 AND 1000),
+  target_url TEXT NOT NULL CHECK (target_url ~ '^https?://[^[:space:]]+$'),
+  source TEXT NOT NULL CHECK (length(trim(source)) BETWEEN 1 AND 300),
+  proposed_change TEXT NOT NULL CHECK (length(trim(proposed_change)) BETWEEN 1 AND 2000),
+  expected_mechanism TEXT NOT NULL CHECK (length(trim(expected_mechanism)) BETWEEN 1 AND 2000),
+  assumptions TEXT NOT NULL CHECK (length(trim(assumptions)) BETWEEN 1 AND 2000),
+  uncertainty TEXT NOT NULL CHECK (length(trim(uncertainty)) BETWEEN 1 AND 2000),
+  baseline_availability TEXT NOT NULL CHECK (baseline_availability IN ('UNKNOWN','UNAVAILABLE','AVAILABLE')),
+  owner_user_id UUID NOT NULL REFERENCES users(id),
+  created_by_user_id UUID NOT NULL REFERENCES users(id),
+  created_by_actor TEXT NOT NULL CHECK (created_by_actor IN ('OPERATOR','ASSISTANT')),
+  request_key UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (id, business_id), UNIQUE (business_id, request_key),
+  FOREIGN KEY (goal_id, business_id) REFERENCES growth_goals(id, business_id)
+);
+CREATE INDEX IF NOT EXISTS growth_opportunities_business ON growth_opportunities(business_id, created_at DESC, id);
+CREATE TABLE IF NOT EXISTS growth_opportunity_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  opportunity_id UUID NOT NULL, business_id UUID NOT NULL,
+  revision INT NOT NULL CHECK (revision > 0),
+  status TEXT NOT NULL CHECK (status IN ('DISCOVERED','PROPOSED','APPROVED','IN_DELIVERY','DELIVERED','MEASURING','REVIEWED','CANCELLED')),
+  actor TEXT NOT NULL CHECK (actor IN ('OPERATOR','ASSISTANT','DELIVERY_SYSTEM','MEASUREMENT_SYSTEM')),
+  user_id UUID NOT NULL REFERENCES users(id),
+  reason TEXT NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 1000),
+  request_key UUID NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (opportunity_id, business_id) REFERENCES growth_opportunities(id, business_id),
+  UNIQUE (opportunity_id, revision), UNIQUE (opportunity_id, request_key)
+);
+CREATE TABLE IF NOT EXISTS growth_opportunity_evidence (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  opportunity_id UUID NOT NULL, business_id UUID NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('OBSERVED','OPERATOR_HYPOTHESIS','MODEL_SUGGESTION','VERIFIED_ACTION','MEASURED_OUTCOME')),
+  reference_kind TEXT, reference_id UUID,
+  note TEXT NOT NULL CHECK (length(trim(note)) BETWEEN 1 AND 1000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (opportunity_id, business_id) REFERENCES growth_opportunities(id, business_id),
+  CHECK ((type = 'OBSERVED') = (reference_kind IS NOT NULL AND reference_id IS NOT NULL)),
+  CHECK (type = 'OBSERVED' OR (reference_kind IS NULL AND reference_id IS NULL))
+);
+
+-- One implementation shared by the repository and DB evidence guard.
+-- A check/batch must contain actual non-synthetic observations; an empty or
+-- queued run is not observed evidence. Referral imports retain their origin.
+CREATE OR REPLACE FUNCTION growth_observed_exists(b UUID, k TEXT, i UUID) RETURNS BOOLEAN AS $$
+  SELECT CASE k
+    WHEN 'OBSERVATION' THEN EXISTS (SELECT 1 FROM observations WHERE id=i AND business_id=b AND NOT synthetic)
+    WHEN 'RECORD_CHECK' THEN EXISTS (SELECT 1 FROM check_runs c JOIN observations o ON o.check_run_id=c.id AND o.business_id=c.business_id WHERE c.id=i AND c.business_id=b AND c.record_run_id IS NOT NULL AND NOT o.synthetic)
+    WHEN 'RECORD_JUDGMENT' THEN EXISTS (SELECT 1 FROM record_judgments j JOIN observations o ON o.id=j.observation_id AND o.business_id=j.business_id WHERE j.id=i AND j.business_id=b AND NOT o.synthetic)
+    WHEN 'ACQUISITION_BATCH' THEN EXISTS (SELECT 1 FROM check_runs c JOIN observations o ON o.check_run_id=c.id AND o.business_id=c.business_id WHERE c.acq_batch_id=i AND c.business_id=b AND NOT o.synthetic)
+    WHEN 'ACQUISITION_RESULT' THEN EXISTS (SELECT 1 FROM acq_judgments j JOIN observations o ON o.id=j.observation_id AND o.business_id=j.business_id WHERE j.id=i AND j.business_id=b AND NOT o.synthetic)
+    WHEN 'REFERRAL_IMPORT' THEN EXISTS (SELECT 1 FROM acq_referral_imports WHERE id=i AND business_id=b AND data_origin='GA4_EXPORT')
+    WHEN 'RECORD_ACTION' THEN EXISTS (SELECT 1 FROM record_actions WHERE intervention_id=i AND business_id=b)
+    ELSE false END
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION guard_growth_authorship() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME='growth_goals' THEN
+    IF NOT record_member(NEW.business_id, NEW.created_by_user_id) THEN RAISE EXCEPTION 'growth author must be account member'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name=NEW.reporting_time_zone) THEN RAISE EXCEPTION 'invalid reporting timezone'; END IF;
+  ELSIF TG_TABLE_NAME='growth_profiles' THEN
+    IF NOT record_member(NEW.business_id, NEW.updated_by_user_id) THEN RAISE EXCEPTION 'growth editor must be account member'; END IF;
+    NEW.updated_at := now();
+  ELSE
+    IF NOT record_member(NEW.business_id, NEW.created_by_user_id) OR NOT record_member(NEW.business_id, NEW.owner_user_id) THEN RAISE EXCEPTION 'growth author and owner must be account members'; END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION guard_growth_event() RETURNS trigger AS $$
+DECLARE prior growth_opportunity_events; opportunity growth_opportunities;
+BEGIN
+  SELECT * INTO opportunity FROM growth_opportunities WHERE id=NEW.opportunity_id AND business_id=NEW.business_id FOR UPDATE;
+  IF NOT FOUND OR NOT record_member(NEW.business_id,NEW.user_id) THEN RAISE EXCEPTION 'growth event outside scope'; END IF;
+  SELECT * INTO prior FROM growth_opportunity_events WHERE opportunity_id=NEW.opportunity_id ORDER BY revision DESC LIMIT 1;
+  IF NEW.revision <> COALESCE(prior.revision,0)+1 THEN RAISE EXCEPTION 'stale growth revision'; END IF;
+  -- Backstop for the pure GROWTH_TRANSITIONS policy. P1 deliberately has no
+  -- system transition path. P2/P3 must attach authoritative records here.
+  IF prior.id IS NULL THEN
+    IF NEW.status NOT IN ('DISCOVERED','PROPOSED') OR NEW.actor <> opportunity.created_by_actor OR NEW.user_id <> opportunity.created_by_user_id THEN RAISE EXCEPTION 'invalid initial growth event'; END IF;
+  ELSIF NOT (
+    (prior.status='DISCOVERED' AND NEW.status='PROPOSED' AND NEW.actor IN ('OPERATOR','ASSISTANT')) OR
+    (prior.status='PROPOSED' AND NEW.status='APPROVED' AND NEW.actor='OPERATOR') OR
+    (prior.status IN ('DISCOVERED','PROPOSED','APPROVED') AND NEW.status='CANCELLED' AND NEW.actor='OPERATOR')
+  ) THEN RAISE EXCEPTION 'growth transition refused'; END IF;
+  NEW.created_at := clock_timestamp();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION guard_growth_evidence() RETURNS trigger AS $$
+DECLARE author TEXT;
+BEGIN
+  SELECT created_by_actor INTO author FROM growth_opportunities WHERE id=NEW.opportunity_id AND business_id=NEW.business_id;
+  IF NEW.type IN ('VERIFIED_ACTION','MEASURED_OUTCOME') THEN RAISE EXCEPTION 'authoritative attachment required; unavailable in P1'; END IF;
+  IF (NEW.type='MODEL_SUGGESTION' AND author <> 'ASSISTANT') OR (NEW.type='OPERATOR_HYPOTHESIS' AND author <> 'OPERATOR') THEN RAISE EXCEPTION 'evidence authorship mismatch'; END IF;
+  IF NEW.type='OBSERVED' AND NOT growth_observed_exists(NEW.business_id,NEW.reference_kind,NEW.reference_id) THEN RAISE EXCEPTION 'observed evidence outside scope or unavailable'; END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DO $$ DECLARE t TEXT; BEGIN
+  FOREACH t IN ARRAY ARRAY['growth_goals','growth_profiles','growth_opportunities'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS growth_authorship ON %I',t);
+    EXECUTE format('CREATE TRIGGER growth_authorship BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION guard_growth_authorship()',t);
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['growth_goals','growth_opportunities','growth_opportunity_events','growth_opportunity_evidence','growth_registrations'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS growth_append_only ON %I',t);
+    EXECUTE format('CREATE TRIGGER growth_append_only BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation()',t);
+  END LOOP;
+END $$;
+DROP TRIGGER IF EXISTS growth_event_guard ON growth_opportunity_events;
+CREATE TRIGGER growth_event_guard BEFORE INSERT ON growth_opportunity_events FOR EACH ROW EXECUTE FUNCTION guard_growth_event();
+DROP TRIGGER IF EXISTS growth_evidence_guard ON growth_opportunity_evidence;
+CREATE TRIGGER growth_evidence_guard BEFORE INSERT ON growth_opportunity_evidence FOR EACH ROW EXECUTE FUNCTION guard_growth_evidence();
+
+CREATE OR REPLACE VIEW growth_goal_documents AS SELECT g.id, g.business_id,
+  jsonb_build_object('id',g.id,'businessId',g.business_id,'version',g.version,'kind',g.kind,'analyticsSource',g.analytics_source,
+    'eventName',g.event_name,'countingSemantics',g.counting_semantics,'reportingTimeZone',g.reporting_time_zone,
+    'propertyRef',g.property_ref,'createdByUserId',g.created_by_user_id,'createdAt',g.created_at) AS document
+  FROM growth_goals g;
+CREATE OR REPLACE VIEW growth_opportunity_documents AS SELECT o.id, o.business_id, o.created_at,
+  jsonb_build_object('id',o.id,'businessId',o.business_id,'goalId',o.goal_id,'title',o.title,'problemStatement',o.problem_statement,
+    'audience',o.audience,'buyerIntent',o.buyer_intent,'targetUrl',o.target_url,'source',o.source,'proposedChange',o.proposed_change,
+    'expectedMechanism',o.expected_mechanism,'assumptions',o.assumptions,'uncertainty',o.uncertainty,'baselineAvailability',o.baseline_availability,
+    'ownerUserId',o.owner_user_id,'createdByUserId',o.created_by_user_id,'createdByActor',o.created_by_actor,'createdAt',o.created_at,
+    'status',last_event.status,'revision',last_event.revision,'updatedAt',last_event.created_at,'updatedByUserId',last_event.user_id,
+    'events',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'status',e.status,'revision',e.revision,'actor',e.actor,'userId',e.user_id,'reason',e.reason,'createdAt',e.created_at) ORDER BY e.revision) FROM growth_opportunity_events e WHERE e.opportunity_id=o.id),'[]'::jsonb),
+    'evidence',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'type',e.type,'note',e.note,'createdAt',e.created_at) ||
+      CASE WHEN e.type='OBSERVED' THEN jsonb_build_object('reference',jsonb_build_object('kind',e.reference_kind,'id',e.reference_id)) ELSE '{}'::jsonb END ORDER BY e.created_at,e.id) FROM growth_opportunity_evidence e WHERE e.opportunity_id=o.id),'[]'::jsonb)) AS document
+  FROM growth_opportunities o JOIN LATERAL (SELECT * FROM growth_opportunity_events e WHERE e.opportunity_id=o.id ORDER BY revision DESC LIMIT 1) last_event ON true;
+
+-- Even direct SQL cannot commit an opportunity without its first event and
+-- explicit authorship evidence. Deferred because the repository inserts all
+-- three immutable parts in one transaction.
+CREATE OR REPLACE FUNCTION guard_growth_opportunity_complete() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM growth_opportunity_events WHERE opportunity_id=NEW.id AND revision=1)
+    OR NOT EXISTS (SELECT 1 FROM growth_opportunity_evidence WHERE opportunity_id=NEW.id
+      AND type=CASE NEW.created_by_actor WHEN 'ASSISTANT' THEN 'MODEL_SUGGESTION' ELSE 'OPERATOR_HYPOTHESIS' END)
+  THEN RAISE EXCEPTION 'growth opportunity requires initial event and authorship evidence'; END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS growth_opportunity_complete ON growth_opportunities;
+CREATE CONSTRAINT TRIGGER growth_opportunity_complete AFTER INSERT ON growth_opportunities DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION guard_growth_opportunity_complete();
+
+CREATE OR REPLACE FUNCTION guard_growth_registration() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM businesses WHERE id=NEW.business_id AND account_id=NEW.account_id) THEN
+    RAISE EXCEPTION 'growth registration outside account';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS growth_registration_guard ON growth_registrations;
+CREATE TRIGGER growth_registration_guard BEFORE INSERT ON growth_registrations FOR EACH ROW EXECUTE FUNCTION guard_growth_registration();

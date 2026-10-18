@@ -1,0 +1,93 @@
+import { Schema } from "effect"
+
+const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.filter(s => s.trim().length > 0))
+export const GrowthUrl = Schema.String.pipe(Schema.maxLength(2000), Schema.filter(s => {
+  try { const u = new URL(s); return ["http:", "https:"].includes(u.protocol) && !u.username && !u.password && !/\s/.test(s) } catch { return false }
+}))
+export const GrowthTimeZone = Schema.String.pipe(Schema.maxLength(100), Schema.filter(s => {
+  try { new Intl.DateTimeFormat("en", { timeZone: s }); return s === "UTC" || s.includes("/") } catch { return false }
+}))
+export const GrowthGoalKind = Schema.Literal("TRIAL_SIGNUPS", "DEMO_REQUESTS", "QUALIFIED_LEADS")
+export const GrowthMetric = Schema.Struct({
+  kind: GrowthGoalKind,
+  analyticsSource: Schema.Literal("GA4_AGGREGATE_EXPORT"),
+  eventName: Schema.String.pipe(Schema.pattern(/^[A-Za-z][A-Za-z0-9_]{0,39}$/)),
+  countingSemantics: Schema.Literal("EVENT_COUNT"),
+  reportingTimeZone: GrowthTimeZone,
+  propertyRef: Schema.NullOr(Text(200)),
+})
+export type GrowthMetric = typeof GrowthMetric.Type
+export const GrowthProfileInput = Schema.Struct({
+  category: Text(300), audience: Text(1000), valueProposition: Text(2000), primaryGoal: GrowthMetric,
+})
+export type GrowthProfileInput = typeof GrowthProfileInput.Type
+export const decodeGrowthProfileInput = (input: unknown): GrowthProfileInput | null => {
+  const result = Schema.decodeUnknownEither(GrowthProfileInput, { onExcessProperty: "error" })(input)
+  return result._tag === "Right" ? result.right : null
+}
+export const GrowthProductInput = Schema.Struct({
+  name: Text(200), websiteUrl: GrowthUrl, engagement: Schema.Literal("DOGFOOD", "CLIENT"),
+  ...GrowthProfileInput.fields,
+  idempotencyKey: Schema.UUID,
+})
+export const GrowthStatus = Schema.Literal("DISCOVERED", "PROPOSED", "APPROVED", "IN_DELIVERY", "DELIVERED", "MEASURING", "REVIEWED", "CANCELLED")
+export type GrowthStatus = typeof GrowthStatus.Type
+export type GrowthActor = "OPERATOR" | "ASSISTANT" | "DELIVERY_SYSTEM" | "MEASUREMENT_SYSTEM"
+/** P2/P3 extend this policy and the DB guard together. Future authorities are
+ * named here but have no P1 repository method or HTTP/tool dispatch path. */
+export const GROWTH_TRANSITIONS: ReadonlyArray<{
+  from: GrowthStatus | null; to: GrowthStatus; actors: ReadonlyArray<GrowthActor>
+}> = [
+  { from: null, to: "DISCOVERED", actors: ["OPERATOR", "ASSISTANT"] },
+  { from: null, to: "PROPOSED", actors: ["OPERATOR", "ASSISTANT"] },
+  { from: "DISCOVERED", to: "PROPOSED", actors: ["OPERATOR", "ASSISTANT"] },
+  { from: "PROPOSED", to: "APPROVED", actors: ["OPERATOR"] },
+  ...(["DISCOVERED", "PROPOSED", "APPROVED"] satisfies GrowthStatus[]).map(from => ({ from, to: "CANCELLED" as const, actors: ["OPERATOR"] as const })),
+]
+export const canTransitionGrowth = (from: GrowthStatus | null, to: GrowthStatus, actor: GrowthActor): boolean =>
+  GROWTH_TRANSITIONS.some(t => t.from === from && t.to === to && t.actors.includes(actor))
+
+export const GrowthObservedRef = Schema.Struct({
+  kind: Schema.Literal("OBSERVATION", "RECORD_CHECK", "RECORD_JUDGMENT", "ACQUISITION_BATCH", "ACQUISITION_RESULT", "REFERRAL_IMPORT", "RECORD_ACTION"),
+  id: Schema.UUID,
+})
+export type GrowthObservedRef = typeof GrowthObservedRef.Type
+export const GrowthEvidenceInput = Schema.Union(
+  Schema.Struct({ type: Schema.Literal("OBSERVED"), reference: GrowthObservedRef, note: Text(1000) }),
+  Schema.Struct({ type: Schema.Literal("OPERATOR_HYPOTHESIS"), note: Text(1000) }),
+  Schema.Struct({ type: Schema.Literal("MODEL_SUGGESTION"), note: Text(1000) }),
+)
+export type GrowthEvidenceInput = typeof GrowthEvidenceInput.Type
+export const GrowthOpportunityFields = Schema.Struct({
+  goalId: Schema.UUID, title: Text(200), problemStatement: Text(2000), audience: Text(1000), buyerIntent: Text(1000),
+  targetUrl: GrowthUrl, source: Text(300), proposedChange: Text(2000), expectedMechanism: Text(2000),
+  assumptions: Text(2000), uncertainty: Text(2000), baselineAvailability: Schema.Literal("UNKNOWN", "UNAVAILABLE", "AVAILABLE"),
+})
+export type GrowthOpportunityFields = typeof GrowthOpportunityFields.Type
+export const CreateGrowthOpportunity = Schema.Struct({
+  ...GrowthOpportunityFields.fields,
+  ownerUserId: Schema.UUID, initialStatus: Schema.Literal("DISCOVERED", "PROPOSED"), idempotencyKey: Schema.UUID,
+  evidence: Schema.Array(GrowthEvidenceInput).pipe(Schema.minItems(1), Schema.maxItems(20)),
+})
+export type CreateGrowthOpportunity = typeof CreateGrowthOpportunity.Type
+export const GrowthDecision = Schema.Struct({
+  expectedStatus: GrowthStatus, expectedRevision: Schema.Int.pipe(Schema.greaterThanOrEqualTo(1)), idempotencyKey: Schema.UUID,
+  reason: Text(1000),
+})
+export type GrowthDecision = typeof GrowthDecision.Type
+export interface GrowthGoal extends GrowthMetric { readonly id: string; readonly businessId: string; readonly version: number; readonly createdByUserId: string; readonly createdAt: string }
+export interface GrowthProfile {
+  readonly businessId: string; readonly category: string; readonly audience: string; readonly valueProposition: string
+  readonly primaryGoal: GrowthGoal; readonly updatedByUserId: string; readonly updatedAt: string
+}
+export interface GrowthEvent {
+  readonly id: string; readonly status: GrowthStatus; readonly revision: number; readonly actor: GrowthActor
+  readonly userId: string; readonly reason: string; readonly createdAt: string
+}
+export type GrowthEvidence = GrowthEvidenceInput & { readonly id: string; readonly createdAt: string }
+export interface GrowthOpportunity extends GrowthOpportunityFields {
+  readonly id: string; readonly businessId: string; readonly ownerUserId: string; readonly createdByUserId: string
+  readonly createdByActor: "OPERATOR" | "ASSISTANT"; readonly createdAt: string; readonly updatedAt: string
+  readonly updatedByUserId: string; readonly status: GrowthStatus; readonly revision: number
+  readonly evidence: ReadonlyArray<GrowthEvidence>; readonly events: ReadonlyArray<GrowthEvent>
+}
