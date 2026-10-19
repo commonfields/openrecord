@@ -91,13 +91,19 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
 
   it("returns only allowlisted development runtime facts for authenticated operators", async () => {
     const f = await fixture()
+    const commit = "c".repeat(40)
+    vi.stubEnv("OPENRECORD_BUILD_COMMIT", commit)
+    vi.stubEnv("OPENRECORD_BUILD_DIRTY", "true")
     const response = await call("GET", "/api/dev/runtime", f.session)
     expect(response.status).toBe(200)
     expect(response.headers.get("cache-control")).toBe("no-store")
     const latest = await pool.query("SELECT filename FROM public.schema_migrations ORDER BY filename DESC LIMIT 1")
     const body: unknown = await response.json()
-    expect(body).toEqual({ commitSha: expect.stringMatching(/^[a-f0-9]{40}$/), shortCommitSha: expect.stringMatching(/^[a-f0-9]{12}$/),
-      dirtyAtStartup: expect.any(Boolean), latestMigration: latest.rows[0].filename, agentConfigured: true })
+    expect(body).toEqual({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: true, latestMigration: latest.rows[0].filename, agentConfigured: true })
+    // Without launcher-provided metadata the commit is unknown, not guessed.
+    vi.stubEnv("OPENRECORD_BUILD_COMMIT", "")
+    vi.stubEnv("OPENRECORD_BUILD_DIRTY", "")
+    expect(await (await call("GET", "/api/dev/runtime", f.session)).json()).toMatchObject({ commitSha: null, shortCommitSha: null, dirtyAtStartup: null })
     expect(JSON.stringify(body)).not.toMatch(/TEST-only-key|AGENT_API_KEY|DATABASE_URL|password|hostname|username|\/Users\//i)
     expect((await call("GET", "/api/dev/runtime", null)).status).toBe(401)
     expect((await call("GET", "/api/dev/runtime", randomUUID())).status).toBe(401)

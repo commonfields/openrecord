@@ -1,25 +1,18 @@
-import { execFileSync } from "node:child_process"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { readStartupGit } from "./runtime.js"
 
-vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }))
-afterEach(() => vi.resetAllMocks())
-
+// The API never runs git or reads .git; it reports what the launcher states.
 describe("startup git metadata", () => {
   const commit = "a".repeat(40)
-  it.each([true, false])("captures the commit and dirty state (%s) with bounded git calls", dirty => {
-    vi.mocked(execFileSync).mockReturnValueOnce(commit).mockReturnValueOnce(dirty ? " M src/server.ts\n" : "")
-    expect(readStartupGit()).toEqual({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: dirty })
-    expect(execFileSync).toHaveBeenCalledWith("git", ["rev-parse", "HEAD"], expect.objectContaining({ timeout: 1000, stdio: ["ignore", "pipe", "ignore"] }))
-    expect(execFileSync).toHaveBeenCalledWith("git", ["status", "--porcelain", "--untracked-files=normal"], expect.objectContaining({ timeout: 1000, stdio: ["ignore", "pipe", "ignore"] }))
+  it.each([["true", true], ["false", false], [undefined, null], ["maybe", null]] as const)("reports the launcher's commit with dirty=%s as %s", (flag, dirty) => {
+    expect(readStartupGit({ OPENRECORD_BUILD_COMMIT: `${commit}\n`, OPENRECORD_BUILD_DIRTY: flag })).toEqual({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: dirty })
   })
-  it("discards unexpected git output", () => {
-    vi.mocked(execFileSync).mockReturnValue("TEST unexpected output")
-    expect(readStartupGit()).toEqual({ commitSha: null, shortCommitSha: null, dirtyAtStartup: null })
-    expect(execFileSync).toHaveBeenCalledTimes(1)
+  it("normalises case and accepts SHA-256 object names", () => {
+    expect(readStartupGit({ OPENRECORD_BUILD_COMMIT: "B".repeat(64) }).commitSha).toBe("b".repeat(64))
   })
-  it("fails soft without exposing errors if git is unavailable", () => {
-    vi.mocked(execFileSync).mockImplementation(() => { throw new Error("TEST private checkout path") })
-    expect(readStartupGit()).toEqual({ commitSha: null, shortCommitSha: null, dirtyAtStartup: null })
+  it("reports unknown for a missing or malformed commit instead of guessing", () => {
+    for (const value of [undefined, "", "not-a-commit", "a".repeat(39), `${commit}; rm -rf /`]) {
+      expect(readStartupGit({ OPENRECORD_BUILD_COMMIT: value }).commitSha).toBeNull()
+    }
   })
 })
