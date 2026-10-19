@@ -7,17 +7,23 @@ describe("growth workspace form and navigation", () => {
   const id = "00000000-0000-4000-8000-000000000001"
   const form = () => {
     const data = new FormData()
-    for (const [key, value] of Object.entries({ category: "Software", audience: "Operators", valueProposition: "Clear positioning", goalKind: "TRIAL_SIGNUPS", eventName: "trial_signup", reportingTimeZone: "Asia/Makassar", propertyRef: "" })) data.set(key, value)
+    for (const [key, value] of Object.entries({ category: "Software", audience: "Operators", valueProposition: "Clear positioning", goalStatement: "Increase trials", conversionKind: "SIGNUP", metricLabel: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", unit: "COUNT", eventName: "trial_signup", reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" })) data.set(key, value)
     return data
   }
   it("saves an event definition with explicit count semantics and optional property", () => {
     const value = profileFromForm(form())
-    expect(value.primaryGoal).toEqual({ kind: "TRIAL_SIGNUPS", analyticsSource: "GA4_AGGREGATE_EXPORT", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", reportingTimeZone: "Asia/Makassar", propertyRef: null })
+    expect(value.metric).toEqual({ conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", unit: "COUNT", currency: null, eventName: "trial_signup", countingSemantics: "EVENT_COUNT", reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" })
   })
   it("rejects invalid timezone, empty audience and malformed event names before saving", () => {
     for (const [key, value] of [["reportingTimeZone", "+08:00"], ["eventName", "signup events"], ["audience", "   "]]) {
       const data = form(); data.set(key!, value!); expect(() => profileFromForm(data)).toThrow("Check the product details")
     }
+  })
+  it("defines operator booking counts and monetary sums without pretending GA4 is configured", () => {
+    const data = form(); data.set("sourceKind", "OPERATOR_AGGREGATE_EXPORT"); data.set("conversionKind", "BOOKING"); data.set("sourceIdentity", "TEST booking system"); data.set("eventName", "ignored"); data.set("propertyRef", "")
+    expect(profileFromForm(data).metric).toMatchObject({ eventName: null, propertyRef: null, conversionKind: "BOOKING", unit: "COUNT", currency: null })
+    data.set("unit", "CURRENCY_MINOR"); data.set("currency", "EUR")
+    expect(profileFromForm(data).metric).toMatchObject({ countingSemantics: "SUM", unit: "CURRENCY_MINOR", currency: "EUR" })
   })
   it("links every observed reference kind to its stored source workspace", () => {
     const paths = {

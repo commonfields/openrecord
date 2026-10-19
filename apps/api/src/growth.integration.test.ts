@@ -14,13 +14,13 @@ import type { AgentModel } from "./agent-model.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const product = { name: "TEST Growth product", websiteUrl: "https://growth.test", engagement: "DOGFOOD", category: "TEST SaaS", audience: "TEST operators", valueProposition: "TEST positioning",
-  primaryGoal: { kind: "TRIAL_SIGNUPS", analyticsSource: "GA4_AGGREGATE_EXPORT", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", reportingTimeZone: "UTC", propertyRef: null } }
+  goalStatement: "Increase trial signups", metric: { conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "UTC", propertyRef: "TEST property" } }
 const suite = url ? describe : describe.skip
 suite("growth HTTP and fixture-model agent (no provider calls)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope, ctx: Context.Context<AgentToolDeps>
   const repos = Layer.mergeAll(
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
-    RepoLayers.GrowthRepositoryLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.BusinessRepositoryLive,
+    RepoLayers.GrowthRepositoriesLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.BusinessRepositoryLive,
     RepoLayers.DiscoveryScopeRepositoryLive, RepoLayers.FactRepositoryLive,
     RepoLayers.ProductReadRepositoryLive, RepoLayers.QuestionRepositoryLive,
   )
@@ -61,7 +61,7 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
       expect(await r.text()).not.toContain(f.profile.primaryGoal.id)
     }
     for (const headers of [{ origin: "https://hostile.test" }, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "cross-site" }]) expect((await call("PUT", f.path, f.cookie, product, headers)).status).toBe(403)
-    const invalid = await call("PUT", f.path, f.cookie, { category: "TEST", audience: "TEST", valueProposition: "TEST", primaryGoal: { ...product.primaryGoal, countingSemantics: "DISTINCT_USERS" } })
+    const invalid = await call("PUT", f.path, f.cookie, { category: "TEST", audience: "TEST", valueProposition: "TEST", metric: { ...product.metric, countingSemantics: "DISTINCT_USERS" } })
     expect(invalid.status).toBe(422)
   })
   it("lets operators create, approve/reject and replay decisions while rejecting forged authority/evidence", async () => {
@@ -129,4 +129,30 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     const malformed = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, initialStatus: "APPROVED" })))
     expect(malformed._tag).toBe("Left")
   })
+  it.each(["SIGNUP", "BOOKING"] as const)("onboards a %s business, preserves versions and accepts a human review", async kind => {
+    const f = await fixture()
+    const metric = kind === "SIGNUP" ? product.metric : { conversionKind: "BOOKING", label: "Confirmed bookings", sourceKind: "OPERATOR_AGGREGATE_EXPORT", sourceIdentity: "TEST appointment system",
+      eventName: null, countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Europe/London", propertyRef: null }
+    const { profile } = await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, { category: kind === "BOOKING" ? "TEST local appointment service" : product.category, audience: kind === "BOOKING" ? "TEST patients" : product.audience, valueProposition: product.valueProposition, goalStatement: `Improve TEST ${kind}`, metric }))
+    expect(profile.primaryGoal.metricDefinition.conversionKind).toBe(kind)
+    expect(profile.category).toBe(kind === "BOOKING" ? "TEST local appointment service" : "TEST SaaS")
+    const { opportunity } = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities`, f.cookie, { ...proposal(f), goalId: profile.primaryGoal.id, targetUrl: null,
+      initialStatus: "PROPOSED", ownerUserId: f.session.userId, evidence: [{ type: "OPERATOR_HYPOTHESIS", note: "TEST W0 scenario" }] }))
+    const request = { expectedStatus: "PROPOSED", expectedRevision: 1, idempotencyKey: randomUUID(), reason: "TEST approved" }
+    await ok(call("POST", `${f.path}/opportunities/${opportunity.id}/approve`, f.cookie, request))
+    const row = (await pool.query("INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,channel,assurance) VALUES($1,'CAMPAIGN_SENT','TEST email',now(),'HUMAN',$2,'EMAIL','OPERATOR_ATTESTED') RETURNING id", [profile.businessId, f.session.userId])).rows[0]
+    await pool.query("INSERT INTO growth_initiative_actions(intervention_id,opportunity_id,business_id,request_key,created_by_user_id) VALUES($1,$2,$3,$4,$5)", [row.id, opportunity.id, profile.businessId, randomUUID(), f.session.userId])
+    const { opportunity: fresh } = await ok<{ opportunity: GrowthOpportunity }>(call("GET", `${f.path}/opportunities/${opportunity.id}`, f.cookie))
+    expect(fresh).toMatchObject({ status: "APPROVED", progress: "EXECUTED", executionCount: 1, targetUrl: null, revision: 2 })
+    const review = { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST observation only", conclusion: "INCONCLUSIVE" }
+    expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, undefined, review)).status).toBe(401)
+    expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, f.cookie, review, { origin: "https://hostile.test" })).status).toBe(403)
+    const other = await fixture()
+    expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, other.cookie, review)).status).toBe(404)
+    const reviewed = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${opportunity.id}/review`, f.cookie, review))
+    expect(reviewed.opportunity.status).toBe("REVIEWED")
+    expect((await ok<{ opportunity: GrowthOpportunity }>(call("GET", `${f.path}/opportunities/${opportunity.id}`, f.cookie))).opportunity).toEqual(reviewed.opportunity)
+    expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, f.cookie, { ...review, conclusion: "KEEP" })).status).toBe(409)
+  })
+
 })

@@ -30,7 +30,7 @@ import {
   SupersedeFactRequest,
 } from "@openrecord/contracts"
 import {
-  GrowthRepositoryLive,
+  GrowthRepositoriesLive,
   AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
@@ -1512,7 +1512,7 @@ export const makeRouter = () => {
 }
 
 export const RepoLayers = {
-  GrowthRepositoryLive,
+  GrowthRepositoriesLive,
   AgentProposalRepositoryLive,
   AssayRepositoryLive,
   AssayReviewRepositoryLive,

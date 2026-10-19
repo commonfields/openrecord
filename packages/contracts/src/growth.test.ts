@@ -1,33 +1,43 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { canTransitionGrowth, GrowthEvidenceInput, GrowthMetric, GrowthStatus, type GrowthActor } from "./growth.js"
+import { canTransitionGrowth, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthExecutionAssurance, GrowthStatus, GrowthReview } from "./growth.js"
 
-describe("growth authority and metric contract", () => {
-  it("exhaustively refuses all undeclared transitions and authorities", () => {
-    const actors: GrowthActor[] = ["OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"]
-    for (const from of [null, ...GrowthStatus.literals]) for (const to of GrowthStatus.literals) for (const actor of actors) {
+const metric = { conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" }
+const valid = (value: unknown) => Schema.decodeUnknownEither(GrowthMetricDefinitionInput, { onExcessProperty: "error" })(value)._tag
+
+describe("channel-neutral growth contract", () => {
+  it("permits only declared decision transitions; systems never decide", () => {
+    for (const from of [null, ...GrowthStatus.literals]) for (const to of GrowthStatus.literals) for (const actor of ["OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"]) {
       const creation = from === null && (to === "DISCOVERED" || to === "PROPOSED")
       const proposal = from === "DISCOVERED" && to === "PROPOSED"
-      const approval = from === "PROPOSED" && to === "APPROVED"
-      const cancellation = (from === "DISCOVERED" || from === "PROPOSED" || from === "APPROVED") && to === "CANCELLED"
-      const expected = actor === "OPERATOR" ? creation || proposal || approval || cancellation : actor === "ASSISTANT" && (creation || proposal)
-      expect(canTransitionGrowth(from, to, actor)).toBe(expected)
-      if (actor === "ASSISTANT" && ["APPROVED", "CANCELLED"].includes(to)) expect(expected).toBe(false)
-      if (["IN_DELIVERY", "DELIVERED", "MEASURING", "REVIEWED"].includes(to)) expect(expected).toBe(false)
+      const human = (from === "PROPOSED" && to === "APPROVED") || (from === "APPROVED" && to === "REVIEWED") || (["DISCOVERED", "PROPOSED", "APPROVED"].some(s => s === from) && to === "CANCELLED")
+      expect(canTransitionGrowth(from, to, actor)).toBe(actor === "OPERATOR" ? creation || proposal || human : actor === "ASSISTANT" && (creation || proposal))
     }
-    expect(canTransitionGrowth("PROPOSED", "APPROVED", "OPERATOR")).toBe(true)
-    expect(canTransitionGrowth("DISCOVERED", "APPROVED", "OPERATOR")).toBe(false)
-    expect(canTransitionGrowth("CANCELLED", "PROPOSED", "OPERATOR")).toBe(false)
+    for (const old of ["IN_DELIVERY", "DELIVERED", "MEASURING"]) expect(Schema.decodeUnknownEither(GrowthStatus)(old)._tag).toBe("Left")
   })
-  it("allows only configured aggregate event counts and IANA timezones", () => {
-    const metric = { kind: "TRIAL_SIGNUPS", analyticsSource: "GA4_AGGREGATE_EXPORT", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", reportingTimeZone: "Asia/Makassar", propertyRef: null }
-    expect(Schema.decodeUnknownEither(GrowthMetric)(metric)._tag).toBe("Right")
-    for (const bad of [{ countingSemantics: "DISTINCT_USERS" }, { analyticsSource: "GEMINI" }, { eventName: "bad event" }, { reportingTimeZone: "+08:00" }, { reportingTimeZone: "Not/AZone" }]) {
-      expect(Schema.decodeUnknownEither(GrowthMetric)({ ...metric, ...bad })._tag).toBe("Left")
+  it("supports software, commerce and services using exact source and unit semantics", () => {
+    for (const conversionKind of ["LEAD", "SIGNUP", "PURCHASE", "BOOKING"]) {
+      expect(valid({ ...metric, conversionKind })).toBe("Right")
+      expect(valid({ ...metric, conversionKind, sourceKind: "OPERATOR_AGGREGATE_EXPORT", eventName: null, propertyRef: null })).toBe("Right")
     }
+    expect(valid({ ...metric, sourceKind: "OPERATOR_AGGREGATE_EXPORT", eventName: null, unit: "CURRENCY_MINOR", countingSemantics: "SUM", currency: "USD" })).toBe("Right")
+    for (const bad of [{ countingSemantics: "DISTINCT_USERS" }, { eventName: "bad event" }, { reportingTimeZone: "+08:00" }, { reportingTimeZone: "Not/AZone" }, { currency: "USD" }, { sourceIdentity: " " }, { propertyRef: null }, { unit: "CURRENCY_MINOR" }, { sourceKind: "GEMINI" }]) expect(valid({ ...metric, ...bad })).toBe("Left")
+    const money = { ...metric, sourceKind: "OPERATOR_AGGREGATE_EXPORT", eventName: null, unit: "CURRENCY_MINOR", countingSemantics: "SUM", currency: "USD" }
+    for (const bad of [{ currency: null }, { currency: "usd" }, { countingSemantics: "EVENT_COUNT" }, { eventName: "purchase" }]) expect(valid({ ...money, ...bad })).toBe("Left")
   })
-  it("has no public evidence constructor for delivery or measured outcome claims", () => {
-    for (const type of ["VERIFIED_ACTION", "MEASURED_OUTCOME"]) expect(Schema.decodeUnknownEither(GrowthEvidenceInput)({ type, note: "unverified claim" })._tag).toBe("Left")
-    expect(Schema.decodeUnknownEither(GrowthEvidenceInput)({ type: "OBSERVED", note: "Missing reference" })._tag).toBe("Left")
+  it("requires a bounded review conclusion and rejects execution evidence as rationale", () => {
+    const base = { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: "00000000-0000-4000-8000-000000000001", reason: "TEST reviewed" }
+    expect(Schema.decodeUnknownEither(GrowthReview)({ ...base, conclusion: "EXTEND" })._tag).toBe("Right")
+    expect(Schema.decodeUnknownEither(GrowthReview)(base)._tag).toBe("Left")
+    for (const type of ["VERIFIED_ACTION", "MEASURED_OUTCOME"]) expect(Schema.decodeUnknownEither(GrowthEvidenceInput)({ type, note: "unverified" })._tag).toBe("Left")
+  })
+  it("names a system-verified merge precisely and cannot call an attestation verified", () => {
+    const id = "00000000-0000-4000-8000-000000000001"
+    const decode = (v: unknown) => Schema.decodeUnknownEither(GrowthExecutionAssurance)(v)._tag
+    const merge = { assurance: "SYSTEM_VERIFIED", actor: "SYSTEM", actorId: null, verification: { kind: "GROWTH_DELIVERY", id, claim: "PR_MERGED" } }
+    expect(decode(merge)).toBe("Right")
+    expect(decode({ ...merge, verification: { ...merge.verification, claim: "DEPLOYED" } })).toBe("Left")
+    expect(decode({ assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: id, verification: null })).toBe("Right")
+    expect(decode({ ...merge, assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: id })).toBe("Left")
   })
 })

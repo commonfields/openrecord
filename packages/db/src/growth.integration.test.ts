@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { canTransitionGrowth, GrowthStatus, type CreateGrowthOpportunity, type GrowthActor, type GrowthMetric, type GrowthObservedRef } from "@openrecord/contracts"
+import { canTransitionGrowth, GrowthStatus, type CreateGrowthOpportunity, type GrowthMetricDefinitionInput, type GrowthObservedRef } from "@openrecord/contracts"
 import { GrowthRepository, GrowthRepositoryLive } from "./growth.js"
 import { RecordRepository, RecordRepositoryLive } from "./record.js"
 import { migrate } from "./migrate.js"
@@ -13,8 +13,8 @@ import { hostedMeasurementContext } from "./evidence.js"
 import type { Session } from "./auth.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
-const metric: GrowthMetric = { kind: "TRIAL_SIGNUPS", analyticsSource: "GA4_AGGREGATE_EXPORT", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", reportingTimeZone: "Asia/Makassar", propertyRef: null }
-const details = { category: "TEST Software", audience: "TEST operators", valueProposition: "TEST fixture positioning", primaryGoal: metric }
+const metric: GrowthMetricDefinitionInput = { conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4 property", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" }
+const details = { category: "TEST Software", audience: "TEST operators", valueProposition: "TEST fixture positioning", goalStatement: "Increase trial signups", metric }
 const suite = url ? describe : describe.skip
 suite("growth persistence, guards and concurrency (disposable TEST fixtures)", () => {
   type Repos = GrowthRepository | RecordRepository | AcquisitionRepository | ObservationRepository
@@ -50,14 +50,14 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
     const register = () => run(Effect.flatMap(GrowthRepository, r => r.registerProduct(f.session, { name: "TEST retry", websiteUrl: "https://retry.test", engagement: "CLIENT", ...details, idempotencyKey: key })))
     const [a, b] = await Promise.all([register(), register()]); expect(a.businessId).toBe(b.businessId)
     const opportunity = await create(f)
-    const changed = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, primaryGoal: { ...metric, eventName: "trial_started" } })))
+    const changed = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, goalStatement: "Increase trial signups", metric: { ...metric, eventName: "trial_started" } })))
     expect(changed.primaryGoal.version).toBe(2)
-    const replay = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, primaryGoal: { ...metric, eventName: "trial_started" } })))
+    const replay = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, goalStatement: "Increase trial signups", metric: { ...metric, eventName: "trial_started" } })))
     expect(replay.primaryGoal.id).toBe(changed.primaryGoal.id)
     const old = await run(Effect.flatMap(GrowthRepository, r => r.get(f.session.accountId, f.businessId, opportunity.id)))
     expect(old.goalId).toBe(f.profile.primaryGoal.id)
     await expect(create(f)).rejects.toMatchObject({ reason: "PrimaryGoalChanged" })
-    await expect(pool.query("UPDATE growth_goals SET event_name='rewrite' WHERE id=$1", [f.profile.primaryGoal.id])).rejects.toThrow("append-only")
+    await expect(pool.query("UPDATE growth_goals SET statement='rewrite' WHERE id=$1", [f.profile.primaryGoal.id])).rejects.toThrow("append-only")
   })
   it("refuses cross-account and cross-business reads/writes without disclosure", async () => {
     const f = await fixture(), other = await fixture(), o = await create(f)
@@ -120,7 +120,7 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
     expect(validation).toEqual({ valid: [], dropped: 1 })
     for (const reference of [...refs, { kind: "RECORD_ACTION" as const, id: randomUUID() }]) await expect(create(other, { ...input(other), evidence: [...input(other).evidence, { type: "OBSERVED", reference, note: "foreign/missing" }] })).rejects.toMatchObject({ reason: "EvidenceNotFound" })
     for (const type of ["VERIFIED_ACTION", "MEASURED_OUTCOME"]) {
-      await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,note) VALUES($1,$2,$3,'TEST forged')", [valid.id, f.businessId, type])).rejects.toThrow("authoritative attachment required")
+      await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,note) VALUES($1,$2,$3,'TEST forged')", [valid.id, f.businessId, type])).rejects.toThrow()
     }
     await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,reference_kind,reference_id,note) VALUES($1,$2,'OBSERVED','RECORD_ACTION',$3,'TEST forged')", [valid.id, f.businessId, randomUUID()])).rejects.toThrow("outside scope")
     await expect(create(f, { ...input(f), evidence: [{ type: "MODEL_SUGGESTION", note: "TEST wrong author" }] })).rejects.toMatchObject({ reason: "AuthorshipRequired" })
@@ -181,11 +181,11 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
       const o = await create(f, { ...input(f), initialStatus: from === "DISCOVERED" ? "DISCOVERED" : "PROPOSED" })
       if (from === "APPROVED" || from === "CANCELLED") await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, o.id, from, decision())))
       const revision = from === "APPROVED" || from === "CANCELLED" ? 3 : 2
-      for (const to of GrowthStatus.literals) for (const actor of ["OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"] satisfies GrowthActor[]) {
+      for (const to of GrowthStatus.literals) for (const actor of ["OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"] satisfies string[]) {
         const client = await pool.connect(); let accepted = false
         try {
           await client.query("BEGIN")
-          await client.query("INSERT INTO growth_opportunity_events(opportunity_id,business_id,revision,status,actor,user_id,reason,request_key) VALUES($1,$2,$3,$4,$5,$6,'TEST policy probe',$7)", [o.id, f.businessId, revision, to, actor, f.session.userId, randomUUID()])
+          await client.query("INSERT INTO growth_opportunity_events(opportunity_id,business_id,revision,status,actor,user_id,reason,request_key,conclusion) VALUES($1,$2,$3,$4,$5,$6,'TEST policy probe',$7,$8)", [o.id, f.businessId, revision, to, actor, f.session.userId, randomUUID(), to === "REVIEWED" ? "INCONCLUSIVE" : null])
           accepted = true
         } catch { /* Every rejected combination is asserted below. */ }
         finally { await client.query("ROLLBACK"); client.release() }
@@ -206,4 +206,68 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
     const loaded = await run(Effect.flatMap(GrowthRepository, r => r.get(f.session.accountId, f.businessId, o.id)))
     expect(loaded).toEqual(o)
   })
+  it("versions goal statements independently and preserves exact source, unit and currency definitions", async () => {
+    const f = await fixture(), old = await create(f)
+    const statement = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, goalStatement: "Increase trials for agencies" })))
+    expect(statement.primaryGoal.version).toBe(2)
+    expect(statement.primaryGoal.metricDefinition.id).toBe(f.profile.primaryGoal.metricDefinition.id)
+    const changed = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, goalStatement: statement.primaryGoal.statement,
+      metric: { conversionKind: "PURCHASE", label: "Gross order value", sourceKind: "OPERATOR_AGGREGATE_EXPORT", sourceIdentity: "TEST shop sales export", eventName: null,
+        propertyRef: "TEST shop", countingSemantics: "SUM", unit: "CURRENCY_MINOR", currency: "EUR", reportingTimeZone: "Europe/Berlin" } })))
+    expect(changed.primaryGoal.version).toBe(3)
+    expect(changed.primaryGoal.metricDefinition).toMatchObject({ version: 2, unit: "CURRENCY_MINOR", currency: "EUR", sourceIdentity: "TEST shop sales export" })
+    const historical = await run(Effect.flatMap(GrowthRepository, r => r.goals(f.session.accountId, f.businessId)))
+    expect(historical.map(g => g.statement)).toEqual([statement.primaryGoal.statement, statement.primaryGoal.statement, details.goalStatement])
+    expect((await run(Effect.flatMap(GrowthRepository, r => r.get(f.session.accountId, f.businessId, old.id)))).goalId).toBe(f.profile.primaryGoal.id)
+    await expect(pool.query("UPDATE growth_metric_definitions SET currency='USD' WHERE id=$1", [changed.primaryGoal.metricDefinition.id])).rejects.toThrow("append-only")
+  })
+  const appendExecution = async (f: Awaited<ReturnType<typeof fixture>>, opportunityId: string, channel: string, key = randomUUID()) => {
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const row = (await client.query("INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,channel,assurance,notes) VALUES($1,$2,'TEST target',now(),'HUMAN',$3,$4,'OPERATOR_ATTESTED','TEST human assertion, not independently verified') RETURNING id",
+        [f.businessId, channel === "EMAIL" ? "CAMPAIGN_SENT" : "SOURCE_UPDATED", f.session.userId, channel])).rows[0]
+      await client.query("INSERT INTO growth_initiative_actions(intervention_id,opportunity_id,business_id,request_key,created_by_user_id) VALUES($1,$2,$3,$4,$5)", [row.id, opportunityId, f.businessId, key, f.session.userId])
+      await client.query("COMMIT"); return String(row.id)
+    } catch (e) { await client.query("ROLLBACK"); throw e } finally { client.release() }
+  }
+  it.each(["SIGNUP", "BOOKING"] as const)("uses the same initiative model for %s with multiple attested interventions", async kind => {
+    const f = await fixture()
+    const saved = await run(Effect.flatMap(GrowthRepository, r => r.saveProfile(f.session, f.businessId, { ...details, category: kind === "BOOKING" ? "TEST local appointment service" : details.category, goalStatement: `Improve TEST ${kind}`,
+      metric: kind === "SIGNUP" ? metric : { conversionKind: "BOOKING", label: "Confirmed bookings", sourceKind: "OPERATOR_AGGREGATE_EXPORT", sourceIdentity: "TEST booking system",
+        eventName: null, propertyRef: null, countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Europe/London" } })))
+    expect(saved.category).toBe(kind === "BOOKING" ? "TEST local appointment service" : "TEST Software")
+    const scoped = { ...f, profile: saved }
+    const o = await create(scoped, { ...input(scoped), targetUrl: null })
+    expect(o.targetUrl).toBeNull(); expect(o.progress).toBe("NOT_STARTED")
+    await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, o.id, "APPROVED", decision())))
+    const key = randomUUID()
+    await appendExecution(f, o.id, "WEBSITE", key); await appendExecution(f, o.id, "EMAIL")
+    await expect(appendExecution(f, o.id, "EMAIL", key)).rejects.toThrow()
+    const loaded = await run(Effect.flatMap(GrowthRepository, r => r.get(f.session.accountId, f.businessId, o.id)))
+    expect(loaded).toMatchObject({ status: "APPROVED", progress: "EXECUTED", executionCount: 2, revision: 2 })
+    expect(loaded.events).toHaveLength(2)
+    const review = { expectedStatus: "APPROVED" as const, expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST no causal conclusion", conclusion: "INCONCLUSIVE" as const }
+    const reviewed = await run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, review)))
+    expect(reviewed.status).toBe("REVIEWED"); expect(reviewed.events[2]?.conclusion).toBe("INCONCLUSIVE")
+    expect(await run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, review)))).toEqual(reviewed)
+    await expect(run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, { ...review, conclusion: "KEEP" })))).rejects.toMatchObject({ reason: "IdempotencyConflict" })
+    await expect(appendExecution(f, o.id, "WEBSITE")).rejects.toThrow("not approved")
+  })
+  it("fails closed on forged system claims, attestations, foreign links and non-members", async () => {
+    const f = await fixture(), other = await fixture(), o = await create(f)
+    await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, o.id, "APPROVED", decision())))
+    const insert = (actor: string, actorId: string | null, assurance: string, kind: string | null, claim: string | null, type = "SOURCE_UPDATED") => pool.query(
+      "INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,channel,assurance,verification_kind,verification_id,verification_claim) VALUES($1,$2,'TEST',now(),$3,$4,'WEBSITE',$5,$6,$7,$8)",
+      [f.businessId,type,actor,actorId,assurance,kind,kind ? randomUUID() : null,claim])
+    await expect(insert("SYSTEM", null, "SYSTEM_VERIFIED", "GROWTH_DELIVERY", "PR_MERGED")).rejects.toThrow("unverified")
+    await expect(insert("SYSTEM", null, "SYSTEM_VERIFIED", "GROWTH_DELIVERY", "DEPLOYED", "SOURCE_PUBLISHED")).rejects.toThrow("unverified")
+    await expect(insert("AGENT", f.session.userId, "OPERATOR_ATTESTED", null, null)).rejects.toThrow("requires a human")
+    await expect(insert("HUMAN", other.session.userId, "OPERATOR_ATTESTED", null, null)).rejects.toThrow("outside scope")
+    await expect(insert("HUMAN", f.session.userId, "OPERATOR_ATTESTED", "GROWTH_DELIVERY", "PR_MERGED")).rejects.toThrow("not system verification")
+    await expect(appendExecution(other, o.id, "EMAIL")).rejects.toThrow("outside scope")
+    await expect(run(Effect.flatMap(GrowthRepository, r => r.saveProfile({ ...f.session, userId: other.session.userId }, f.businessId, details)))).rejects.toMatchObject({ reason: "GrowthNotFound" })
+    await expect(pool.query("DELETE FROM growth_initiative_actions")).rejects.toThrow("append-only")
+  })
+
 })

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { ConfigProvider, Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AcquisitionRepository, AcquisitionRepositoryLive, AgentProposalRepository, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepository, RecordRepositoryLive, ObservationRepository, ObservationRepositoryLive, acquisitionView, hostedMeasurementContext, type Session } from "@openrecord/db"
+import { AcquisitionRepository, AcquisitionRepositoryLive, AgentProposalRepository, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepository, RecordRepositoryLive, ObservationRepository, ObservationRepositoryLive, acquisitionView, hostedMeasurementContext, type Session } from "@openrecord/db"
 import { migrate } from "@openrecord/db/migrate"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
 import { compareAgentBatches } from "./agent-acquisition-tools.js"
@@ -22,7 +22,7 @@ suite("acquisition-aware agent (TEST evidence, no provider network)", () => {
   const run = <A, E>(fx: Effect.Effect<A, E, Services>, cost = true) => Effect.runPromise(Effect.provide(fx, ctx).pipe(Effect.withConfigProvider(config(cost))))
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url }); scope = await Effect.runPromise(Scope.make())
-    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, ObservationRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))), scope))
+    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, ObservationRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))), scope))
   })
   afterAll(async () => { await Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))); await pool.end() })
   const fixture = async () => {

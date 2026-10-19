@@ -1,119 +1,133 @@
-# Growth opportunities P1 reference
+# Marketing control-plane W0 contract
 
-This change implements OPENRECORD_GROWTH_DELIVERY_V1 phase P1. It adds manual product onboarding, a versioned primary goal, and reviewable growth opportunities.
+W0 reconciles the unmerged P1 schema before delivery or measurement work
+continues. Business and Record profiles remain the identity and tenant boundary.
 
-## Repository
+## Goals and metrics
 
-- Base and local origin/main: `2bec7a5611d7f4e40a1b8d01e621f39338268720`.
-- Branch: `feat/growth-workspaces-opportunities-v1`.
-- Migration: `0030_growth_opportunities_v1.sql`. Migrations 0031 and 0032 remain reserved for later phases.
+Profile requests carry positioning, `goalStatement`, and `metric`. Goals and
+metric definitions have separate immutable IDs and versions. Changing only the
+statement reuses the definition. Identical definitions are reused. A source,
+selector, timezone, unit or currency change creates a new definition. Existing
+initiatives keep their original goal and its exact definition.
 
-## Persistence
+Definitions support `LEAD`, `SIGNUP`, `PURCHASE`, and `BOOKING`, plus an operator
+label. Source identity and IANA timezone are required:
 
-`Business` and `record_profiles` retain product identity and engagement. Registration calls `RecordRepository.createClient` inside the same transaction as growth-profile creation. `DOGFOOD` and `CLIENT` remain explicit operator assertions. A URL grants no publication or repository authority.
-
-`growth_profiles` holds category, audience, value proposition, the one primary goal pointer, and update attribution. `growth_goals` holds immutable metric versions and author attribution. A changed definition appends a version. Identical definitions reuse the current version. Existing opportunities retain their original goal foreign key.
-
-The metric definition contains goal kind, `GA4_AGGREGATE_EXPORT`, GA4 event name, `EVENT_COUNT`, IANA reporting timezone, and an optional property reference. Event counts are not distinct people. Distinct-user semantics require a later contract and migration.
-
-`growth_opportunities` holds the immutable opportunity specification, owner, source, baseline availability, and creator attribution. `growth_opportunity_events` holds append-only lifecycle events. The current status, revision, update time, and editor derive from the latest event. `growth_opportunity_evidence` holds typed source references and authorship notes. `growth_registrations` holds account-scoped registration request identities.
-
-Business/account locks serialize registration, opportunity creation, and goal edits. Opportunity row locks serialize decisions. Repeated request keys replay the original resource. A decision replay must match its original target state, reason, expected state, and expected revision. Opposing concurrent decisions produce one event and one stale-decision refusal.
-
-## Authority and lifecycle
-
-The pure `GROWTH_TRANSITIONS` table in `packages/contracts/src/growth.ts` defines authority. Integration tests compare the database trigger against the table.
-
-| From | To | Authority |
+| Source | Selector and identity | Values |
 | --- | --- | --- |
-| Initial | DISCOVERED or PROPOSED | Operator or assistant |
-| DISCOVERED | PROPOSED | Operator or assistant |
-| PROPOSED | APPROVED | Operator only |
-| DISCOVERED, PROPOSED, or APPROVED | CANCELLED | Operator only, with a reason |
-| Any | IN_DELIVERY, DELIVERED, MEASURING, or REVIEWED | Refused in P1 |
+| `GA4_AGGREGATE_EXPORT` | Property reference and event name required | `EVENT_COUNT`, `COUNT`, no currency |
+| `OPERATOR_AGGREGATE_EXPORT` | Named system/account; event name is null | `EVENT_COUNT` / `COUNT`, or `SUM` / `CURRENCY_MINOR` with a three-letter uppercase currency code |
 
-P1 exposes operator promotion through HTTP. The agent creates proposals directly.
+Currency minor units are explicit: USD values are cents, for example. No FX,
+revenue attribution, unique-person counts, CSV importer or analytics engine is
+introduced. Source identity remains an operator assertion, not authenticated
+access to the external account. Currency codes are format-validated identifiers;
+W0 does not connect to a currency registry.
 
-`GrowthActor` names future `DELIVERY_SYSTEM` and `MEASUREMENT_SYSTEM` authorities. They have no P1 HTTP or tool dispatch path. P2/P3 must extend both the pure policy and database guard when they attach authoritative records.
+## Initiative decisions and execution
 
-## Evidence and isolation
+Stored states are `DISCOVERED`, `PROPOSED`, `APPROVED`, `CANCELLED`, and `REVIEWED`.
+Only people approve, cancel or review. Review closes an approved initiative with
+`KEEP`, `REVERT`, `EXTEND`, or `INCONCLUSIVE`, plus a reason. Replay identities
+include the conclusion; stale revisions and conflicting replays are refused.
 
-`OBSERVED` references must resolve to stored evidence in the selected business. Supported kinds are observation, record check, record judgment, acquisition batch, acquisition result judgment, GA4 referral import, and record action. Empty checks/batches and synthetic observations/imports do not qualify.
+Delivery and measurement do not change those states. W0 derives `NOT_STARTED`
+or `EXECUTED` and `executionCount` from current linked intervention rows. This
+means that an execution was recorded, not that a website was published or an
+outcome measured. W2/W3 may later derive finer adapter and measurement progress
+from their authoritative records. The primary page is optional.
 
-Operator creation requires `OPERATOR_HYPOTHESIS` authorship. Assistant creation requires `MODEL_SUGGESTION` authorship. Observed references do not turn a proposed mechanism into a verified result. Both the repository schema and database trigger refuse `VERIFIED_ACTION` and `MEASURED_OUTCOME` writes in P1.
+Rationale evidence remains `OBSERVED`, `OPERATOR_HYPOTHESIS` or
+`MODEL_SUGGESTION`. Execution and outcomes are not rationale evidence types.
+Existing validation of real, same-business observed references is preserved.
 
-HTTP routes use the authenticated session, `BusinessRepository.getScoped`, strict request decoding, and the existing origin guard. Foreign or missing business, opportunity, goal, and owner IDs produce 404. Unknown errors return generic responses without SQL details. Browser page context grants no permissions.
+## Execution-ledger contract
 
-## API
+Migration 0030 adds nullable columns to `interventions` and the append-only
+`growth_initiative_actions` link table. An approved initiative can have multiple
+interventions across `WEBSITE`, `THIRD_PARTY_PROFILE`, `EMAIL`, `PAID`, `SOCIAL`,
+and `OTHER`. New types include `CAMPAIGN_SENT` and `LISTING_UPDATED`.
 
-All opportunity paths below are under `/api/growth/clients/:id`.
+Legacy intervention rows keep null assurance and existing protocol semantics.
+The new columns are not exported in protocol v1 packets.
 
-- `POST /api/growth/products`: atomic registration with a client request key.
-- `GET /api/growth/clients/:id`: growth profile and goal versions.
-- `PUT /api/growth/clients/:id`: human-authored profile and primary-goal update.
-- `GET /opportunities`: latest 50 opportunities, including evidence and event history.
-- `GET /opportunities/:opportunityId`: one scoped opportunity.
-- `POST /opportunities`: operator-authored discovered or proposed opportunity.
-- `POST /opportunities/:opportunityId/propose`: operator promotion for review.
-- `POST /opportunities/:opportunityId/approve`: operator approval.
-- `POST /opportunities/:opportunityId/reject` and `/cancel`: operator cancellation with a reason.
+- `OPERATOR_ATTESTED` requires a HUMAN actor whose ID is a member of the business
+  account. It cannot contain system-verification fields. Deployment assertions
+  must be labelled `DEPLOYMENT_ATTESTED` by the later adapter.
+- `SYSTEM_VERIFIED` currently describes only `GROWTH_DELIVERY` / `PR_MERGED`, on a
+  WEBSITE / SOURCE_UPDATED row with SYSTEM actor. It proves a repository merge,
+  not production publication.
+- `growth_execution_verified(execution interventions)` receives the entire row.
+  W0 returns false for all claims. W2 must resolve the exact business, event,
+  before/after digests and performed time against its confirmed adapter record.
+  Merely possessing a delivery ID is insufficient.
 
-Decisions require `expectedStatus`, `expectedRevision`, `idempotencyKey`, and `reason`. Invalid payloads return 422. Stale decisions, conflicting request identities, and illegal transitions return 409.
+Links check tenant, approval, actor identity and proof. Corrections cannot move
+an action to another initiative. Historical rows, links, evidence and decisions
+remain append-only; corrections use the existing supersession model.
 
-## Agent
+W0 provides this schema/type contract and derived reads. Attestation routes/UI,
+GitHub delivery integration and measurement imports remain separate workstreams.
 
-`read_growth_goal` reads scoped positioning and the human-authored metric. `read_growth_opportunities` reads at most five bounded summaries with evidence types and citations.
+## API, tools and UI
 
-`propose_growth_opportunity` creates an assistant-attributed `PROPOSED` opportunity. The server validates observed references, drops unavailable references, and reports their count. Missing evidence stays a labelled model hypothesis. Baseline availability remains `UNKNOWN` for agent proposals. No approval, cancellation, goal-editing, delivery, or measurement tool is exposed.
+Existing registration, profile, proposal and decision routes use the new
+contract. `POST /api/growth/clients/:id/opportunities/:opportunityId/review` is
+operator-only, session/origin scoped and revision/idempotency guarded.
 
-Changes to `agent.ts` are limited to imports, declarations, dispatch, and one system-prompt paragraph. `runConversation` remains unchanged for the concurrent sanitisation work.
+The operator agent retains scoped read/propose capabilities only. It receives
+the new metric definition through the existing goal read tool. No approve,
+attest, import or review tool is added. `GrowthRepositoriesLive` centralizes the
+growth layer used by API callers for subsequent workstreams.
 
-## Web
+The existing onboarding/profile form supports the four categories and both
+sources, shows explicit unit/currency/timezone fields, and separates the goal
+statement. The workspace shows recorded execution counts separately from human
+decision state, offers human review, and accepts initiatives without a page.
+No browser verification is claimed in this phase.
 
-`/products/new` registers an owned product or authorized client with manual positioning and a trial-signup goal by default. The new product enters the shared business selector after registration. Review dialogs retain the state and revision that the operator opened, including after an error or retry.
+## Migration safety
 
-`/clients/:id/growth` shows the profile, exact goal definition, opportunities, owner and creator attribution, evidence badges and stored-source links, lifecycle history, and human review dialogs. Existing Client Record, AI Discovery, Overview, and Operator Agent links remain available. Existing URLs remain unchanged.
+Only 0030 changes. 0031 remains owned by P2/W2; 0032 is reserved for measurement.
+No existing P1/P2 database is reset or upgraded by W0.
 
-Shared UI edits are limited to entry links, the workspace route, growth citation links, and breadcrumbs. `api.ts` remains untouched because the growth client reuses its existing `api` function.
+The amended migration accepts fresh databases, pre-0030 populated databases,
+and populated databases already on W0. An older `growth_goals.kind` layout is
+explicitly refused before W0 schema writes. `CREATE TABLE IF NOT EXISTS` is not
+an upgrade strategy for old 0030/0031 databases. Those databases must remain on
+the preserved code until an explicit data-preserving forward conversion is
+commissioned, or a new database is selected. W0 does not claim such a conversion.
 
-## Verification environment
+The repeatable rehearsal creates only new databases in an owned loopback
+fixture container and never drops or resets an existing database:
 
-All database operations use PostgreSQL 16 in `or-p1-ce71-pg`, exposed only on `127.0.0.1:55811`. Test fixtures use a new database inside that container. The API and web smoke use ports 55812 and 55813. No operator database or existing development server is used.
+```sh
+python3 scripts/verify-marketing-w0-migrations.py \
+  --container openrecord-marketing-w0-20261019 \
+  --output /absolute/new/private/output-directory
+```
 
-A temporary local runner supplies disposable-database settings and Node 24.3.0 without printing credentials. It disables external agent processing and 9Router. The runner and `apps/web/vite.p1.local.ts` are removed before delivery.
+It checks fresh/replay, populated pre-0030 upgrade/replay, raw evidence and
+legacy intervention preservation, schema-catalog equivalence, and preservation
+when an old 0030 layout is refused. Use Node 24 and pnpm on PATH.
 
-## Scope limits
+## P2 integration requirements
 
-P1 completes product registration, goal definition, opportunity proposal, human approval or rejection, and persistent status review. GitHub delivery and general GA4 outcome imports are separate P2/P3 work. No delivered work, measured growth, deployment, or customer-acquisition result is claimed.
+Preserve P2 at `ee80b911be5b60b9fcfa218f365e586a85929823`. In a later W2 phase:
 
-Opportunity lists are bounded to the latest 50 in the UI and latest 100 in the repository. Goal history reads the latest 100 versions. Source links for record and acquisition judgments open their existing workspace views. They do not introduce new evidence detail routes.
+1. Rebase/adapt against verified W0 without rewriting the preserved branch.
+2. Retain targets, patch/base binding, path guards, claims, reconciliation and
+   review controls. Remove `moveOpportunity`, the opportunity-event delivery
+   column/guard rewrite, and VERIFIED_ACTION rationale writes.
+3. Replace the full-row verifier with exact merged-delivery validation.
+4. In the merge transaction append a SYSTEM_VERIFIED PR_MERGED intervention and
+   initiative link. Use GitHub's confirmed merge time and bound content digests.
+5. Rename DEPLOYMENT_VERIFIED to DEPLOYMENT_ATTESTED; append a separate HUMAN /
+   OPERATOR_ATTESTED SOURCE_PUBLISHED row and link. Do not imply independent
+   deployment verification.
+6. Allow multiple deliveries while the initiative remains APPROVED. Adapt
+   contracts, fixtures, UI and tests to the new decision and metric documents.
 
-## Browser verification
-
-The T3 collaborative browser exercised an authenticated fixture account against the isolated API and database:
-
-1. Registered a DOGFOOD product through `/products/new` with manual positioning and a trial-signup event definition.
-2. Created an opportunity through the UI and approved it with a human reason. A fresh API read returned revision 2 and exactly `PROPOSED`, `APPROVED` in history.
-3. Rejected another proposal through the UI. A fresh read returned `CANCELLED` and exactly two events.
-4. Changed `trial_signup` to `trial_started` through the profile editor. The primary metric became version 2. Existing opportunities kept version 1 and `trial_signup`.
-5. Opened a rejection dialog, committed a concurrent human approval through the API, and submitted the stale dialog. The UI displayed the stale-review message. The opportunity stayed approved at revision 2 with two events. Retrying the same dialog also refused the stale decision without adding an event.
-6. Inspected the workspace at desktop 1280x800 and mobile 390x844. Neither viewport had horizontal document overflow.
-7. Opened the preserved Client Record and AI Discovery routes without starting measurements or calling a model.
-
-A hot reload reset an open review dialog during an intermediate check. After reopening the dialog, rejection passed. A restarted API served the final backend source for the stale-review check.
-
-## Existing-test review
-
-The resumed changes to these integration tests add only `GrowthRepositoryLive` to imports and Effect test layers:
-
-- `apps/api/src/agent-acquisition.integration.test.ts`
-- `apps/api/src/agent-conversations.integration.test.ts`
-- `apps/api/src/agent-proposals.integration.test.ts`
-- `apps/api/src/agent-referrals.integration.test.ts`
-- `apps/api/src/agent-tools.integration.test.ts`
-- `apps/api/src/observation-semantics.integration.test.ts`
-- `apps/api/src/stack-workflow.integration.test.ts`
-
-The new tools extend `AgentToolDeps`, and `makeRouter` includes the growth routes. These existing test environments therefore need the new repository service. Their assertions remain unchanged. `agent-tools.test.ts` adds the two registered read tools to its exact allowlist.
-
-Intentionally untouched code includes `runConversation`, the shared `api.ts` transport, existing workers, P2/P3 migrations and implementation, Jev, production configuration, and all other worktrees.
+W0 must be incorporated into #65 before #65 is considered for a main merge.
+Do not merge the old P1 schema first and rely on W0 to reshape it afterward.

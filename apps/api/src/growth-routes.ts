@@ -1,7 +1,7 @@
 import { HttpRouter } from "@effect/platform"
 import { Effect } from "effect"
 import { BusinessRepository, GrowthRefused, GrowthRepository, type Session } from "@openrecord/db"
-import { CreateGrowthOpportunity, GrowthDecision, GrowthProductInput, GrowthProfileInput, decodeRouteId } from "@openrecord/contracts"
+import { CreateGrowthOpportunity, GrowthDecision, GrowthReview, GrowthProductInput, GrowthProfileInput, decodeRouteId } from "@openrecord/contracts"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const failure = (e: unknown) => {
@@ -56,6 +56,11 @@ export const growthApi = (withSession: WithSession) => {
       const input = decode(GrowthDecision, yield* readJson)
       if (!input || !id) return yield* json(422, { _tag: "InvalidRequest" })
       return yield* json(200, { opportunity: yield* (yield* GrowthRepository).propose(session, businessId, id, input) })
+    }))),
+    HttpRouter.post("/api/growth/clients/:id/opportunities/:opportunityId/review", client((session, businessId, id) => Effect.gen(function*() {
+      const input = decode(GrowthReview, yield* readJson)
+      if (!input || !id) return yield* json(422, { _tag: "InvalidRequest" })
+      return yield* json(200, { opportunity: yield* (yield* GrowthRepository).review(session, businessId, id, input) })
     }))),
     HttpRouter.post("/api/growth/clients/:id/opportunities/:opportunityId/approve", decision("APPROVED")),
     HttpRouter.post("/api/growth/clients/:id/opportunities/:opportunityId/cancel", decision("CANCELLED")),

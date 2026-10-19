@@ -6,7 +6,7 @@ import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import {
-  AcquisitionRepository, AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive,
+  AcquisitionRepository, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive,
   ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepository, RecordRepositoryLive, SIGNUPS_NOT_MEASURED, acquisitionReport, acquisitionView, type Ga4ImportMeta, type Session,
 } from "@openrecord/db"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
@@ -20,7 +20,7 @@ suite("AI referral evidence tool (TEST fixtures, no provider calls)", () => {
   const run = <A, E>(fx: Effect.Effect<A, E, AgentToolDeps>) => Effect.runPromise(Effect.provide(fx, ctx))
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url }); scope = await Effect.runPromise(Scope.make())
-    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive,
+    ctx = await Effect.runPromise(Layer.buildWithScope(Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive,
       ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))), scope))
   })
   afterAll(async () => { await Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))); await pool.end() })

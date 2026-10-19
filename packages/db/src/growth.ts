@@ -2,7 +2,7 @@ import { Context, Data, Effect, Layer, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import {
-  canTransitionGrowth, CreateGrowthOpportunity, GrowthDecision, GrowthEvidenceInput, GrowthMetric,
+  canTransitionGrowth, CreateGrowthOpportunity, GrowthDecision, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthProgress, GrowthReview, GrowthReviewConclusion,
   GrowthOpportunityFields, GrowthProductInput, GrowthProfileInput, GrowthStatus,
   type GrowthGoal, type GrowthObservedRef, type GrowthOpportunity, type GrowthProfile,
 } from "@openrecord/contracts"
@@ -12,7 +12,12 @@ import type { Session } from "./auth.js"
 
 export class GrowthRefused extends Data.TaggedError("GrowthRefused")<{ readonly reason: string }> {}
 export type GrowthEffect<A> = Effect.Effect<A, SqlError | RowDecodeError | GrowthRefused>
-const Goal = Schema.Struct({ ...GrowthMetric.fields, id: Schema.UUID, businessId: Schema.UUID, version: Schema.Int, createdByUserId: Schema.UUID, createdAt: Schema.String })
+const MetricMeta = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, version: Schema.Int, createdByUserId: Schema.UUID, createdAt: Schema.String })
+const Metric = Schema.Union(
+  Schema.extend(GrowthMetricDefinitionInput.members[0], MetricMeta), Schema.extend(GrowthMetricDefinitionInput.members[1], MetricMeta), Schema.extend(GrowthMetricDefinitionInput.members[2], MetricMeta),
+)
+const Goal = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, version: Schema.Int, statement: Schema.String,
+  metricDefinition: Metric, createdByUserId: Schema.UUID, createdAt: Schema.String })
 const Profile = Schema.Struct({ businessId: Schema.UUID, category: Schema.String, audience: Schema.String, valueProposition: Schema.String,
   primaryGoal: Goal, updatedByUserId: Schema.UUID, updatedAt: Schema.String })
 const EvidenceMeta = Schema.Struct({ id: Schema.UUID, createdAt: Schema.String })
@@ -22,10 +27,10 @@ const Evidence = Schema.Union(
   Schema.extend(GrowthEvidenceInput.members[2], EvidenceMeta),
 )
 const Event = Schema.Struct({ id: Schema.UUID, status: GrowthStatus, revision: Schema.Int,
-  actor: Schema.Literal("OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"), userId: Schema.UUID, reason: Schema.String, createdAt: Schema.String })
+  actor: Schema.Literal("OPERATOR", "ASSISTANT"), userId: Schema.UUID, reason: Schema.String, conclusion: Schema.NullOr(GrowthReviewConclusion), createdAt: Schema.String })
 const Opportunity = Schema.Struct({ ...GrowthOpportunityFields.fields, id: Schema.UUID, businessId: Schema.UUID, ownerUserId: Schema.UUID,
   createdByUserId: Schema.UUID, createdByActor: Schema.Literal("OPERATOR", "ASSISTANT"), createdAt: Schema.String, updatedAt: Schema.String,
-  updatedByUserId: Schema.UUID, status: GrowthStatus, revision: Schema.Int, evidence: Schema.Array(Evidence), events: Schema.Array(Event) })
+  updatedByUserId: Schema.UUID, status: GrowthStatus, revision: Schema.Int, progress: GrowthProgress, executionCount: Schema.Int, evidence: Schema.Array(Evidence), events: Schema.Array(Event) })
 export class GrowthRepository extends Context.Tag("GrowthRepository")<GrowthRepository, {
   readonly profile: (accountId: string, businessId: string) => GrowthEffect<GrowthProfile | null>
   readonly goals: (accountId: string, businessId: string) => GrowthEffect<ReadonlyArray<GrowthGoal>>
@@ -36,6 +41,7 @@ export class GrowthRepository extends Context.Tag("GrowthRepository")<GrowthRepo
   readonly create: (session: Session, businessId: string, actor: "OPERATOR" | "ASSISTANT", input: CreateGrowthOpportunity) => GrowthEffect<GrowthOpportunity>
   readonly validateObserved: (accountId: string, businessId: string, references: ReadonlyArray<GrowthObservedRef>) => GrowthEffect<{ valid: ReadonlyArray<GrowthObservedRef>; dropped: number }>
   readonly propose: (session: Session, businessId: string, opportunityId: string, input: GrowthDecision) => GrowthEffect<GrowthOpportunity>
+  readonly review: (session: Session, businessId: string, opportunityId: string, input: GrowthReview) => GrowthEffect<GrowthOpportunity>
   /** Human decisions only. No assistant or future-system actor argument. */
   readonly decide: (session: Session, businessId: string, opportunityId: string, decision: "APPROVED" | "CANCELLED", input: GrowthDecision) => GrowthEffect<GrowthOpportunity>
 }>() {}
@@ -71,14 +77,24 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
     const input = yield* parse(GrowthProfileInput, raw)
     yield* sql`SELECT business_id FROM record_profiles WHERE business_id=${businessId} FOR UPDATE`
     const current = yield* profile(session.accountId, businessId)
-    // Repeat the same definition without manufacturing a new metric version.
-    const metric = input.primaryGoal
-    const metricKeys: ReadonlyArray<keyof GrowthMetric> = ["kind", "analyticsSource", "eventName", "countingSemantics", "reportingTimeZone", "propertyRef"]
-    const same = current !== null && metricKeys.every(key => current.primaryGoal[key] === metric[key])
+    // Locking the business serializes independent definition and goal versions.
+    const metric = input.metric
+    const matches = yield* sql`SELECT id FROM growth_metric_definitions WHERE business_id=${businessId}
+      AND conversion_kind=${metric.conversionKind} AND label=${metric.label} AND source_kind=${metric.sourceKind}
+      AND source_identity=${metric.sourceIdentity} AND event_name IS NOT DISTINCT FROM ${metric.eventName}
+      AND counting_semantics=${metric.countingSemantics} AND unit=${metric.unit} AND currency IS NOT DISTINCT FROM ${metric.currency}
+      AND reporting_time_zone=${metric.reportingTimeZone} AND property_ref IS NOT DISTINCT FROM ${metric.propertyRef} ORDER BY version DESC LIMIT 1`
+    let metricId = matches[0] ? String(matches[0]["id"]) : undefined
+    if (!metricId) {
+      const rows = yield* sql`INSERT INTO growth_metric_definitions(business_id,version,conversion_kind,label,source_kind,source_identity,event_name,counting_semantics,unit,currency,reporting_time_zone,property_ref,created_by_user_id)
+        SELECT ${businessId},COALESCE(MAX(version),0)+1,${metric.conversionKind},${metric.label},${metric.sourceKind},${metric.sourceIdentity},${metric.eventName},${metric.countingSemantics},${metric.unit},${metric.currency},${metric.reportingTimeZone},${metric.propertyRef},${session.userId}
+        FROM growth_metric_definitions WHERE business_id=${businessId} RETURNING id`
+      metricId = String(rows[0]!["id"])
+    }
     let goalId = current?.primaryGoal.id
-    if (!same) {
-      const rows = yield* sql`INSERT INTO growth_goals(business_id,version,kind,analytics_source,event_name,counting_semantics,reporting_time_zone,property_ref,created_by_user_id)
-        SELECT ${businessId},COALESCE(MAX(version),0)+1,${metric.kind},${metric.analyticsSource},${metric.eventName},${metric.countingSemantics},${metric.reportingTimeZone},${metric.propertyRef},${session.userId}
+    if (!current || current.primaryGoal.statement !== input.goalStatement || current.primaryGoal.metricDefinition.id !== metricId) {
+      const rows = yield* sql`INSERT INTO growth_goals(business_id,version,statement,metric_definition_id,created_by_user_id)
+        SELECT ${businessId},COALESCE(MAX(version),0)+1,${input.goalStatement},${metricId},${session.userId}
         FROM growth_goals WHERE business_id=${businessId} RETURNING id`
       goalId = String(rows[0]!["id"])
     }
@@ -100,24 +116,25 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
     }
     return { valid, dropped: references.length - valid.length }
   })
-  const transition = (session: Session, businessId: string, opportunityId: string, decision: "PROPOSED" | "APPROVED" | "CANCELLED", raw: GrowthDecision): GrowthEffect<GrowthOpportunity> => sql.withTransaction(Effect.gen(function*() {
+  const transition = (session: Session, businessId: string, opportunityId: string, decision: "PROPOSED" | "APPROVED" | "CANCELLED" | "REVIEWED", raw: GrowthDecision | GrowthReview): GrowthEffect<GrowthOpportunity> => sql.withTransaction(Effect.gen(function*() {
       yield* member(session, businessId)
-      const input = yield* parse(GrowthDecision, raw)
-      if (decision !== "PROPOSED" && decision !== "APPROVED" && decision !== "CANCELLED") return yield* refuse("TransitionRefused")
+      const input = decision === "REVIEWED" ? yield* parse(GrowthReview, raw) : yield* parse(GrowthDecision, raw)
+      const conclusion = "conclusion" in input ? input.conclusion : null
+      if (decision !== "PROPOSED" && decision !== "APPROVED" && decision !== "CANCELLED" && decision !== "REVIEWED") return yield* refuse("TransitionRefused")
       const locked = yield* sql`SELECT id FROM growth_opportunities WHERE id=${opportunityId} AND business_id=${businessId} FOR UPDATE`
       if (!locked.length) return yield* refuse("OpportunityNotFound")
-      const existing = yield* sql`SELECT e.status,e.reason,e.revision,prior.status AS expected_status FROM growth_opportunity_events e
+      const existing = yield* sql`SELECT e.status,e.reason,e.revision,e.conclusion,prior.status AS expected_status FROM growth_opportunity_events e
         LEFT JOIN growth_opportunity_events prior ON prior.opportunity_id=e.opportunity_id AND prior.revision=e.revision-1
         WHERE e.opportunity_id=${opportunityId} AND e.request_key=${input.idempotencyKey}`
       if (existing[0]) {
-        if (existing[0]["status"] !== decision || existing[0]["reason"] !== input.reason || existing[0]["revision"] !== input.expectedRevision + 1 || existing[0]["expected_status"] !== input.expectedStatus) return yield* refuse("IdempotencyConflict")
+        if (existing[0]["conclusion"] !== conclusion || existing[0]["status"] !== decision || existing[0]["reason"] !== input.reason || existing[0]["revision"] !== input.expectedRevision + 1 || existing[0]["expected_status"] !== input.expectedStatus) return yield* refuse("IdempotencyConflict")
         return yield* get(session.accountId, businessId, opportunityId)
       }
       const current = yield* get(session.accountId, businessId, opportunityId)
       if (current.status !== input.expectedStatus || current.revision !== input.expectedRevision) return yield* refuse("StaleDecision")
       if (!canTransitionGrowth(current.status, decision, "OPERATOR")) return yield* refuse("TransitionRefused")
-      yield* sql`INSERT INTO growth_opportunity_events(opportunity_id,business_id,revision,status,actor,user_id,reason,request_key)
-        VALUES(${opportunityId},${businessId},${current.revision + 1},${decision},'OPERATOR',${session.userId},${input.reason},${input.idempotencyKey})`
+      yield* sql`INSERT INTO growth_opportunity_events(opportunity_id,business_id,revision,status,actor,user_id,reason,request_key,conclusion)
+        VALUES(${opportunityId},${businessId},${current.revision + 1},${decision},'OPERATOR',${session.userId},${input.reason},${input.idempotencyKey},${conclusion})`
       return yield* get(session.accountId, businessId, opportunityId)
     }))
   return {
@@ -141,7 +158,7 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
         return saved
       }
       const record = yield* (yield* RecordRepository).createClient(session, { name: input.name, websiteUrl: input.websiteUrl, engagement: input.engagement })
-      const saved = yield* saveProfile(session, record.businessId, { category: input.category, audience: input.audience, valueProposition: input.valueProposition, primaryGoal: input.primaryGoal })
+      const saved = yield* saveProfile(session, record.businessId, { category: input.category, audience: input.audience, valueProposition: input.valueProposition, goalStatement: input.goalStatement, metric: input.metric })
       yield* sql`INSERT INTO growth_registrations(account_id,request_key,business_id) VALUES(${session.accountId},${input.idempotencyKey},${record.businessId})`
       return saved
     })),
@@ -184,6 +201,7 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
         VALUES(${id},${businessId},1,${input.initialStatus},${actor},${session.userId},'Opportunity created',${input.idempotencyKey})`
       return yield* get(session.accountId, businessId, id)
     })),
+    review: (session, businessId, opportunityId, input) => transition(session, businessId, opportunityId, "REVIEWED", input),
     propose: (session, businessId, opportunityId, input) => transition(session, businessId, opportunityId, "PROPOSED", input),
     decide: (session, businessId, opportunityId, decision, input) => {
       if (decision !== "APPROVED" && decision !== "CANCELLED") return refuse("TransitionRefused")

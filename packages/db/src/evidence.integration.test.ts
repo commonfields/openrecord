@@ -268,6 +268,21 @@ run("postgres evidence protocol v1", () => {
     expect(byId.get(correction.id)?.actor_id).toEqual({ state: "KNOWN", value: userId })
   })
 
+  it("keeps growth assurance metadata out of unchanged protocol v1 packets", async () => {
+    const l = await acceptanceLineage()
+    const user = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`w0-${unique("protocol")}@example.test`])).rows[0].id)
+    await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [l.accountId, user])
+    const row = (await pool.query("INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,channel,assurance,supersedes_id,correction_reason) VALUES($1,'SOURCE_UPDATED','TEST page','2026-10-02T00:00:00.000Z','HUMAN',$2,'WEBSITE','OPERATOR_ATTESTED',$3,'TEST record human attestation') RETURNING id", [l.businessId, user, l.intervention.id])).rows[0]
+    await pool.query("INSERT INTO intervention_issues(intervention_id,issue_id) VALUES($1,$2)", [row.id, l.issueId])
+    const packet = await runFx(exportIssuePacket({ accountId: l.accountId, businessId: l.businessId, issueId: l.issueId, generatedAt: "2026-10-19T00:00:00.000Z" }))
+    expect(packet).not.toBeNull()
+    if (!packet) return
+    const exported = packet.interventions.find(x => x.id === row.id)
+    expect(exported).toMatchObject({ schema_version: 1, actor: "HUMAN", type: "SOURCE_UPDATED" })
+    for (const field of ["channel", "assurance", "verification_kind", "verification_id", "verification_claim"]) expect(exported).not.toHaveProperty(field)
+    expect(validatePacket(JSON.parse(serializePacket(packet))).packet_digest).toBe(packet.packet_digest)
+  })
+
   it("exports the complete PART 11 lineage as a valid, deterministic packet", async () => {
     const l = await acceptanceLineage()
     const exportAt = (embedRawEvidence = false) => runFx(exportIssuePacket({
