@@ -33,8 +33,12 @@ export const GrowthProductInput = Schema.Struct({
 export const GrowthStatus = Schema.Literal("DISCOVERED", "PROPOSED", "APPROVED", "IN_DELIVERY", "DELIVERED", "MEASURING", "REVIEWED", "CANCELLED")
 export type GrowthStatus = typeof GrowthStatus.Type
 export type GrowthActor = "OPERATOR" | "ASSISTANT" | "DELIVERY_SYSTEM" | "MEASUREMENT_SYSTEM"
-/** P2/P3 extend this policy and the DB guard together. Future authorities are
- * named here but have no P1 repository method or HTTP/tool dispatch path. */
+/** P2/P3 extend this policy and the DB guard together.
+ * Delivery (P2): the delivery system moves an approved opportunity into
+ * delivery only when GitHub confirmed a pull request, and back to APPROVED
+ * when that pull request closed unmerged. Only a person marks it DELIVERED,
+ * by attesting the deployment of a merged delivery. The database requires
+ * each of these events to name the delivery record that justifies it. */
 export const GROWTH_TRANSITIONS: ReadonlyArray<{
   from: GrowthStatus | null; to: GrowthStatus; actors: ReadonlyArray<GrowthActor>
 }> = [
@@ -43,6 +47,9 @@ export const GROWTH_TRANSITIONS: ReadonlyArray<{
   { from: "DISCOVERED", to: "PROPOSED", actors: ["OPERATOR", "ASSISTANT"] },
   { from: "PROPOSED", to: "APPROVED", actors: ["OPERATOR"] },
   ...(["DISCOVERED", "PROPOSED", "APPROVED"] satisfies GrowthStatus[]).map(from => ({ from, to: "CANCELLED" as const, actors: ["OPERATOR"] as const })),
+  { from: "APPROVED", to: "IN_DELIVERY", actors: ["DELIVERY_SYSTEM"] },
+  { from: "IN_DELIVERY", to: "APPROVED", actors: ["DELIVERY_SYSTEM"] },
+  { from: "IN_DELIVERY", to: "DELIVERED", actors: ["OPERATOR"] },
 ]
 export const canTransitionGrowth = (from: GrowthStatus | null, to: GrowthStatus, actor: GrowthActor): boolean =>
   GROWTH_TRANSITIONS.some(t => t.from === from && t.to === to && t.actors.includes(actor))
@@ -84,7 +91,9 @@ export interface GrowthEvent {
   readonly id: string; readonly status: GrowthStatus; readonly revision: number; readonly actor: GrowthActor
   readonly userId: string; readonly reason: string; readonly createdAt: string
 }
-export type GrowthEvidence = GrowthEvidenceInput & { readonly id: string; readonly createdAt: string }
+/** Evidence only the server attaches from an authoritative record (never request input). */
+export type GrowthVerifiedActionEvidence = { readonly type: "VERIFIED_ACTION"; readonly reference: { readonly kind: "GROWTH_DELIVERY"; readonly id: string }; readonly note: string }
+export type GrowthEvidence = (GrowthEvidenceInput | GrowthVerifiedActionEvidence) & { readonly id: string; readonly createdAt: string }
 export interface GrowthOpportunity extends GrowthOpportunityFields {
   readonly id: string; readonly businessId: string; readonly ownerUserId: string; readonly createdByUserId: string
   readonly createdByActor: "OPERATOR" | "ASSISTANT"; readonly createdAt: string; readonly updatedAt: string

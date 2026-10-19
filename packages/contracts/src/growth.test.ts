@@ -10,10 +10,17 @@ describe("growth authority and metric contract", () => {
       const proposal = from === "DISCOVERED" && to === "PROPOSED"
       const approval = from === "PROPOSED" && to === "APPROVED"
       const cancellation = (from === "DISCOVERED" || from === "PROPOSED" || from === "APPROVED") && to === "CANCELLED"
-      const expected = actor === "OPERATOR" ? creation || proposal || approval || cancellation : actor === "ASSISTANT" && (creation || proposal)
+      // P2: GitHub-confirmed pull requests move delivery; a person attests deployment.
+      const intoDelivery = from === "APPROVED" && to === "IN_DELIVERY"
+      const deliveryClosed = from === "IN_DELIVERY" && to === "APPROVED"
+      const delivered = from === "IN_DELIVERY" && to === "DELIVERED"
+      const expected = actor === "OPERATOR" ? creation || proposal || approval || cancellation || delivered
+        : actor === "ASSISTANT" ? creation || proposal
+        : actor === "DELIVERY_SYSTEM" ? intoDelivery || deliveryClosed
+        : false
       expect(canTransitionGrowth(from, to, actor)).toBe(expected)
-      if (actor === "ASSISTANT" && ["APPROVED", "CANCELLED"].includes(to)) expect(expected).toBe(false)
-      if (["IN_DELIVERY", "DELIVERED", "MEASURING", "REVIEWED"].includes(to)) expect(expected).toBe(false)
+      if (actor === "ASSISTANT" && ["APPROVED", "CANCELLED", "IN_DELIVERY", "DELIVERED"].includes(to)) expect(expected).toBe(false)
+      if (["MEASURING", "REVIEWED"].includes(to)) expect(expected).toBe(false)
     }
     expect(canTransitionGrowth("PROPOSED", "APPROVED", "OPERATOR")).toBe(true)
     expect(canTransitionGrowth("DISCOVERED", "APPROVED", "OPERATOR")).toBe(false)
