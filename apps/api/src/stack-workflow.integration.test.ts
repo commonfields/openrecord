@@ -13,7 +13,7 @@ import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import {
-  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
+  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive, RecordRepository,
   RecordRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
@@ -26,7 +26,7 @@ const MODEL = "gemini-fixture-measurement-model"
 suite("stack workflow: acquisition evidence -> operator investigation -> gated measurement -> private report (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AssayRepositoryLive, RepoLayers.AssayReviewRepositoryLive, RepoLayers.BusinessRepositoryLive,

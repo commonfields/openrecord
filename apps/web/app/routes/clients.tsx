@@ -31,20 +31,21 @@ export function ClientsPage() {
   return (
     <div className="space-y-6 pb-4">
       <PageHeader
-        title="Clients"
-        description="One shareable record per client: three approved facts, what a live AI surface said about them, your review, and the weekly re-check."
+        title="Products and clients"
+        description="Manage owned products and authorized clients. Review growth opportunities, Record Integrity and AI Discovery."
         actions={
-          <Button size="sm" onClick={() => setOpen(true)}>
+          <><Button size="sm" asChild><Link to="/products/new"><PlusIcon />Add a product</Link></Button>
+          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
             <PlusIcon />
             New client
-          </Button>
+          </Button></>
         }
       />
 
       {list.length > 0 ? (
       <StatStrip
         stats={[
-          { key: "all", label: "Clients", value: clients.loading ? <Skeleton className="h-5 w-8" /> : list.length, hint: "Records you operate" },
+          { key: "all", label: "Products and clients", value: clients.loading ? <Skeleton className="h-5 w-8" /> : list.length, hint: "Records you operate" },
           { key: "recent", label: "Checked this week", value: clients.loading ? <Skeleton className="h-5 w-8" /> : recent, hint: "Last check under 7 days ago", tone: "supported" },
           { key: "never", label: "Never checked", value: clients.loading ? <Skeleton className="h-5 w-8" /> : never, hint: "Run the first check", tone: "review" },
           { key: "shared", label: "Shared", value: clients.loading ? <Skeleton className="h-5 w-8" /> : shared, hint: "Active share link" },
@@ -89,17 +90,17 @@ export function ClientsPage() {
           <div className="flex items-center gap-2 px-3 pt-3 pb-2">
             <div className="relative flex-1">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="Search clients" aria-label="Search clients" className="h-8 pl-8 text-xs" />
+              <Input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="Search products and clients" aria-label="Search products and clients" className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="hidden grid-cols-[minmax(0,1fr)_9rem_9rem_1rem] gap-4 border-y bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground sm:grid">
-            <span>Client</span>
+            <span>Product or client</span>
             <span>Last checked</span>
             <span>Share</span>
             <span />
           </div>
           {visible.length === 0 ? (
-            <p className="px-4 py-8 text-center text-xs text-muted-foreground">No client matches &ldquo;{q}&rdquo;.</p>
+            <p className="px-4 py-8 text-center text-xs text-muted-foreground">No product or client matches &ldquo;{q}&rdquo;.</p>
           ) : (
             <ul className="divide-y">
               {visible.map((c) => (

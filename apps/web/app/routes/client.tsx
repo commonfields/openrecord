@@ -1075,6 +1075,7 @@ export function ClientRecordPage() {
             <Link className="font-medium text-foreground hover:underline" to={`/clients/${encodeURIComponent(id)}/discovery`}>
               AI Discovery
             </Link>
+            <Link className="font-medium text-foreground hover:underline" to={`/clients/${encodeURIComponent(id)}/growth`}>Growth workspace</Link>
           </>
         }
         actions={

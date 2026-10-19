@@ -20,3 +20,7 @@ export * from "./acquisition-detect.js"
 export * from "./acquisition-ga4.js"
 export * from "./acquisition-view.js"
 export * from "./agent-referrals.js"
+
+export * from "./growth.js"
+
+export { GrowthRepositoriesLive } from "./growth-repositories.js"

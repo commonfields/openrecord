@@ -454,3 +454,4 @@ export interface AssayQueue {
   groups: Array<{ id: string; status: string; n: number; missing_samples: Array<{ sampleNumber: number; failureClass: string }> }>;
   facts: AssayFact[]; findings: AssayFinding[]
 }
+export * from "./growth.js"

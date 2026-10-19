@@ -7,7 +7,7 @@ import { HttpApp } from "@effect/platform"
 import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
-  AgentProposalRepositoryLive,
+  GrowthRepositoriesLive, AgentProposalRepositoryLive,
   AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive,
   RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
@@ -25,7 +25,7 @@ const suite = url ? describe : describe.skip
 suite("agent proposal-gated writes (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    AgentProposalRepositoryLive,
+    GrowthRepositoriesLive, AgentProposalRepositoryLive,
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
