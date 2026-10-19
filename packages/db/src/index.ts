@@ -22,5 +22,6 @@ export * from "./acquisition-view.js"
 export * from "./agent-referrals.js"
 
 export * from "./growth.js"
+export * from "./growth-measurement.js"
 
 export { GrowthRepositoriesLive } from "./growth-repositories.js"

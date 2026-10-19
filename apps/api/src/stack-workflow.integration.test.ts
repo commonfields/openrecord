@@ -38,6 +38,7 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
     RepoLayers.SiteFindingRepositoryLive, RepoLayers.SiteFindingEventRepositoryLive, RepoLayers.SiteFixProposalRepositoryLive,
     RepoLayers.SiteMutationRepositoryLive, RepoLayers.SiteVerificationRepositoryLive, RepoLayers.SiteOperatorEventRepositoryLive,
     RepoLayers.SiteGscRepositoryLive,
+    RepoLayers.GrowthMeasurementRepositoryLive,
   ).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const config = ConfigProvider.fromMap(new Map([
     ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-conversation-model"], ["AGENT_API_KEY", "TEST-only-key"],

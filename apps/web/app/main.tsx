@@ -27,6 +27,7 @@ import { SiteRunPage } from "./routes/site-run"
 import { TruthPage } from "./routes/truth"
 import { ClientsPage } from "./routes/clients"
 import { ClientGrowthPage } from "./routes/client-growth"
+import ClientGrowthMeasurementPage from "./routes/client-growth-measurement"
 import { NewProductPage } from "./routes/product-new"
 import { ClientRecordPage } from "./routes/client"
 import { ClientDiscoveryPage } from "./routes/client-discovery"
@@ -57,6 +58,7 @@ function App() {
             <Route path="/" element={<Navigate to="/clients" replace />} />
             <Route path="/products/new" element={<NewProductPage />} />
             <Route path="/clients/:id/growth" element={<ClientGrowthPage />} />
+            <Route path="/clients/:id/growth-measurement" element={<ClientGrowthMeasurementPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:id" element={<ClientRecordPage />} />
             <Route path="/clients/:id/discovery" element={<ClientDiscoveryPage />} />
