@@ -6,7 +6,7 @@ export const GROWTH_STATUS_LABELS = {
   MEASURING: "Measuring", REVIEWED: "Reviewed", CANCELLED: "Cancelled",
 }
 export const GROWTH_GOAL_LABELS = { TRIAL_SIGNUPS: "Trial signups", DEMO_REQUESTS: "Demo requests", QUALIFIED_LEADS: "Qualified leads" }
-export const GROWTH_EVIDENCE_LABELS = { OBSERVED: "Observed", OPERATOR_HYPOTHESIS: "Hypothesis", MODEL_SUGGESTION: "Agent suggestion" }
+export const GROWTH_EVIDENCE_LABELS = { OBSERVED: "Observed", OPERATOR_HYPOTHESIS: "Hypothesis", MODEL_SUGGESTION: "Agent suggestion", VERIFIED_ACTION: "Verified action" }
 export const growthEvidencePath = (businessId: string, reference: GrowthObservedRef): string => {
   const id = encodeURIComponent(businessId)
   switch (reference.kind) {

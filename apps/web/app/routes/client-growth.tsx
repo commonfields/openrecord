@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link, useParams } from "react-router"
-import type { GrowthGoal, GrowthOpportunity, GrowthProfile } from "@openrecord/contracts"
+import type { DeliveryTarget, GrowthDelivery, GrowthGoal, GrowthOpportunity, GrowthProfile } from "@openrecord/contracts"
 import { LightbulbIcon, TriangleAlertIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, PageHeader, Panel, PanelHeader } from "@/components/page"
 import { GrowthProfileFields } from "@/components/growth-profile-fields"
+import { DeliveryRepositories, OpportunityDelivery } from "@/components/growth-delivery"
+import { Delivery } from "@/lib/growth-delivery"
 import { Auth } from "@/lib/api"
 import { Records } from "@/lib/record"
 import { useApi } from "@/lib/use-api"
@@ -61,7 +63,7 @@ function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: { busin
   </form>
 }
 
-function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: { businessId: string; opportunity: GrowthOpportunity; goal: GrowthGoal | undefined; userId: string; reload: () => Promise<void> }) {
+function OpportunityCard({ businessId, opportunity: o, goal, userId, targets, deliveries, reload }: { businessId: string; opportunity: GrowthOpportunity; goal: GrowthGoal | undefined; userId: string; targets: DeliveryTarget[]; deliveries: GrowthDelivery[]; reload: () => Promise<void> }) {
   const [decision, setDecision] = useState<"propose" | "approve" | "cancel" | null>(null)
   const [reason, setReason] = useState("")
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID())
@@ -84,12 +86,14 @@ function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: {
       <div><dt className="text-muted-foreground">Created by</dt><dd className="mt-1">{o.createdByActor === "ASSISTANT" ? "Operator Agent" : "Account operator"}, {formatDateTime(o.createdAt)}</dd></div>
     </dl>
     <ul className="space-y-2" aria-label="Opportunity evidence">{o.evidence.map(e => <li key={e.id} className="flex flex-wrap items-start gap-2 text-xs">
-      <Badge variant={e.type === "OBSERVED" ? "supported" : "outline"}>{GROWTH_EVIDENCE_LABELS[e.type]}</Badge><span className="min-w-0 flex-1">{e.note}
-        {e.type === "OBSERVED" ? <Link to={growthEvidencePath(businessId, e.reference)} className="ml-1 underline">View stored {e.reference.kind.toLowerCase().replaceAll("_", " ")}</Link> : null}</span>
+      <Badge variant={e.type === "OBSERVED" || e.type === "VERIFIED_ACTION" ? "supported" : "outline"}>{GROWTH_EVIDENCE_LABELS[e.type]}</Badge><span className="min-w-0 flex-1">{e.note}
+        {e.type === "OBSERVED" ? <Link to={growthEvidencePath(businessId, e.reference)} className="ml-1 underline">View stored {e.reference.kind.toLowerCase().replaceAll("_", " ")}</Link> : null}
+        {e.type === "VERIFIED_ACTION" ? <a href={`#delivery-${e.reference.id}`} className="ml-1 underline">View delivery</a> : null}</span>
     </li>)}</ul>
     <details className="text-xs"><summary className="cursor-pointer font-medium">Event history ({o.events.length})</summary><ol className="mt-2 space-y-2 border-l pl-3">{o.events.map(event => <li key={event.id}>
       <p>{GROWTH_STATUS_LABELS[event.status]} by {event.actor === "ASSISTANT" ? "Operator Agent" : "operator"}, {formatDateTime(event.createdAt)}</p><p className="mt-0.5 text-muted-foreground">{event.reason}</p>
     </li>)}</ol></details>
+    <OpportunityDelivery businessId={businessId} opportunity={o} targets={targets} deliveries={deliveries} reload={reload} />
     {o.status === "DISCOVERED" ? <Button size="sm" onClick={() => beginDecision("propose")}>Propose for review</Button> : null}
     {o.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" onClick={() => beginDecision("approve")}>Approve</Button>
       <Button size="sm" variant="outline" onClick={() => beginDecision("cancel")}>Reject</Button></div> : null}
@@ -109,14 +113,15 @@ function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: {
 export function ClientGrowthPage() {
   const { id = "" } = useParams()
   const state = useApi(`growth:${id}`, async () => {
-    const [record, growth, opportunities, user] = await Promise.all([Records.get(id), Growth.profile(id), Growth.list(id), Auth.me()])
-    return { record: record.record, ...growth, ...opportunities, user }
+    const [record, growth, opportunities, user, targets, deliveries] = await Promise.all([Records.get(id), Growth.profile(id), Growth.list(id), Auth.me(),
+      Delivery.targets(id).catch(() => ({ targets: [] })), Delivery.list(id).catch(() => ({ deliveries: [] }))])
+    return { record: record.record, ...growth, ...opportunities, user, ...targets, ...deliveries }
   })
   const [editing, setEditing] = useState(false)
   const [creating, setCreating] = useState(false)
   if (state.error) return <EmptyState icon={<TriangleAlertIcon />} title="Growth workspace could not load" description={growthError(state.error)} action={<Button variant="outline" onClick={() => void state.reload()}>Try again</Button>} />
   if (!state.data || state.loading) return <p className="text-xs text-muted-foreground">Loading growth workspace…</p>
-  const { record, profile, goals, opportunities, user } = state.data
+  const { record, profile, goals, opportunities, user, targets, deliveries } = state.data
   return <div className="space-y-5 pb-4">
     <PageHeader title={`${record.profile.name} growth`} back={{ to: `/clients/${id}`, label: "Client record" }}
       description="Choose a goal, investigate evidence, then review specific marketing opportunities."
@@ -129,7 +134,9 @@ export function ClientGrowthPage() {
           <p>Event count, not distinct people. Reporting timezone: {profile.primaryGoal.reportingTimeZone}.</p><p>Property: {profile.primaryGoal.propertyRef ?? "Not configured"}. Metric version {profile.primaryGoal.version}.</p><p className="text-muted-foreground">No growth outcomes measured here yet.</p></div>
       </div>}
     </Panel>
-    {opportunities.length ? <div className="space-y-4">{opportunities.map(o => <OpportunityCard key={o.id} businessId={id} opportunity={o} goal={goals.find(g => g.id === o.goalId)} userId={user.userId} reload={state.reload} />)}
+    {profile ? <DeliveryRepositories businessId={id} targets={targets} reload={state.reload} /> : null}
+    {opportunities.length ? <div className="space-y-4">{opportunities.map(o => <OpportunityCard key={o.id} businessId={id} opportunity={o} goal={goals.find(g => g.id === o.goalId)} userId={user.userId}
+      targets={targets} deliveries={deliveries.filter(d => d.opportunityId === o.id)} reload={state.reload} />)}
       <p className="text-xs text-muted-foreground">Showing the latest {opportunities.length} opportunities (up to 50).</p></div> : <EmptyState icon={<LightbulbIcon />} title="No opportunities yet" description="Investigate existing evidence with the Operator Agent, or write a specific hypothesis to review." />}
     <Dialog open={creating} onOpenChange={setCreating}><DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Propose an opportunity</DialogTitle><DialogDescription>Describe one specific marketing improvement and what remains uncertain.</DialogDescription></DialogHeader>
       {profile ? <OpportunityForm businessId={id} goal={profile.primaryGoal} userId={user.userId} websiteUrl={record.profile.websiteUrl} done={async () => { setCreating(false); await state.reload() }} /> : null}
