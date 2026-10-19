@@ -22,3 +22,4 @@ export * from "./acquisition-view.js"
 export * from "./agent-referrals.js"
 
 export * from "./growth.js"
+export * from "./growth-delivery.js"

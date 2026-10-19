@@ -16,10 +16,14 @@ const Goal = Schema.Struct({ ...GrowthMetric.fields, id: Schema.UUID, businessId
 const Profile = Schema.Struct({ businessId: Schema.UUID, category: Schema.String, audience: Schema.String, valueProposition: Schema.String,
   primaryGoal: Goal, updatedByUserId: Schema.UUID, updatedAt: Schema.String })
 const EvidenceMeta = Schema.Struct({ id: Schema.UUID, createdAt: Schema.String })
+// Request input can only create the first three; VERIFIED_ACTION is attached
+// by the delivery repository from a merge GitHub confirmed.
+const VerifiedAction = Schema.Struct({ type: Schema.Literal("VERIFIED_ACTION"), reference: Schema.Struct({ kind: Schema.Literal("GROWTH_DELIVERY"), id: Schema.UUID }), note: Schema.String })
 const Evidence = Schema.Union(
   Schema.extend(GrowthEvidenceInput.members[0], EvidenceMeta),
   Schema.extend(GrowthEvidenceInput.members[1], EvidenceMeta),
   Schema.extend(GrowthEvidenceInput.members[2], EvidenceMeta),
+  Schema.extend(VerifiedAction, EvidenceMeta),
 )
 const Event = Schema.Struct({ id: Schema.UUID, status: GrowthStatus, revision: Schema.Int,
   actor: Schema.Literal("OPERATOR", "ASSISTANT", "DELIVERY_SYSTEM", "MEASUREMENT_SYSTEM"), userId: Schema.UUID, reason: Schema.String, createdAt: Schema.String })

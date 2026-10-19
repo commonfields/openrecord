@@ -120,7 +120,9 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
     expect(validation).toEqual({ valid: [], dropped: 1 })
     for (const reference of [...refs, { kind: "RECORD_ACTION" as const, id: randomUUID() }]) await expect(create(other, { ...input(other), evidence: [...input(other).evidence, { type: "OBSERVED", reference, note: "foreign/missing" }] })).rejects.toMatchObject({ reason: "EvidenceNotFound" })
     for (const type of ["VERIFIED_ACTION", "MEASURED_OUTCOME"]) {
-      await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,note) VALUES($1,$2,$3,'TEST forged')", [valid.id, f.businessId, type])).rejects.toThrow("authoritative attachment required")
+      await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,note) VALUES($1,$2,$3,'TEST forged')", [valid.id, f.businessId, type])).rejects.toThrow(
+        // P2: a verified action now has one source, a merge GitHub confirmed for this opportunity.
+        type === "VERIFIED_ACTION" ? "verified action requires a merge GitHub confirmed" : "authoritative attachment required")
     }
     await expect(pool.query("INSERT INTO growth_opportunity_evidence(opportunity_id,business_id,type,reference_kind,reference_id,note) VALUES($1,$2,'OBSERVED','RECORD_ACTION',$3,'TEST forged')", [valid.id, f.businessId, randomUUID()])).rejects.toThrow("outside scope")
     await expect(create(f, { ...input(f), evidence: [{ type: "MODEL_SUGGESTION", note: "TEST wrong author" }] })).rejects.toMatchObject({ reason: "AuthorshipRequired" })
@@ -189,7 +191,11 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
           accepted = true
         } catch { /* Every rejected combination is asserted below. */ }
         finally { await client.query("ROLLBACK"); client.release() }
-        expect(accepted, `${from} -> ${to} by ${actor}`).toBe(canTransitionGrowth(from, to, actor))
+        // Delivery transitions (P2) must name a delivery in the right state, which
+        // this bare probe does not: the database refuses them here, and the
+        // delivery integration tests show them accepted with real records.
+        const deliveryBacked = to === "IN_DELIVERY" || to === "DELIVERED" || from === "IN_DELIVERY"
+        expect(accepted, `${from} -> ${to} by ${actor}`).toBe(canTransitionGrowth(from, to, actor) && !deliveryBacked)
       }
     }
   })
