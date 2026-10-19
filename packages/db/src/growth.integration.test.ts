@@ -194,7 +194,7 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
         // Delivery transitions (P2) must name a delivery in the right state, which
         // this bare probe does not: the database refuses them here, and the
         // delivery integration tests show them accepted with real records.
-        const deliveryBacked = to === "IN_DELIVERY" || to === "DELIVERED" || from === "IN_DELIVERY"
+        const deliveryBacked = to === "IN_DELIVERY" || to === "DELIVERED"
         expect(accepted, `${from} -> ${to} by ${actor}`).toBe(canTransitionGrowth(from, to, actor) && !deliveryBacked)
       }
     }
