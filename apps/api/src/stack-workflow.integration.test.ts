@@ -13,11 +13,12 @@ import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import {
-  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, GrowthRepositoryLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
+  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, GrowthRepositoryLive, GrowthDeliveryRepositoryLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive, RecordRepository,
   RecordRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
 import { makeRouter, RepoLayers } from "./router.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -26,7 +27,7 @@ const MODEL = "gemini-fixture-measurement-model"
 suite("stack workflow: acquisition evidence -> operator investigation -> gated measurement -> private report (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    GrowthRepositoryLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    GrowthRepositoryLive, GrowthDeliveryRepositoryLive, GitHubDeliveryLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AssayRepositoryLive, RepoLayers.AssayReviewRepositoryLive, RepoLayers.BusinessRepositoryLive,

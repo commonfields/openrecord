@@ -7,7 +7,7 @@ import { HttpApp } from "@effect/platform"
 import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
-  GrowthRepositoryLive, AgentProposalRepositoryLive,
+  GrowthRepositoryLive, GrowthDeliveryRepositoryLive, AgentProposalRepositoryLive,
   AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive,
   RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
@@ -18,6 +18,7 @@ import { dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
 import { dispatchAgentTool, runConversation } from "./agent.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { makeRouter, RepoLayers } from "./router.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -25,7 +26,7 @@ const suite = url ? describe : describe.skip
 suite("agent proposal-gated writes (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    GrowthRepositoryLive, AgentProposalRepositoryLive,
+    GrowthRepositoryLive, GrowthDeliveryRepositoryLive, GitHubDeliveryLive, AgentProposalRepositoryLive,
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,

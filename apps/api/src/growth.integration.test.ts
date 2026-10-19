@@ -11,6 +11,7 @@ import { requireSession, RepoLayers } from "./router.js"
 import { dispatchAgentTool, runConversation } from "./agent.js"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
 import type { AgentModel } from "./agent-model.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const product = { name: "TEST Growth product", websiteUrl: "https://growth.test", engagement: "DOGFOOD", category: "TEST SaaS", audience: "TEST operators", valueProposition: "TEST positioning",
@@ -20,7 +21,7 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope, ctx: Context.Context<AgentToolDeps>
   const repos = Layer.mergeAll(
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
-    RepoLayers.GrowthRepositoryLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.BusinessRepositoryLive,
+    RepoLayers.GrowthRepositoryLive, RepoLayers.GrowthDeliveryRepositoryLive, GitHubDeliveryLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.BusinessRepositoryLive,
     RepoLayers.DiscoveryScopeRepositoryLive, RepoLayers.FactRepositoryLive,
     RepoLayers.ProductReadRepositoryLive, RepoLayers.QuestionRepositoryLive,
   )

@@ -6,7 +6,7 @@ import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
   AcquisitionRepositoryLive,
-  GrowthRepositoryLive, AgentProposalRepositoryLive,
+  GrowthRepositoryLive, GrowthDeliveryRepositoryLive, AgentProposalRepositoryLive,
   BusinessRepositoryLive,
   DiscoveryScopeRepositoryLive,
   FactRepository,
@@ -17,6 +17,7 @@ import {
 } from "@openrecord/db"
 import pg from "pg"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -25,7 +26,7 @@ suite("agent tool tenancy (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
     AcquisitionRepositoryLive,
-    GrowthRepositoryLive, AgentProposalRepositoryLive,
+    GrowthRepositoryLive, GrowthDeliveryRepositoryLive, GitHubDeliveryLive, AgentProposalRepositoryLive,
     BusinessRepositoryLive,
     DiscoveryScopeRepositoryLive,
     FactRepositoryLive,

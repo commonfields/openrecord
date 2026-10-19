@@ -12,6 +12,7 @@ import {
 import { ProviderCatalogResponse, ProviderDailyAnswer } from "@openrecord/contracts"
 import pg from "pg"
 import { makeRouter, RepoLayers } from "./router.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -22,7 +23,7 @@ suite("hosted observation semantics (TEST fixtures)", () => {
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
-    RepoLayers.GrowthRepositoryLive,
+    RepoLayers.GrowthRepositoryLive, RepoLayers.GrowthDeliveryRepositoryLive, GitHubDeliveryLive,
     RepoLayers.AgentProposalRepositoryLive,
     RepoLayers.AssayRepositoryLive,
     RepoLayers.AssayReviewRepositoryLive,

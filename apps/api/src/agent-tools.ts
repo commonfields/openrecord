@@ -1,4 +1,6 @@
 import { GROWTH_AGENT_TOOLS } from "./agent-growth-tools.js"
+import { DELIVERY_AGENT_TOOLS } from "./agent-delivery-tools.js"
+import type { GitHubDelivery } from "./github-delivery.js"
 import { ACQUISITION_AGENT_TOOLS } from "./agent-acquisition-tools.js"
 import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
@@ -18,7 +20,7 @@ import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 // returned verbatim as cited data and never interpreted as instructions.
 import { Data, Effect, JSONSchema, Schema } from "effect"
 import { SqlClient } from "@effect/sql"
-import {
+import { GrowthDeliveryRepository,
   GrowthRepository,
   AcquisitionRepository,
   AgentProposalRepository,
@@ -58,6 +60,8 @@ export interface AgentToolResult {
  * at every call site. */
 export type AgentToolDeps =
   | GrowthRepository
+  | GrowthDeliveryRepository
+  | GitHubDelivery
   | AcquisitionRepository
   | AgentProposalRepository
   | BusinessRepository
@@ -354,6 +358,7 @@ const readRecordOutcomes: AgentToolDef = {
  * which asserts this exact list. */
 export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   ...GROWTH_AGENT_TOOLS,
+  ...DELIVERY_AGENT_TOOLS,
   ...ACQUISITION_AGENT_TOOLS,
   ...REFERRAL_AGENT_TOOLS,
   readBusinessTruth,

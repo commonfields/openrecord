@@ -5,6 +5,7 @@ import { PgClient } from "@effect/sql-pg"
 import { createServer } from "node:http"
 import {
   GrowthRepositoryLive,
+  GrowthDeliveryRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepositoryLive,
   AssayRepositoryLive,
@@ -42,9 +43,12 @@ import {
   AcquisitionRepositoryLive,
 } from "@openrecord/db"
 import { makeRouter } from "./router.js"
+import { GitHubDeliveryLive } from "./github-delivery.js"
 
 const Repos = Layer.mergeAll(
   GrowthRepositoryLive,
+  GrowthDeliveryRepositoryLive,
+  GitHubDeliveryLive,
   AgentProposalRepositoryLive,
   RecordRepositoryLive,
   AcquisitionRepositoryLive,
