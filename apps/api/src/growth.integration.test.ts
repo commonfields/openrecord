@@ -156,10 +156,19 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
       initialStatus: "PROPOSED", ownerUserId: f.session.userId, evidence: [{ type: "OPERATOR_HYPOTHESIS", note: "TEST W0 scenario" }] }))
     const request = { expectedStatus: "PROPOSED", expectedRevision: 1, idempotencyKey: randomUUID(), reason: "TEST approved" }
     await ok(call("POST", `${f.path}/opportunities/${opportunity.id}/approve`, f.cookie, request))
-    const row = (await pool.query("INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,channel,assurance) VALUES($1,'CAMPAIGN_SENT','TEST email',now(),'HUMAN',$2,'EMAIL','OPERATOR_ATTESTED') RETURNING id", [profile.businessId, f.session.userId])).rows[0]
-    await pool.query("INSERT INTO growth_initiative_actions(intervention_id,opportunity_id,business_id,request_key,created_by_user_id) VALUES($1,$2,$3,$4,$5)", [row.id, opportunity.id, profile.businessId, randomUUID(), f.session.userId])
+    // The same API records the software action (a website source publish) and
+    // the service/commerce action (a third-party listing update).
+    const recording = kind === "SIGNUP"
+      ? { type: "SOURCE_PUBLISHED", channel: "WEBSITE", target: "TEST pricing page", description: "TEST published the trial explainer" }
+      : { type: "LISTING_UPDATED", channel: "THIRD_PARTY_PROFILE", target: "TEST appointment listing", description: "TEST corrected the booking hours" }
+    const { opportunity: executed } = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${opportunity.id}/executions`, f.cookie,
+      { ...recording, performedAt: new Date(Date.now() - 60_000).toISOString(), idempotencyKey: randomUUID() }))
+    expect(executed).toMatchObject({ status: "APPROVED", progress: "EXECUTED", executionCount: 1, targetUrl: null, revision: 2 })
+    expect(executed.executions).toHaveLength(1)
+    expect(executed.executions[0]).toMatchObject({ ...recording, assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: f.session.userId, verification: null })
     const { opportunity: fresh } = await ok<{ opportunity: GrowthOpportunity }>(call("GET", `${f.path}/opportunities/${opportunity.id}`, f.cookie))
     expect(fresh).toMatchObject({ status: "APPROVED", progress: "EXECUTED", executionCount: 1, targetUrl: null, revision: 2 })
+    expect(fresh.executions).toEqual(executed.executions)
     const review = { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST observation only", conclusion: "INCONCLUSIVE" }
     expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, undefined, review)).status).toBe(401)
     expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, f.cookie, review, { origin: "https://hostile.test" })).status).toBe(403)
@@ -169,6 +178,70 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     expect(reviewed.opportunity.status).toBe("REVIEWED")
     expect((await ok<{ opportunity: GrowthOpportunity }>(call("GET", `${f.path}/opportunities/${opportunity.id}`, f.cookie))).opportunity).toEqual(reviewed.opportunity)
     expect((await call("POST", `${f.path}/opportunities/${opportunity.id}/review`, f.cookie, { ...review, conclusion: "KEEP" })).status).toBe(409)
+  })
+  it("records, replays and refuses executions without ever manufacturing system verification", async () => {
+    const f = await fixture(), other = await fixture()
+    const { opportunity: o } = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities`, f.cookie,
+      { ...proposal(f), initialStatus: "PROPOSED", ownerUserId: f.session.userId, evidence: [{ type: "OPERATOR_HYPOTHESIS", note: "TEST execution authority" }] }))
+    const execution = { type: "SOURCE_PUBLISHED", channel: "WEBSITE", target: "TEST pricing page", description: "TEST published the revised pricing explainer", performedAt: new Date(Date.now() - 60_000).toISOString(), idempotencyKey: randomUUID() }
+    // Approval is required before anything can be linked, and scope is never disclosed.
+    expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, execution)).status).toBe(409)
+    expect((await call("POST", `${f.path}/opportunities/${randomUUID()}/executions`, f.cookie, execution)).status).toBe(404)
+    expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, other.cookie, execution)).status).toBe(404)
+    expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, undefined, execution)).status).toBe(401)
+    expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, execution, { origin: "https://hostile.test" })).status).toBe(403)
+    await ok(call("POST", `${f.path}/opportunities/${o.id}/approve`, f.cookie, { expectedStatus: "PROPOSED", expectedRevision: 1, idempotencyKey: randomUUID(), reason: "TEST approved" }))
+    // No client field can forge proof strength, identity, tenancy, a malformed
+    // or impossible time, a non-http reference or an incompatible channel pair.
+    for (const forged of [{ assurance: "SYSTEM_VERIFIED" }, { actor: "SYSTEM" }, { actorId: f.session.userId },
+      { verification: { kind: "GROWTH_DELIVERY", id: randomUUID(), claim: "PR_MERGED" } }, { businessId: f.profile.businessId }, { opportunityId: o.id },
+      { performedAt: new Date(Date.now() + 3_600_000).toISOString() }, { performedAt: "2026-10-19T10:00" }, { performedAt: "2026-02-30T10:00:00Z" },
+      { target: "   " }, { target: "javascript:alert(1)" }, { target: "file:///etc/passwd" },
+      { channel: "GITHUB" }, { type: "VERIFIED_ACTION" }, { type: "CAMPAIGN_SENT", channel: "WEBSITE" }, { type: "LISTING_UPDATED", channel: "EMAIL" },
+      { idempotencyKey: undefined }]) {
+      expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, { ...execution, ...forged })).status).toBe(422)
+    }
+    const first = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, execution))
+    expect(first.opportunity.executions).toHaveLength(1)
+    const asserted = { type: execution.type, channel: execution.channel, target: execution.target, description: execution.description, performedAt: execution.performedAt }
+    expect(first.opportunity.executions[0]).toMatchObject({ ...asserted, opportunityId: o.id, businessId: f.profile.businessId, assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: f.session.userId, verification: null })
+    expect(first.opportunity.executions[0]).not.toHaveProperty("idempotencyKey")
+    const replayed = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, execution))
+    expect(replayed).toEqual(first)
+    const conflict = await call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, { ...execution, description: "TEST different description" })
+    expect(conflict.status).toBe(409); expect(await conflict.text()).toContain("IdempotencyConflict")
+    // A service/commerce action uses the same endpoint and channel-neutral ledger.
+    const commerce = { type: "LISTING_UPDATED", channel: "THIRD_PARTY_PROFILE", target: "TEST third-party listing", description: "TEST corrected the opening hours", performedAt: new Date(Date.now() - 30_000).toISOString(), idempotencyKey: randomUUID() }
+    const second = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, commerce))
+    expect(second.opportunity).toMatchObject({ progress: "EXECUTED", executionCount: 2 })
+    expect(second.opportunity.executions.map(e => e.channel)).toEqual(["WEBSITE", "THIRD_PARTY_PROFILE"])
+    expect(second.opportunity.executions.every(e => e.assurance === "OPERATOR_ATTESTED")).toBe(true)
+    // Concurrent identical HTTP submissions produce one ledger entry and one link.
+    const concurrent = { ...commerce, description: "TEST concurrent identical recording", idempotencyKey: randomUUID(), performedAt: new Date(Date.now() - 20_000).toISOString() }
+    const responses = await Promise.all([call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, concurrent), call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, concurrent)]
+      .map(response => ok<{ opportunity: GrowthOpportunity }>(response)))
+    const left = responses[0]!, right = responses[1]!
+    expect(left.opportunity.executions).toHaveLength(3); expect(right.opportunity).toEqual(left.opportunity)
+    expect(String((await pool.query("SELECT count(*)::int AS n FROM growth_initiative_actions WHERE opportunity_id=$1 AND request_key=$2", [o.id, concurrent.idempotencyKey])).rows[0]["n"])).toBe("1")
+    // A second account member cannot reuse the key to present the first
+    // operator's submission as their own; the identity is bound to its author.
+    const secondUserId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`growth-w1-${randomUUID()}@example.test`])).rows[0].id)
+    await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [f.session.accountId, secondUserId])
+    const secondCookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [f.session.accountId, secondUserId])).rows[0]["id"])
+    const foreignActor = await call("POST", `${f.path}/opportunities/${o.id}/executions`, secondCookie, concurrent)
+    expect(foreignActor.status).toBe(409); expect(await foreignActor.text()).toContain("IdempotencyConflict")
+    // The initiative's scoped read and list both expose the same history.
+    const listed = await ok<{ opportunities: GrowthOpportunity[] }>(call("GET", `${f.path}/opportunities`, f.cookie))
+    expect(listed.opportunities.find(item => item.id === o.id)?.executions).toEqual(left.opportunity.executions)
+    expect(await (await call("GET", `${f.path}/opportunities/${o.id}`, f.cookie)).text()).not.toContain("SYSTEM_VERIFIED")
+    // A replay after review returns the original record; a new key cannot add
+    // an execution to a closed initiative.
+    const review = { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST observation only", conclusion: "INCONCLUSIVE" }
+    await ok(call("POST", `${f.path}/opportunities/${o.id}/review`, f.cookie, review))
+    const afterReview = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, execution))
+    expect(afterReview.opportunity).toMatchObject({ status: "REVIEWED", executionCount: 3 })
+    expect(afterReview.opportunity.executions).toEqual(left.opportunity.executions)
+    expect((await call("POST", `${f.path}/opportunities/${o.id}/executions`, f.cookie, { ...commerce, idempotencyKey: randomUUID() })).status).toBe(409)
   })
 
 })

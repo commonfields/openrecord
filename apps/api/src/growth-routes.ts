@@ -1,11 +1,11 @@
 import { HttpRouter } from "@effect/platform"
 import { Effect } from "effect"
 import { BusinessRepository, GrowthRefused, GrowthRepository, type Session } from "@openrecord/db"
-import { CreateGrowthOpportunity, GrowthDecision, GrowthReview, GrowthProductInput, GrowthProfileUpdate, decodeRouteId } from "@openrecord/contracts"
+import { CreateGrowthOpportunity, GrowthDecision, GrowthExecutionRecord, GrowthReview, GrowthProductInput, GrowthProfileUpdate, decodeRouteId } from "@openrecord/contracts"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const failure = (e: unknown) => {
-  if (e instanceof GrowthRefused) return json(e.reason.endsWith("NotFound") ? 404 : e.reason === "InvalidRequest" ? 422 : 409, { _tag: "GrowthRefused", reason: e.reason })
+  if (e instanceof GrowthRefused) return json(e.reason.endsWith("NotFound") ? 404 : e.reason === "InvalidRequest" || e.reason === "ExecutionTimeRefused" ? 422 : 409, { _tag: "GrowthRefused", reason: e.reason })
   if (typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated") return json(401, { _tag: "NotAuthenticated" })
   return json(500, { _tag: "GrowthRequestFailed" })
 }
@@ -56,6 +56,11 @@ export const growthApi = (withSession: WithSession) => {
       const input = decode(GrowthDecision, yield* readJson)
       if (!input || !id) return yield* json(422, { _tag: "InvalidRequest" })
       return yield* json(200, { opportunity: yield* (yield* GrowthRepository).propose(session, businessId, id, input) })
+    }))),
+    HttpRouter.post("/api/growth/clients/:id/opportunities/:opportunityId/executions", client((session, businessId, id) => Effect.gen(function*() {
+      const input = decode(GrowthExecutionRecord, yield* readJson)
+      if (!input || !id) return yield* json(422, { _tag: "InvalidRequest" })
+      return yield* json(200, { opportunity: yield* (yield* GrowthRepository).recordExecution(session, businessId, id, input) })
     }))),
     HttpRouter.post("/api/growth/clients/:id/opportunities/:opportunityId/review", client((session, businessId, id) => Effect.gen(function*() {
       const input = decode(GrowthReview, yield* readJson)

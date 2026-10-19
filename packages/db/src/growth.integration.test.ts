@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { canTransitionGrowth, GrowthStatus, type CreateGrowthOpportunity, type GrowthMetricDefinitionInput, type GrowthObservedRef } from "@openrecord/contracts"
+import { canTransitionGrowth, GrowthStatus, type CreateGrowthOpportunity, type GrowthExecutionRecord, type GrowthMetricDefinitionInput, type GrowthObservedRef } from "@openrecord/contracts"
 import { GrowthRepository, GrowthRepositoryLive } from "./growth.js"
 import { RecordRepository, RecordRepositoryLive } from "./record.js"
 import { migrate } from "./migrate.js"
@@ -299,6 +299,97 @@ suite("growth persistence, guards and concurrency (disposable TEST fixtures)", (
     expect(await run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, review)))).toEqual(reviewed)
     await expect(run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, { ...review, conclusion: "KEEP" })))).rejects.toMatchObject({ reason: "IdempotencyConflict" })
     await expect(appendExecution(f, o.id, "WEBSITE")).rejects.toThrow("not approved")
+  })
+  it("records operator-attested software and commerce executions through the repository, idempotently", async () => {
+    const f = await fixture(), other = await fixture()
+    const o = await create(f), pending = await create(f)
+    const record = (session: typeof f.session, businessId: string, opportunityId: string, body: GrowthExecutionRecord) =>
+      run(Effect.flatMap(GrowthRepository, r => r.recordExecution(session, businessId, opportunityId, body)))
+    const forged = (body: Record<string, unknown>) => body as unknown as GrowthExecutionRecord
+    const software = { type: "SOURCE_PUBLISHED" as const, channel: "WEBSITE" as const, target: "TEST pricing page",
+      description: "TEST published the revised pricing explainer", performedAt: new Date(Date.now() - 7_200_000).toISOString(), idempotencyKey: randomUUID() }
+    // Recording attaches to an approved initiative only; the pending row stays untouched.
+    await expect(record(f.session, f.businessId, pending.id, software)).rejects.toMatchObject({ reason: "InitiativeNotApproved" })
+    await expect(record(f.session, f.businessId, o.id, forged({ ...software, assurance: "SYSTEM_VERIFIED" }))).rejects.toMatchObject({ reason: "InvalidRequest" })
+    await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, o.id, "APPROVED", decision())))
+    const first = await record(f.session, f.businessId, o.id, software)
+    expect(first.executions).toHaveLength(1)
+    expect(first.executions[0]).toMatchObject({ opportunityId: o.id, businessId: f.businessId, type: "SOURCE_PUBLISHED", channel: "WEBSITE",
+      target: "TEST pricing page", description: "TEST published the revised pricing explainer", assurance: "OPERATOR_ATTESTED", actor: "HUMAN",
+      actorId: f.session.userId, verification: null })
+    expect(first.executions).toHaveLength(first.executionCount)
+    // A replay returns the original ledger entry; different content under the same
+    // request identity is refused instead of appending or silently rewriting.
+    const replay = await record(f.session, f.businessId, o.id, software)
+    expect(replay.executions).toEqual(first.executions)
+    for (const changed of [{ target: "TEST other page" }, { description: "TEST other description" }, { channel: "EMAIL" as const }])
+      await expect(record(f.session, f.businessId, o.id, { ...software, ...changed })).rejects.toMatchObject({ reason: "IdempotencyConflict" })
+    // Boundary whitespace is normalised, so a retry of the same content is a
+    // replay rather than a conflict.
+    const spaced = await record(f.session, f.businessId, o.id, { ...software, target: `  ${software.target}  `, description: `  ${software.description}  ` })
+    expect(spaced.executions).toEqual(first.executions)
+    // An incompatible channel/type pair never reaches the ledger.
+    await expect(record(f.session, f.businessId, o.id, forged({ ...software, idempotencyKey: randomUUID(), type: "CAMPAIGN_SENT", channel: "WEBSITE" }))).rejects.toMatchObject({ reason: "InvalidRequest" })
+    // The request identity is bound to its author: another member of the same
+    // account cannot reuse the key to claim or replace the first operator's row.
+    const secondUserId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`growth-w1-${randomUUID()}@example.test`])).rows[0]["id"])
+    await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [f.session.accountId, secondUserId])
+    await expect(record({ accountId: f.session.accountId, userId: secondUserId }, f.businessId, o.id, software)).rejects.toMatchObject({ reason: "IdempotencyConflict" })
+    // A service/commerce action uses the same channel-neutral ledger.
+    const commerce = { type: "LISTING_UPDATED" as const, channel: "THIRD_PARTY_PROFILE" as const, target: "TEST third-party listing",
+      description: "TEST corrected the opening hours", performedAt: new Date(Date.now() - 3_600_000).toISOString(), idempotencyKey: randomUUID() }
+    const updated = await record(f.session, f.businessId, o.id, commerce)
+    expect(updated).toMatchObject({ progress: "EXECUTED", executionCount: 2 })
+    expect(updated.executions.map(e => e.type)).toEqual(["SOURCE_PUBLISHED", "LISTING_UPDATED"])
+    const listed = await run(Effect.flatMap(GrowthRepository, r => r.list(f.session.accountId, f.businessId)))
+    expect(listed.find(item => item.id === o.id)?.executions).toEqual(updated.executions)
+    // Concurrent identical recordings serialize on the opportunity and leave one row.
+    const concurrent = { ...commerce, performedAt: new Date(Date.now() - 1_800_000).toISOString(), idempotencyKey: randomUUID() }
+    const [left, right] = await Promise.all([record(f.session, f.businessId, o.id, concurrent), record(f.session, f.businessId, o.id, concurrent)])
+    expect(left.executions).toHaveLength(3); expect(right.executions).toEqual(left.executions)
+    expect(String((await pool.query("SELECT count(*)::int AS n FROM growth_initiative_actions WHERE opportunity_id=$1 AND request_key=$2", [o.id, concurrent.idempotencyKey])).rows[0]["n"])).toBe("1")
+    // The performed time asserts the past, checked against the database clock.
+    await expect(record(f.session, f.businessId, o.id, { ...concurrent, idempotencyKey: randomUUID(), performedAt: new Date(Date.now() + 3_600_000).toISOString() })).rejects.toMatchObject({ reason: "ExecutionTimeRefused" })
+    // Foreign operators, businesses and opportunities are never disclosed.
+    await expect(record(other.session, f.businessId, o.id, { ...commerce, idempotencyKey: randomUUID() })).rejects.toMatchObject({ reason: "GrowthNotFound" })
+    const foreignOpportunity = await create(other)
+    await expect(record(f.session, other.businessId, foreignOpportunity.id, { ...commerce, idempotencyKey: randomUUID() })).rejects.toMatchObject({ reason: "GrowthNotFound" })
+    // A replay after the initiative closed returns the original record; a new
+    // recording is refused while the history stays authoritative.
+    const review = { expectedStatus: "APPROVED" as const, expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST closed after execution", conclusion: "INCONCLUSIVE" as const }
+    await run(Effect.flatMap(GrowthRepository, r => r.review(f.session, f.businessId, o.id, review)))
+    const afterReview = await record(f.session, f.businessId, o.id, software)
+    expect(afterReview.status).toBe("REVIEWED")
+    expect(afterReview.executions[0]).toEqual(first.executions[0])
+    expect(afterReview.executions).toHaveLength(3)
+    await expect(record(f.session, f.businessId, o.id, { ...commerce, idempotencyKey: randomUUID() })).rejects.toMatchObject({ reason: "InitiativeNotApproved" })
+    await expect(pool.query("DELETE FROM interventions WHERE business_id=$1", [f.businessId])).rejects.toThrow("append-only")
+  })
+  it("rolls back the intervention when the initiative link fails inside the same transaction", async () => {
+    const f = await fixture()
+    const o = await create(f)
+    await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, o.id, "APPROVED", decision())))
+    const description = `TEST atomicity ${randomUUID()}`
+    const body = { type: "SOURCE_UPDATED" as const, channel: "WEBSITE" as const, target: "TEST atomicity page", description,
+      performedAt: new Date(Date.now() - 60_000).toISOString(), idempotencyKey: randomUUID() }
+    // A test-only trigger forces the second half of the write to fail after the
+    // intervention insert succeeded. Both rows must disappear together.
+    await pool.query(`CREATE OR REPLACE FUNCTION w1_forced_link_failure() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced link failure'; END $$ LANGUAGE plpgsql`)
+    await pool.query("CREATE TRIGGER w1_forced_link_failure BEFORE INSERT ON growth_initiative_actions FOR EACH ROW EXECUTE FUNCTION w1_forced_link_failure()")
+    try {
+      // Effect SQL reports the driver failure generically; the rollback and the
+      // successful retry below prove the transaction boundary.
+      await expect(run(Effect.flatMap(GrowthRepository, r => r.recordExecution(f.session, f.businessId, o.id, body)))).rejects.toThrow()
+    } finally {
+      await pool.query("DROP TRIGGER IF EXISTS w1_forced_link_failure ON growth_initiative_actions")
+      await pool.query("DROP FUNCTION IF EXISTS w1_forced_link_failure()")
+    }
+    expect((await pool.query("SELECT count(*)::int AS n FROM interventions WHERE business_id=$1 AND notes=$2", [f.businessId, description])).rows[0]["n"]).toBe(0)
+    expect((await pool.query("SELECT count(*)::int AS n FROM growth_initiative_actions WHERE opportunity_id=$1 AND request_key=$2", [o.id, body.idempotencyKey])).rows[0]["n"]).toBe(0)
+    // The retry after the failed transaction succeeds exactly once.
+    const recorded = await run(Effect.flatMap(GrowthRepository, r => r.recordExecution(f.session, f.businessId, o.id, body)))
+    expect(recorded.executions).toHaveLength(1)
+    expect(recorded.executions[0]).toMatchObject({ description, assurance: "OPERATOR_ATTESTED" })
   })
   it("binds an entire intervention correction chain to one initiative regardless of link order", async () => {
     const f = await fixture(), other = await fixture()

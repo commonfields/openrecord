@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { canTransitionGrowth, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthExecutionAssurance, GrowthProfileUpdate, GrowthStatus, GrowthReview } from "./growth.js"
+import { canTransitionGrowth, GrowthChannel, GrowthEvidenceInput, GrowthExecutionRecord, GrowthExecutionType, GrowthMetricDefinitionInput, GrowthExecutionAssurance, GrowthProfileUpdate, GrowthStatus, GrowthReview, growthChannelsForExecution } from "./growth.js"
 
 const metric = { conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" }
 const valid = (value: unknown) => Schema.decodeUnknownEither(GrowthMetricDefinitionInput, { onExcessProperty: "error" })(value)._tag
@@ -48,5 +48,38 @@ describe("channel-neutral growth contract", () => {
     expect(decode(profile)).toBe("Left")
     expect(decode({ ...profile, idempotencyKey: "not-a-uuid" })).toBe("Left")
     expect(decode({ ...profile, idempotencyKey: key, ignored: true })).toBe("Left")
+  })
+  it("accepts every compatible execution action and channel but never an assurance, actor or verification field", () => {
+    const key = "00000000-0000-4000-8000-000000000001"
+    const record = { type: "SOURCE_PUBLISHED", channel: "WEBSITE", target: "https://product.test/pricing", description: "TEST published the revised pricing explainer", performedAt: "2026-10-19T10:00:00.000Z", idempotencyKey: key }
+    const decode = (v: unknown) => Schema.decodeUnknownEither(GrowthExecutionRecord, { onExcessProperty: "error" })(v)._tag
+    expect(decode(record)).toBe("Right")
+    // Python-style matrix without Python: each declared type is accepted on
+    // exactly the channels the contract calls compatible, and refused outside it.
+    for (const type of GrowthExecutionType.literals) for (const channel of GrowthChannel.literals)
+      expect(decode({ ...record, type, channel }), `${type}/${channel}`).toBe(growthChannelsForExecution(type).includes(channel) ? "Right" : "Left")
+    for (const [type, channel] of [["CAMPAIGN_SENT", "WEBSITE"], ["CAMPAIGN_SENT", "THIRD_PARTY_PROFILE"],
+      ["LISTING_UPDATED", "EMAIL"], ["LISTING_UPDATED", "PAID"], ["THIRD_PARTY_CORRECTION_REQUESTED", "WEBSITE"]] as const)
+      expect(decode({ ...record, type, channel }), `${type}/${channel}`).toBe("Left")
+    for (const bad of [{ type: "DELIVERED" }, { type: "VERIFIED_ACTION" }, { channel: "GITHUB" }, { target: "   " }, { description: "" },
+      { performedAt: "soon" }, { performedAt: "2026-10-19" }, { performedAt: "2026-10-19T10:00Z" }, { performedAt: "2026-10-19T10:00" },
+      { performedAt: "2026-13-40T10:00:00Z" }, { performedAt: "2026-02-30T10:00:00Z" }, { performedAt: "2026-10-19T24:00:00Z" },
+      { performedAt: "2026-10-19T10:00:00+24:00" }, { idempotencyKey: "not-a-uuid" }]) expect(decode({ ...record, ...bad })).toBe("Left")
+    expect(decode({ ...record, performedAt: "2026-10-19T10:00:00+07:00" })).toBe("Right")
+    expect(decode({ ...record, performedAt: "2024-02-29T10:00:00.123456789Z" })).toBe("Right")
+    expect(decode({ ...record, performedAt: "2025-02-29T10:00:00Z" })).toBe("Left")
+    expect(decode({ ...record, idempotencyKey: undefined })).toBe("Left")
+    // A reference may be a page, listing, campaign, profile or artifact. A
+    // URI-looking value must be an absolute, credential-free http(s) URL; the
+    // repository never fetches it to accept the attestation.
+    for (const target of ["TEST pricing page", "https://product.test/pricing", "http://product.test/pricing?x=1"])
+      expect(decode({ ...record, target })).toBe("Right")
+    for (const target of ["javascript:alert(1)", "file:///etc/passwd", "ftp://product.test/file", "https://user:pass@product.test/pricing", "https://product.test/a b"])
+      expect(decode({ ...record, target })).toBe("Left")
+    // A client or agent cannot manufacture the stronger claim: the request has
+    // no assurance, actor, verification or tenancy field at all.
+    for (const forged of [{ assurance: "SYSTEM_VERIFIED" }, { actor: "SYSTEM" }, { actorId: record.idempotencyKey },
+      { verification: { kind: "GROWTH_DELIVERY", id: key, claim: "PR_MERGED" } }, { businessId: key }, { opportunityId: key }, { channel: "WEBSITE", type: "SOURCE_UPDATED", state: "EXECUTED" }])
+      expect(decode({ ...record, ...forged })).toBe("Left")
   })
 })
