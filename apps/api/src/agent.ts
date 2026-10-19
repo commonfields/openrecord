@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect"
 import { AgentProposalRepository } from "@openrecord/db"
 import { AGENT_TOOLS, runAgentTool, type AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent } from "./agent-model.js"
+import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
 
 export interface AgentToolCall { readonly tool: string; readonly summary: string }
 export interface AgentCitation { readonly kind: string; readonly id: string; readonly text: string }
@@ -34,6 +35,7 @@ Keep three evidence surfaces separate: measured AI recommendations (only the mea
 REFERRAL_DATA_UNAVAILABLE and SIGNUPS_NOT_MEASURED mean unknown, never zero. A configured conversion event that is not a signup event is not a signup count. Quote referral and conversion totals exactly as tools return them; never add, extrapolate or recompute them across exports or periods.
 Never state or imply that a recommendation caused a referral, a referral caused a signup, or agency work caused either. Co-occurring changes are descriptive only.
 Never invent URLs or evidence IDs. The application renders evidence references from actual tools separately. Do not output raw private notes or internal IDs in prose.
+Use plain language without internal field names, JSON fragments or status and limitation codes.
 Do not promise legacy CLI or gateway capabilities. A proposed action is not completed work. Keep answers concise and evidence-backed.`
 
 export const runConversation = (input: {
@@ -46,6 +48,7 @@ export const runConversation = (input: {
   contents.push({ role: "user", parts: [{ text: input.message }] })
   const toolCalls: AgentToolCall[] = []
   const citations = new Map<string, AgentCitation>()
+  const internals = replyInternals()
   const usage: { observedModel: string | null; promptTokens: number | null; outputTokens: number | null; thoughtTokens: number | null; totalTokens: number | null }[] = []
   let calls = 0
   for (let round = 0; round < 5; round++) {
@@ -58,7 +61,9 @@ export const runConversation = (input: {
       totalTokens: response.usageMetadata?.totalTokenCount ?? null })
     const functions = candidate.content.parts.flatMap(p => p.functionCall ? [p.functionCall] : [])
     if (!functions.length) {
-      const reply = candidate.content.parts.filter(p => !p.thought).map(p => p.text ?? "").join("").trim()
+      const rawReply = candidate.content.parts.filter(p => !p.thought).map(p => p.text ?? "").join("").trim()
+      if (!rawReply || rawReply.length > 16000) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
+      const reply = sanitiseAgentReply(rawReply, internals).trim()
       if (!reply || reply.length > 16000) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
       return { reply, toolCalls, citations: [...citations.values()], usage }
     }
@@ -72,6 +77,7 @@ export const runConversation = (input: {
         toolCalls.push({ tool: call.name, summary: "Evidence unavailable or request refused" })
         results.push({ functionResponse: { name: call.name, response: { error: "UNAVAILABLE_OR_REFUSED" } } })
       } else {
+        collectReplyInternals(result.right, internals)
         const data = JSON.stringify(result.right)
         if (data.length > 18000) {
           toolCalls.push({ tool: call.name, summary: "Evidence exceeds context limit; request a smaller selection" })
