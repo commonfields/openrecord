@@ -54,6 +54,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     RepoLayers.SiteVerificationRepositoryLive,
     RepoLayers.SiteOperatorEventRepositoryLive,
     RepoLayers.SiteGscRepositoryLive,
+    RepoLayers.GrowthMeasurementRepositoryLive,
   ).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
   )

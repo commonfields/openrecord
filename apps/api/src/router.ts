@@ -1,4 +1,5 @@
 import { growthApi } from "./growth-routes.js"
+import { growthMeasurementApi } from "./growth-measurement-routes.js"
 import { agentOriginAllowed } from "./agent-origin.js"
 import { runtimeDiagnostic } from "./runtime.js"
 // Effect API server: HttpRouter + HttpServer over Node.
@@ -31,6 +32,7 @@ import {
 } from "@openrecord/contracts"
 import {
   GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
@@ -1507,12 +1509,13 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(runtimeApi, HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)))),
   ))
 }
 
 export const RepoLayers = {
   GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AssayRepositoryLive,
   AssayReviewRepositoryLive,

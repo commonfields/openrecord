@@ -40,11 +40,13 @@ import {
   ReobservationRepositoryLive,
   RecordRepositoryLive,
   AcquisitionRepositoryLive,
+  GrowthMeasurementRepositoryLive,
 } from "@openrecord/db"
 import { makeRouter } from "./router.js"
 
 const Repos = Layer.mergeAll(
   GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   RecordRepositoryLive,
   AcquisitionRepositoryLive,
