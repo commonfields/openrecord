@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { canTransitionGrowth, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthExecutionAssurance, GrowthStatus, GrowthReview } from "./growth.js"
+import { canTransitionGrowth, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthExecutionAssurance, GrowthProfileUpdate, GrowthStatus, GrowthReview } from "./growth.js"
 
 const metric = { conversionKind: "SIGNUP", label: "Trial signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Asia/Makassar", propertyRef: "TEST property" }
 const valid = (value: unknown) => Schema.decodeUnknownEither(GrowthMetricDefinitionInput, { onExcessProperty: "error" })(value)._tag
@@ -39,5 +39,14 @@ describe("channel-neutral growth contract", () => {
     expect(decode({ ...merge, verification: { ...merge.verification, claim: "DEPLOYED" } })).toBe("Left")
     expect(decode({ assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: id, verification: null })).toBe("Right")
     expect(decode({ ...merge, assurance: "OPERATOR_ATTESTED", actor: "HUMAN", actorId: id })).toBe("Left")
+  })
+  it("requires a request identity for profile updates and rejects excess fields", () => {
+    const key = "00000000-0000-4000-8000-000000000001"
+    const profile = { category: "TEST Software", audience: "TEST operators", valueProposition: "TEST positioning", goalStatement: "Increase trial signups", metric }
+    const decode = (v: unknown) => Schema.decodeUnknownEither(GrowthProfileUpdate, { onExcessProperty: "error" })(v)._tag
+    expect(decode({ ...profile, idempotencyKey: key })).toBe("Right")
+    expect(decode(profile)).toBe("Left")
+    expect(decode({ ...profile, idempotencyKey: "not-a-uuid" })).toBe("Left")
+    expect(decode({ ...profile, idempotencyKey: key, ignored: true })).toBe("Left")
   })
 })

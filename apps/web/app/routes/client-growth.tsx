@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, PageHeader, Panel, PanelHeader } from "@/components/page"
 import { GrowthProfileFields } from "@/components/growth-profile-fields"
-import { Auth } from "@/lib/api"
+import { ApiError, Auth } from "@/lib/api"
 import { Records } from "@/lib/record"
 import { useApi } from "@/lib/use-api"
 import { formatDateTime } from "@/lib/format"
@@ -20,9 +20,11 @@ import { Growth, GROWTH_EVIDENCE_LABELS, GROWTH_GOAL_LABELS, GROWTH_STATUS_LABEL
 function ProfileEditor({ businessId, profile, done }: { businessId: string; profile: GrowthProfile | null; done: () => Promise<void> }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [requestKey] = useState(() => crypto.randomUUID())
   return <form className="grid gap-4 p-5" onSubmit={async e => {
     e.preventDefault(); const form = new FormData(e.currentTarget); setBusy(true); setError(null)
-    try { await Growth.save(businessId, profileFromForm(form)); await done() } catch (err) { setError(growthError(err)) } finally { setBusy(false) }
+    try { await Growth.save(businessId, profileFromForm(form), requestKey); await done() }
+    catch (err) { setError(err instanceof ApiError && err.body["reason"] === "IdempotencyConflict" ? "This save is already recorded. Close and reopen the editor before submitting different content." : growthError(err)) } finally { setBusy(false) }
   }}>
     <GrowthProfileFields profile={profile} />
     <p className="text-xs text-muted-foreground">A goal statement and its metric have separate versions. Existing initiatives keep their original goal and metric.</p>
@@ -37,7 +39,7 @@ const OPPORTUNITY_FIELDS = [
   ["proposedChange", "Proposed change", 2000], ["expectedMechanism", "Why might this help?", 2000],
   ["assumptions", "Assumptions", 2000], ["uncertainty", "Uncertainty and what to verify", 2000],
 ] as const
-function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: { businessId: string; goal: GrowthGoal; userId: string; websiteUrl: string; done: () => Promise<void> }) {
+export function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: { businessId: string; goal: GrowthGoal; userId: string; websiteUrl: string; done: () => Promise<void> }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [requestKey] = useState(() => crypto.randomUUID())
@@ -52,7 +54,7 @@ function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: { busin
       await done()
     } catch (err) { setError(growthError(err)) } finally { setBusy(false) }
   }}>
-    <p className="text-xs text-muted-foreground">For {GROWTH_GOAL_LABELS[goal.metricDefinition.conversionKind].toLowerCase()}, metric version {goal.version}. You own this proposal. It starts as a hypothesis with baseline availability unknown.</p>
+    <p className="text-xs text-muted-foreground">For {GROWTH_GOAL_LABELS[goal.metricDefinition.conversionKind].toLowerCase()}, metric version {goal.metricDefinition.version}. You own this proposal. It starts as a hypothesis with baseline availability unknown.</p>
     {OPPORTUNITY_FIELDS.map(([name, label, max]) => <div className="grid gap-2" key={name}><Label htmlFor={`op-${name}`}>{label}</Label>
       {max > 1000 ? <Textarea id={`op-${name}`} name={name} maxLength={max} required /> : <Input id={`op-${name}`} name={name} maxLength={max} required />}
     </div>)}
@@ -62,7 +64,7 @@ function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: { busin
   </form>
 }
 
-function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: { businessId: string; opportunity: GrowthOpportunity; goal: GrowthGoal | undefined; userId: string; reload: () => Promise<void> }) {
+export function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: { businessId: string; opportunity: GrowthOpportunity; goal: GrowthGoal | undefined; userId: string; reload: () => Promise<void> }) {
   const [decision, setDecision] = useState<"propose" | "approve" | "cancel" | "review" | null>(null)
   const [reason, setReason] = useState("")
   const [conclusion, setConclusion] = useState<GrowthReview["conclusion"]>("INCONCLUSIVE")
@@ -82,7 +84,7 @@ function OpportunityCard({ businessId, opportunity: o, goal, userId, reload }: {
       {[["Audience and intent", `${o.audience}\n${o.buyerIntent}`], ["Proposed change", o.proposedChange], ["Expected mechanism", o.expectedMechanism],
         ["Assumptions", o.assumptions], ["Uncertainty", o.uncertainty], ["Source", o.source]].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap">{value}</dd></div>)}
       <div><dt className="text-muted-foreground">Target page</dt><dd className="mt-1 break-all">{o.targetUrl ? <a href={o.targetUrl} target="_blank" rel="noreferrer" className="underline">{o.targetUrl}</a> : "No primary page"}</dd></div>
-      <div><dt className="text-muted-foreground">Goal and baseline</dt><dd className="mt-1">{goal ? `${GROWTH_GOAL_LABELS[goal.metricDefinition.conversionKind]}, ${goal.metricDefinition.label}, metric version ${goal.version}` : "Historical metric definition"}. Baseline: {o.baselineAvailability.toLowerCase()}.</dd></div>
+      <div><dt className="text-muted-foreground">Goal and baseline</dt><dd className="mt-1">{goal ? `${GROWTH_GOAL_LABELS[goal.metricDefinition.conversionKind]}, ${goal.metricDefinition.label}, metric version ${goal.metricDefinition.version}` : "Historical metric definition"}. Baseline: {o.baselineAvailability.toLowerCase()}.</dd></div>
       <div><dt className="text-muted-foreground">Operator owner</dt><dd className="mt-1">{o.ownerUserId === userId ? "You" : "Another account operator"}</dd></div>
       <div><dt className="text-muted-foreground">Created by</dt><dd className="mt-1">{o.createdByActor === "ASSISTANT" ? "Operator Agent" : "Account operator"}, {formatDateTime(o.createdAt)}</dd></div>
     </dl>

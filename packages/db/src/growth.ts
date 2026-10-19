@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto"
 import { Context, Data, Effect, Layer, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import {
   canTransitionGrowth, CreateGrowthOpportunity, GrowthDecision, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthProgress, GrowthReview, GrowthReviewConclusion,
-  GrowthOpportunityFields, GrowthProductInput, GrowthProfileInput, GrowthStatus,
+  GrowthOpportunityFields, GrowthProductInput, GrowthProfileUpdate, GrowthStatus,
   type GrowthGoal, type GrowthObservedRef, type GrowthOpportunity, type GrowthProfile,
 } from "@openrecord/contracts"
 import { decodeRow, type RowDecodeError } from "./row-codecs.js"
@@ -34,7 +35,7 @@ const Opportunity = Schema.Struct({ ...GrowthOpportunityFields.fields, id: Schem
 export class GrowthRepository extends Context.Tag("GrowthRepository")<GrowthRepository, {
   readonly profile: (accountId: string, businessId: string) => GrowthEffect<GrowthProfile | null>
   readonly goals: (accountId: string, businessId: string) => GrowthEffect<ReadonlyArray<GrowthGoal>>
-  readonly saveProfile: (session: Session, businessId: string, input: GrowthProfileInput) => GrowthEffect<GrowthProfile>
+  readonly saveProfile: (session: Session, businessId: string, input: GrowthProfileUpdate) => GrowthEffect<GrowthProfile>
   readonly registerProduct: (session: Session, input: typeof GrowthProductInput.Type) => Effect.Effect<GrowthProfile, SqlError | RowDecodeError | GrowthRefused | import("./record.js").RecordRefused, RecordRepository>
   readonly list: (accountId: string, businessId: string, limit?: number) => GrowthEffect<ReadonlyArray<GrowthOpportunity>>
   readonly get: (accountId: string, businessId: string, opportunityId: string) => GrowthEffect<GrowthOpportunity>
@@ -72,10 +73,29 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
     if (!rows[0]) return yield* refuse("OpportunityNotFound")
     return yield* decodeRow(Opportunity, "growth_opportunities", rows[0]["document"])
   })
-  const saveProfile = (session: Session, businessId: string, raw: GrowthProfileInput): GrowthEffect<GrowthProfile> => sql.withTransaction(Effect.gen(function*() {
+  // Deterministic JSON for the operation fingerprint: key order must not let
+  // two identical payloads hash differently.
+  const canonical = (value: unknown): string => {
+    const order = (v: unknown): unknown => Array.isArray(v) ? v.map(order)
+      : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : 1).map(([k, x]) => [k, order(x)]))
+      : v
+    return JSON.stringify(order(value))
+  }
+  const saveProfile = (session: Session, businessId: string, raw: GrowthProfileUpdate): GrowthEffect<GrowthProfile> => sql.withTransaction(Effect.gen(function*() {
     yield* member(session, businessId)
-    const input = yield* parse(GrowthProfileInput, raw)
+    const input = yield* parse(GrowthProfileUpdate, raw)
     yield* sql`SELECT business_id FROM record_profiles WHERE business_id=${businessId} FOR UPDATE`
+    // The request identity is read only after the business lock: concurrent
+    // identical updates observe the first committed result instead of creating
+    // duplicate versions, and a replay never re-applies older content.
+    const fingerprint = createHash("sha256").update(canonical({
+      category: input.category, audience: input.audience, valueProposition: input.valueProposition, goalStatement: input.goalStatement, metric: input.metric,
+    })).digest("hex")
+    const seen = yield* sql`SELECT fingerprint,result FROM growth_profile_updates WHERE business_id=${businessId} AND request_key=${input.idempotencyKey}`
+    if (seen[0]) {
+      if (seen[0]["fingerprint"] !== fingerprint) return yield* refuse("IdempotencyConflict")
+      return yield* decodeRow(Profile, "growth_profile_updates", seen[0]["result"])
+    }
     const current = yield* profile(session.accountId, businessId)
     // Locking the business serializes independent definition and goal versions.
     const metric = input.metric
@@ -105,6 +125,8 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
         primary_goal_id=excluded.primary_goal_id,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()`
     const saved = yield* profile(session.accountId, businessId)
     if (!saved) return yield* refuse("GrowthNotFound")
+    yield* sql`INSERT INTO growth_profile_updates(business_id,request_key,fingerprint,result,created_by_user_id)
+      VALUES(${businessId},${input.idempotencyKey},${fingerprint},${JSON.stringify(saved)}::jsonb,${session.userId})`
     return saved
   }))
   const validateObserved = (accountId: string, businessId: string, references: ReadonlyArray<GrowthObservedRef>) => Effect.gen(function*() {
@@ -158,7 +180,7 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
         return saved
       }
       const record = yield* (yield* RecordRepository).createClient(session, { name: input.name, websiteUrl: input.websiteUrl, engagement: input.engagement })
-      const saved = yield* saveProfile(session, record.businessId, { category: input.category, audience: input.audience, valueProposition: input.valueProposition, goalStatement: input.goalStatement, metric: input.metric })
+      const saved = yield* saveProfile(session, record.businessId, { category: input.category, audience: input.audience, valueProposition: input.valueProposition, goalStatement: input.goalStatement, metric: input.metric, idempotencyKey: input.idempotencyKey })
       yield* sql`INSERT INTO growth_registrations(account_id,request_key,business_id) VALUES(${session.accountId},${input.idempotencyKey},${record.businessId})`
       return saved
     })),

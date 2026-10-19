@@ -129,11 +129,27 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     const malformed = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, initialStatus: "APPROVED" })))
     expect(malformed._tag).toBe("Left")
   })
+  it("requires a request identity on profile updates and replays the original result", async () => {
+    const f = await fixture()
+    const key = randomUUID()
+    const body = { category: "TEST identified update", audience: "TEST operators", valueProposition: "TEST positioning", goalStatement: "TEST identified goal", metric: product.metric, idempotencyKey: key }
+    const first = await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, body))
+    expect(first.profile.category).toBe("TEST identified update")
+    const missing = await call("PUT", f.path, f.cookie, { category: body.category, audience: body.audience, valueProposition: body.valueProposition, goalStatement: body.goalStatement, metric: body.metric })
+    expect(missing.status).toBe(422)
+    expect(await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, body))).toEqual(first)
+    expect((await call("PUT", f.path, f.cookie, { ...body, goalStatement: "TEST conflicting content" })).status).toBe(409)
+    const newer = await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, { ...body, idempotencyKey: randomUUID(), goalStatement: "TEST newer goal" }))
+    expect(newer.profile.primaryGoal.version).toBe(first.profile.primaryGoal.version + 1)
+    expect(await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, body))).toEqual(first)
+    const current = await ok<{ profile: GrowthProfile | null }>(call("GET", f.path, f.cookie))
+    expect(current.profile).toEqual(newer.profile)
+  })
   it.each(["SIGNUP", "BOOKING"] as const)("onboards a %s business, preserves versions and accepts a human review", async kind => {
     const f = await fixture()
     const metric = kind === "SIGNUP" ? product.metric : { conversionKind: "BOOKING", label: "Confirmed bookings", sourceKind: "OPERATOR_AGGREGATE_EXPORT", sourceIdentity: "TEST appointment system",
       eventName: null, countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "Europe/London", propertyRef: null }
-    const { profile } = await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, { category: kind === "BOOKING" ? "TEST local appointment service" : product.category, audience: kind === "BOOKING" ? "TEST patients" : product.audience, valueProposition: product.valueProposition, goalStatement: `Improve TEST ${kind}`, metric }))
+    const { profile } = await ok<{ profile: GrowthProfile }>(call("PUT", f.path, f.cookie, { category: kind === "BOOKING" ? "TEST local appointment service" : product.category, audience: kind === "BOOKING" ? "TEST patients" : product.audience, valueProposition: product.valueProposition, goalStatement: `Improve TEST ${kind}`, metric, idempotencyKey: randomUUID() }))
     expect(profile.primaryGoal.metricDefinition.conversionKind).toBe(kind)
     expect(profile.category).toBe(kind === "BOOKING" ? "TEST local appointment service" : "TEST SaaS")
     const { opportunity } = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities`, f.cookie, { ...proposal(f), goalId: profile.primaryGoal.id, targetUrl: null,

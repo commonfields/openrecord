@@ -27,6 +27,11 @@ export const GrowthProfileInput = Schema.Struct({
   category: Text(300), audience: Text(1000), valueProposition: Text(2000), goalStatement: Text(1000), metric: GrowthMetricDefinitionInput,
 })
 export type GrowthProfileInput = typeof GrowthProfileInput.Type
+/** A profile update request: exact content plus its request identity. The key
+ * identifies one operation; replaying it returns the original result and a
+ * different payload under the same key is refused. */
+export const GrowthProfileUpdate = Schema.Struct({ ...GrowthProfileInput.fields, idempotencyKey: Schema.UUID })
+export type GrowthProfileUpdate = typeof GrowthProfileUpdate.Type
 export const decodeGrowthProfileInput = (input: unknown): GrowthProfileInput | null => {
   const result = Schema.decodeUnknownEither(GrowthProfileInput, { onExcessProperty: "error" })(input)
   return result._tag === "Right" ? result.right : null

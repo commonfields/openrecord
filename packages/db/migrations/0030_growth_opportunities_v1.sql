@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS growth_registrations (
   business_id UUID NOT NULL UNIQUE REFERENCES growth_profiles(business_id),
   PRIMARY KEY (account_id, request_key)
 );
+-- Profile updates are identified requests. The fingerprint covers the exact
+-- normalized content (not the key); the stored result is the document the
+-- first execution returned. Replays return that document without re-applying
+-- anything, so they can never restore older content over a newer update.
+CREATE TABLE IF NOT EXISTS growth_profile_updates (
+  business_id UUID NOT NULL REFERENCES growth_profiles(business_id), request_key UUID NOT NULL,
+  fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^[a-f0-9]{64}$'), result JSONB NOT NULL,
+  created_by_user_id UUID NOT NULL REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (business_id, request_key)
+);
 CREATE TABLE IF NOT EXISTS growth_opportunities (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES growth_profiles(business_id),
@@ -127,6 +137,8 @@ BEGIN
   ELSIF TG_TABLE_NAME='growth_profiles' THEN
     IF NOT record_member(NEW.business_id, NEW.updated_by_user_id) THEN RAISE EXCEPTION 'growth editor must be account member'; END IF;
     NEW.updated_at := now();
+  ELSIF TG_TABLE_NAME='growth_profile_updates' THEN
+    IF NOT record_member(NEW.business_id, NEW.created_by_user_id) THEN RAISE EXCEPTION 'growth editor must be account member'; END IF;
   ELSE
     IF NOT record_member(NEW.business_id, NEW.created_by_user_id) OR NOT record_member(NEW.business_id, NEW.owner_user_id) THEN RAISE EXCEPTION 'growth author and owner must be account members'; END IF;
   END IF;
@@ -163,11 +175,11 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 
 DO $$ DECLARE t TEXT; BEGIN
-  FOREACH t IN ARRAY ARRAY['growth_metric_definitions','growth_goals','growth_profiles','growth_opportunities'] LOOP
+  FOREACH t IN ARRAY ARRAY['growth_metric_definitions','growth_goals','growth_profiles','growth_opportunities','growth_profile_updates'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS growth_authorship ON %I',t);
     EXECUTE format('CREATE TRIGGER growth_authorship BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION guard_growth_authorship()',t);
   END LOOP;
-  FOREACH t IN ARRAY ARRAY['growth_metric_definitions','growth_goals','growth_opportunities','growth_opportunity_events','growth_opportunity_evidence','growth_registrations'] LOOP
+  FOREACH t IN ARRAY ARRAY['growth_metric_definitions','growth_goals','growth_opportunities','growth_opportunity_events','growth_opportunity_evidence','growth_registrations','growth_profile_updates'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS growth_append_only ON %I',t);
     EXECUTE format('CREATE TRIGGER growth_append_only BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation()',t);
     EXECUTE format('DROP TRIGGER IF EXISTS growth_no_truncate ON %I',t);
@@ -188,12 +200,12 @@ ALTER TABLE interventions ADD COLUMN IF NOT EXISTS verification_claim TEXT;
 ALTER TABLE interventions DROP CONSTRAINT IF EXISTS interventions_type_check;
 ALTER TABLE interventions ADD CONSTRAINT interventions_type_check CHECK (type IN
   ('SOURCE_UPDATED','SOURCE_PUBLISHED','THIRD_PARTY_CORRECTION_REQUESTED','KNOWLEDGE_BASE_UPDATED','STRUCTURED_DATA_UPDATED','OTHER','CAMPAIGN_SENT','LISTING_UPDATED'));
-DO $$ BEGIN
-  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='interventions'::regclass AND conname='growth_intervention_business_key') THEN
-    ALTER TABLE interventions ADD CONSTRAINT growth_intervention_business_key UNIQUE(id,business_id);
-  END IF;
-END $$;
--- W2 replaces this with an adapter resolver validating the ENTIRE claim,
+-- No second tenant-uniqueness constraint is added here. Migration 0022 already
+-- maintains uq_record_tenant_interventions ON interventions(id, business_id),
+-- a non-partial unique index that satisfies the composite foreign key in
+-- growth_initiative_actions. Adding growth_intervention_business_key would
+-- duplicate that tenant requirement without adding any new guarantee.
+-- W2 must replace growth_execution_verified with an adapter resolver validating the ENTIRE claim,
 -- including event, business, content digests and performed time, not just an ID.
 CREATE OR REPLACE FUNCTION growth_execution_verified(execution interventions) RETURNS BOOLEAN AS $$ SELECT false $$ LANGUAGE sql STABLE;
 CREATE OR REPLACE FUNCTION guard_growth_execution() RETURNS trigger AS $$
@@ -222,15 +234,41 @@ CREATE TABLE IF NOT EXISTS growth_initiative_actions (
   FOREIGN KEY(intervention_id,business_id) REFERENCES interventions(id,business_id),
   FOREIGN KEY(opportunity_id,business_id) REFERENCES growth_opportunities(id,business_id), UNIQUE(opportunity_id,request_key)
 );
+-- An initiative owns an entire correction chain, not just one row. The root is
+-- the oldest row a supersession chain reaches; corrections are linear and
+-- same-business (0003: uq_interventions_supersedes + tenancy trigger).
+CREATE OR REPLACE FUNCTION growth_intervention_chain_root(origin UUID) RETURNS UUID AS $$
+  WITH RECURSIVE chain AS (
+    SELECT i.id, i.supersedes_id FROM interventions i WHERE i.id=origin
+    UNION
+    SELECT p.id, p.supersedes_id FROM interventions p JOIN chain c ON p.id=c.supersedes_id
+  )
+  SELECT id FROM chain WHERE supersedes_id IS NULL LIMIT 1
+$$ LANGUAGE sql STABLE;
 CREATE OR REPLACE FUNCTION guard_growth_execution_link() RETURNS trigger AS $$
-DECLARE execution interventions; status TEXT;
+DECLARE execution interventions; status TEXT; root UUID;
 BEGIN
   PERFORM 1 FROM growth_opportunities WHERE id=NEW.opportunity_id AND business_id=NEW.business_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'execution link outside scope'; END IF;
   SELECT e.status INTO status FROM growth_opportunity_events e WHERE e.opportunity_id=NEW.opportunity_id AND e.business_id=NEW.business_id ORDER BY revision DESC LIMIT 1;
   SELECT * INTO execution FROM interventions WHERE id=NEW.intervention_id AND business_id=NEW.business_id;
   IF status IS DISTINCT FROM 'APPROVED' OR execution.id IS NULL OR execution.channel IS NULL OR execution.assurance IS NULL OR NOT record_member(NEW.business_id,NEW.created_by_user_id) THEN RAISE EXCEPTION 'execution link outside scope or initiative not approved'; END IF;
-  IF execution.supersedes_id IS NOT NULL AND EXISTS (SELECT 1 FROM growth_initiative_actions a WHERE a.intervention_id=execution.supersedes_id AND a.opportunity_id<>NEW.opportunity_id) THEN RAISE EXCEPTION 'execution correction cannot change initiative'; END IF;
+  -- Lock the chain root so concurrent links on any member of the same chain
+  -- serialize; then refuse when ANY member is already bound to a different
+  -- initiative. Order-independent: it holds when the original is linked first
+  -- and when a correction is linked first, across multiple corrections.
+  root := growth_intervention_chain_root(execution.id);
+  IF root IS NULL THEN RAISE EXCEPTION 'execution chain root missing'; END IF;
+  PERFORM 1 FROM interventions WHERE id=root FOR UPDATE;
+  IF EXISTS (
+    WITH RECURSIVE members AS (
+      SELECT i.id FROM interventions i WHERE i.id=root
+      UNION
+      SELECT c.id FROM interventions c JOIN members m ON c.supersedes_id=m.id
+    )
+    SELECT 1 FROM growth_initiative_actions a JOIN members m ON m.id=a.intervention_id
+    WHERE a.business_id=NEW.business_id AND a.opportunity_id<>NEW.opportunity_id
+  ) THEN RAISE EXCEPTION 'execution correction cannot change initiative'; END IF;
   IF execution.assurance='OPERATOR_ATTESTED' AND execution.actor_id IS DISTINCT FROM NEW.created_by_user_id::text THEN RAISE EXCEPTION 'execution attestation author mismatch'; END IF;
   IF execution.assurance='SYSTEM_VERIFIED' AND NOT growth_execution_verified(execution) THEN RAISE EXCEPTION 'execution claim unavailable'; END IF;
   RETURN NEW;

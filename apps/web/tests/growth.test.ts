@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
+import { createElement } from "react"
 import { matchRoutes } from "react-router"
+import { renderToStaticMarkup } from "react-dom/server"
+import type { GrowthGoal, GrowthOpportunity } from "@openrecord/contracts"
 import { agentEvidencePath } from "../app/lib/agent-evidence"
 import { growthPath, growthEvidencePath, profileFromForm } from "../app/lib/growth"
+import { OpportunityCard, OpportunityForm } from "../app/routes/client-growth"
 
 describe("growth workspace form and navigation", () => {
   const id = "00000000-0000-4000-8000-000000000001"
@@ -39,5 +43,29 @@ describe("growth workspace form and navigation", () => {
       const path = agentEvidencePath(id, { kind, id, text: "Growth evidence" })
       expect(path?.split("#")[0]).toBe(growthPath(id)); expect(matchRoutes([{ path: "/clients/:id/growth" }], path!)?.[0]?.params["id"]).toBe(id)
     }
+  })
+  it("labels the goal version and the metric definition version from their own fields", () => {
+    const userId = "00000000-0000-4000-8000-000000000001"
+    const goal: GrowthGoal = {
+      id: "00000000-0000-4000-8000-000000000010", businessId: id, version: 7, statement: "TEST goal",
+      metricDefinition: { id: "00000000-0000-4000-8000-000000000020", businessId: id, version: 3, conversionKind: "SIGNUP", label: "Trial signups",
+        sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "TEST GA4", eventName: "trial_signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null,
+        reportingTimeZone: "UTC", propertyRef: "TEST property", createdByUserId: userId, createdAt: "2026-10-01T00:00:00.000Z" },
+      createdByUserId: userId, createdAt: "2026-10-01T00:00:00.000Z",
+    }
+    const form = renderToStaticMarkup(createElement(OpportunityForm, { businessId: id, goal, userId, websiteUrl: "https://growth.test", done: async () => {} }))
+    expect(form).toContain("metric version 3")
+    expect(form).not.toContain("metric version 7")
+    const opportunity: GrowthOpportunity = {
+      id: "00000000-0000-4000-8000-000000000030", businessId: id, goalId: goal.id, title: "TEST opportunity", problemStatement: "TEST problem",
+      audience: "TEST audience", buyerIntent: "TEST intent", targetUrl: null, source: "TEST source", proposedChange: "TEST change",
+      expectedMechanism: "TEST mechanism", assumptions: "TEST assumptions", uncertainty: "TEST uncertainty", baselineAvailability: "UNKNOWN",
+      ownerUserId: userId, createdByUserId: userId, createdByActor: "OPERATOR", createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z", updatedByUserId: userId, status: "PROPOSED", revision: 1, progress: "NOT_STARTED",
+      executionCount: 0, evidence: [], events: [],
+    }
+    const card = renderToStaticMarkup(createElement(OpportunityCard, { businessId: id, opportunity, goal, userId, reload: async () => {} }))
+    expect(card).toContain("metric version 3")
+    expect(card).not.toContain("metric version 7")
   })
 })

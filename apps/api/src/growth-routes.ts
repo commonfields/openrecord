@@ -1,7 +1,7 @@
 import { HttpRouter } from "@effect/platform"
 import { Effect } from "effect"
 import { BusinessRepository, GrowthRefused, GrowthRepository, type Session } from "@openrecord/db"
-import { CreateGrowthOpportunity, GrowthDecision, GrowthReview, GrowthProductInput, GrowthProfileInput, decodeRouteId } from "@openrecord/contracts"
+import { CreateGrowthOpportunity, GrowthDecision, GrowthReview, GrowthProductInput, GrowthProfileUpdate, decodeRouteId } from "@openrecord/contracts"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const failure = (e: unknown) => {
@@ -36,7 +36,7 @@ export const growthApi = (withSession: WithSession) => {
       return yield* json(200, { profile: yield* repo.profile(session.accountId, id), goals: yield* repo.goals(session.accountId, id) })
     }))),
     HttpRouter.put("/api/growth/clients/:id", client((session, id) => Effect.gen(function*() {
-      const input = decode(GrowthProfileInput, yield* readJson)
+      const input = decode(GrowthProfileUpdate, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" })
       return yield* json(200, { profile: yield* (yield* GrowthRepository).saveProfile(session, id, input) })
     }))),

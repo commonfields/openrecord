@@ -19,7 +19,7 @@ const base = (id: string) => `/api/growth/clients/${encodeURIComponent(id)}`
 export const Growth = {
   register: (input: typeof GrowthProductInput.Type) => api<{ profile: GrowthProfile }>("/api/growth/products", { method: "POST", body: JSON.stringify(input) }),
   profile: (id: string) => api<{ profile: GrowthProfile | null; goals: GrowthGoal[] }>(base(id)),
-  save: (id: string, input: GrowthProfileInput) => api<{ profile: GrowthProfile }>(base(id), { method: "PUT", body: JSON.stringify(input) }),
+  save: (id: string, input: GrowthProfileInput, requestKey: string) => api<{ profile: GrowthProfile }>(base(id), { method: "PUT", body: JSON.stringify({ ...input, idempotencyKey: requestKey }) }),
   list: (id: string) => api<{ opportunities: GrowthOpportunity[] }>(`${base(id)}/opportunities`),
   create: (id: string, input: CreateGrowthOpportunity) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities`, { method: "POST", body: JSON.stringify(input) }),
   review: (id: string, opportunityId: string, input: GrowthReview) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/review`, { method: "POST", body: JSON.stringify(input) }),
