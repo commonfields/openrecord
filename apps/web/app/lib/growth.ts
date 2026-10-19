@@ -1,9 +1,32 @@
-import { decodeGrowthProfileInput, type GrowthObservedRef, type GrowthProfileInput, type GrowthGoal, type GrowthOpportunity, type GrowthProfile, type GrowthProductInput, type CreateGrowthOpportunity, type GrowthDecision, type GrowthReview } from "@openrecord/contracts"
+import { decodeGrowthExecutionRecord, decodeGrowthProfileInput, growthChannelsForExecution, type GrowthObservedRef, type GrowthProfileInput, type GrowthGoal, type GrowthOpportunity, type GrowthProfile, type GrowthProductInput, type CreateGrowthOpportunity, type GrowthDecision, type GrowthExecution, type GrowthExecutionRecord, type GrowthExecutionType, type GrowthReview } from "@openrecord/contracts"
 import { api, ApiError } from "./api"
 
 export const GROWTH_STATUS_LABELS = { DISCOVERED: "Discovered", PROPOSED: "Proposed", APPROVED: "Approved", REVIEWED: "Reviewed", CANCELLED: "Cancelled" }
 export const GROWTH_GOAL_LABELS = { LEAD: "Leads", SIGNUP: "Signups", PURCHASE: "Purchases", BOOKING: "Bookings" }
 export const GROWTH_EVIDENCE_LABELS = { OBSERVED: "Observed", OPERATOR_HYPOTHESIS: "Hypothesis", MODEL_SUGGESTION: "Agent hypothesis" }
+export const GROWTH_CHANNEL_LABELS = { WEBSITE: "Website", THIRD_PARTY_PROFILE: "Third-party profile", EMAIL: "Email", PAID: "Paid", SOCIAL: "Social", OTHER: "Other" }
+export const GROWTH_EXECUTION_LABELS = {
+  SOURCE_UPDATED: "Source updated", SOURCE_PUBLISHED: "Source published", THIRD_PARTY_CORRECTION_REQUESTED: "Third-party correction requested",
+  KNOWLEDGE_BASE_UPDATED: "Knowledge base updated", STRUCTURED_DATA_UPDATED: "Structured data updated", OTHER: "Other",
+  CAMPAIGN_SENT: "Campaign sent", LISTING_UPDATED: "Listing updated",
+}
+/** The proof level is stated before any progress claim: an operator attestation
+ * is never presented as verification, and a merge is never presented as
+ * publication. */
+export const growthAssuranceLabel = (execution: GrowthExecution): string => execution.assurance === "OPERATOR_ATTESTED"
+  ? "Operator-attested; not independently verified."
+  : `System-verified by the delivery adapter: ${execution.verification.claim.toLowerCase().replaceAll("_", " ")} (${execution.verification.kind.toLowerCase().replaceAll("_", " ")}). A merged change is not production publication.`
+export const growthAssuranceBadge = (execution: GrowthExecution): "Operator-attested" | "System-verified" =>
+  execution.assurance === "OPERATOR_ATTESTED" ? "Operator-attested" : "System-verified"
+/** Who asserted it, from the reading operator's point of view. A system claim
+ * belongs to an adapter, never to a person. */
+export const growthExecutionActorLabel = (execution: GrowthExecution, userId: string): string =>
+  execution.actor === "SYSTEM" ? "System adapter" : execution.actorId === userId ? "You (account operator)" : "Another account operator"
+export const executionChannelsFor = (type: GrowthExecutionType | "") => growthChannelsForExecution(type)
+export const localDateTimeInput = (date: Date): string => {
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 export const growthEvidencePath = (businessId: string, reference: GrowthObservedRef): string => {
   const id = encodeURIComponent(businessId)
   switch (reference.kind) {
@@ -24,6 +47,7 @@ export const Growth = {
   create: (id: string, input: CreateGrowthOpportunity) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities`, { method: "POST", body: JSON.stringify(input) }),
   review: (id: string, opportunityId: string, input: GrowthReview) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/review`, { method: "POST", body: JSON.stringify(input) }),
   decide: (id: string, opportunityId: string, decision: "propose" | "approve" | "cancel", input: GrowthDecision) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/${decision}`, { method: "POST", body: JSON.stringify(input) }),
+  recordExecution: (id: string, opportunityId: string, input: GrowthExecutionRecord) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/executions`, { method: "POST", body: JSON.stringify(input) }),
 }
 export const profileFromForm = (form: FormData): GrowthProfileInput => {
   const sourceKind = form.get("sourceKind")
@@ -38,10 +62,24 @@ export const profileFromForm = (form: FormData): GrowthProfileInput => {
   if (parsed === null) throw new Error("Check the product details, goal, metric source, units and IANA reporting timezone.")
   return parsed
 }
+export const executionFromForm = (form: FormData, requestKey: string, choice: { readonly type: string; readonly channel: string }): GrowthExecutionRecord => {
+  const performed = String(form.get("performedAt") ?? "")
+  const date = performed ? new Date(performed) : null
+  const parsed = decodeGrowthExecutionRecord({
+    type: choice.type, channel: choice.channel, target: String(form.get("target") ?? "").trim(),
+    description: String(form.get("description") ?? "").trim(),
+    performedAt: date && !Number.isNaN(date.getTime()) ? date.toISOString() : performed,
+    idempotencyKey: requestKey,
+  })
+  if (parsed === null) throw new Error("Choose the action type and a compatible channel, describe what was done, and give the reference and a real performed time.")
+  return parsed
+}
 export const growthError = (e: unknown): string => {
   if (e instanceof ApiError && e.body["reason"] === "StaleDecision") return "This opportunity changed. Refresh and review its current state before deciding."
-  if (e instanceof ApiError && e.body["reason"] === "IdempotencyConflict") return "This review no longer matches the saved decision. Close it and review the opportunity again."
+  if (e instanceof ApiError && e.body["reason"] === "IdempotencyConflict") return "This request no longer matches what was saved. Close and reopen it before submitting different content."
   if (e instanceof ApiError && e.body["reason"] === "PrimaryGoalChanged") return "The primary goal changed. Refresh before proposing an opportunity."
+  if (e instanceof ApiError && e.body["reason"] === "InitiativeNotApproved") return "This opportunity is no longer approved. Refresh before recording an execution."
+  if (e instanceof ApiError && e.body["reason"] === "ExecutionTimeRefused") return "The performed time is in the future. Record what already happened."
   if (e instanceof ApiError && e.status === 404) return "This product or opportunity is unavailable."
   return e instanceof Error ? e.message : "The request failed. Try again."
 }

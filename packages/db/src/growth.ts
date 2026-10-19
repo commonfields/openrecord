@@ -3,11 +3,11 @@ import { Context, Data, Effect, Layer, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import {
-  canTransitionGrowth, CreateGrowthOpportunity, GrowthDecision, GrowthEvidenceInput, GrowthMetricDefinitionInput, GrowthProgress, GrowthReview, GrowthReviewConclusion,
-  GrowthOpportunityFields, GrowthProductInput, GrowthProfileUpdate, GrowthStatus,
-  type GrowthGoal, type GrowthObservedRef, type GrowthOpportunity, type GrowthProfile,
+  canTransitionGrowth, CreateGrowthOpportunity, GrowthChannel, GrowthDecision, GrowthEvidenceInput, GrowthExecutionRecord, GrowthExecutionType,
+  GrowthMetricDefinitionInput, GrowthProgress, GrowthReview, GrowthReviewConclusion, GrowthOpportunityFields, GrowthProductInput, GrowthProfileUpdate, GrowthStatus,
+  type GrowthExecution, type GrowthGoal, type GrowthObservedRef, type GrowthOpportunity, type GrowthProfile,
 } from "@openrecord/contracts"
-import { decodeRow, type RowDecodeError } from "./row-codecs.js"
+import { decodeRow, iso, type RowDecodeError } from "./row-codecs.js"
 import { RecordRepository } from "./record.js"
 import type { Session } from "./auth.js"
 
@@ -29,6 +29,13 @@ const Evidence = Schema.Union(
 )
 const Event = Schema.Struct({ id: Schema.UUID, status: GrowthStatus, revision: Schema.Int,
   actor: Schema.Literal("OPERATOR", "ASSISTANT"), userId: Schema.UUID, reason: Schema.String, conclusion: Schema.NullOr(GrowthReviewConclusion), createdAt: Schema.String })
+const ExecutionFields = { id: Schema.UUID, opportunityId: Schema.UUID, businessId: Schema.UUID, type: GrowthExecutionType, channel: GrowthChannel,
+  target: Schema.String, description: Schema.NullOr(Schema.String), performedAt: Schema.String, recordedAt: Schema.String }
+const Execution = Schema.Union(
+  Schema.Struct({ ...ExecutionFields, assurance: Schema.Literal("OPERATOR_ATTESTED"), actor: Schema.Literal("HUMAN"), actorId: Schema.UUID, verification: Schema.Null }),
+  Schema.Struct({ ...ExecutionFields, assurance: Schema.Literal("SYSTEM_VERIFIED"), actor: Schema.Literal("SYSTEM"), actorId: Schema.Null,
+    verification: Schema.Struct({ kind: Schema.Literal("GROWTH_DELIVERY"), id: Schema.UUID, claim: Schema.Literal("PR_MERGED") }) }),
+)
 const Opportunity = Schema.Struct({ ...GrowthOpportunityFields.fields, id: Schema.UUID, businessId: Schema.UUID, ownerUserId: Schema.UUID,
   createdByUserId: Schema.UUID, createdByActor: Schema.Literal("OPERATOR", "ASSISTANT"), createdAt: Schema.String, updatedAt: Schema.String,
   updatedByUserId: Schema.UUID, status: GrowthStatus, revision: Schema.Int, progress: GrowthProgress, executionCount: Schema.Int, evidence: Schema.Array(Evidence), events: Schema.Array(Event) })
@@ -45,6 +52,9 @@ export class GrowthRepository extends Context.Tag("GrowthRepository")<GrowthRepo
   readonly review: (session: Session, businessId: string, opportunityId: string, input: GrowthReview) => GrowthEffect<GrowthOpportunity>
   /** Human decisions only. No assistant or future-system actor argument. */
   readonly decide: (session: Session, businessId: string, opportunityId: string, decision: "APPROVED" | "CANCELLED", input: GrowthDecision) => GrowthEffect<GrowthOpportunity>
+  /** Operator-only. Records one HUMAN / OPERATOR_ATTESTED execution on the
+   * channel-neutral ledger and links it to the approved initiative. */
+  readonly recordExecution: (session: Session, businessId: string, opportunityId: string, input: GrowthExecutionRecord) => GrowthEffect<GrowthOpportunity>
 }>() {}
 
 export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(PgClient.PgClient, sql => {
@@ -67,11 +77,44 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
       FROM growth_profiles p JOIN growth_goal_documents g ON g.id=p.primary_goal_id AND g.business_id=p.business_id WHERE p.business_id=${businessId}`
     return rows[0] ? yield* decodeRow(Profile, "growth_profiles", rows[0]["document"]) : null
   })
+  /** Mirrors growth_opportunity_documents: an execution replaced by a
+   * correction is not double-counted, so the history length equals
+   * `executionCount` and each row carries its exact assurance. */
+  const executionDocument = (businessId: string, row: Record<string, unknown>) => ({
+    id: row["id"], opportunityId: row["opportunity_id"], businessId, type: row["type"], channel: row["channel"], target: row["target"],
+    description: row["notes"], performedAt: iso(row["performed_at"] as Date | string), recordedAt: iso(row["created_at"] as Date | string),
+    assurance: row["assurance"], actor: row["actor"], actorId: row["actor_id"],
+    verification: row["verification_kind"] === null ? null : { kind: row["verification_kind"], id: row["verification_id"], claim: row["verification_claim"] },
+  })
+  const executionsOf = (businessId: string, opportunityId: string): GrowthEffect<ReadonlyArray<GrowthExecution>> => Effect.gen(function*() {
+    const rows = yield* sql`SELECT a.opportunity_id,i.id,i.type,i.channel,i.target,i.notes,i.performed_at,i.assurance,i.actor,i.actor_id,
+      i.verification_kind,i.verification_id,i.verification_claim,i.created_at
+      FROM growth_initiative_actions a JOIN interventions i ON i.id=a.intervention_id AND i.business_id=a.business_id
+      WHERE a.business_id=${businessId} AND a.opportunity_id=${opportunityId}
+      AND NOT EXISTS(SELECT 1 FROM interventions correction WHERE correction.supersedes_id=i.id)
+      ORDER BY i.performed_at,i.created_at,i.id`
+    return yield* Effect.forEach(rows, row => decodeRow(Execution, "growth_initiative_actions", executionDocument(businessId, row)))
+  })
+  const executionsByOpportunity = (businessId: string): GrowthEffect<ReadonlyMap<string, ReadonlyArray<GrowthExecution>>> => Effect.gen(function*() {
+    const rows = yield* sql`SELECT a.opportunity_id,i.id,i.type,i.channel,i.target,i.notes,i.performed_at,i.assurance,i.actor,i.actor_id,
+      i.verification_kind,i.verification_id,i.verification_claim,i.created_at
+      FROM growth_initiative_actions a JOIN interventions i ON i.id=a.intervention_id AND i.business_id=a.business_id
+      WHERE a.business_id=${businessId} AND NOT EXISTS(SELECT 1 FROM interventions correction WHERE correction.supersedes_id=i.id)
+      ORDER BY i.performed_at,i.created_at,i.id`
+    const all = yield* Effect.forEach(rows, row => decodeRow(Execution, "growth_initiative_actions", executionDocument(businessId, row)))
+    const grouped = new Map<string, Array<GrowthExecution>>()
+    for (const execution of all) {
+      const bucket = grouped.get(execution.opportunityId)
+      if (bucket) bucket.push(execution); else grouped.set(execution.opportunityId, [execution])
+    }
+    return grouped
+  })
   const get = (accountId: string, businessId: string, opportunityId: string): GrowthEffect<GrowthOpportunity> => Effect.gen(function*() {
     yield* scope(accountId, businessId)
     const rows = yield* sql`SELECT document FROM growth_opportunity_documents WHERE id=${opportunityId} AND business_id=${businessId}`
     if (!rows[0]) return yield* refuse("OpportunityNotFound")
-    return yield* decodeRow(Opportunity, "growth_opportunities", rows[0]["document"])
+    const opportunity = yield* decodeRow(Opportunity, "growth_opportunities", rows[0]["document"])
+    return { ...opportunity, executions: yield* executionsOf(businessId, opportunityId) }
   })
   // Deterministic JSON for the operation fingerprint: key order must not let
   // two identical payloads hash differently.
@@ -187,7 +230,11 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
     list: (accountId, businessId, limit = 50) => Effect.gen(function*() {
       yield* scope(accountId, businessId)
       const rows = yield* sql`SELECT document FROM growth_opportunity_documents WHERE business_id=${businessId} ORDER BY created_at DESC,id LIMIT ${Math.min(100, Math.max(1, limit))}`
-      return yield* Effect.forEach(rows, row => decodeRow(Opportunity, "growth_opportunities", row["document"]))
+      const executions = yield* executionsByOpportunity(businessId)
+      return yield* Effect.forEach(rows, row => Effect.gen(function*() {
+        const opportunity = yield* decodeRow(Opportunity, "growth_opportunities", row["document"])
+        return { ...opportunity, executions: executions.get(opportunity.id) ?? [] }
+      }))
     }),
     create: (session, businessId, actor, raw) => sql.withTransaction(Effect.gen(function*() {
       yield* member(session, businessId)
@@ -229,5 +276,43 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
       if (decision !== "APPROVED" && decision !== "CANCELLED") return refuse("TransitionRefused")
       return transition(session, businessId, opportunityId, decision, input)
     },
+    recordExecution: (session, businessId, opportunityId, raw) => sql.withTransaction(Effect.gen(function*() {
+      yield* member(session, businessId)
+      const input = yield* parse(GrowthExecutionRecord, raw)
+      const content = { ...input, target: input.target.trim(), description: input.description.trim() }
+      // An execution asserts what already happened. The bound is checked
+      // against the database clock with a small skew window, not the caller's.
+      const timing = yield* sql`SELECT (${content.performedAt}::timestamptz <= now() + interval '5 minutes') AS accepted`
+      if (timing[0]?.["accepted"] !== true) return yield* refuse("ExecutionTimeRefused")
+      // The opportunity lock serializes sibling executions, decisions and reviews.
+      const locked = yield* sql`SELECT id FROM growth_opportunities WHERE id=${opportunityId} AND business_id=${businessId} FOR UPDATE`
+      if (!locked.length) return yield* refuse("OpportunityNotFound")
+      // The request identity is read only after the lock: concurrent identical
+      // recordings observe the first committed row, and a replay never appends
+      // a second ledger entry or re-relinks an existing one.
+      const seen = yield* sql`SELECT i.type,i.channel,i.target,i.notes,i.performed_at,a.created_by_user_id FROM growth_initiative_actions a
+        JOIN interventions i ON i.id=a.intervention_id AND i.business_id=a.business_id
+        WHERE a.opportunity_id=${opportunityId} AND a.business_id=${businessId} AND a.request_key=${content.idempotencyKey}`
+      if (seen[0]) {
+        // Instant comparison, not string formatting: a JS date string is not
+        // guaranteed to preserve milliseconds across runtimes.
+        const recorded = seen[0]["performed_at"]
+        const recordedMs = recorded instanceof Date ? recorded.getTime() : Date.parse(String(recorded))
+        const identical = seen[0]["created_by_user_id"] === session.userId && seen[0]["type"] === content.type
+          && seen[0]["channel"] === content.channel && seen[0]["target"] === content.target
+          && (seen[0]["notes"] ?? null) === content.description && recordedMs === Date.parse(content.performedAt)
+        if (!identical) return yield* refuse("IdempotencyConflict")
+        return yield* get(session.accountId, businessId, opportunityId)
+      }
+      const current = yield* get(session.accountId, businessId, opportunityId)
+      if (current.status !== "APPROVED") return yield* refuse("InitiativeNotApproved")
+      // Assurance, actor and verification are fixed here: no request field can
+      // manufacture a system-verified execution.
+      const rows = yield* sql`INSERT INTO interventions(business_id,type,target,performed_at,actor,actor_id,notes,channel,assurance)
+        VALUES(${businessId},${content.type},${content.target},${content.performedAt}::timestamptz,'HUMAN',${session.userId},${content.description},${content.channel},'OPERATOR_ATTESTED') RETURNING id`
+      yield* sql`INSERT INTO growth_initiative_actions(intervention_id,opportunity_id,business_id,request_key,created_by_user_id)
+        VALUES(${rows[0]!["id"]},${opportunityId},${businessId},${content.idempotencyKey},${session.userId})`
+      return yield* get(session.accountId, businessId, opportunityId)
+    })),
   } satisfies Context.Tag.Service<GrowthRepository>
 }))

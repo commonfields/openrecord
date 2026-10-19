@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link, useParams } from "react-router"
-import type { GrowthGoal, GrowthOpportunity, GrowthProfile, GrowthReview } from "@openrecord/contracts"
+import type { GrowthExecutionType, GrowthGoal, GrowthOpportunity, GrowthProfile, GrowthReview } from "@openrecord/contracts"
 import { LightbulbIcon, TriangleAlertIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,7 @@ import { ApiError, Auth } from "@/lib/api"
 import { Records } from "@/lib/record"
 import { useApi } from "@/lib/use-api"
 import { formatDateTime } from "@/lib/format"
-import { Growth, GROWTH_EVIDENCE_LABELS, GROWTH_GOAL_LABELS, GROWTH_STATUS_LABELS, growthError, growthEvidencePath, profileFromForm } from "@/lib/growth"
+import { Growth, GROWTH_CHANNEL_LABELS, GROWTH_EVIDENCE_LABELS, GROWTH_EXECUTION_LABELS, GROWTH_GOAL_LABELS, GROWTH_STATUS_LABELS, executionChannelsFor, executionFromForm, growthAssuranceBadge, growthAssuranceLabel, growthError, growthEvidencePath, growthExecutionActorLabel, localDateTimeInput, profileFromForm } from "@/lib/growth"
 
 function ProfileEditor({ businessId, profile, done }: { businessId: string; profile: GrowthProfile | null; done: () => Promise<void> }) {
   const [busy, setBusy] = useState(false)
@@ -72,6 +72,18 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
   const [expected, setExpected] = useState({ status: o.status, revision: o.revision })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [executionKey, setExecutionKey] = useState(() => crypto.randomUUID())
+  const [executionType, setExecutionType] = useState<GrowthExecutionType | "">("")
+  const [executionChannel, setExecutionChannel] = useState("")
+  const beginExecution = () => { setError(null); setExecutionKey(crypto.randomUUID()); setExecutionType(""); setExecutionChannel(""); setRecording(true) }
+  // The channel list follows the action: an incompatible pair is never offered,
+  // and a previously chosen channel is cleared when the action changes.
+  const chooseExecutionType = (value: string) => {
+    const type = value as GrowthExecutionType
+    setExecutionType(type)
+    if (!(executionChannelsFor(type) as ReadonlyArray<string>).includes(executionChannel)) setExecutionChannel("")
+  }
   const beginDecision = (next: "propose" | "approve" | "cancel" | "review") => {
     setDecision(next); setError(null); setReason(""); setRequestKey(crypto.randomUUID())
     setExpected({ status: o.status, revision: o.revision })
@@ -95,10 +107,19 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
     <details className="text-xs"><summary className="cursor-pointer font-medium">Event history ({o.events.length})</summary><ol className="mt-2 space-y-2 border-l pl-3">{o.events.map(event => <li key={event.id}>
       {event.conclusion ? <p>Conclusion: {event.conclusion.toLowerCase()}</p> : null}<p>{GROWTH_STATUS_LABELS[event.status]} by {event.actor === "ASSISTANT" ? "Operator Agent" : "operator"}, {formatDateTime(event.createdAt)}</p><p className="mt-0.5 text-muted-foreground">{event.reason}</p>
     </li>)}</ol></details>
+    {o.executions.length ? <details className="text-xs"><summary className="cursor-pointer font-medium">Execution history ({o.executions.length})</summary>
+      <ol className="mt-2 space-y-3 border-l pl-3">{o.executions.map(execution => <li key={execution.id}>
+        <p className="flex flex-wrap items-center gap-2"><Badge variant="outline">{GROWTH_CHANNEL_LABELS[execution.channel]}</Badge>
+          <Badge variant={execution.assurance === "SYSTEM_VERIFIED" ? "supported" : "outline"}>{growthAssuranceBadge(execution)}</Badge>
+          <span className="font-medium">{GROWTH_EXECUTION_LABELS[execution.type]}</span></p>
+        <p className="mt-0.5 break-all"><span className="text-muted-foreground">Reference: </span>{execution.target}</p>
+        {execution.description ? <p className="mt-0.5 text-muted-foreground">{execution.description}</p> : null}
+        <p className="mt-0.5 text-muted-foreground">Asserted by {growthExecutionActorLabel(execution, userId)} on {formatDateTime(execution.recordedAt)}; the operator says the action happened {formatDateTime(execution.performedAt)}. {growthAssuranceLabel(execution)}</p>
+      </li>)}</ol></details> : null}
     {o.status === "DISCOVERED" ? <Button size="sm" onClick={() => beginDecision("propose")}>Propose for review</Button> : null}
     {o.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" onClick={() => beginDecision("approve")}>Approve</Button>
       <Button size="sm" variant="outline" onClick={() => beginDecision("cancel")}>Reject</Button></div> : null}
-    {o.status === "APPROVED" ? <div className="flex gap-2"><Button size="sm" onClick={() => beginDecision("review")}>Record review</Button><Button size="sm" variant="outline" onClick={() => beginDecision("cancel")}>Cancel initiative</Button></div> : null}
+    {o.status === "APPROVED" ? <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={beginExecution}>Record execution</Button><Button size="sm" onClick={() => beginDecision("review")}>Record review</Button><Button size="sm" variant="outline" onClick={() => beginDecision("cancel")}>Cancel initiative</Button></div> : null}
     <Dialog open={decision !== null} onOpenChange={open => { if (!open && !busy) setDecision(null) }}><DialogContent><DialogHeader>
       <DialogTitle>{decision === "review" ? "Record review" : decision === "propose" ? "Propose for review" : decision === "approve" ? "Approve opportunity" : "Reject opportunity"}</DialogTitle><DialogDescription>{o.title}. {decision === "review" ? "Record your conclusion and its limits. A review does not verify publication or causal impact." : decision === "cancel" ? "Rejection cancels this opportunity and preserves its history." : decision === "propose" ? "Request human review of this hypothesis." : "Approval records your decision; it does not publish or deliver a change."}</DialogDescription>
     </DialogHeader><form className="grid gap-4" onSubmit={async e => {
@@ -113,6 +134,26 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
       <Label htmlFor={`decision-${o.id}`}>Reason for your decision</Label><Textarea id={`decision-${o.id}`} value={reason} onChange={e => setReason(e.target.value)} maxLength={1000} required />
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setDecision(null)}>Back</Button><Button disabled={busy || !reason.trim()}>{busy ? "Saving…" : decision === "review" ? "Record review" : decision === "propose" ? "Propose for review" : decision === "approve" ? "Approve opportunity" : "Reject opportunity"}</Button></DialogFooter>
+    </form></DialogContent></Dialog>
+    <Dialog open={recording} onOpenChange={open => { if (!open && !busy) setRecording(false) }}><DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader>
+      <DialogTitle>Record execution</DialogTitle><DialogDescription>{o.title}. Record what a person actually did for this approved initiative. The entry is operator-attested, does not prove publication and implies no measured outcome.</DialogDescription>
+    </DialogHeader><form className="grid gap-4" onSubmit={async e => {
+      e.preventDefault(); setBusy(true); setError(null)
+      try { await Growth.recordExecution(businessId, o.id, executionFromForm(new FormData(e.currentTarget), executionKey, { type: executionType, channel: executionChannel })); setRecording(false); await reload() }
+      catch (err) { setError(growthError(err)); await reload() } finally { setBusy(false) }
+    }}>
+      <div className="grid gap-2"><Label htmlFor={`execution-type-${o.id}`}>Action performed</Label>
+        <Select value={executionType} onValueChange={chooseExecutionType}><SelectTrigger id={`execution-type-${o.id}`}><SelectValue placeholder="Choose the action you performed" /></SelectTrigger>
+          <SelectContent>{(Object.keys(GROWTH_EXECUTION_LABELS) as Array<keyof typeof GROWTH_EXECUTION_LABELS>).map(type => <SelectItem key={type} value={type}>{GROWTH_EXECUTION_LABELS[type]}</SelectItem>)}</SelectContent></Select></div>
+      <div className="grid gap-2"><Label htmlFor={`execution-channel-${o.id}`}>Channel</Label>
+        <Select value={executionChannel} onValueChange={setExecutionChannel}><SelectTrigger id={`execution-channel-${o.id}`}><SelectValue placeholder="Choose the channel" /></SelectTrigger>
+          <SelectContent>{(executionChannelsFor(executionType) as ReadonlyArray<keyof typeof GROWTH_CHANNEL_LABELS>).map(channel => <SelectItem key={channel} value={channel}>{GROWTH_CHANNEL_LABELS[channel]}</SelectItem>)}</SelectContent></Select></div>
+      <div className="grid gap-2"><Label htmlFor={`execution-target-${o.id}`}>Reference (page, listing, campaign, profile or artifact)</Label><Input id={`execution-target-${o.id}`} name="target" maxLength={500} required />
+        <p className="text-xs text-muted-foreground">A plain identifier or an absolute http(s) URL. OpenRecord stores it as your reference and does not fetch it.</p></div>
+      <div className="grid gap-2"><Label htmlFor={`execution-description-${o.id}`}>What did you actually do?</Label><Textarea id={`execution-description-${o.id}`} name="description" maxLength={2000} required /></div>
+      <div className="grid gap-2"><Label htmlFor={`execution-time-${o.id}`}>Performed at</Label><Input id={`execution-time-${o.id}`} name="performedAt" type="datetime-local" defaultValue={localDateTimeInput(new Date())} required /></div>
+      {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setRecording(false)}>Back</Button><Button disabled={busy}>{busy ? "Saving…" : "Record execution"}</Button></DialogFooter>
     </form></DialogContent></Dialog>
   </article></Panel>
 }
