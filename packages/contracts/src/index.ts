@@ -457,3 +457,4 @@ export interface AssayQueue {
 export * from "./growth.js"
 export * from "./growth-measurement.js"
 export * from "./growth-evaluation.js"
+export * from "./growth-report.js"
