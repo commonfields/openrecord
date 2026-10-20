@@ -1,4 +1,4 @@
-import { decodeGrowthExecutionRecord, decodeGrowthProfileInput, growthChannelsForExecution, type GrowthObservedRef, type GrowthProfileInput, type GrowthGoal, type GrowthOpportunity, type GrowthProfile, type GrowthProductInput, type CreateGrowthOpportunity, type GrowthDecision, type GrowthExecution, type GrowthExecutionRecord, type GrowthExecutionType, type GrowthReview } from "@openrecord/contracts"
+import { decodeGrowthExecutionRecord, decodeGrowthProfileInput, growthChannelsForExecution, type GrowthObservedRef, type GrowthProfileInput, type GrowthGoal, type GrowthOpportunity, type GrowthProfile, type GrowthProductInput, type CreateGrowthOpportunity, type GrowthDecision, type GrowthExecution, type GrowthExecutionRecord, type GrowthExecutionType, type GrowthReview, type GrowthEvaluationAction, type GrowthEvaluationAssurance, type GrowthEvaluationCaveat, type GrowthEvaluationReason, type GrowthOutcomeEvaluation } from "@openrecord/contracts"
 import { api, ApiError } from "./api"
 
 export const GROWTH_STATUS_LABELS = { DISCOVERED: "Discovered", PROPOSED: "Proposed", APPROVED: "Approved", REVIEWED: "Reviewed", CANCELLED: "Cancelled" }
@@ -9,6 +9,28 @@ export const GROWTH_EXECUTION_LABELS = {
   SOURCE_UPDATED: "Source updated", SOURCE_PUBLISHED: "Source published", THIRD_PARTY_CORRECTION_REQUESTED: "Third-party correction requested",
   KNOWLEDGE_BASE_UPDATED: "Knowledge base updated", STRUCTURED_DATA_UPDATED: "Structured data updated", OTHER: "Other",
   CAMPAIGN_SENT: "Campaign sent", LISTING_UPDATED: "Listing updated",
+}
+/** W4 evaluation vocabulary: measurement quality and limits, never success or causation. */
+export const GROWTH_EVALUATION_REASON_LABELS: Record<GrowthEvaluationReason, string> = {
+  INITIATIVE_NOT_APPROVED: "Initiative never approved", CURRENCY_AGGREGATION_UNSUPPORTED: "Currency metrics are not aggregated",
+  NO_MEASUREMENT_PLAN: "No measurement plan", METRIC_DEFINITION_MISMATCH: "Metric definitions differ", INVALID_WINDOWS: "Invalid windows",
+  PLAN_DECLARED_AFTER_EXECUTION: "Plan declared after the action", NO_RECORDED_EXECUTION: "No recorded action",
+  EXECUTION_TIMING_INCOMPATIBLE: "Action timing overlaps a window", OBSERVATION_INCOMPLETE: "Observation window not complete",
+  MISSING_DAYS: "Missing days", UNAVAILABLE_DAYS: "Days without any import", CONFLICTING_DAYS: "Conflicting imports", SYNTHETIC_DAYS: "Synthetic data",
+}
+export const GROWTH_EVALUATION_CAVEAT_LABELS: Record<GrowthEvaluationCaveat, string> = {
+  OPERATOR_ATTESTED_ONLY: "Operator-attested, not verified", UNSPECIFIED_ASSURANCE: "Actions without stated proof",
+  MULTIPLE_INITIATIVE_ACTIONS: "Several actions on this initiative", OTHER_ACTIONS_IN_PERIOD: "Other actions in the period",
+  ACTIONS_TRUNCATED: "Action list truncated", EXECUTION_ON_OBSERVATION_START: "Action on the first observed day",
+  UNEQUAL_WINDOW_LENGTHS: "Windows differ in length", ZERO_BASELINE: "Zero baseline", PLAN_REDECLARED: "Plan re-declared",
+  OTHER_METRIC_VERSIONS_EXCLUDED: "Other metric versions excluded", INITIATIVE_CANCELLED: "Initiative cancelled",
+}
+export const GROWTH_EVALUATION_PHASE_LABELS: Record<GrowthEvaluationAction["phase"], string> = {
+  BEFORE_BASELINE: "before the baseline", BASELINE: "inside the baseline", BETWEEN_WINDOWS: "between the windows",
+  OBSERVATION: "inside the observation window", AFTER_OBSERVATION: "after the observation window", UNPLANNED: "no plan",
+}
+export const GROWTH_EVALUATION_ASSURANCE_LABELS: Record<GrowthEvaluationAssurance, string> = {
+  OPERATOR_ATTESTED: "Operator-attested", SYSTEM_VERIFIED: "System-verified", UNSPECIFIED: "No stated proof",
 }
 /** The proof level is stated before any progress claim: an operator attestation
  * is never presented as verification, and a merge is never presented as
@@ -48,6 +70,7 @@ export const Growth = {
   review: (id: string, opportunityId: string, input: GrowthReview) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/review`, { method: "POST", body: JSON.stringify(input) }),
   decide: (id: string, opportunityId: string, decision: "propose" | "approve" | "cancel", input: GrowthDecision) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/${decision}`, { method: "POST", body: JSON.stringify(input) }),
   recordExecution: (id: string, opportunityId: string, input: GrowthExecutionRecord) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/executions`, { method: "POST", body: JSON.stringify(input) }),
+  evaluation: (id: string, opportunityId: string) => api<{ evaluation: GrowthOutcomeEvaluation }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/evaluation`),
 }
 export const profileFromForm = (form: FormData): GrowthProfileInput => {
   const sourceKind = form.get("sourceKind")

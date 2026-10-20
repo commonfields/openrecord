@@ -1,9 +1,10 @@
 // W3 measurement routes: imports bound to metric definitions, per-day series
-// reads, and measurement plans. Operator-only writes; session reads stay
+// reads, and measurement plans. W4 adds the read-only, descriptive outcome
+// evaluation of one initiative. Operator-only writes; session reads stay
 // scoped to the account's business.
 import { HttpRouter, HttpServerRequest } from "@effect/platform"
 import { Effect, Schema } from "effect"
-import { GrowthMeasurementRefused, GrowthMeasurementRepository, type Session } from "@openrecord/db"
+import { GrowthEvaluationRepository, GrowthMeasurementRefused, GrowthMeasurementRepository, type Session } from "@openrecord/db"
 import { GrowthIsoDay, GrowthMeasurementPlanInput, GrowthMetricImportInput, decodeRouteId } from "@openrecord/contracts"
 import { decode, json, operatorSessionFor, readJson, recordFixtureAllowed, type WithSession } from "./record-routes.js"
 
@@ -72,6 +73,9 @@ export const growthMeasurementApi = (withSession: WithSession) => {
     HttpRouter.get("/api/growth/clients/:id/opportunities/:opportunityId/measurement-plan", opportunity((session, businessId, opportunityId) => Effect.gen(function*() {
       const plan = yield* (yield* GrowthMeasurementRepository).plan(session.accountId, businessId, opportunityId)
       return yield* json(200, plan === null ? { plan: null } : { plan })
+    }))),
+    HttpRouter.get("/api/growth/clients/:id/opportunities/:opportunityId/evaluation", opportunity((session, businessId, opportunityId) => Effect.gen(function*() {
+      return yield* json(200, { evaluation: yield* (yield* GrowthEvaluationRepository).evaluate(session.accountId, businessId, opportunityId) })
     }))),
   )
 }

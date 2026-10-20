@@ -17,10 +17,10 @@ const MetricMeta = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, ver
 const Metric = Schema.Union(
   Schema.extend(GrowthMetricDefinitionInput.members[0], MetricMeta), Schema.extend(GrowthMetricDefinitionInput.members[1], MetricMeta), Schema.extend(GrowthMetricDefinitionInput.members[2], MetricMeta),
 )
-const Goal = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, version: Schema.Int, statement: Schema.String,
+export const GrowthGoalDocument = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, version: Schema.Int, statement: Schema.String,
   metricDefinition: Metric, createdByUserId: Schema.UUID, createdAt: Schema.String })
 const Profile = Schema.Struct({ businessId: Schema.UUID, category: Schema.String, audience: Schema.String, valueProposition: Schema.String,
-  primaryGoal: Goal, updatedByUserId: Schema.UUID, updatedAt: Schema.String })
+  primaryGoal: GrowthGoalDocument, updatedByUserId: Schema.UUID, updatedAt: Schema.String })
 const EvidenceMeta = Schema.Struct({ id: Schema.UUID, createdAt: Schema.String })
 const Evidence = Schema.Union(
   Schema.extend(GrowthEvidenceInput.members[0], EvidenceMeta),
@@ -207,7 +207,7 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
     goals: (accountId, businessId) => Effect.gen(function*() {
       yield* scope(accountId, businessId)
       const rows = yield* sql`SELECT document FROM growth_goal_documents WHERE business_id=${businessId} ORDER BY (document->>'version')::int DESC LIMIT 100`
-      return yield* Effect.forEach(rows, row => decodeRow(Goal, "growth_goals", row["document"]))
+      return yield* Effect.forEach(rows, row => decodeRow(GrowthGoalDocument, "growth_goals", row["document"]))
     }),
     registerProduct: (session, raw) => sql.withTransaction(Effect.gen(function*() {
       const input = yield* parse(GrowthProductInput, raw)
