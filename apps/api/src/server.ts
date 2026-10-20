@@ -42,9 +42,11 @@ import {
   AcquisitionRepositoryLive,
   GrowthMeasurementRepositoryLive,
 } from "@openrecord/db"
+import { GitHubExecutionLive } from "@openrecord/site-operator"
 import { makeRouter } from "./router.js"
 
 const Repos = Layer.mergeAll(
+  GitHubExecutionLive,
   GrowthRepositoriesLive,
   GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,

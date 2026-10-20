@@ -198,6 +198,12 @@ export const GrowthRepositoryLive = Layer.effect(GrowthRepository, Effect.map(Pg
       const current = yield* get(session.accountId, businessId, opportunityId)
       if (current.status !== input.expectedStatus || current.revision !== input.expectedRevision) return yield* refuse("StaleDecision")
       if (!canTransitionGrowth(current.status, decision, "OPERATOR")) return yield* refuse("TransitionRefused")
+      // W7: a final decision cannot pretend it prevented an external action that may be in progress.
+      if (decision === "REVIEWED" || decision === "CANCELLED") {
+        const open = yield* sql`SELECT 1 FROM growth_execution_operations o WHERE o.opportunity_id=${opportunityId} AND o.business_id=${businessId}
+          AND growth_execution_state(o.id) IN ('DISPATCHING','AWAITING_MERGE','RECONCILING','UNKNOWN') LIMIT 1`
+        if (open.length) return yield* refuse("ExecutionUnresolved")
+      }
       yield* sql`INSERT INTO growth_opportunity_events(opportunity_id,business_id,revision,status,actor,user_id,reason,request_key,conclusion)
         VALUES(${opportunityId},${businessId},${current.revision + 1},${decision},'OPERATOR',${session.userId},${input.reason},${input.idempotencyKey},${conclusion})`
       return yield* get(session.accountId, businessId, opportunityId)

@@ -3,6 +3,7 @@ import { GrowthRepositoryLive } from "./growth.js"
 import { GrowthMeasurementRepositoryLive } from "./growth-measurement.js"
 import { GrowthEvaluationRepositoryLive } from "./growth-evaluation.js"
 import { GrowthReportRepositoryLive } from "./growth-report.js"
+import { GrowthExecutionRepositoryLive } from "./growth-execution.js"
 
 // One growth-owned layer for callers; later workstreams extend it here.
 // W4: the read-only outcome evaluator composes the W0 and W3 repositories.
@@ -10,6 +11,8 @@ import { GrowthReportRepositoryLive } from "./growth-report.js"
 const evaluation = GrowthEvaluationRepositoryLive.pipe(Layer.provide(Layer.merge(GrowthRepositoryLive, GrowthMeasurementRepositoryLive)))
 export const GrowthRepositoriesLive = Layer.mergeAll(
   GrowthRepositoryLive,
+  // W7: connected execution. Its own lifecycle; the initiative's decisions are untouched.
+  GrowthExecutionRepositoryLive,
   evaluation,
   GrowthReportRepositoryLive.pipe(Layer.provide(Layer.merge(GrowthRepositoryLive, evaluation))),
 )
