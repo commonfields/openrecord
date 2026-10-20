@@ -60,12 +60,16 @@ export const GrowthEvaluationRepositoryLive = Layer.effect(GrowthEvaluationRepos
 
       // Every current ledger entry in the planned period (calendar days in the
       // metric time zone, by performed time), plus all of this initiative's
-      // own linked actions wherever they fall. Superseded rows are excluded,
-      // exactly as the W1 execution history excludes them.
+      // own actions wherever they fall. Only the current head of each
+      // correction chain is listed, attributed to the chain's initiative.
       const rows = yield* sql`SELECT i.id,i.type,i.channel,i.target,i.notes,i.performed_at,i.created_at,i.assurance,i.actor,
           i.verification_kind,i.verification_id,i.verification_claim,a.opportunity_id,o.title
         FROM interventions i
-        LEFT JOIN growth_initiative_actions a ON a.intervention_id=i.id AND a.business_id=i.business_id
+        -- A correction appended later supersedes the linked row; the initiative
+        -- owns the whole chain (0030), so association follows the chain root.
+        LEFT JOIN LATERAL (SELECT l.opportunity_id, l.business_id FROM growth_initiative_actions l
+          WHERE l.business_id=i.business_id AND growth_intervention_chain_root(l.intervention_id)=growth_intervention_chain_root(i.id)
+          ORDER BY l.created_at, l.intervention_id LIMIT 1) a ON true
         LEFT JOIN growth_opportunities o ON o.id=a.opportunity_id AND o.business_id=a.business_id
         WHERE i.business_id=${businessId}
           AND NOT EXISTS (SELECT 1 FROM interventions c WHERE c.supersedes_id=i.id)

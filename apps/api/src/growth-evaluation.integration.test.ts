@@ -217,6 +217,27 @@ suite("growth outcome evaluation over HTTP (descriptive only, no provider calls)
     expect(caveats(e)).toEqual(["OPERATOR_ATTESTED_ONLY", "UNSPECIFIED_ASSURANCE", "OTHER_ACTIONS_IN_PERIOD"])
   })
 
+  it("a correction stays attributed to its initiative and cannot hide an earlier action from plan timing", async () => {
+    const f = await fixture(software)
+    const id = await approved(f)
+    await preDeclaredPlan(f, id)
+    const original = (await execute(f, id, {}) as { opportunity: GrowthOpportunity }).opportunity.executions[0]!.id
+    await importMetric(f, importBody(ga4Csv()))
+    // Evidence-protocol corrections carry no channel or assurance.
+    const correction = String((await pool.query(`INSERT INTO interventions(business_id,type,target,performed_at,actor,notes,supersedes_id,correction_reason)
+      VALUES($1,'SOURCE_UPDATED','https://saas.test/pricing','2026-09-08T11:00:00Z','UNKNOWN','TEST corrected time',$2,'TEST time typo') RETURNING id`, [f.businessId, original])).rows[0].id)
+    const e = await evaluate(f, id)
+    expect(e.actions.map(a => [a.id, a.association, a.assurance])).toEqual([[correction, "THIS_INITIATIVE", "UNSPECIFIED"]])
+    expect(codes(e)).toEqual([])
+    expect(caveats(e)).toContain("UNSPECIFIED_ASSURANCE")
+    // A second correction dated before the plan makes the plan late.
+    await pool.query(`INSERT INTO interventions(business_id,type,target,performed_at,actor,supersedes_id,correction_reason)
+      VALUES($1,'SOURCE_UPDATED','https://saas.test/pricing','2026-08-20T09:00:00Z','UNKNOWN',$2,'TEST actually earlier')`, [f.businessId, correction])
+    const late = await evaluate(f, id)
+    expect(late.plan?.timing).toBe("DECLARED_AFTER_EXECUTION")
+    expect(codes(late)).toEqual(["PLAN_DECLARED_AFTER_EXECUTION", "EXECUTION_TIMING_INCOMPATIBLE"])
+  })
+
   it("no plan, unapproved initiatives and currency metrics are indeterminate with reasons", async () => {
     const f = await fixture(software)
     const id = await approved(f)

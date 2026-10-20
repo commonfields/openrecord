@@ -113,10 +113,12 @@ export const GrowthMeasurementRepositoryLive = Layer.effect(GrowthMeasurementRep
     return yield* decodeRow(PlanDocumentCodec, "growth_measurement_plans", rows[0]["document"])
   })
   const firstLinkedExecutionAt = (businessId: string, opportunityId: string) => Effect.gen(function*() {
+    // Every member of a linked correction chain counts: a correction must not
+    // make a plan look pre-declared by hiding the action it corrects.
     const rows = yield* sql`SELECT MIN(i.performed_at) AS first_at FROM growth_initiative_actions a
-      JOIN interventions i ON i.id=a.intervention_id AND i.business_id=a.business_id
-      WHERE a.opportunity_id=${opportunityId} AND a.business_id=${businessId}
-      AND NOT EXISTS (SELECT 1 FROM interventions c WHERE c.supersedes_id=i.id)`
+      JOIN interventions i ON i.business_id=a.business_id
+        AND growth_intervention_chain_root(i.id)=growth_intervention_chain_root(a.intervention_id)
+      WHERE a.opportunity_id=${opportunityId} AND a.business_id=${businessId}`
     const raw = rows[0]?.["first_at"]
     if (raw == null) return null
     const d = raw instanceof Date ? raw : new Date(String(raw))

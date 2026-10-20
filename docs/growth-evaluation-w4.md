@@ -130,7 +130,11 @@ first. Each entry carries:
 - `association` (`THIS_INITIATIVE`, `OTHER_INITIATIVE` or `UNLINKED`) and the
   linked initiative's id and title.
 
-Association follows the direct W1 link, exactly like the W1 execution history.
+Association follows the correction chain: an initiative owns every row its linked
+execution's chain reaches (0030 `growth_intervention_chain_root`), so a later
+correction is listed as this initiative's action with its own (possibly
+`UNSPECIFIED`) assurance, never as an unrelated entry. W3 plan timing counts every
+chain member, so a correction cannot hide an earlier action from the plan check.
 
 ## Workspace
 
