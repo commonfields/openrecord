@@ -1,4 +1,5 @@
 import { decodeGrowthExecutionRecord, decodeGrowthProfileInput, growthChannelsForExecution, type GrowthObservedRef, type GrowthProfileInput, type GrowthGoal, type GrowthOpportunity, type GrowthProfile, type GrowthProductInput, type CreateGrowthOpportunity, type GrowthDecision, type GrowthExecution, type GrowthExecutionRecord, type GrowthExecutionType, type GrowthReview, type GrowthEvaluationAction, type GrowthEvaluationAssurance, type GrowthEvaluationCaveat, type GrowthEvaluationReason, type GrowthOutcomeEvaluation } from "@openrecord/contracts"
+import type { GrowthMeasurementPlanInput, GrowthPlanRead } from "@openrecord/contracts"
 import { api, ApiError } from "./api"
 
 export const GROWTH_STATUS_LABELS = { DISCOVERED: "Discovered", PROPOSED: "Proposed", APPROVED: "Approved", REVIEWED: "Reviewed", CANCELLED: "Cancelled" }
@@ -70,6 +71,8 @@ export const Growth = {
   review: (id: string, opportunityId: string, input: GrowthReview) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/review`, { method: "POST", body: JSON.stringify(input) }),
   decide: (id: string, opportunityId: string, decision: "propose" | "approve" | "cancel", input: GrowthDecision) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/${decision}`, { method: "POST", body: JSON.stringify(input) }),
   recordExecution: (id: string, opportunityId: string, input: GrowthExecutionRecord) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/executions`, { method: "POST", body: JSON.stringify(input) }),
+  plan: (id: string, opportunityId: string) => api<{ plan: GrowthPlanRead | null }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/measurement-plan`),
+  declarePlan: (id: string, opportunityId: string, input: GrowthMeasurementPlanInput) => api<{ plan: GrowthPlanRead }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/measurement-plan`, { method: "POST", body: JSON.stringify(input) }),
   evaluation: (id: string, opportunityId: string) => api<{ evaluation: GrowthOutcomeEvaluation }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/evaluation`),
 }
 export const profileFromForm = (form: FormData): GrowthProfileInput => {
@@ -105,4 +108,15 @@ export const growthError = (e: unknown): string => {
   if (e instanceof ApiError && e.body["reason"] === "ExecutionTimeRefused") return "The performed time is in the future. Record what already happened."
   if (e instanceof ApiError && e.status === 404) return "This product or opportunity is unavailable."
   return e instanceof Error ? e.message : "The request failed. Try again."
+}
+
+/** The four plan days from the form; the same checks the server applies, so an operator sees the problem before sending. */
+export const planFromForm = (form: FormData, requestKey: string): GrowthMeasurementPlanInput => {
+  const day = (name: string) => String(form.get(name) ?? "").trim()
+  const input = { baselineStart: day("baselineStart"), baselineEnd: day("baselineEnd"), observationStart: day("observationStart"), observationEnd: day("observationEnd"), idempotencyKey: requestKey }
+  const real = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d
+  if (![input.baselineStart, input.baselineEnd, input.observationStart, input.observationEnd].every(real)) throw new Error("Give all four dates as real calendar days.")
+  if (input.baselineStart > input.baselineEnd || input.observationStart > input.observationEnd || input.observationStart <= input.baselineEnd)
+    throw new Error("Each period must start on or before it ends, and the observation period must begin after the baseline period ends.")
+  return input
 }
