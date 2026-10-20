@@ -33,6 +33,7 @@ import { ClientRecordPage } from "./routes/client"
 import { ClientDiscoveryPage } from "./routes/client-discovery"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
+import { PublicGrowthReportPage } from "./routes/public-growth-report"
 
 function App() {
   return (
@@ -44,6 +45,7 @@ function App() {
           <Route path="/signup" element={<SignUp />} />
           {/* The client-facing record: public, read-only, outside the workspace shell. */}
           <Route path="/open/:publicId" element={<PublicRecordPage />} />
+          <Route path="/reports/:publicId" element={<PublicGrowthReportPage />} />
           <Route
             element={
               <RequireAuth>
