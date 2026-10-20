@@ -25,6 +25,8 @@ export type ExecutionActionKind = typeof ExecutionActionKind.Type
 export const EXECUTION_EXTENSIONS = [".html", ".htm"] as const
 export const EXECUTION_MAX_FILE_BYTES = 256_000
 export const EXECUTION_AUTHORIZATION_HOURS = 24
+/** How long OpenRecord keeps following an unmerged pull request. After that the operation stops, so an abandoned pull request cannot hold the initiative's final decision forever. */
+export const EXECUTION_MERGE_WINDOW_DAYS = 30
 
 /**
  * A repository-relative HTML page an execution may change. Deliberately
@@ -183,7 +185,7 @@ export const canTransitionExecution = (from: ExecutionState | null, to: Executio
 export type ExecutionStopCode =
   | "SOURCE_CHANGED" | "AUTHORIZATION_EXPIRED" | "INITIATIVE_NOT_APPROVED" | "REPOSITORY_NOT_PERMITTED" | "PATH_NOT_PERMITTED"
   | "NOT_APPLICABLE" | "BRANCH_CONFLICT" | "PROVIDER_AUTH" | "PROVIDER_NOT_FOUND" | "PROVIDER_REJECTED" | "RETRIES_EXHAUSTED"
-  | "PR_CLOSED_WITHOUT_MERGE" | "PR_CONTENT_CHANGED" | "PR_WRONG_TARGET" | "MERGED_CONTENT_DIFFERS" | "NOT_CONFIGURED"
+  | "PR_CLOSED_WITHOUT_MERGE" | "MERGE_WINDOW_EXPIRED" | "PR_CONTENT_CHANGED" | "PR_WRONG_TARGET" | "MERGED_CONTENT_DIFFERS" | "NOT_CONFIGURED"
 
 // ---- provider evidence and live observation ----
 

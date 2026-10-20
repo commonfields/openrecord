@@ -100,6 +100,8 @@ export class GrowthExecutionRepository extends Context.Tag("GrowthExecutionRepos
   readonly finishJob: (jobId: string, workerId: string) => GrowthExecutionEffect<void>
   readonly retryJob: (jobId: string, workerId: string, delaySeconds: number, errorCode: string) => GrowthExecutionEffect<void>
   readonly ensureJob: (operationId: string, businessId: string, kind: JobKind, delaySeconds: number) => GrowthExecutionEffect<void>
+  /** Queues the missing job for any in-flight operation that has none (a worker died between a state change and the next enqueue). Returns how many were queued. */
+  readonly repairJobs: () => GrowthExecutionEffect<number>
   readonly work: (businessId: string, operationId: string) => GrowthExecutionEffect<ExecutionWork>
   readonly recordEvidence: (operationId: string, businessId: string, kind: ExecutionEvidenceKind, detail: Record<string, unknown>) => GrowthExecutionEffect<void>
   readonly transition: (operationId: string, businessId: string, to: ExecutionState, reason: string, detail: Record<string, unknown>) => GrowthExecutionEffect<ExecutionOperation>
@@ -255,7 +257,9 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       yield* lock(businessId, operationId)
       const current = yield* read(businessId, operationId)
       if (current.state !== "VERIFIED") return yield* refuse("TransitionRefused")
-      yield* enqueue(operationId, businessId, "LIVE_CHECK", 0, input.idempotencyKey, session.userId)
+      // A delayed automatic check is made due now instead of being shadowed by the open job.
+      const woke = yield* sql`UPDATE growth_execution_jobs SET not_before=LEAST(not_before,now()) WHERE operation_id=${operationId} AND kind='LIVE_CHECK' AND status='QUEUED' RETURNING id`
+      if (!woke.length) yield* enqueue(operationId, businessId, "LIVE_CHECK", 0, input.idempotencyKey, session.userId)
       return current
     })),
 
@@ -281,6 +285,15 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
         WHERE id=${jobId} AND claimed_by=${workerId} AND status='CLAIMED'`
     }),
     ensureJob: (operationId, businessId, kind, delaySeconds) => enqueue(operationId, businessId, kind, delaySeconds, null, null),
+    repairJobs: () => sql.withTransaction(Effect.gen(function*() {
+      const rows = yield* sql`INSERT INTO growth_execution_jobs(operation_id,business_id,kind)
+        SELECT o.id,o.business_id,CASE WHEN growth_execution_state(o.id)='DISPATCHING' THEN 'DISPATCH' ELSE 'RECONCILE' END
+        FROM growth_execution_operations o
+        WHERE growth_execution_state(o.id) IN ('DISPATCHING','AWAITING_MERGE','RECONCILING','UNKNOWN')
+          AND NOT EXISTS (SELECT 1 FROM growth_execution_jobs j WHERE j.operation_id=o.id AND j.status IN ('QUEUED','CLAIMED') AND j.kind IN ('DISPATCH','RECONCILE'))
+        ON CONFLICT DO NOTHING RETURNING id`
+      return rows.length
+    })),
     work: (businessId, operationId) => Effect.gen(function*() {
       const operation = yield* read(businessId, operationId)
       const rows = yield* sql`SELECT b.account_id,o.after_content,o.after_blob_sha,s.canonical_origin,s.path_prefix,t.allowed_paths,growth_opportunity_status(o.opportunity_id) AS initiative_status,

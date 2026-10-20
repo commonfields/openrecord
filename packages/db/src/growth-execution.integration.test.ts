@@ -286,6 +286,13 @@ suite("connected execution persistence and guards (disposable TEST fixtures)", (
     await exec(r => r.finishJob(again!.id, "again"))
     expect(await sqlError(pool.query("UPDATE growth_execution_jobs SET status='QUEUED',claimed_by=NULL,lease_expires_at=NULL WHERE id=$1", [again!.id]))).toContain("finished job")
     expect(await sqlError(pool.query("DELETE FROM growth_execution_jobs WHERE id=$1", [again!.id]))).toContain("keep their history")
+    // A manual website check expedites a delayed automatic one instead of being shadowed by it.
+    const f2 = await fixture(), { op: done } = await verified(f2)
+    await pool.query("UPDATE growth_execution_jobs SET status='DONE' WHERE operation_id=$1 AND kind='DISPATCH'", [done.id])   // this test drove the operation by hand
+    await exec(r => r.ensureJob(done.id, f2.businessId, "LIVE_CHECK", 3600))
+    expect(await exec(r => r.claimJob("early", 60, [done.id]))).toBeNull()
+    await exec(r => r.requestLiveCheck(f2.session, f2.businessId, done.id, { idempotencyKey: randomUUID() }))
+    expect(await exec(r => r.claimJob("now", 60, [done.id]))).toMatchObject({ kind: "LIVE_CHECK", operationId: done.id })
     // A job must fit the operation: no live check before a verified merge.
     expect(await sqlError(pool.query("INSERT INTO growth_execution_jobs(operation_id,business_id,kind) VALUES($1,$2,'LIVE_CHECK')", [op.id, f.businessId]))).toContain("job does not fit")
   })

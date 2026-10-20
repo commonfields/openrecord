@@ -52,6 +52,7 @@ const STOP_COPY: Record<string, string> = {
   PROVIDER_REJECTED: "GitHub rejected the request.",
   RETRIES_EXHAUSTED: "OpenRecord could not confirm the outcome. Check the repository before approving again.",
   PR_CLOSED_WITHOUT_MERGE: "The pull request was closed without being merged.",
+  MERGE_WINDOW_EXPIRED: "The pull request was not merged within 30 days, so OpenRecord stopped following it. The pull request may still be open in the repository.",
   PR_CONTENT_CHANGED: "The pull request was changed after it was opened, so it is no longer the approved change.",
   PR_WRONG_TARGET: "The pull request no longer points at the approved repository and branch.",
   MERGED_CONTENT_DIFFERS: "What was merged is not the approved change, so no verification was recorded.",

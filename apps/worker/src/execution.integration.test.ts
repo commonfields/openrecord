@@ -10,16 +10,14 @@ import pg from "pg"
 import { executionFacts, type ExecutionOperation, type GrowthMetricDefinitionInput } from "@openrecord/contracts"
 import {
   GrowthExecutionRepository, GrowthRepositoriesLive, GrowthRepository, GrowthEvaluationRepository, GrowthReportRepository, executionRequestFingerprint,
-  SiteFindingRepositoryLive, SiteFixProposalRepositoryLive, SiteGscRepositoryLive, SiteMutationRepositoryLive, SiteOperatorEventRepositoryLive, SitePageObservationRepositoryLive,
-  SiteRunRepositoryLive, SiteTargetRepositoryLive, SiteVerificationRepositoryLive, SiteFindingEventRepositoryLive, RecordRepository, RecordRepositoryLive, type PreparedExecution, type Session,
+  RecordRepository, RecordRepositoryLive, type PreparedExecution, type Session,
 } from "@openrecord/db"
 import {
-  GitHubExecution, executionPatchSha256, fixtureGitHub, fixtureGitHubLayer, gitBlobSha, removeNoindexFromHtml, sha256Text,
+  GitHubExecution, executionPatchSha256, fixtureGitHub, fixtureGitHubLayer, gitBlobSha, inspectPage, removeNoindexFromHtml, sha256Text,
 } from "@openrecord/site-operator"
 import { diffLines, unifiedDiff } from "@openrecord/contracts"
 import type { HttpTransport } from "@openrecord/representation"
 import { ExecutionRunner, executionBackoffSeconds, makeExecutionRunnerLive } from "./execution-runner.js"
-import { SiteInspectionRunner, makeSiteInspectionRunnerLive } from "./site-inspection-runner.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const metric: GrowthMetricDefinitionInput = { conversionKind: "BOOKING", label: "Bookings", sourceKind: "OPERATOR_AGGREGATE_EXPORT", sourceIdentity: "TEST booking system", eventName: null, countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "UTC", propertyRef: null }
@@ -96,10 +94,10 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     const op = await exec(r => r.dispatch(f.session, f.businessId, a.op.id, { expectedRevision: a.op.revision, idempotencyKey: randomUUID() }))
     return { oid: a.oid, op }
   }
-  const runnerFor = async (f: F, ids: string[], opts: { live?: HttpTransport; maxAttempts?: number; workerId?: string; allowed?: boolean } = {}) => {
+  const runnerFor = async (f: F, ids: string[], opts: { live?: HttpTransport; maxAttempts?: number; workerId?: string; allowed?: boolean; now?: () => number } = {}) => {
     const allowed = opts.allowed ?? true
     const live = makeExecutionRunnerLive({ ...(opts.live ? { transport: opts.live } : {}), operationIds: ids, workerId: opts.workerId ?? `w-${randomUUID().slice(0, 6)}`, maxAttempts: opts.maxAttempts ?? 3,
-      reconcilePollSeconds: 0, liveCheckDelaySeconds: 0, leaseSeconds: 60 })
+      reconcilePollSeconds: 0, liveCheckDelaySeconds: 0, leaseSeconds: 60, ...(opts.now ? { now: opts.now } : {}) })
     const execRepo = (await Effect.runPromise(Effect.provide(GrowthExecutionRepository, ctx)))
     const built = await Effect.runPromise(Layer.buildWithScope(live.pipe(Layer.provide(Layer.mergeAll(Layer.succeed(GrowthExecutionRepository, execRepo), fixtureGitHubLayer(f.gh, (o, r, a) => allowed && o === f.owner && r === f.repo && a === f.accountId)))), scope))
     const runner = Context.get(built, ExecutionRunner)
@@ -115,21 +113,14 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
 
   it("Scenario A: one authorized change becomes one pull request, one verified merge and one linked receipt; the live site is a separate fact", async () => {
     const f = await fixture()
-    // Detect the issue with the real inspection runner against a stub site, as an operator would.
-    const siteRun = String((await pool.query("INSERT INTO site_inspection_runs(business_id,site_target_id) VALUES($1,$2) RETURNING id", [f.businessId, f.siteId])).rows[0].id)
-    const inspect = makeSiteInspectionRunnerLive({ transport: {
-      lookup: async () => ["93.184.216.34"],
-      fetch: async (raw) => {
-        const path = new URL(raw).pathname
-        const body = path === "/pricing.html" ? BEFORE : path === "/robots.txt" ? "User-agent: *\nDisallow:\n" : path === "/sitemap.xml" ? '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://salon.test/pricing.html</loc></url></urlset>' : `<html><head><title>Home</title></head><body><a href="/pricing.html">Pricing</a></body></html>`
-        return { status: 200, headers: { "content-type": path === "/sitemap.xml" ? "application/xml" : path === "/robots.txt" ? "text/plain" : "text/html" }, body: enc.encode(body), peerIp: "93.184.216.34" }
-      } } }).pipe(Layer.provide(Layer.mergeAll(SiteTargetRepositoryLive, SiteRunRepositoryLive, SitePageObservationRepositoryLive, SiteFindingRepositoryLive, SiteFindingEventRepositoryLive,
-        SiteFixProposalRepositoryLive, SiteMutationRepositoryLive, SiteVerificationRepositoryLive, SiteOperatorEventRepositoryLive, SiteGscRepositoryLive)), Layer.provide(PgLive()))
-    const sr = Context.get(await Effect.runPromise(Layer.buildWithScope(inspect, scope)), SiteInspectionRunner)
-    await Effect.runPromise(sr.runOnce())
-    const finding = (await pool.query("SELECT id,url FROM site_findings WHERE business_id=$1 AND finding_kind='BLOCKED_BY_META'", [f.businessId])).rows[0]
-    expect(finding, "the inspection found the noindex").toBeTruthy()
-    void siteRun
+    // Detect the issue with the real page classifier. The finding row is a labelled fixture: the shared site-inspection
+    // runner claims any queued run in a shared database, so it is not driven from here.
+    const classified = inspectPage({ url: LIVE, finalUrl: LIVE, status: 200, contentType: "text/html", redirectChain: [LIVE], headers: {}, html: BEFORE, failure: null })
+    const derived = classified.findings.find(x => x.findingKind === "BLOCKED_BY_META")
+    expect(derived, "the inspector finds the noindex").toBeTruthy()
+    const runId = String((await pool.query("INSERT INTO site_inspection_runs(business_id,site_target_id,state,completed_at) VALUES($1,$2,'SUCCEEDED',now()) RETURNING id", [f.businessId, f.siteId])).rows[0].id)
+    const finding = (await pool.query(`INSERT INTO site_findings(business_id,site_target_id,run_id,url,canonical_url,finding_kind,severity,category,evidence,diagnosis,recommended_action,confidence,identity_key)
+      VALUES($1,$2,$3,$4,$4,'BLOCKED_BY_META',$5,$6,$7::jsonb,$8,$9,$10,$11) RETURNING id,url`, [f.businessId, f.siteId, runId, derived!.url, derived!.severity, derived!.category, JSON.stringify(derived!.evidence), derived!.diagnosis, derived!.recommendedAction, derived!.confidence, randomUUID()])).rows[0]
     const oid = await opportunity(f)
     const p = await plan(f, { siteFindingId: finding.id as string, liveUrl: String(finding.url) })
     const fp = executionRequestFingerprint({ opportunityId: oid, targetId: p.targetId, actionKind: p.actionKind, filePath: p.filePath, liveUrl: p.liveUrl, rationale: p.rationale, siteFindingId: p.siteFindingId })
@@ -308,6 +299,18 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     expect(op.events.at(-1)!.detail["code"]).toBe("MERGED_CONTENT_DIFFERS"); expect(await receipts(op)).toBe(0)
   })
 
+  it("stops following a pull request nobody merges, so the initiative is not held forever", async () => {
+    const f = await fixture(), d = await dispatched(f)
+    await (await runnerFor(f, [d.op.id])).once()
+    expect((await get(f, d.op)).state).toBe("AWAITING_MERGE")
+    const runner = await runnerFor(f, [d.op.id], { now: () => Date.now() + 31 * 86_400_000 })   // a month later
+    const op = await settle(f, d.op, runner, o => o.state === "BLOCKED")
+    expect(op.events.at(-1)!.detail["code"]).toBe("MERGE_WINDOW_EXPIRED")
+    expect(await receipts(op)).toBe(0)
+    const decided = await run(Effect.flatMap(GrowthRepository, r => r.decide(f.session, f.businessId, d.oid, "CANCELLED", { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST cancel" })))
+    expect(decided.status).toBe("CANCELLED")
+  })
+
   it("Scenario C: a changed source, an expired authorization, a disallowed repository and a cancelled initiative stop the write", async () => {
     // the source moved after review
     let f = await fixture(); let d = await dispatched(f); let runner = await runnerFor(f, [d.op.id])
@@ -382,6 +385,24 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     await live.steps(3)
     expect(await receipts(op)).toBe(1)
     expect((await get(f, op)).state).toBe("VERIFIED")
+  })
+
+  it("repairs an operation that lost its job to a crash between a state change and the next enqueue", async () => {
+    const f = await fixture(), { op: queued } = await dispatched(f)
+    const runner = await runnerFor(f, [queued.id])
+    await runner.once()
+    expect((await get(f, queued)).state).toBe("AWAITING_MERGE")
+    // The worker died after moving to AWAITING_MERGE but before the reconcile job existed: close every open job.
+    await pool.query("UPDATE growth_execution_jobs SET status='DONE',claimed_by=NULL,lease_expires_at=NULL WHERE operation_id=$1 AND status<>'DONE'", [queued.id])
+    expect(await runner.once()).toBe(false)                                  // nothing to claim: the operation would be silently stuck
+    const queuedBefore = Number((await pool.query("SELECT count(*) FROM growth_execution_jobs WHERE operation_id=$1 AND status='QUEUED'", [queued.id])).rows[0].count)
+    expect(queuedBefore).toBe(0)
+    expect(await exec(r => r.repairJobs())).toBeGreaterThanOrEqual(1)
+    expect(Number((await pool.query("SELECT count(*) FROM growth_execution_jobs WHERE operation_id=$1 AND status='QUEUED' AND kind='RECONCILE'", [queued.id])).rows[0].count)).toBe(1)
+    expect(await exec(r => r.repairJobs())).toBe(0)                           // idempotent: no duplicate
+    f.gh.merge(1)
+    const op = await settle(f, queued, runner, o => o.state === "VERIFIED")
+    expect(op.state).toBe("VERIFIED"); expect(await receipts(op)).toBe(1)
   })
 
   it("Scenario C: a final initiative decision waits for an unresolved execution and then preserves the truth", async () => {

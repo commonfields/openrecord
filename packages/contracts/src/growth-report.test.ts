@@ -26,6 +26,15 @@ const snapshot = (overrides: Partial<GrowthReportSnapshot> = {}): GrowthReportSn
 })
 
 describe("growth report snapshot integrity", () => {
+  it("the client page does not name the customer's repository for a verified merge, and still shows ordinary references", () => {
+    const verified = { ...evaluation.actions[0]!, id: "00000000-0000-4000-8000-000000000061", type: "SOURCE_UPDATED" as const, channel: "WEBSITE", assurance: "SYSTEM_VERIFIED" as const, actor: "SYSTEM",
+      reference: "https://github.com/acme/private-site/pull/7", verification: { kind: "GROWTH_DELIVERY", id: "00000000-0000-4000-8000-000000000062", claim: "PR_MERGED" } }
+    const pub = publicGrowthReport({ id: null, snapshotDigest: null, superseded: false, snapshot: snapshot({ evaluation: { ...evaluation, actions: [evaluation.actions[0]!, verified] } }) })
+    expect(JSON.stringify(pub)).not.toContain("private-site")
+    expect(pub.actions[1]).toMatchObject({ assurance: "SYSTEM_VERIFIED", verification: { kind: "GROWTH_DELIVERY", claim: "PR_MERGED" } })
+    expect(pub.actions[0]!.reference).toBe("TEST listing")
+  })
+
   it("canonical JSON is independent of key order and digests deterministically", () => {
     expect(canonicalJson({ b: 1, a: { d: [2, { z: 1, y: 2 }], c: null } })).toBe('{"a":{"c":null,"d":[2,{"y":2,"z":1}]},"b":1}')
     const a = canonicalJson(snapshot()), b = canonicalJson(JSON.parse(JSON.stringify(snapshot())) as unknown)

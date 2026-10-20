@@ -23,7 +23,7 @@ import type { SqlError } from "@effect/sql/SqlError"
 import {
   GrowthExecutionRepository, GrowthExecutionRefused, type ExecutionJob, type ExecutionWork, type RowDecodeError,
 } from "@openrecord/db"
-import { executionPathAllowed, executionRepositoryDenied, type ExecutionOperation, type ExecutionStopCode } from "@openrecord/contracts"
+import { EXECUTION_MERGE_WINDOW_DAYS, executionPathAllowed, executionRepositoryDenied, type ExecutionOperation, type ExecutionStopCode } from "@openrecord/contracts"
 import { safeFetch, type HttpTransport } from "@openrecord/representation"
 import { isInScope } from "@openrecord/discovery"
 import {
@@ -46,6 +46,8 @@ export interface ExecutionRunnerOptions {
   readonly reconcilePollSeconds?: number
   /** First live check after a verified merge. A deployment takes time; 0 in tests. */
   readonly liveCheckDelaySeconds?: number
+  /** Test seam for the merge-window and authorization-expiry clocks. */
+  readonly now?: () => number
 }
 const SITE_FETCH_TIMEOUT_MS = 10_000
 const LIVE_MAX_BYTES = 1_000_000
@@ -64,9 +66,12 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
   const workerId = opts.workerId ?? `execution-worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
   const leaseSeconds = opts.leaseSeconds ?? 120
   const maxAttempts = opts.maxAttempts ?? 5
-  const pollSeconds = opts.reconcilePollSeconds ?? 120
-  const liveDelay = opts.liveCheckDelaySeconds ?? 300
+  // Deployment-tunable: how often a pull request is re-read, and how long after a verified merge the first live check runs.
+  const fromEnv = (name: string, fallback: number) => { const n = Number(process.env[name]); return Number.isFinite(n) && n >= 0 && n <= 86_400 ? n : fallback }
+  const pollSeconds = opts.reconcilePollSeconds ?? fromEnv("EXECUTION_RECONCILE_POLL_SECONDS", 120)
+  const liveDelay = opts.liveCheckDelaySeconds ?? fromEnv("EXECUTION_LIVE_CHECK_DELAY_SECONDS", 300)
   const only = opts.operationIds
+  const now = opts.now ?? (() => Date.now())
 
   const log = (message: string, extra: Record<string, unknown> = {}) => Effect.logInfo(message).pipe(Effect.annotateLogs({ component: "execution-runner", ...extra }))
   const stop = (op: ExecutionOperation, to: "FAILED" | "BLOCKED", code: ExecutionStopCode, reason: string, detail: Record<string, unknown> = {}) =>
@@ -78,12 +83,15 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
   // ---------------------------------------------------------------- dispatch
   const dispatch = (job: ExecutionJob, work: ExecutionWork): Effect.Effect<Outcome, SqlError | RowDecodeError | GrowthExecutionRefused> => Effect.gen(function*() {
     const op = work.operation
-    if (op.state !== "DISPATCHING") return DONE                                           // already settled elsewhere
+    if (op.state !== "DISPATCHING") {                                                     // already advanced: make sure it is being followed
+      if (op.state === "AWAITING_MERGE" || op.state === "RECONCILING" || op.state === "UNKNOWN") yield* repo.ensureJob(op.id, op.businessId, "RECONCILE", 0)
+      return DONE
+    }
     const transport = config.transport
     // Re-prove authority now, not when the job was queued.
     if (work.initiativeStatus !== "APPROVED") { yield* stop(op, "BLOCKED", "INITIATIVE_NOT_APPROVED", "The initiative is no longer approved"); return DONE }
     if (work.authorizedPatchSha256 !== op.patchSha256 || !work.authorizationExpiresAt) { yield* stop(op, "BLOCKED", "AUTHORIZATION_EXPIRED", "The authorization does not match the change"); return DONE }
-    if (Date.parse(work.authorizationExpiresAt) <= Date.now()) { yield* stop(op, "BLOCKED", "AUTHORIZATION_EXPIRED", "The authorization expired before dispatch"); return DONE }
+    if (Date.parse(work.authorizationExpiresAt) <= now()) { yield* stop(op, "BLOCKED", "AUTHORIZATION_EXPIRED", "The authorization expired before dispatch"); return DONE }
     if (executionRepositoryDenied(op.owner, op.repository) || !config.allowed(op.owner, op.repository, work.accountId)) { yield* stop(op, "BLOCKED", "REPOSITORY_NOT_PERMITTED", "The repository is not permitted for this account"); return DONE }
     if (!executionPathAllowed(op.filePath, work.allowedPaths)) { yield* stop(op, "BLOCKED", "PATH_NOT_PERMITTED", "The page is outside the connected paths"); return DONE }
     if (!transport) { yield* stop(op, "BLOCKED", "NOT_CONFIGURED", "Provider access is not configured"); return DONE }
@@ -194,7 +202,7 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
         if (!sameRepo(pr.baseRepository, owner, repository) || pr.baseRef !== op.baseBranch || pr.headRef !== branch) { yield* stop(op, "BLOCKED", "PR_WRONG_TARGET", "The pull request targets another repository or branch"); return DONE }
         yield* repo.recordEvidence(op.id, op.businessId, "PR_OPENED", { prNumber: pr.number, prUrl: pr.url, headSha: pr.headSha, headRef: pr.headRef, baseRef: pr.baseRef, baseRepository: pr.baseRepository })
         yield* repo.transition(op.id, op.businessId, "AWAITING_MERGE", "Reconciled: the pull request exists", { prNumber: pr.number, prUrl: pr.url, providerChecked: true })
-        return { retry: 0, code: "PENDING_MERGE" }               // finish this job and look again at once
+        return { retry: 0, code: "PENDING_MERGE" }               // look again at once
       }
       // Nothing opened. Retrying is safe now because the dispatch steps read before they write.
       const uncertainCycles = op.evidence.filter(e => e.kind === "DISPATCH_UNCERTAIN").length
@@ -231,8 +239,13 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
         yield* stop(op, "BLOCKED", "PR_CONTENT_CHANGED", "The pull request was changed after it was opened, so it is no longer the approved change")
         return DONE
       }
+      // An abandoned pull request is not followed forever: after the merge window the operation stops and the initiative is free to be decided.
+      if (now() - Date.parse(opened.observedAt) > EXECUTION_MERGE_WINDOW_DAYS * 86_400_000) {
+        yield* stop(op, "BLOCKED", "MERGE_WINDOW_EXPIRED", `The pull request was not merged within ${EXECUTION_MERGE_WINDOW_DAYS} days; OpenRecord stopped following it`)
+        return DONE
+      }
       if (op.state === "RECONCILING") yield* repo.transition(op.id, op.businessId, "AWAITING_MERGE", "Not merged after all", {})
-      return { retry: pollSeconds, code: "PENDING_MERGE" }
+      return { retry: pollSeconds, code: "WAITING_FOR_MERGE" }
     }
     // The provider says merged. Verify what was merged before claiming anything.
     if (op.state === "AWAITING_MERGE") op = yield* repo.transition(op.id, op.businessId, "RECONCILING", "Merge observed; verifying the merged change", { mergeObserved: true, mergeCommitSha: pr.mergeCommitSha })
@@ -286,18 +299,20 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
 
   const runOnce = (): Effect.Effect<boolean, SqlError | RowDecodeError> => Effect.gen(function*() {
     const job = yield* repo.claimJob(workerId, leaseSeconds, only).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.succeed(null)))
-    if (!job) return false
+    if (!job) {
+      // Idle: make sure no in-flight operation is left without a job (a worker may have died between a state change and the next enqueue).
+      // Tests sharing a database repair only their own operations by not calling this.
+      if (only === undefined) yield* repo.repairJobs().pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.succeed(0)), Effect.flatMap(n => n > 0 ? log("repaired missing execution jobs", { count: n }) : Effect.void))
+      return false
+    }
     const outcome = yield* repo.work(job.businessId, job.operationId).pipe(
       Effect.flatMap(work => job.kind === "DISPATCH" ? dispatch(job, work) : job.kind === "RECONCILE" ? reconcile(job, work) : liveCheck(job, work)),
       // A refused move (stale state after a race) means someone else already settled it: finish rather than loop.
       Effect.catchTag("GrowthExecutionRefused", e => Effect.as(log("execution job refused", { reason: e.reason, kind: job.kind }), DONE as Outcome)),
     )
+    // Waiting for a maintainer re-queues the same job in one atomic update: there is no window with no job.
     if ("done" in outcome) yield* repo.finishJob(job.id, workerId).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.void))
-    else if (job.kind === "RECONCILE" && outcome.code === "PENDING_MERGE") {
-      // Waiting for a maintainer is not a retry: it does not count against the attempt budget.
-      yield* repo.finishJob(job.id, workerId).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.void))
-      yield* repo.ensureJob(job.operationId, job.businessId, "RECONCILE", outcome.retry).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.void))
-    } else yield* repo.retryJob(job.id, workerId, outcome.retry, outcome.code).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.void))
+    else yield* repo.retryJob(job.id, workerId, outcome.retry, outcome.code).pipe(Effect.catchTag("GrowthExecutionRefused", () => Effect.void))
     return true
   }).pipe(Effect.timeout(Duration.seconds(300)), Effect.catchTag("TimeoutException", () => Effect.succeed(false)))
 
