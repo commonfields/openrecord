@@ -1,0 +1,357 @@
+{
+ "note": "TEST fixture results from scripts/marketing-w6-acceptance.py against the built API and a disposable PostgreSQL 16. Not customer evidence.",
+ "summary": {
+  "checks": 87,
+  "failed": 0
+ },
+ "results": [
+  {
+   "check": "A.01 software business, goal and GA4 count metric created through the API",
+   "pass": true
+  },
+  {
+   "check": "A.02 initiative proposed then approved by an authenticated operator",
+   "pass": true
+  },
+  {
+   "check": "A.03 measurement plan can be declared through the API",
+   "pass": true
+  },
+  {
+   "check": "A.04 operator-attested website action recorded",
+   "pass": true
+  },
+  {
+   "check": "A.05 evaluation uses the latest plan; earlier one disclosed as re-declared",
+   "pass": true
+  },
+  {
+   "check": "A.05b a plan declared after the action cannot be read as pre-declared",
+   "pass": true
+  },
+  {
+   "check": "A.06 second initiative: attested execution recorded",
+   "pass": true
+  },
+  {
+   "check": "A.07 valid GA4 baseline and observation measurements imported",
+   "pass": true
+  },
+  {
+   "check": "A.08 evaluation COMPARABLE with descriptive comparison only",
+   "pass": true
+  },
+  {
+   "check": "A.09 plan is PRE_DECLARED",
+   "pass": true
+  },
+  {
+   "check": "A.10 action assurance is attestation, never verification",
+   "pass": true
+  },
+  {
+   "check": "A.11 evaluation carries limitations and caveat list",
+   "pass": true
+  },
+  {
+   "check": "A.12 report preview has no invented human decision",
+   "pass": true
+  },
+  {
+   "check": "A.13 human review decision appears in preview verbatim",
+   "pass": true
+  },
+  {
+   "check": "A.14 immutable report v1 published",
+   "pass": true
+  },
+  {
+   "check": "A.15 share link has a 43-char base64url (256-bit) id",
+   "pass": true
+  },
+  {
+   "check": "A.16 client-facing context opens the report (no session)",
+   "pass": true
+  },
+  {
+   "check": "A.17 public headers: no-store, noindex, no-referrer",
+   "pass": true
+  },
+  {
+   "check": "A.18 public report shows figures, decision, limitations",
+   "pass": true
+  },
+  {
+   "check": "A.19 public payload contains no 'TEST private'",
+   "pass": true
+  },
+  {
+   "check": "A.19 public payload contains no 'date,value'",
+   "pass": true
+  },
+  {
+   "check": "A.19 public payload contains no 'key events'",
+   "pass": true
+  },
+  {
+   "check": "A.19 public payload contains no 'or_session'",
+   "pass": true
+  },
+  {
+   "check": "A.19 public payload contains no 'password'",
+   "pass": true
+  },
+  {
+   "check": "B.01 service business with a booking goal and operator-CSV metric (Asia/Makassar)",
+   "pass": true
+  },
+  {
+   "check": "B.02 multiple executions recorded (third-party listing + email)",
+   "pass": true
+  },
+  {
+   "check": "B.03 unrelated activity recorded on another initiative",
+   "pass": true
+  },
+  {
+   "check": "B.04 operator CSV with incomplete coverage accepted; missing days stay missing",
+   "pass": true
+  },
+  {
+   "check": "B.05 evaluation INDETERMINATE with incomplete coverage",
+   "pass": true
+  },
+  {
+   "check": "B.06 no invented comparison figures",
+   "pass": true
+  },
+  {
+   "check": "B.07 missing days are null, never zero",
+   "pass": true
+  },
+  {
+   "check": "B.08 other activity disclosed",
+   "pass": true
+  },
+  {
+   "check": "B.09 timezone from definition (Asia/Makassar) respected",
+   "pass": true
+  },
+  {
+   "check": "B.10 service preview: no decision invented",
+   "pass": true
+  },
+  {
+   "check": "B.11 report published despite uncertainty (INDETERMINATE)",
+   "pass": true
+  },
+  {
+   "check": "B.12 service share link works",
+   "pass": true
+  },
+  {
+   "check": "B.13 public service report omits private notes",
+   "pass": true
+  },
+  {
+   "check": "B.14 revocation disables access",
+   "pass": true
+  },
+  {
+   "check": "B.15 revoked, unknown and malformed links are byte-identical 404s",
+   "pass": true
+  },
+  {
+   "check": "C.01 attested execution never reads as verified (ledger)",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account evaluation refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account preview refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account report refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account share refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account revoke refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account series refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account import refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account execute refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account plan refused",
+   "pass": true
+  },
+  {
+   "check": "C.02 cross-account publish refused",
+   "pass": true
+  },
+  {
+   "check": "C.03 unauthenticated evaluation refused",
+   "pass": true
+  },
+  {
+   "check": "C.04 cross-origin/no-origin write refused",
+   "pass": true
+  },
+  {
+   "check": "C.05 wrong format for GA4 definition refused",
+   "pass": true
+  },
+  {
+   "check": "C.06 fractional/negative values refused",
+   "pass": true
+  },
+  {
+   "check": "C.07 duplicate day refused",
+   "pass": true
+  },
+  {
+   "check": "C.08 row outside declared range refused",
+   "pass": true
+  },
+  {
+   "check": "C.09 conflicting exports stay visible",
+   "pass": true
+  },
+  {
+   "check": "C.10a same bytes under a different provenance are refused, not relabelled",
+   "pass": true
+  },
+  {
+   "check": "C.10 synthetic observations identified",
+   "pass": true
+  },
+  {
+   "check": "C.11 currency metric plan fails closed",
+   "pass": true
+  },
+  {
+   "check": "C.12 currency metric import fails closed",
+   "pass": true
+  },
+  {
+   "check": "C.13 'roi' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "C.13 'caused by' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "C.13 'attributed' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "C.13 'lift' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "C.13 'success' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "C.13 'return on' is absent outside the limitations text",
+   "pass": true
+  },
+  {
+   "check": "D.01 retry with the same key is idempotent",
+   "pass": true
+  },
+  {
+   "check": "D.02 new import leaves the published figures unchanged",
+   "pass": true
+  },
+  {
+   "check": "D.03 stale evidence is refused after a new import",
+   "pass": true
+  },
+  {
+   "check": "D.04 correction publishes a new version superseding the previous one",
+   "pass": true
+  },
+  {
+   "check": "D.05 old link still shows frozen v1 with a newer-version notice",
+   "pass": true
+  },
+  {
+   "check": "D.06 concurrent publication keeps a linear version chain",
+   "pass": true
+  },
+  {
+   "check": "D.07 published report row cannot be updated",
+   "pass": true
+  },
+  {
+   "check": "D.08 published report row cannot be deleted",
+   "pass": true
+  },
+  {
+   "check": "D.09 stored digest matches stored snapshot text",
+   "pass": true
+  },
+  {
+   "check": "D.10 raw CSV never stored in report snapshots",
+   "pass": true
+  },
+  {
+   "check": "D.11 share creation returns the active link (no id churn)",
+   "pass": true
+  },
+  {
+   "check": "D.12 revoked link never works again; a new link has a new id",
+   "pass": true
+  },
+  {
+   "check": "D.13 share identifiers are unique",
+   "pass": true
+  },
+  {
+   "check": "E.01 corrected execution stays attributed to its initiative",
+   "pass": true
+  },
+  {
+   "check": "E.02 correction does not invalidate plan timing",
+   "pass": true
+  },
+  {
+   "check": "E.03 a correction dated before the plan cannot hide an earlier action",
+   "pass": true
+  },
+  {
+   "check": "E.04 action day uses the metric time zone",
+   "pass": true
+  },
+  {
+   "check": "E.05 earlier initiative keeps its pinned goal and metric version",
+   "pass": true
+  },
+  {
+   "check": "E.06 the profile change created a new metric version",
+   "pass": true
+  },
+  {
+   "check": "E.07 an initiative without approval cannot be published",
+   "pass": true
+  }
+ ]
+}
