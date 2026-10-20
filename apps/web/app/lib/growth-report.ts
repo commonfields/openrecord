@@ -68,7 +68,7 @@ export const REPORT_CAVEAT_COPY: Record<GrowthEvaluationCaveat, string> = {
 }
 export const REPORT_ASSURANCE_COPY: Record<GrowthEvaluationAssurance, string> = {
   OPERATOR_ATTESTED: "Recorded by the team, not independently verified",
-  SYSTEM_VERIFIED: "Independently verified by a system check",
+  SYSTEM_VERIFIED: "The merge into the website's code repository was confirmed with the code host. This does not show the page is live.",
   UNSPECIFIED: "No stated level of proof",
 }
 /** Standing limits of every report, in client language. The evaluator's own

@@ -89,7 +89,8 @@ export const growthExecutionApi = (withSession: WithSession) => {
       baseBlobSha: file.blobSha, afterBlobSha: gitBlobSha(after), beforeSha256, afterSha256, patchSha256, afterContent: after, diff, rationale: input.rationale.trim(), idempotencyKey: input.idempotencyKey } as const
     return yield* repo.prepare(session, businessId, opportunityId, fingerprint, plan).pipe(
       // Two identical requests racing: the loser returns the winner's operation.
-      Effect.catchIf((e): e is GrowthExecutionRefused => e instanceof GrowthExecutionRefused && e.reason === "IdempotencyConflict",
+      // (The page guard can refuse the loser first, so that reason is a replay candidate too.)
+      Effect.catchIf((e): e is GrowthExecutionRefused => e instanceof GrowthExecutionRefused && (e.reason === "IdempotencyConflict" || e.reason === "ExecutionAlreadyOpen"),
         e => repo.findPrepared(session, businessId, opportunityId, fingerprint, input.idempotencyKey).pipe(Effect.flatMap(found => found ? Effect.succeed(found) : Effect.fail(e)))))
   })
 
@@ -101,6 +102,8 @@ export const growthExecutionApi = (withSession: WithSession) => {
       const input = decode(ConnectExecutionTarget, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
       const gh = yield* gitHubConfig
+      // Scope first: another account's business is "not found" before anything about the destination is discussed.
+      yield* (yield* GrowthExecutionRepository).targets(session.accountId, businessId)
       // A repository must be on the server allowlist for this account before it can even be connected.
       if (!executionRepositoryPermitted(gh.allowed, input.owner, input.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
       return yield* json(200, { target: yield* (yield* GrowthExecutionRepository).connectTarget(session, businessId, input) }, PRIVATE_HEADERS)
