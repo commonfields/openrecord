@@ -1,4 +1,4 @@
-import { useParams } from "react-router"
+import { useParams, useSearchParams } from "react-router"
 import { TriangleAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { EmptyState, PageHeader } from "@/components/page"
@@ -12,6 +12,7 @@ import { Growth } from "@/lib/growth"
 // the same immutable metric definitions.
 export default function ClientGrowthMeasurementPage() {
   const { id = "" } = useParams()
+  const [params] = useSearchParams()
   const state = useApi(`growth-measurement:${id}`, async () => {
     const [record, growth] = await Promise.all([Records.get(id), Growth.profile(id)])
     return { name: record.record.profile.name, goals: growth.goals }
@@ -21,8 +22,8 @@ export default function ClientGrowthMeasurementPage() {
   const { name, goals } = state.data
   return <div className="space-y-5 pb-4">
     <PageHeader title={`${name} measurement`} back={{ to: `/clients/${id}`, label: "Client record" }}
-      description="Import daily aggregates for one metric definition at a time and read the resolved series. The newest import that reports a day wins; days no import reports stay missing and disagreements stay visible — no impact, lift or attribution is inferred."
+      description="Import daily aggregates, or read them from Google Analytics, for one metric definition at a time and read the resolved series. The newest import that reports a day wins; days no import reports stay missing and disagreements stay visible — no impact, lift or attribution is inferred."
       meta={<><a href={`/clients/${id}/growth`} className="font-medium hover:underline">Growth workspace</a><a href={`/clients/${id}`} className="font-medium hover:underline">Client record</a></>} />
-    <GrowthMeasurement businessId={id} goals={goals} />
+    <GrowthMeasurement businessId={id} goals={goals} ga4Status={params.get("ga4")} />
   </div>
 }

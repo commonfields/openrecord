@@ -8,10 +8,10 @@ import { Context, Data, Effect, Layer, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import {
-  GrowthIsoDay, GrowthMeasurementPlanInput, GrowthMetricImportInput, GrowthImportProvenance, decodeRouteId,
+  GrowthIsoDay, GrowthMeasurementPlanInput, GrowthMetricImportInput, GrowthStoredProvenance, decodeRouteId,
   type GrowthMeasurementPlanInput as PlanInput, type GrowthMetricImportInput as ImportInput,
   type GrowthMetricCoverage, type GrowthMetricImport, type GrowthPlanRead,
-  type GrowthSeries, type GrowthSeriesConflict, type GrowthSeriesDay,
+  type GrowthSeries, type GrowthSeriesConflict, type GrowthSeriesDay, type GrowthSeriesRevision,
 } from "@openrecord/contracts"
 import { decodeRow, type RowDecodeError } from "./row-codecs.js"
 import { parseGa4Export } from "./acquisition-ga4.js"
@@ -37,7 +37,7 @@ const DefinitionDoc = Schema.Struct({
 type Definition = typeof DefinitionDoc.Type
 const ImportDocument = Schema.Struct({
   id: Schema.UUID, businessId: Schema.UUID, metricDefinitionId: Schema.UUID,
-  sourceKind: Schema.Literal("GA4_AGGREGATE_EXPORT", "OPERATOR_AGGREGATE_EXPORT"), provenance: GrowthImportProvenance,
+  sourceKind: Schema.Literal("GA4_AGGREGATE_EXPORT", "OPERATOR_AGGREGATE_EXPORT"), provenance: GrowthStoredProvenance,
   propertyRef: Schema.NullOr(Schema.String), dateStart: Schema.String, dateEnd: Schema.String, timeZone: Schema.String,
   rawDigest: Schema.String, rowCount: Schema.Int, importedByUserId: Schema.UUID, importedAt: Schema.String,
 })
@@ -212,23 +212,48 @@ export const GrowthMeasurementRepositoryLive = Layer.effect(GrowthMeasurementRep
           FROM covering
         )
         SELECT day::text AS day, value, provenance FROM ranked WHERE rn = 1 ORDER BY day`
-      const conflictRows = yield* sql`SELECT r.day::text AS day, array_agg(DISTINCT r.value)::int[] AS values
+      // Values reported for the day. An authenticated provider source revises
+      // itself: only its newest collection takes part in the comparison, so a
+      // GA4 revision is a revision, not a conflict. Every operator or fixture
+      // import still takes part, so a disagreement between provenance classes
+      // (or between two operator files) stays a CONFLICT exactly as in W3.
+      const conflictRows = yield* sql`WITH reported AS (
+          SELECT r.day, r.value, i.provenance, i.imported_at, i.id
+          FROM growth_metric_imports i
+          JOIN growth_metric_rows r ON r.business_id=i.business_id AND r.import_id=i.id
+          WHERE i.business_id=${businessId} AND i.metric_definition_id=${metricDefinitionId}
+            AND i.date_start <= ${end}::date AND i.date_end >= ${start}::date
+            AND r.day BETWEEN ${start}::date AND ${end}::date
+        ), latest_provider AS (
+          SELECT DISTINCT ON (day) day, value FROM reported WHERE provenance='AUTHENTICATED_PROVIDER_API' ORDER BY day, imported_at DESC, id DESC
+        ), compared AS (
+          SELECT day, value FROM reported WHERE provenance <> 'AUTHENTICATED_PROVIDER_API'
+          UNION ALL SELECT day, value FROM latest_provider
+        )
+        SELECT day::text AS day, array_agg(DISTINCT value)::int[] AS values FROM compared
+        GROUP BY day HAVING count(DISTINCT value) > 1 ORDER BY day`
+      const revisionRows = yield* sql`SELECT r.day::text AS day, array_agg(r.value ORDER BY i.imported_at, i.id)::int[] AS values
         FROM growth_metric_imports i
         JOIN growth_metric_rows r ON r.business_id=i.business_id AND r.import_id=i.id
-        WHERE i.business_id=${businessId} AND i.metric_definition_id=${metricDefinitionId}
+        WHERE i.business_id=${businessId} AND i.metric_definition_id=${metricDefinitionId} AND i.provenance='AUTHENTICATED_PROVIDER_API'
           AND i.date_start <= ${end}::date AND i.date_end >= ${start}::date
           AND r.day BETWEEN ${start}::date AND ${end}::date
         GROUP BY r.day HAVING count(DISTINCT r.value) > 1 ORDER BY r.day`
+      const revisions: GrowthSeriesRevision[] = revisionRows.map(row => {
+        const all = [...((row["values"] as unknown as ReadonlyArray<number>) ?? [])].map(Number)
+        // Consecutive identical collections are one reported value.
+        return { day: String(row["day"]), values: all.filter((v, i) => i === 0 || v !== all[i - 1]) }
+      })
       const conflicts: GrowthSeriesConflict[] = conflictRows.map(row => ({
         day: String(row["day"]),
         values: [...((row["values"] as unknown as ReadonlyArray<number>) ?? [])].map(Number).sort((a, b) => a - b),
       }))
       const conflicting = new Set(conflicts.map(c => c.day))
-      const resolvedByDay = new Map<string, { value: number | null; provenance: GrowthImportProvenance }>()
+      const resolvedByDay = new Map<string, { value: number | null; provenance: GrowthStoredProvenance }>()
       for (const row of resolved) {
         resolvedByDay.set(String(row["day"]), {
           value: row["value"] == null ? null : Number(row["value"]),
-          provenance: String(row["provenance"] ?? "") as GrowthImportProvenance,
+          provenance: String(row["provenance"] ?? "") as GrowthStoredProvenance,
         })
       }
       const days: GrowthSeriesDay[] = []
@@ -237,15 +262,18 @@ export const GrowthMeasurementRepositoryLive = Layer.effect(GrowthMeasurementRep
         const found = resolvedByDay.get(day)
         if (!found) { days.push({ day, value: null, origin: null, status: "UNAVAILABLE" }); continue }
         if (found.value === null) { days.push({ day, value: null, origin: null, status: "MISSING" }); continue }
+        const authenticated = found.provenance === "AUTHENTICATED_PROVIDER_API"
         days.push({
           day, value: found.value,
-          origin: found.provenance === "OPERATOR_SUPPLIED_EXPORT" ? "REAL" : "SYNTHETIC",
+          origin: found.provenance === "OPERATOR_SUPPLIED_EXPORT" || authenticated ? "REAL" : "SYNTHETIC",
           status: conflicting.has(day) ? "CONFLICT" : "OK",
+          ...(authenticated ? { provider: "GA4_DATA_API" as const } : {}),
         })
       }
       return {
         businessId, metricDefinitionId, metricLabel: def.label, definitionVersion: def.version, sourceKind: def.sourceKind,
         countingSemantics: def.countingSemantics, unit: def.unit, timeZone: def.reportingTimeZone, start, end, days, conflicts,
+        ...(revisions.length ? { revisions } : {}),
       } satisfies GrowthSeries
     }),
     declarePlan: (session, businessId, opportunityId, raw) => sql.withTransaction(Effect.gen(function*() {

@@ -67,14 +67,27 @@ export const GrowthReportRepositoryLive = Layer.effect(GrowthReportRepository, E
     const reviewed = [...opportunity.events].reverse().find(e => e.status === "REVIEWED" && e.actor === "OPERATOR" && e.conclusion !== null)
     const review: GrowthReportReview | null = reviewed ? { conclusion: reviewed.conclusion!, reason: reviewed.reason, decidedAt: reviewed.createdAt } : null
     const plan = evaluation.plan
-    const sourceRows = plan ? yield* sql`SELECT id, source_kind, provenance, date_start::text AS date_start, date_end::text AS date_end, row_count, raw_digest, imported_at
-        FROM growth_metric_imports WHERE business_id=${businessId} AND metric_definition_id=${evaluation.metric.id}
-          AND date_start <= ${plan.observationEnd}::date AND date_end >= ${plan.baselineStart}::date
-        ORDER BY imported_at, id LIMIT ${SOURCE_LIMIT}` : []
+    const sourceRows = plan ? yield* sql`SELECT i.id, i.source_kind, i.provenance, i.date_start::text AS date_start, i.date_end::text AS date_end, i.row_count, i.raw_digest, i.imported_at,
+          o.connection_id, o.binding_id, o.property, o.event_name, o.provider_metric, o.time_zone, o.requested_start::text AS requested_start, o.requested_end::text AS requested_end,
+          o.observed_start::text AS observed_start, o.observed_end::text AS observed_end, o.collected_at, o.response_digest, o.supersedes_import_id, o.subject_to_thresholding
+        FROM growth_metric_imports i
+        -- W8: an authenticated import carries its provider identity (never the Google account or any credential).
+        LEFT JOIN growth_ga4_observations o ON o.import_id=i.id AND o.business_id=i.business_id
+        WHERE i.business_id=${businessId} AND i.metric_definition_id=${evaluation.metric.id}
+          AND i.date_start <= ${plan.observationEnd}::date AND i.date_end >= ${plan.baselineStart}::date
+        ORDER BY i.imported_at, i.id LIMIT ${SOURCE_LIMIT}` : []
     const sources: GrowthReportImportRef[] = sourceRows.map(r => ({
       id: String(r["id"]), sourceKind: r["source_kind"] as GrowthReportImportRef["sourceKind"], provenance: r["provenance"] as GrowthReportImportRef["provenance"],
       dateStart: String(r["date_start"]), dateEnd: String(r["date_end"]), rowCount: Number(r["row_count"]), rawDigest: String(r["raw_digest"]),
       importedAt: iso(r["imported_at"] as Date | string),
+      ...(r["connection_id"] == null ? {} : { observation: {
+        provider: "GA4_DATA_API" as const, connectionId: String(r["connection_id"]), bindingId: String(r["binding_id"]), property: String(r["property"]),
+        eventName: String(r["event_name"]), providerMetric: "keyEvents" as const, timeZone: String(r["time_zone"]),
+        requestedStart: String(r["requested_start"]), requestedEnd: String(r["requested_end"]),
+        observedStart: r["observed_start"] == null ? null : String(r["observed_start"]), observedEnd: r["observed_end"] == null ? null : String(r["observed_end"]),
+        collectedAt: iso(r["collected_at"] as Date | string), responseDigest: String(r["response_digest"]),
+        supersedesImportId: r["supersedes_import_id"] == null ? null : String(r["supersedes_import_id"]), subjectToThresholding: r["subject_to_thresholding"] === true,
+      } }),
     }))
     return {
       schema: GROWTH_REPORT_SCHEMA,

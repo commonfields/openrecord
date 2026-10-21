@@ -74,6 +74,9 @@ export const GROWTH_EVALUATION_LIMITATIONS: ReadonlyArray<string> = [
   "Operator-attested actions are what an operator asserted; they are not independently verified.",
 ]
 
+/** Used instead of the operator-export line when a window read values collected through an authenticated provider connection (W8). */
+export const GROWTH_EVALUATION_PROVIDER_LIMITATION = "Values marked as collected from the Google Analytics Data API were read by OpenRecord through a read-only connection an operator authorized; values from imported files remain operator-supplied exports that OpenRecord does not authenticate. Google Analytics can revise recent days; a published report keeps the values that were current when it was published."
+
 /** Deterministic: the same input always yields the same evaluation. */
 export const evaluateGrowthOutcome = (input: GrowthEvaluationInput): GrowthOutcomeEvaluation => {
   const reasons: Array<GrowthEvaluationFinding<GrowthEvaluationReason>> = []
@@ -137,7 +140,11 @@ export const evaluateGrowthOutcome = (input: GrowthEvaluationInput): GrowthOutco
     gap(w => w.unavailableDays, "UNAVAILABLE_DAYS", "are outside every import's declared range")
     gap(w => w.conflictingDays, "CONFLICTING_DAYS", "have imports that disagree on the value")
     gap(w => w.syntheticDays, "SYNTHETIC_DAYS", "carry synthetic fixture data, which is never treated as observed")
+    // A provider revision is not a conflict: the newest collection is read and every earlier value stays on record.
+    const revised = [baseline ? input.baseline : null, observation ? input.observation : null].flatMap(s => s?.revisions ?? []).map(r => r.day).sort()
+    if (revised.length) note("PROVIDER_REVISED_DAYS", `${revised.length} day(s) were revised by Google Analytics after they were first collected; the newest collected value is read and earlier values stay on record.`, revised)
   }
+  const providerRead = [baseline, observation].some(w => w?.series.some(d => d.provider === "GA4_DATA_API") === true)
 
   const phaseOf = (day: string): GrowthEvaluationAction["phase"] => {
     if (!windows) return "UNPLANNED"
@@ -215,7 +222,8 @@ export const evaluateGrowthOutcome = (input: GrowthEvaluationInput): GrowthOutco
       "Each day's value comes from the newest import that reported that day; days no import reported stay absent and are never treated as zero.",
       "Action timing uses the operator-asserted performed time converted to the metric's time zone; the recorded time is shown but never used for windowing.",
       "Both windows come from the latest declared measurement plan; they are never inferred from the data.",
+      ...(providerRead ? [`Days collected from the Google Analytics Data API are key-event counts (keyEvents) for the event ${def.eventName ?? "(none)"} in ${def.propertyRef ?? "(no property)"}, reported by Google in the property's time zone; a day Google did not report stays absent.`] : []),
     ],
-    limitations: GROWTH_EVALUATION_LIMITATIONS,
+    limitations: providerRead ? GROWTH_EVALUATION_LIMITATIONS.map(l => l.startsWith("Imported values are operator-supplied exports.") ? GROWTH_EVALUATION_PROVIDER_LIMITATION : l) : GROWTH_EVALUATION_LIMITATIONS,
   }
 }

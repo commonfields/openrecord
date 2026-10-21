@@ -5,7 +5,8 @@
 import { Schema } from "effect"
 import type { GrowthEvaluationAction, GrowthEvaluationCaveat, GrowthEvaluationComparison, GrowthEvaluationFinding, GrowthEvaluationMetric,
   GrowthEvaluationReason, GrowthEvaluationStatus, GrowthEvaluationWindow, GrowthOutcomeEvaluation } from "./growth-evaluation.js"
-import type { GrowthPlanTiming } from "./growth-measurement.js"
+import type { GrowthPlanTiming, GrowthStoredProvenance } from "./growth-measurement.js"
+import type { Ga4ObservationRef } from "./growth-ga4.js"
 
 export const GROWTH_REPORT_SCHEMA = "openrecord.growth-report/v1"
 const Digest = Schema.String.pipe(Schema.pattern(/^[a-f0-9]{64}$/))
@@ -24,12 +25,15 @@ export type GrowthReportPublishInput = typeof GrowthReportPublishInput.Type
 export interface GrowthReportImportRef {
   readonly id: string
   readonly sourceKind: "GA4_AGGREGATE_EXPORT" | "OPERATOR_AGGREGATE_EXPORT"
-  readonly provenance: "OPERATOR_SUPPLIED_EXPORT" | "SYNTHETIC_FIXTURE"
+  readonly provenance: GrowthStoredProvenance
   readonly dateStart: string
   readonly dateEnd: string
   readonly rowCount: number
   readonly rawDigest: string
   readonly importedAt: string
+  /** Present only for authenticated provider imports (W8): which connection,
+   * property, key event and collection produced the bytes. */
+  readonly observation?: Ga4ObservationRef
 }
 /** The latest human review, exactly as recorded. Null when none exists. */
 export interface GrowthReportReview {

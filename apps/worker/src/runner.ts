@@ -13,6 +13,8 @@ import {
   DiscoveryScopeRepositoryLive,
   FactRepositoryLive,
   GrowthExecutionRepositoryLive,
+  GrowthGa4RepositoryLive,
+  GrowthMeasurementRepositoryLive,
   ObservationRepositoryLive,
   ProviderAttemptEvidenceRepositoryLive,
   ProductReadRepositoryLive,
@@ -35,6 +37,8 @@ import { CheckRunner, CheckRunnerLive } from "./check-runner.js"
 import { DiscoveryRunner, DiscoveryRunnerLive } from "./discovery-runner.js"
 import { SiteInspectionRunner, SiteInspectionRunnerLive } from "./site-inspection-runner.js"
 import { ExecutionRunner, ExecutionRunnerLive } from "./execution-runner.js"
+import { Ga4SyncRunner, Ga4SyncRunnerLive } from "./ga4-sync-runner.js"
+import { Ga4ProviderLive } from "@openrecord/ga4"
 import { GitHubExecutionLive } from "@openrecord/site-operator"
 import { GeminiSettingsLive, NineRouterSettingsLive } from "@openrecord/config"
 import { GeminiProviderLive, MockProviderLive, NineRouterProviderLive, ProviderRegistryLive } from "@openrecord/providers"
@@ -89,7 +93,9 @@ const buildRunnerLive = (databaseUrl: Redacted.Redacted<string>) => {
   const AssayLive = AssayRunnerLive.pipe(Layer.provide(AssayRepositoryLive), Layer.provide(PgLive))
   // W7: durable connected-execution jobs. Provider credentials come from server configuration only.
   const ExecutionLive = ExecutionRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthExecutionRepositoryLive, GitHubExecutionLive)), Layer.provide(PgLive))
-  return Layer.mergeAll(CheckLive, DiscoveryLive, SiteLive, AssayLive, ExecutionLive)
+  // W8: GA4 measurement sync. OAuth client, redirect URI and encryption keys come from server configuration only.
+  const Ga4Live = Ga4SyncRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthGa4RepositoryLive.pipe(Layer.provide(GrowthMeasurementRepositoryLive)), Ga4ProviderLive)), Layer.provide(PgLive))
+  return Layer.mergeAll(CheckLive, DiscoveryLive, SiteLive, AssayLive, ExecutionLive, Ga4Live)
 }
 
 export type RunnerLoopError = SqlError | RowDecodeError | RawDigestMismatch
@@ -102,6 +108,8 @@ export interface LoopRunners {
   readonly site?: { readonly runOnce: () => Effect.Effect<boolean, RunnerLoopError> }
   /** Optional connected-execution loop (W7). Absent in legacy tests. */
   readonly execution?: { readonly runOnce: () => Effect.Effect<boolean, RunnerLoopError> }
+  /** Optional GA4 measurement sync loop (W8). Absent in legacy tests. */
+  readonly ga4?: { readonly runOnce: () => Effect.Effect<boolean, RunnerLoopError> }
 }
 
 /**
@@ -114,7 +122,7 @@ export interface LoopRunners {
  */
 export const startRunnerLoops = (runners: LoopRunners, pollMs: number): Effect.Effect<void, never, never> =>
   Effect.gen(function*() {
-    const loop = (which: "check" | "discovery" | "site" | "assay" | "execution", runOnce: () => Effect.Effect<boolean, RunnerLoopError>) => {
+    const loop = (which: "check" | "discovery" | "site" | "assay" | "execution" | "ga4", runOnce: () => Effect.Effect<boolean, RunnerLoopError>) => {
       const step: Effect.Effect<void> = Effect.gen(function*() {
         while (true) {
           const did = yield* runOnce().pipe(
@@ -138,6 +146,7 @@ export const startRunnerLoops = (runners: LoopRunners, pollMs: number): Effect.E
     const discoveryFiber = yield* Effect.fork(loop("discovery", runners.discovery.runOnce))
     if (runners.assay) yield* Effect.fork(loop("assay", runners.assay.runOnce))
     if (runners.execution) yield* Effect.fork(loop("execution", runners.execution.runOnce))
+    if (runners.ga4) yield* Effect.fork(loop("ga4", runners.ga4.runOnce))
     if (runners.site) {
       const siteFiber = yield* Effect.fork(loop("site", runners.site.runOnce))
       yield* Fiber.join(checkFiber)
@@ -156,7 +165,8 @@ const main: Effect.Effect<void, SqlError | ConfigError.ConfigError> = Effect.fla
     const site = yield* SiteInspectionRunner
     const assay = yield* AssayRunner
     const execution = yield* ExecutionRunner
-    yield* startRunnerLoops({ check, discovery, site, assay, execution }, cfg.pollIntervalMs)
+    const ga4 = yield* Ga4SyncRunner
+    yield* startRunnerLoops({ check, discovery, site, assay, execution, ga4 }, cfg.pollIntervalMs)
   }).pipe(
     Effect.provide(buildRunnerLive(cfg.databaseUrl)),
     Effect.scoped,

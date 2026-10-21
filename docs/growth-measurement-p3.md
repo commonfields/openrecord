@@ -126,6 +126,18 @@ rehearsal script `scripts/verify-marketing-w3-migrations.py` proves fresh and
 replayed installs, a populated compatible upgrade, legacy-row preservation, and
 all refusal paths.
 
+## W8: authenticated provider imports
+
+W8 adds a third stored provenance, `AUTHENTICATED_PROVIDER_API`, written only
+by the GA4 synchronization worker through an authorized read-only connection
+(the import route above still accepts only the two original values). Each
+such import carries one GA4 observation (connection, authorizing identity,
+property, key event, definition version, time zone, requested and observed
+coverage, response digest, collection time). Resolution adds one rule: newer
+authenticated collections of a day **revise** older ones (listed in
+`revisions`, not `conflicts`), while disagreement with an operator or fixture
+import is still a `CONFLICT`. See `docs/engineering/authenticated-measurement-w8.md`.
+
 ## Non-goals
 
 No revenue aggregation, FX conversion, attribution, lift estimation, anomaly

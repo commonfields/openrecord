@@ -22,6 +22,7 @@
     "@openrecord/discovery": "workspace:*",
     "@openrecord/domain": "workspace:*",
     "@openrecord/fs-containment": "workspace:*",
+    "@openrecord/ga4": "workspace:*",
     "@openrecord/protocol": "workspace:*",
     "@openrecord/representation": "workspace:*",
     "@openrecord/site-operator": "workspace:*",
