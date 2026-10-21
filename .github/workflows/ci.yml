@@ -124,3 +124,8 @@ jobs:
         env:
           HOSTED_SMOKE_ALLOWED: "1"
         run: python3 scripts/agency-record-runtime-smoke.py
+
+      - name: Built connected execution workflow (TEST fixtures, local GitHub stand-in, mock only)
+        env:
+          HOSTED_SMOKE_ALLOWED: "1"
+        run: python3 scripts/connected-execution-runtime-smoke.py

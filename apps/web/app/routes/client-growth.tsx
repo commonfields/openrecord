@@ -13,6 +13,7 @@ import { EmptyState, PageHeader, Panel, PanelHeader } from "@/components/page"
 import { GrowthProfileFields } from "@/components/growth-profile-fields"
 import { GrowthEvaluationSection } from "@/components/growth-evaluation"
 import { GrowthPlanSection } from "@/components/growth-plan"
+import { GrowthExecutionSection } from "@/components/growth-execution"
 import { GrowthReportPanel } from "@/components/growth-report-panel"
 import { ApiError, Auth } from "@/lib/api"
 import { Records } from "@/lib/record"
@@ -119,7 +120,7 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
         {execution.description ? <p className="mt-0.5 text-muted-foreground">{execution.description}</p> : null}
         <p className="mt-0.5 text-muted-foreground">Asserted by {growthExecutionActorLabel(execution, userId)} on {formatDateTime(execution.recordedAt)}; the operator says the action happened {formatDateTime(execution.performedAt)}. {growthAssuranceLabel(execution)}</p>
       </li>)}</ol></details> : null}
-    {o.events.some(event => event.status === "APPROVED") ? <><GrowthPlanSection businessId={businessId} opportunityId={o.id} /><GrowthEvaluationSection businessId={businessId} opportunityId={o.id} /><GrowthReportPanel businessId={businessId} opportunityId={o.id} /></> : null}
+    {o.events.some(event => event.status === "APPROVED") ? <><GrowthPlanSection businessId={businessId} opportunityId={o.id} /><GrowthExecutionSection businessId={businessId} opportunityId={o.id} /><GrowthEvaluationSection businessId={businessId} opportunityId={o.id} /><GrowthReportPanel businessId={businessId} opportunityId={o.id} /></> : null}
     {o.status === "DISCOVERED" ? <Button size="sm" onClick={() => beginDecision("propose")}>Propose for review</Button> : null}
     {o.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" onClick={() => beginDecision("approve")}>Approve</Button>
       <Button size="sm" variant="outline" onClick={() => beginDecision("cancel")}>Reject</Button></div> : null}

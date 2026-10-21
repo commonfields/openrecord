@@ -255,3 +255,33 @@ again, choose **Create a new view-only link**, which gives a new address.
 - Do not describe the pilot as customer-validated until the client has read
   the report, made a decision from it and said whether they would continue or
   pay. Record that outside OpenRecord.
+
+## 13. Connected change (optional, GitHub)
+
+Besides recording work by hand (section 4), an operator can send **one exact
+change** to a connected GitHub repository: remove an accidental `noindex` robots
+directive from one HTML page. OpenRecord opens a pull request. It never merges
+and never deploys.
+
+1. An administrator allows the repository for your account in server
+   configuration (`GITHUB_EXECUTION_REPOSITORIES`, `GITHUB_EXECUTION_TOKEN`).
+2. Register the website under **Search**. On the approved initiative open
+   **Connected change → Connect a repository**.
+3. **Prepare the exact change** (page path, where it is live, why). Read the
+   change, the repository and the risk.
+4. **Approve this exact change**, then **Open the pull request**. The approval
+   lasts 24 hours and covers only what you reviewed. If the page changes before
+   it is sent, OpenRecord stops and you prepare it again.
+5. The repository maintainer merges. OpenRecord checks that exactly the approved
+   change was merged and records **GitHub merge confirmed** on the initiative.
+   Use **Check GitHub now** instead of waiting for the next automatic check.
+6. **Check the website now** looks at the live page separately. "Website change
+   not yet observed" or "Website verification unavailable" is normal until the
+   site is deployed. A merge does not show the website is live, and neither shows
+   a business result.
+
+While a connected change is in progress (pull request open or being checked) the
+initiative's final review and cancellation are held. A pull request left unmerged
+for 30 days is no longer followed. A change edited after it was opened, merged in
+another repository, or merged with different content is never recorded as
+verified.

@@ -31,7 +31,7 @@ export const GROWTH_EVALUATION_PHASE_LABELS: Record<GrowthEvaluationAction["phas
   OBSERVATION: "inside the observation window", AFTER_OBSERVATION: "after the observation window", UNPLANNED: "no plan",
 }
 export const GROWTH_EVALUATION_ASSURANCE_LABELS: Record<GrowthEvaluationAssurance, string> = {
-  OPERATOR_ATTESTED: "Operator-attested", SYSTEM_VERIFIED: "System-verified", UNSPECIFIED: "No stated proof",
+  OPERATOR_ATTESTED: "Operator-attested", SYSTEM_VERIFIED: "System-verified (merge confirmed, not shown live)", UNSPECIFIED: "No stated proof",
 }
 /** The proof level is stated before any progress claim: an operator attestation
  * is never presented as verification, and a merge is never presented as
@@ -105,6 +105,7 @@ export const growthError = (e: unknown): string => {
   if (e instanceof ApiError && e.body["reason"] === "IdempotencyConflict") return "This request no longer matches what was saved. Close and reopen it before submitting different content."
   if (e instanceof ApiError && e.body["reason"] === "PrimaryGoalChanged") return "The primary goal changed. Refresh before proposing an opportunity."
   if (e instanceof ApiError && e.body["reason"] === "InitiativeNotApproved") return "This opportunity is no longer approved. Refresh before recording an execution."
+  if (e instanceof ApiError && e.body["reason"] === "ExecutionUnresolved") return "A connected change is still in progress. Wait until GitHub confirms it or it stops before the final decision."
   if (e instanceof ApiError && e.body["reason"] === "ExecutionTimeRefused") return "The performed time is in the future. Record what already happened."
   if (e instanceof ApiError && e.status === 404) return "This product or opportunity is unavailable."
   return e instanceof Error ? e.message : "The request failed. Try again."

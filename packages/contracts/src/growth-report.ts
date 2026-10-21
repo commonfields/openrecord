@@ -143,7 +143,9 @@ export const publicGrowthReport = (report: { readonly id: string | null; readonl
     status: e.status, reasons: e.reasons, caveats: e.caveats, baseline: e.baseline, observation: e.observation, comparison: e.comparison,
     actions: e.actions.map(a => ({
       id: a.id, type: a.type, channel: a.channel, performedAt: a.performedAt, recordedAt: a.recordedAt, performedDay: a.performedDay, phase: a.phase,
-      assurance: a.assurance, reference: a.reference, association: a.association, initiativeTitle: a.initiative?.title ?? null,
+      assurance: a.assurance,
+      // A verified merge's reference is a pull request URL in the customer's repository: the client-facing page does not name it.
+      reference: a.verification ? "Pull request in the website's code repository" : a.reference, association: a.association, initiativeTitle: a.initiative?.title ?? null,
       verification: a.verification ? { kind: a.verification.kind, claim: a.verification.claim } : null,
     })),
     review: s.review, nextSteps: s.nextSteps, assumptions: e.assumptions, limitations: e.limitations,
