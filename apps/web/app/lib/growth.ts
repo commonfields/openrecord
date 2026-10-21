@@ -24,7 +24,7 @@ export const GROWTH_EVALUATION_CAVEAT_LABELS: Record<GrowthEvaluationCaveat, str
   MULTIPLE_INITIATIVE_ACTIONS: "Several actions on this initiative", OTHER_ACTIONS_IN_PERIOD: "Other actions in the period",
   ACTIONS_TRUNCATED: "Action list truncated", EXECUTION_ON_OBSERVATION_START: "Action on the first observed day",
   UNEQUAL_WINDOW_LENGTHS: "Windows differ in length", ZERO_BASELINE: "Zero baseline", PLAN_REDECLARED: "Plan re-declared",
-  OTHER_METRIC_VERSIONS_EXCLUDED: "Other metric versions excluded", INITIATIVE_CANCELLED: "Initiative cancelled",
+  OTHER_METRIC_VERSIONS_EXCLUDED: "Other metric versions excluded", INITIATIVE_CANCELLED: "Initiative cancelled", PROVIDER_REVISED_DAYS: "Provider-revised days",
 }
 export const GROWTH_EVALUATION_PHASE_LABELS: Record<GrowthEvaluationAction["phase"], string> = {
   BEFORE_BASELINE: "before the baseline", BASELINE: "inside the baseline", BETWEEN_WINDOWS: "between the windows",

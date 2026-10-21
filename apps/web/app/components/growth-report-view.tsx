@@ -4,7 +4,7 @@
 // never presents a difference as proof that the work caused it.
 import type { GrowthEvaluationWindow, PublicGrowthReport } from "@openrecord/contracts"
 import { GROWTH_CHANNEL_LABELS, GROWTH_EXECUTION_LABELS, GROWTH_GOAL_LABELS } from "@/lib/growth"
-import { REPORT_ASSURANCE_COPY, REPORT_CAVEAT_COPY, REPORT_DECISION_COPY, REPORT_LIMITATIONS, REPORT_REASON_COPY } from "@/lib/growth-report"
+import { REPORT_ASSURANCE_COPY, REPORT_CAVEAT_COPY, REPORT_DECISION_COPY, REPORT_REASON_COPY, reportLimitations, reportSourceLabel } from "@/lib/growth-report"
 import { safeRecordUrl } from "@/lib/record"
 
 const day = (d: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${d}T00:00:00Z`))
@@ -87,7 +87,7 @@ export function GrowthReportView({ report: r }: { report: PublicGrowthReport }) 
     <Section title="What limits this result">
       <ul className="list-disc space-y-1 pl-5">
         {r.caveats.map(c => <li key={c.code}>{REPORT_CAVEAT_COPY[c.code]}</li>)}
-        {REPORT_LIMITATIONS.map(text => <li key={text}>{text}</li>)}
+        {reportLimitations(r.evidence.sources).map(text => <li key={text}>{text}</li>)}
       </ul>
     </Section>
 
@@ -99,12 +99,12 @@ export function GrowthReportView({ report: r }: { report: PublicGrowthReport }) 
 
     <section className="space-y-2 border-t pt-4 text-xs text-muted-foreground" aria-label="Evidence and provenance">
       <h2 className="text-sm font-semibold text-foreground">Evidence and provenance</h2>
-      <p>Source: {r.metric.sourceKind === "GA4_AGGREGATE_EXPORT" ? `GA4 aggregate export${r.metric.eventName ? ` (event ${r.metric.eventName})` : ""}` : "operator-supplied daily export"}; {r.metric.countingSemantics}/{r.metric.unit}; metric version {r.metric.version}; goal version {r.goal.version}; time zone {r.metric.timeZone}.</p>
+      <p>Source: {r.metric.sourceKind === "GA4_AGGREGATE_EXPORT" ? `Google Analytics 4${r.evidence.sources.some(s => s.provenance === "AUTHENTICATED_PROVIDER_API") ? " (read through a read-only connection" + (r.evidence.sources.every(s => s.provenance === "AUTHENTICATED_PROVIDER_API") ? ")" : " and from exports)") : " aggregate export"}${r.metric.eventName ? `, key event ${r.metric.eventName}` : ""}` : "operator-supplied daily export"}; {r.metric.countingSemantics}/{r.metric.unit}; metric version {r.metric.version}; goal version {r.goal.version}; time zone {r.metric.timeZone}.</p>
       {r.plan ? <p>Plan declared {instant(r.plan.declaredAt)}: before {r.plan.baselineStart} to {r.plan.baselineEnd}, after {r.plan.observationStart} to {r.plan.observationEnd} ({r.plan.timing.toLowerCase().replaceAll("_", " ")}).</p> : null}
       {gaps.flatMap(w => ([["missing", w.missingDays], ["not covered", w.unavailableDays], ["conflicting", w.conflictingDays], ["sample data", w.syntheticDays]] as const)
         .filter(([, list]) => list.length).map(([name, list]) => <p key={`${w.role}-${name}`}>{w.role === "BASELINE" ? "Before" : "After"}, {name}: {list.join(", ")}</p>))}
       <p>Data imports ({r.evidence.sources.length}):</p>
-      <ul className="space-y-0.5 break-all font-mono">{r.evidence.sources.map(s => <li key={s.id}>{s.id} · {s.dateStart}→{s.dateEnd} · {s.rowCount} days · {s.provenance === "SYNTHETIC_FIXTURE" ? "sample data" : "operator-supplied"} · sha256 {s.rawDigest}</li>)}</ul>
+      <ul className="space-y-0.5 break-all font-mono">{r.evidence.sources.map(s => <li key={s.id}>{s.id} · {s.dateStart}→{s.dateEnd} · {s.rowCount} days · {reportSourceLabel(s)} · sha256 {s.rawDigest}</li>)}</ul>
       <p>Recorded actions: <span className="break-all font-mono">{r.evidence.actionIds.join(", ") || "none"}</span></p>
       {[...r.reasons, ...r.caveats].length ? <ul className="space-y-0.5">{[...r.reasons, ...r.caveats].map(x => <li key={x.code}><span className="font-mono">{x.code}</span>: {x.detail}</li>)}</ul> : null}
       <p className="break-all">Report {r.evidence.reportId ?? "(draft)"} · initiative {r.evidence.initiativeId} · goal {r.evidence.goalId} · metric {r.evidence.metricDefinitionId} · plan {r.evidence.planId ?? "none"}</p>

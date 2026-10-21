@@ -65,6 +65,7 @@ export const REPORT_CAVEAT_COPY: Record<GrowthEvaluationCaveat, string> = {
   PLAN_REDECLARED: "The measured periods were revised before reporting; the latest agreed periods are used.",
   OTHER_METRIC_VERSIONS_EXCLUDED: "Figures counted under a different definition of this result are left out.",
   INITIATIVE_CANCELLED: "This initiative was later cancelled.",
+  PROVIDER_REVISED_DAYS: "Google Analytics updated some daily figures after they were first collected; the latest figures are used and earlier ones are kept on record.",
 }
 export const REPORT_ASSURANCE_COPY: Record<GrowthEvaluationAssurance, string> = {
   OPERATOR_ATTESTED: "Recorded by the team, not independently verified",
@@ -79,6 +80,15 @@ export const REPORT_LIMITATIONS: ReadonlyArray<string> = [
   "“Can be compared” is a statement about data quality. It is not a judgement that the work succeeded or failed.",
   "Figures come from exports supplied by the team. OpenRecord does not confirm them directly with the analytics or booking system.",
 ]
+/** The last standing limit depends on where the figures came from: files the team supplied, or Google Analytics read through an authorized read-only connection. */
+export const REPORT_PROVIDER_LIMITATION = "Some figures were read by OpenRecord directly from Google Analytics through a read-only connection the team authorized. Google Analytics can update recent days afterwards; this report keeps the figures as they were when it was published. Figures from uploaded files are still supplied by the team and not confirmed directly."
+export const reportLimitations = (sources: ReadonlyArray<{ readonly provenance: string }>): ReadonlyArray<string> =>
+  sources.some(s => s.provenance === "AUTHENTICATED_PROVIDER_API") ? [...REPORT_LIMITATIONS.slice(0, -1), REPORT_PROVIDER_LIMITATION] : REPORT_LIMITATIONS
+/** How one data import is described in the evidence section. */
+export const reportSourceLabel = (s: { readonly provenance: string; readonly observation?: { readonly property: string; readonly eventName: string; readonly collectedAt: string } }): string =>
+  s.provenance === "AUTHENTICATED_PROVIDER_API"
+    ? `read from Google Analytics (${s.observation ? `${s.observation.property}, key event ${s.observation.eventName}, collected ${s.observation.collectedAt}` : "read-only connection"})`
+    : s.provenance === "SYNTHETIC_FIXTURE" ? "sample data" : "operator-supplied"
 export const REPORT_DECISION_COPY: Record<GrowthReportReview["conclusion"], string> = {
   KEEP: "Keep the change", REVERT: "Undo the change", EXTEND: "Continue and extend the work", INCONCLUSIVE: "No conclusion yet",
 }

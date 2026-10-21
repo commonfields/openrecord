@@ -285,3 +285,49 @@ initiative's final review and cancellation are held. A pull request left unmerge
 for 30 days is no longer followed. A change edited after it was opened, merged in
 another repository, or merged with different content is never recorded as
 verified.
+
+## 14. Read measurements from Google Analytics (optional, GA4)
+
+Instead of uploading GA4 exports (section 5), an operator can let OpenRecord
+read daily key-event counts directly from Google Analytics, read-only.
+
+1. An administrator configures the Google OAuth client, the exact redirect URI
+   and the token encryption key on the server (see `.env.example`), and registers
+   the same redirect URI on the Google OAuth client. The Google project needs
+   the Analytics Admin and Data APIs enabled.
+2. The metric must be a **GA4 key-event count** whose definition names the
+   property (`properties/123456789` or `123456789`), the key event and the
+   property's own reporting time zone.
+3. On **Measurement imports**, choose the metric, then **Connect Google
+   Analytics**. Sign in with a Google account that can read the property and
+   allow read-only access. OpenRecord records which Google account allowed
+   access; that is not proof of who owns the property.
+4. **Load properties**, choose the property, **Load key events**, choose the
+   key event, and **Link property**. Only properties the connected account can
+   read, with the same time zone and key event as the definition, can be linked.
+5. **Synchronize these dates** reads up to 366 complete days (ending yesterday
+   in the property's time zone). **Refresh now** re-reads the last three days.
+   The worker also refreshes the last three days once a day.
+6. The panel shows the connection status, the last successful synchronization,
+   whether the data is up to date, and how many of the last 28 days were
+   reported, missing, conflicting or revised.
+
+What to expect:
+
+- A day Google did not report stays **missing**; it is never treated as zero.
+  A zero is recorded only when Google reports a zero.
+- Reading the same answer again stores nothing new. If Google later changes a
+  day's figure, the new figure is used and the old one is kept as a revision.
+  That is not a conflict. A day where an uploaded file disagrees with Google
+  **is** a conflict and keeps the evaluation from being comparable.
+- If Google stops accepting the connection (access removed, password change,
+  token expiry), the connection shows **Needs reconnecting** and synchronization
+  stops. Nothing already collected is removed. **Reconnect** with the same
+  Google account.
+- **Disconnect** asks Google to remove OpenRecord's access and erases the stored
+  credentials. Collected figures and published reports stay as they are.
+- A published report never changes when later figures arrive. Publish a new
+  version to include them.
+- Google may show an "unverified app" screen until the OAuth app passes Google's
+  verification for the Analytics read-only scope; unverified apps are limited to
+  100 users.

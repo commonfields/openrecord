@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, PanelHeader } from "@/components/page"
 import type { GrowthGoal } from "@openrecord/contracts"
 import { ApiError, api } from "@/lib/api"
+import { Ga4Panel } from "@/components/growth-ga4"
 
 type ImportResult = { result: { import: GrowthMetricImport; coverage: GrowthMetricCoverage; replayed: boolean } }
 const STATUS_LABELS = { OK: "Reported", MISSING: "Missing", UNAVAILABLE: "No import", CONFLICT: "Conflicting" } as const
@@ -50,7 +51,7 @@ export const measurementError = (err: unknown): string => {
 
 const dateShift = (days: number): string => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
 
-const PROVENANCE_LABELS = { OPERATOR_SUPPLIED_EXPORT: "Operator export", SYNTHETIC_FIXTURE: "Synthetic fixture" } as const
+const PROVENANCE_LABELS = { OPERATOR_SUPPLIED_EXPORT: "Operator export", SYNTHETIC_FIXTURE: "Synthetic fixture", AUTHENTICATED_PROVIDER_API: "Read from Google Analytics" } as const
 
 function ImportForm({ businessId, definitionId, sourceKind, done }: { businessId: string; definitionId: string; sourceKind: string; done: (imported: GrowthMetricImport, coverage: GrowthMetricCoverage, replayed: boolean) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
@@ -113,11 +114,14 @@ function SeriesPanel({ businessId, definitionId, label, version, timeZone }: { b
       {series.conflicts.length > 0 ? <p role="alert" className="mb-3 text-xs text-destructive">
         {series.conflicts.length} day(s) have conflicting counts across imports (newest import resolves the value; the disagreement stays listed).
       </p> : null}
+      {series.revisions?.length ? <p className="mb-3 text-xs text-muted-foreground">
+        Google Analytics revised {series.revisions.length} day(s) after first collecting them ({series.revisions.map(r => `${r.day}: ${r.values.join(" → ")}`).join("; ")}). The newest figure is used; earlier ones stay on record.
+      </p> : null}
       <ul className="grid gap-1 text-xs" aria-label="Daily series">
         {series.days.map(d => <li key={d.day} className="flex items-center gap-2">
           <span className="w-24 shrink-0 tabular-nums">{d.day}</span>
           <span className="w-16 shrink-0 tabular-nums">{d.value === null ? "—" : d.value.toLocaleString()}</span>
-          {d.origin ? <Badge variant={d.origin === "REAL" ? "supported" : "review"}>{d.origin.toLowerCase()}</Badge> : null}
+          {d.origin ? <Badge variant={d.origin === "REAL" ? "supported" : "review"}>{d.provider === "GA4_DATA_API" ? "google analytics" : d.origin.toLowerCase()}</Badge> : null}
           <span className="text-muted-foreground">{STATUS_LABELS[d.status]}</span>
         </li>)}
       </ul>
@@ -125,13 +129,13 @@ function SeriesPanel({ businessId, definitionId, label, version, timeZone }: { b
   </Panel>
 }
 
-export function GrowthMeasurement({ businessId, goals }: { businessId: string; goals: ReadonlyArray<GrowthGoal> }) {
+export function GrowthMeasurement({ businessId, goals, ga4Status = null }: { businessId: string; goals: ReadonlyArray<GrowthGoal>; ga4Status?: string | null }) {
   const definitions = useMemo(() => {
-    const byId = new Map<string, { id: string; label: string; version: number; sourceKind: string; timeZone: string }>()
+    const byId = new Map<string, { id: string; label: string; version: number; sourceKind: string; timeZone: string; propertyRef: string | null; eventName: string | null }>()
     for (const g of goals) {
       const d = g.metricDefinition
       if (d.countingSemantics !== "EVENT_COUNT") continue
-      if (!byId.has(d.id)) byId.set(d.id, { id: d.id, label: d.label, version: d.version, sourceKind: d.sourceKind, timeZone: d.reportingTimeZone })
+      if (!byId.has(d.id)) byId.set(d.id, { id: d.id, label: d.label, version: d.version, sourceKind: d.sourceKind, timeZone: d.reportingTimeZone, propertyRef: d.propertyRef, eventName: d.eventName })
     }
     return [...byId.values()]
   }, [goals])
@@ -165,7 +169,7 @@ export function GrowthMeasurement({ businessId, goals }: { businessId: string; g
       {imports !== null ? <div className="px-5 pb-3">
         {imports.length === 0 ? <p className="text-xs text-muted-foreground">No imports for this definition yet.</p> : <ul className="divide-y text-xs" aria-label="Imports">
           {imports.map(i => <li key={i.id} className="flex flex-wrap items-center gap-2 py-2">
-            <Badge variant={i.provenance === "OPERATOR_SUPPLIED_EXPORT" ? "supported" : "review"}>{PROVENANCE_LABELS[i.provenance]}</Badge>
+            <Badge variant={i.provenance === "SYNTHETIC_FIXTURE" ? "review" : "supported"}>{PROVENANCE_LABELS[i.provenance]}</Badge>
             <span className="tabular-nums">{i.dateStart} → {i.dateEnd}</span>
             <span>{i.rowCount} days, {i.timeZone}</span>
             <span className="text-muted-foreground">digest {i.rawDigest.slice(0, 10)}…</span>
@@ -177,6 +181,7 @@ export function GrowthMeasurement({ businessId, goals }: { businessId: string; g
         await loadImports(defId)
       }} /> : null}
     </Panel>
+    <Ga4Panel businessId={businessId} definition={definition} callbackStatus={ga4Status} />
     {definition ? <SeriesPanel businessId={businessId} definitionId={definition.id} label={definition.label} version={definition.version} timeZone={definition.timeZone} /> : null}
   </div>
 }

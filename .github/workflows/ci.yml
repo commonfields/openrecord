@@ -129,3 +129,8 @@ jobs:
         env:
           HOSTED_SMOKE_ALLOWED: "1"
         run: python3 scripts/connected-execution-runtime-smoke.py
+
+      - name: Built GA4 measurement workflow (TEST fixtures, local Google stand-in, mock only)
+        env:
+          HOSTED_SMOKE_ALLOWED: "1"
+        run: python3 scripts/ga4-measurement-runtime-smoke.py

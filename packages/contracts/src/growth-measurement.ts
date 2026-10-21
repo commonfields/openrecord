@@ -11,6 +11,11 @@ export const GrowthIsoDay = Schema.String.pipe(Schema.pattern(/^\d{4}-\d{2}-\d{2
  * operator supplied; nothing here authenticates the reporting platform. */
 export const GrowthImportProvenance = Schema.Literal("OPERATOR_SUPPLIED_EXPORT", "SYNTHETIC_FIXTURE")
 export type GrowthImportProvenance = typeof GrowthImportProvenance.Type
+/** Provenance of a stored import. `AUTHENTICATED_PROVIDER_API` is written only by
+ * the W8 synchronization worker through an authorized read-only connection; the
+ * CSV route can never claim it (its input schema accepts only the two values above). */
+export const GrowthStoredProvenance = Schema.Literal("OPERATOR_SUPPLIED_EXPORT", "SYNTHETIC_FIXTURE", "AUTHENTICATED_PROVIDER_API")
+export type GrowthStoredProvenance = typeof GrowthStoredProvenance.Type
 /**
  * A daily aggregate import for one definition. `dateStart`/`dateEnd` state the
  * declared coverage; days without a row inside the range stay missing, not
@@ -29,7 +34,7 @@ export interface GrowthMetricImport {
   readonly businessId: string
   readonly metricDefinitionId: string
   readonly sourceKind: "GA4_AGGREGATE_EXPORT" | "OPERATOR_AGGREGATE_EXPORT"
-  readonly provenance: GrowthImportProvenance
+  readonly provenance: GrowthStoredProvenance
   readonly propertyRef: string | null
   readonly dateStart: string
   readonly dateEnd: string
@@ -59,6 +64,16 @@ export interface GrowthSeriesDay {
   readonly value: number | null
   readonly origin: GrowthDayOrigin
   readonly status: GrowthDayStatus
+  /** Present only when the resolving import was collected from an authenticated
+   * provider API (W8). Absent for operator exports, so W3-only series are unchanged. */
+  readonly provider?: "GA4_DATA_API"
+}
+/** A day the authenticated provider reported differently over time. Revisions
+ * from one provider source supersede each other (newest collection wins) and
+ * are not conflicts; every value stays on record, oldest first. */
+export interface GrowthSeriesRevision {
+  readonly day: string
+  readonly values: ReadonlyArray<number>
 }
 export interface GrowthSeriesConflict {
   readonly day: string
@@ -78,6 +93,8 @@ export interface GrowthSeries {
   readonly end: string
   readonly days: ReadonlyArray<GrowthSeriesDay>
   readonly conflicts: ReadonlyArray<GrowthSeriesConflict>
+  /** Present only when at least one day in range was revised by the authenticated provider. */
+  readonly revisions?: ReadonlyArray<GrowthSeriesRevision>
 }
 /** Plan timing is derived per read, never stored. */
 export const GrowthPlanTiming = Schema.Literal("PRE_DECLARED", "DECLARED_AFTER_EXECUTION")
