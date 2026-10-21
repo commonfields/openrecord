@@ -41,6 +41,9 @@ OWNER, REPO = "smoke-owner", "salon-site"
 PAGE = "pricing.html"
 BEFORE = '<!doctype html>\n<html>\n<head>\n<title>Pricing</title>\n<meta name="robots" content="noindex">\n</head>\n<body>Pricing</body>\n</html>\n'
 base = f"http://127.0.0.1:{API_PORT}"
+# The browser-facing origin (set when a web preview fronts the API); writes must come from the configured origin.
+origin = os.environ.get("EXEC_SMOKE_ORIGIN", base)
+SERVE = os.environ.get("EXEC_SMOKE_MODE") == "serve"   # prepare the account and an approved initiative, then wait so a person or browser can drive the rest
 checks = []
 
 def check(name, ok, detail=""):
@@ -195,7 +198,7 @@ class Client:
     def __init__(self):
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def call(self, method, path, payload=None):
-        req = urllib.request.Request(base + path, data=None if payload is None else json.dumps(payload).encode(), method=method, headers={"Content-Type": "application/json", "Origin": base})
+        req = urllib.request.Request(base + path, data=None if payload is None else json.dumps(payload).encode(), method=method, headers={"Content-Type": "application/json", "Origin": origin})
         try:
             with self.opener.open(req, timeout=30) as res:
                 body = res.read()
@@ -219,7 +222,7 @@ def psql(sql):
 
 processes = []
 def start(entry, app, extra):
-    env = dict(os.environ, PORT=str(API_PORT), APP_BASE_URL=base, NINE_ROUTER_ENABLED="false", WORKER_POLL_MS="50", **extra)
+    env = dict(os.environ, PORT=str(API_PORT), APP_BASE_URL=origin, NINE_ROUTER_ENABLED="false", WORKER_POLL_MS="50", **extra)
     env.pop("NODE_ENV", None)
     p = subprocess.Popen(["node", "--import", "tsx", f"dist/{entry}.js"], cwd=root / "apps" / app, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     processes.append(p)
@@ -287,6 +290,14 @@ try:
     check("S.02 OpenRecord's own repository is refused even when listed", own[0] == 409)
     other = op.call("POST", f"{base_c}/execution-targets", {"owner": "someone", "repository": "else", "baseBranch": "main", "siteTargetId": site, "allowedPaths": [PAGE], "idempotencyKey": str(uuid.uuid4())})
     check("S.03 a repository outside the allowlist is refused", other[0] == 409 and other[1]["reason"] == "RepositoryNotPermitted")
+    if SERVE:
+        opp0 = op.ok("POST", f"{base_c}/opportunities", {"goalId": goal, "title": "TEST remove accidental noindex", "problemStatement": "TEST pricing page is hidden from search", "audience": "TEST locals", "buyerIntent": "TEST",
+            "targetUrl": None, "source": "TEST", "proposedChange": "TEST remove noindex", "expectedMechanism": "TEST", "assumptions": "TEST", "uncertainty": "TEST", "baselineAvailability": "UNKNOWN", "ownerUserId": user,
+            "initialStatus": "PROPOSED", "idempotencyKey": str(uuid.uuid4()), "evidence": [{"type": "OPERATOR_HYPOTHESIS", "note": "TEST"}]})["opportunity"]["id"]
+        op.ok("POST", f"{base_c}/opportunities/{opp0}/approve", {"expectedStatus": "PROPOSED", "expectedRevision": 1, "idempotencyKey": str(uuid.uuid4()), "reason": "TEST approve"})
+        print("SERVE_READY " + json.dumps({"email": email, "password": "disposable-fixture-password", "businessId": biz, "opportunityId": opp0, "githubControlPort": GH_PORT, "owner": OWNER, "repository": REPO}), flush=True)
+        while True:
+            time.sleep(1)
     target = op.ok("POST", f"{base_c}/execution-targets", {"owner": OWNER, "repository": REPO, "baseBranch": "main", "siteTargetId": site, "allowedPaths": [PAGE, "pages/"], "idempotencyKey": str(uuid.uuid4())})["target"]
     opp = op.ok("POST", f"{base_c}/opportunities", {"goalId": goal, "title": "TEST remove accidental noindex", "problemStatement": "TEST hidden", "audience": "TEST", "buyerIntent": "TEST", "targetUrl": None, "source": "TEST",
         "proposedChange": "TEST", "expectedMechanism": "TEST", "assumptions": "TEST", "uncertainty": "TEST", "baselineAvailability": "UNKNOWN", "ownerUserId": user, "initialStatus": "PROPOSED", "idempotencyKey": str(uuid.uuid4()),
