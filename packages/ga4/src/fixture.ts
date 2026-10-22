@@ -26,7 +26,7 @@ export interface FixtureProperty {
   keyEvents: Array<{ eventName: string; countingMethod: string }>
   /** event name → day (YYYY-MM-DD) → counts. Days not listed have no row. */
   data: Record<string, Record<string, FixtureDay>>
-  flags?: { thresholded?: boolean; sampled?: boolean; dataLoss?: boolean }
+  flags?: { thresholded?: boolean; sampled?: boolean; dataLoss?: boolean; activitySampled?: boolean }
 }
 export interface FixtureGoogleOptions {
   readonly clientId: string
@@ -136,8 +136,36 @@ export const fixtureGoogle = (opts: FixtureGoogleOptions) => {
       keepEmptyRows?: boolean; limit?: number; offset?: number; returnPropertyQuota?: boolean
     }
     const range = body.dateRanges?.[0], dims = (body.dimensions ?? []).map(d => d.name), mets = (body.metrics ?? []).map(m => m.name)
-    if (!range || body.dateRanges!.length !== 1 || dims.join(",") !== "date,eventName" || mets.some(m => !["keyEvents", "eventCount"].includes(m))) return apiError(400, "INVALID_ARGUMENT")
+    if (!range || body.dateRanges!.length !== 1) return apiError(400, "INVALID_ARGUMENT")
     const filter = body.dimensionFilter?.filter
+    // The property-activity probe: dimensions [date], metrics [eventCount], unfiltered. Google
+    // documents that only recorded data can be displayed, so only days where the property
+    // recorded any event appear here.
+    if (filter === undefined && dims.join(",") === "date" && mets.join(",") === "eventCount") {
+      const perDay = new Map<string, number>()
+      for (const day of Object.values(p.data)) {
+        for (const [d, v] of Object.entries(day)) {
+          if (d < range.startDate || d > range.endDate) continue
+          perDay.set(d, (perDay.get(d) ?? 0) + v.eventCount)
+        }
+      }
+      const all = [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b))
+      const offset = body.offset ?? 0, limit = Math.min(body.limit ?? 10_000, opts.pageSizeCap ?? 250_000)
+      const rows = all.slice(offset, offset + limit).map(([d, count]) => ({
+        dimensionValues: [{ value: d.replaceAll("-", "") }],
+        metricValues: [{ value: String(count) }],
+      }))
+      return json(200, {
+        dimensionHeaders: dims.map(n => ({ name: n })), metricHeaders: mets.map(n => ({ name: n, type: "TYPE_INTEGER" })),
+        ...(rows.length ? { rows } : {}), rowCount: all.length,
+        metadata: { currencyCode: "USD", timeZone: p.timeZone,
+          ...(p.flags?.thresholded ? { subjectToThresholding: true } : {}),
+          ...(p.flags?.activitySampled ? { samplingMetadatas: [{ samplesReadCount: "10", samplingSpaceSize: "100" }] } : {}) },
+        ...(body.returnPropertyQuota ? { propertyQuota: { tokensPerDay: { consumed: 1, remaining: 199_999 }, tokensPerHour: { consumed: 1, remaining: 39_999 } } } : {}),
+        kind: "analyticsData#runReport",
+      })
+    }
+    if (dims.join(",") !== "date,eventName" || mets.some(m => !["keyEvents", "eventCount"].includes(m))) return apiError(400, "INVALID_ARGUMENT")
     if (filter?.fieldName !== "eventName" || filter.stringFilter?.matchType !== "EXACT" || !filter.stringFilter.value) return apiError(400, "INVALID_ARGUMENT")
     const event = filter.stringFilter.value
     const days = Object.entries(p.data[event] ?? {}).filter(([d]) => d >= range.startDate && d <= range.endDate).sort(([a], [b]) => a.localeCompare(b))

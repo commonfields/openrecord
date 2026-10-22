@@ -261,7 +261,8 @@ suite("growth outcome evaluation over HTTP (descriptive only, no provider calls)
     }
     expect((await call("GET", `${f.base}/opportunities/not-a-uuid/evaluation`, f.cookie)).status).toBe(422)
     const tables = ["growth_metric_imports", "growth_metric_rows", "growth_measurement_plans", "growth_opportunity_events", "growth_initiative_actions", "interventions"]
-    const counts = async () => Promise.all(tables.map(async t => Number((await pool.query(`SELECT count(*)::int AS n FROM ${t}`)).rows[0].n)))
+    // Counted for this fixture's business only: other test files share the database and run in parallel.
+    const counts = async () => Promise.all(tables.map(async t => Number((await pool.query(`SELECT count(*)::int AS n FROM ${t} WHERE business_id=$1`, [f.businessId])).rows[0].n)))
     const before = await counts()
     const first = await evaluate(f, id), second = await evaluate(f, id)
     expect(await counts()).toEqual(before)

@@ -165,7 +165,14 @@ class Handler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("content-length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
                 r = body["dateRanges"][0]
-                assert [d["name"] for d in body["dimensions"]] == ["date", "eventName"] and body["dimensionFilter"]["filter"]["stringFilter"]["value"] == EVENT
+                dims = [d["name"] for d in body["dimensions"]]
+                if dims == ["date"] and [m["name"] for m in body["metrics"]] == ["eventCount"] and "dimensionFilter" not in body:
+                    # The property-activity probe: only days with recorded data have rows.
+                    rows = [{"dimensionValues": [{"value": d.replace("-", "")}], "metricValues": [{"value": str(v + 4)}]}
+                            for d, v in sorted(google.data.items()) if r["startDate"] <= d <= r["endDate"]]
+                    return self.send(200, {"dimensionHeaders": [{"name": "date"}], "metricHeaders": [{"name": "eventCount"}],
+                                           "rows": rows, "rowCount": len(rows), "metadata": {"timeZone": TZ, "currencyCode": "USD"}, "kind": "analyticsData#runReport"})
+                assert dims == ["date", "eventName"] and body["dimensionFilter"]["filter"]["stringFilter"]["value"] == EVENT
                 rows = [{"dimensionValues": [{"value": d.replace("-", "")}, {"value": EVENT}], "metricValues": [{"value": str(v)}, {"value": str(v + 4)}]}
                         for d, v in sorted(google.data.items()) if r["startDate"] <= d <= r["endDate"]]
                 return self.send(200, {"dimensionHeaders": [{"name": "date"}, {"name": "eventName"}], "metricHeaders": [{"name": "keyEvents"}, {"name": "eventCount"}],

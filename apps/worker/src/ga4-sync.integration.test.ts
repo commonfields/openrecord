@@ -43,12 +43,13 @@ suite("GA4 sync runner against a local Google stand-in (MOCK_ADAPTER_PASS, TEST 
   })
   afterAll(async () => { await Effect.runPromise(Scope.close(scope, Exit.void)); await pool.end() })
 
-  const setup = async (data: Record<string, FixtureDay> = days("2026-09-01", [3, 0, 5, 7, null, 2, 4, 6, 1, 3]), opts: { pageSizeCap?: number } = {}) => {
+  const setup = async (data: Record<string, FixtureDay> = days("2026-09-01", [3, 0, 5, 7, null, 2, 4, 6, 1, 3]), opts: { pageSizeCap?: number; thresholded?: boolean; activitySampled?: boolean; otherEvents?: Record<string, Record<string, FixtureDay>> } = {}) => {
     const g = fixtureGoogle({
       ...CLIENT, ...(opts.pageSizeCap ? { pageSizeCap: opts.pageSizeCap } : {}),
       identities: [{ sub: "1001", email: "agency@example.test", properties: [P1] }],
       properties: [{ name: P1, displayName: "TEST Salon site", account: "accounts/10", accountDisplayName: "TEST Salon", timeZone: TZ,
-        keyEvents: [{ eventName: EVENT, countingMethod: "ONCE_PER_EVENT" }], data: { [EVENT]: data } }],
+        keyEvents: [{ eventName: EVENT, countingMethod: "ONCE_PER_EVENT" }], data: { [EVENT]: data, ...(opts.otherEvents ?? {}) },
+        ...(opts.thresholded || opts.activitySampled ? { flags: { ...(opts.thresholded ? { thresholded: true } : {}), ...(opts.activitySampled ? { activitySampled: true } : {}) } } : {}) }],
     })
     const config = fixtureGa4Config(g, CLIENT)
     if (!config.configured) throw new Error("fixture config")
@@ -110,6 +111,64 @@ suite("GA4 sync runner against a local Google stand-in (MOCK_ADAPTER_PASS, TEST 
     expect(raw).toContain('"keyEvents"')
     for (const secret of [...f.g.issuedTokens, CLIENT.clientSecret]) expect(raw).not.toContain(secret)
     expect(await f.runs()).toMatchObject([{ outcome: "RECORDED", error_code: null, import_id: imp.id }])
+  })
+
+  it("records a zero for a silent day the property demonstrably served, and keeps a dead day missing", async () => {
+    // Google documents (runReport keepEmptyRows) that only recorded data can be displayed: a day
+    // with zero occurrences of the selected key event has no row even with keepEmptyRows. Where the
+    // property recorded other activity that day, the absence is an authoritative zero; where it
+    // recorded nothing, the day stays missing.
+    const f = await setup(days("2026-09-01", [3, null, 5, 7]), { otherEvents: { page_view: { "2026-09-02": { keyEvents: 0, eventCount: 9 } } } })
+    const { job } = await f.sync("2026-09-01", "2026-09-05")
+    expect(await (await f.runner())()).toBe(true)
+    expect(await f.job(job.id)).toMatchObject({ status: "SUCCEEDED", last_error: null })
+    const s = await f.series("2026-09-01", "2026-09-05")
+    expect(s.days.map(d => [d.day, d.value, d.status, d.origin, d.provider ?? null])).toEqual([
+      ["2026-09-01", 3, "OK", "REAL", "GA4_DATA_API"],
+      ["2026-09-02", 0, "OK", "REAL", "GA4_DATA_API"], // derived: page_view activity, no key-event row
+      ["2026-09-03", 5, "OK", "REAL", "GA4_DATA_API"],
+      ["2026-09-04", 7, "OK", "REAL", "GA4_DATA_API"],
+      ["2026-09-05", null, "MISSING", null, null], // no recorded property activity: absent, never zero
+    ])
+    const [imp] = await f.imports()
+    expect(imp).toMatchObject({ provenance: "AUTHENTICATED_PROVIDER_API", row_count: 4 })
+    const evidence = JSON.parse(String(imp.raw_text)).evidence
+    expect(evidence.response.derivedZeroDays).toEqual(["2026-09-02"])
+    expect(evidence.response.activity.rows.map((r: { day: string }) => r.day)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"])
+    for (const secret of [...f.g.issuedTokens, CLIENT.clientSecret]) expect(String(imp.raw_text)).not.toContain(secret)
+    // A later explicit zero from Google is the same answer: confirmed, never stored twice.
+    await f.sync("2026-09-01", "2026-09-05", "REFRESH")
+    expect(await (await f.runner())()).toBe(true)
+    expect((await f.imports()).length).toBe(1)
+    expect(await f.runs()).toMatchObject([{ outcome: "RECORDED" }, { outcome: "UNCHANGED" }])
+  })
+
+  it("never derives from a thresholded answer or a suspect activity probe; the skip is recorded", async () => {
+    // Thresholding can hide rows, so the absences prove nothing and the probe is not attempted.
+    const f = await setup(days("2026-09-01", [3, 0, null, 7]), { thresholded: true, otherEvents: { page_view: { "2026-09-03": { keyEvents: 0, eventCount: 9 } } } })
+    const { job } = await f.sync("2026-09-01", "2026-09-04")
+    expect(await (await f.runner())()).toBe(true)
+    expect(await f.job(job.id)).toMatchObject({ status: "SUCCEEDED" })
+    let [imp] = await f.imports()
+    let evidence = JSON.parse(String(imp.raw_text)).evidence
+    expect(evidence.response.subjectToThresholding).toBe(true)
+    expect(evidence.response.derivedZeroDays).toBeUndefined()
+    expect(evidence.response.activity).toBeUndefined()
+    const s = await f.series("2026-09-01", "2026-09-04")
+    expect(s.days.find(d => d.day === "2026-09-03")).toMatchObject({ value: null, status: "MISSING" })
+
+    // A sampled activity answer cannot prove activity either: derivation is skipped and named.
+    const f2 = await setup(days("2026-09-01", [3, 0, null, 7]), { activitySampled: true, otherEvents: { page_view: { "2026-09-03": { keyEvents: 0, eventCount: 9 } } } })
+    const { job: job2 } = await f2.sync("2026-09-01", "2026-09-04")
+    expect(await (await f2.runner())()).toBe(true)
+    expect(await f2.job(job2.id)).toMatchObject({ status: "SUCCEEDED" })
+    ;[imp] = await f2.imports()
+    evidence = JSON.parse(String(imp.raw_text)).evidence
+    expect(evidence.response.subjectToThresholding).toBe(false)
+    expect(evidence.response.derivedZeroDays).toBeUndefined()
+    expect(evidence.response.activitySkipped).toBe("SAMPLED")
+    const s2 = await f2.series("2026-09-01", "2026-09-04")
+    expect(s2.days.find(d => d.day === "2026-09-03")).toMatchObject({ value: null, status: "MISSING" })
   })
 
   it("is idempotent: the same answer is confirmed, not stored twice, including through an overlapping window", async () => {

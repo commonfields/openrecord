@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest"
 import { GA4_OAUTH_CALLBACK_PATH, GA4_READONLY_SCOPE, ga4LatestCompleteDay, ga4PropertyMatchesRef, ga4RangeRefusal, ga4ScopesAcceptable } from "@openrecord/contracts"
 import {
   Ga4Error, authorizationUrl, exchangeCode, fixtureGoogle, ga4ConfigFromEnv, getProperty, identityFromIdToken, keyEventReportBody, listAccessibleProperties,
-  listKeyEvents, makeTokenCipher, observationDigest, observationEvidence, parseCipherKeys, parseKeyEventReport, pkceChallenge, refreshAccessToken,
+  listKeyEvents, makeTokenCipher, observationDigest, observationEvidence, parseActivityReport, parseCipherKeys, parseKeyEventReport, pkceChallenge,
+  propertyActivityReportBody, refreshAccessToken,
   revokeToken, runReport, standInEndpoints, validRedirectUri,
 } from "../src/index.js"
 
@@ -17,7 +18,8 @@ const google = () => fixtureGoogle({
   identities: [{ sub: "1001", email: "Agency@Example.test", properties: [P1, P2] }, { sub: "2002", email: "other@example.test", properties: [P3] }],
   properties: [
     { name: P1, displayName: "Salon site", account: "accounts/10", accountDisplayName: "Salon", timeZone: "Asia/Makassar", keyEvents: [{ eventName: "book_appointment", countingMethod: "ONCE_PER_EVENT" }],
-      data: { book_appointment: { "2026-09-01": { keyEvents: 3, eventCount: 5 }, "2026-09-02": { keyEvents: 0, eventCount: 2 }, "2026-09-04": { keyEvents: 7, eventCount: 7 } } } },
+      data: { book_appointment: { "2026-09-01": { keyEvents: 3, eventCount: 5 }, "2026-09-02": { keyEvents: 0, eventCount: 2 }, "2026-09-04": { keyEvents: 7, eventCount: 7 } },
+        page_view: { "2026-09-03": { keyEvents: 0, eventCount: 12 } } } },
     { name: P2, displayName: "Clinic", account: "accounts/20", accountDisplayName: "Clinic", timeZone: "UTC", keyEvents: [], data: {} },
     { name: P3, displayName: "Someone else", account: "accounts/30", accountDisplayName: "Other", timeZone: "UTC", keyEvents: [], data: {} },
   ],
@@ -183,6 +185,63 @@ describe("the key-event report", () => {
     const page = (n: number) => ({ rows: [{ day: "2026-09-01", keyEvents: n, eventCount: n }], rowCount: 1, timeZone: "UTC", currencyCode: "USD", subjectToThresholding: false, emptyReason: null, quota: { tokensPerDay: { consumed: n } } })
     expect(observationDigest(observationEvidence(req, [page(3)]))).toBe(observationDigest(observationEvidence(req, [{ ...page(3), quota: null }])))
     expect(observationDigest(observationEvidence(req, [page(3)]))).not.toBe(observationDigest(observationEvidence(req, [page(4)])))
+  })
+})
+
+describe("the property-activity report and derived zeros", () => {
+  const req = { property: P1, eventName: "book_appointment", dateStart: "2026-09-01", dateEnd: "2026-09-05" }
+  it("asks for eventCount by date with no filter, keeping empty rows", () => {
+    const body = propertyActivityReportBody(req)
+    expect(body.dimensions.map(d => d.name)).toEqual(["date"])
+    expect(body.metrics.map(m => m.name)).toEqual(["eventCount"])
+    expect("dimensionFilter" in body).toBe(false)
+    expect(body.keepEmptyRows).toBe(true)
+  })
+  it("reads property-wide activity only for days Google recorded data, and never guesses the rest", async () => {
+    const g = google()
+    const { tokens } = await connect(g)
+    const { json } = await runReport({ endpoints: g.endpoints, fetch: g.fetch }, tokens.accessToken, P1, propertyActivityReportBody(req))
+    const parsed = parseActivityReport(json, req, "Asia/Makassar")
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    // Recorded activity: 09-01/02/04 from the key event, 09-03 from page_view; 09-05 has no data at all.
+    expect(parsed.page.rows).toEqual([
+      { day: "2026-09-01", eventCount: 5 }, { day: "2026-09-02", eventCount: 2 },
+      { day: "2026-09-03", eventCount: 12 }, { day: "2026-09-04", eventCount: 7 },
+    ])
+    expect(parsed.page.subjectToThresholding).toBe(false)
+  })
+  it("refuses a different time zone, sampled data, '(other)' data loss, out-of-range or duplicate days and non-integers", () => {
+    const ok = { dimensionHeaders: [{ name: "date" }], metricHeaders: [{ name: "eventCount" }], rowCount: 1,
+      rows: [{ dimensionValues: [{ value: "20260901" }], metricValues: [{ value: "12" }] }], metadata: { timeZone: "UTC" } }
+    expect(parseActivityReport(ok, req, "UTC").ok).toBe(true)
+    expect(parseActivityReport(ok, req, "Asia/Makassar")).toEqual({ ok: false, reason: "PROPERTY_TIME_ZONE_CHANGED" })
+    expect(parseActivityReport({ ...ok, metadata: { timeZone: "UTC", samplingMetadatas: [{}] } }, req, "UTC")).toEqual({ ok: false, reason: "RESPONSE_SAMPLED" })
+    expect(parseActivityReport({ ...ok, metadata: { timeZone: "UTC", dataLossFromOtherRow: true } }, req, "UTC")).toEqual({ ok: false, reason: "RESPONSE_DATA_LOSS" })
+    expect(parseActivityReport({ ...ok, rows: [{ dimensionValues: [{ value: "20260906" }], metricValues: [{ value: "1" }] }] }, req, "UTC").ok).toBe(false)
+    expect(parseActivityReport({ ...ok, rows: [{ dimensionValues: [{ value: "20260901" }], metricValues: [{ value: "-1" }] }] }, req, "UTC").ok).toBe(false)
+    expect(parseActivityReport({ ...ok, rows: [{ dimensionValues: [{ value: "20260901" }], metricValues: [{ value: "1.5" }] }] }, req, "UTC").ok).toBe(false)
+    expect(parseActivityReport({ ...ok, rows: [...ok.rows, ...ok.rows] }, req, "UTC").ok).toBe(false)
+  })
+  it("derives a zero only for an absent day with proven recorded activity, and keeps a silent day absent", () => {
+    const filtered = [{ rows: [{ day: "2026-09-01", keyEvents: 3, eventCount: 5 }, { day: "2026-09-02", keyEvents: 0, eventCount: 2 }], rowCount: 2, timeZone: "Asia/Makassar", currencyCode: "USD", subjectToThresholding: false, emptyReason: null, quota: null }]
+    const activity = { rows: [{ day: "2026-09-01", eventCount: 5 }, { day: "2026-09-02", eventCount: 2 }, { day: "2026-09-03", eventCount: 12 }], skipped: null }
+    const evidence = observationEvidence(req, filtered, activity)
+    expect(evidence.response.derivedZeroDays).toEqual(["2026-09-03"])
+    expect(evidence.response.activity?.rows.map(r => r.day)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03"])
+    // No probe, or a skipped one, never derives: the days stay absent.
+    expect(observationEvidence(req, filtered).response.derivedZeroDays).toBeUndefined()
+    const skipped = observationEvidence(req, filtered, { rows: [], skipped: "SAMPLED" })
+    expect(skipped.response.derivedZeroDays).toBeUndefined()
+    expect(skipped.response.activitySkipped).toBe("SAMPLED")
+    // A thresholded filtered report can hide rows: its absences are not evidence of anything.
+    const thresholded = filtered.map(p => ({ ...p, subjectToThresholding: true }))
+    const fromThresholded = observationEvidence(req, thresholded, activity)
+    expect(fromThresholded.response.derivedZeroDays).toBeUndefined()
+    expect(fromThresholded.response.activity?.rows.length).toBe(3)
+    // A day the property recorded nothing about stays absent even with a clean probe.
+    const quiet = observationEvidence(req, filtered, { rows: [{ day: "2026-09-01", eventCount: 5 }], skipped: null })
+    expect(quiet.response.derivedZeroDays).toBeUndefined()
   })
 })
 
