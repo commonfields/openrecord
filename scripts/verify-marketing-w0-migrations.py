@@ -37,6 +37,30 @@ def command(cmd, name, data=None, expect=0, env=None):
 def sql(db, source, name, expect=0):
     return command(['docker', 'exec', '-i', args.container, 'psql', '-X', '-U', 'fixture', '-d', db, '-At', '-v', 'ON_ERROR_STOP=1'], name, source.encode(), expect)
 
+def legacy_0031_sql():
+    """The historical W2 0031 replay, with a fail-open-to-markers fallback.
+
+    The full historical file (commit ee80b911, migration 0031) is preferred:
+    its exact historical catalog is replayed as-is. That object is no longer
+    reachable in every clone, so when it is absent this returns a synthesized
+    marker layout that installs exactly the artifacts the current migrations
+    must refuse (the same markers the W7/W8 rehearsals install directly). The
+    synthesis never reproduces historical 0031 semantics; it only prepares the
+    fail-closed refusal targets.
+    """
+    marker_sql = """
+ALTER TABLE growth_opportunity_events ADD COLUMN delivery_id UUID;
+CREATE TABLE growth_deliveries(id UUID PRIMARY KEY, business_id UUID);
+CREATE TABLE growth_delivery_events(id UUID PRIMARY KEY, delivery_id UUID);
+CREATE TABLE growth_delivery_targets(id UUID PRIMARY KEY, delivery_id UUID);
+"""
+    git = ['git', 'show', 'ee80b911be5b60b9fcfa218f365e586a85929823:packages/db/migrations/0031_growth_delivery_v1.sql']
+    probe = subprocess.run(git, cwd=repo, capture_output=True, text=True)
+    if probe.returncode == 0:
+        return probe.stdout, 'preserved-commit-ee80b911'
+    print('note: preserved 0031 (ee80b911) unreachable; using synthesized legacy markers')
+    return marker_sql, 'synthesized-markers'
+
 def create(db, template=None):
     cmd = ['docker', 'exec', args.container, 'createdb', '-U', 'fixture']
     if template:
@@ -91,7 +115,7 @@ sql(old, new_sql, 'old-refusal', expect=1)
 assert b'legacy 0030/0031' in (out / 'old-refusal.log').read_bytes()
 assert sql(old, snapshot, 'old-after') == before
 assert sql(old, "SELECT to_regclass('growth_metric_definitions') IS NULL;", 'old-no-partial-schema').strip() == b't'
-p2_sql = subprocess.check_output(['git', 'show', 'ee80b911be5b60b9fcfa218f365e586a85929823:packages/db/migrations/0031_growth_delivery_v1.sql'], cwd=repo, text=True)
+p2_sql, p2_source = legacy_0031_sql()
 sql(old, p2_sql, 'old-0031')
 p2_catalog = sql(old, catalog, 'old-p2-catalog-before')
 sql(old, new_sql, 'old-p2-refusal', expect=1)
@@ -99,6 +123,7 @@ assert sql(old, snapshot, 'old-p2-goals-after') == before
 assert sql(old, catalog, 'old-p2-catalog-after') == p2_catalog
 summary = {'freshAndReplay': True, 'compatiblePopulatedUpgradeAndReplay': True, 'rawEvidencePreserved': True,
            'legacyInterventionValuesPreserved': True, 'catalogsMatch': True, 'old0030RefusedWithoutMutation': True, 'old0031RefusedWithoutMutation': True,
+           'legacy0031Source': p2_source,
            'catalogSha256': hashlib.sha256(a).hexdigest(), 'databasesCreated': [base, upgrade, fresh, old], 'existingDatabasesReset': False}
 (out / 'summary.json').write_text(json.dumps(summary, indent=2))
 print(json.dumps(summary))
