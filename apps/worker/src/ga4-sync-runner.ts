@@ -21,8 +21,8 @@ import type { SqlError } from "@effect/sql/SqlError"
 import { GrowthGa4Repository, GrowthGa4Refused, type Ga4ClaimedJob, type Ga4JobWork, type RowDecodeError } from "@openrecord/db"
 import { canonicalJson, ga4LatestCompleteDay, GA4_REFRESH_DAYS, type Ga4SyncErrorCode } from "@openrecord/contracts"
 import {
-  Ga4Error, Ga4Provider, getProperty, keyEventReportBody, listKeyEvents, observationDigest, observationEvidence, parseKeyEventReport,
-  refreshAccessToken, runReport, type Ga4ProviderConfig, type Ga4ReportPage,
+  Ga4Error, Ga4Provider, getProperty, keyEventReportBody, listKeyEvents, observationDigest, observationEvidence, parseActivityReport, parseKeyEventReport,
+  propertyActivityReportBody, refreshAccessToken, runReport, type Ga4ActivityDay, type Ga4ActivitySkipReason, type Ga4ProviderConfig, type Ga4ReportPage,
 } from "@openrecord/ga4"
 
 export class Ga4SyncRunner extends Context.Tag("Ga4SyncRunner")<
@@ -155,17 +155,66 @@ export const makeGa4SyncRunnerLive = (opts: Ga4SyncRunnerOptions = {}) => Layer.
       if (collected >= parsed.page.rowCount || parsed.page.rows.length === 0) break
       if (page === MAX_REPORT_PAGES - 1) return fail("RESPONSE_UNEXPECTED")
     }
-    const evidence = observationEvidence(request, pages)
-    const days = evidence.response.rows.map(r => r.day)
+    // Zero-versus-missing: Google documents that only recorded data can be displayed, so a day with
+    // zero occurrences of the selected key event has no row here even with keepEmptyRows. For every
+    // requested day without a row, one unfiltered activity report asks whether the property recorded
+    // anything at all that day. Recorded activity with no key-event row is an authoritative zero;
+    // no recorded activity stays absent. A degraded probe is recorded as skipped, and those days
+    // stay missing: derivation is never attempted from a suspect answer.
+    const thresholded = pages.some(p => p.subjectToThresholding)
+    const reportedDays = new Set(pages.flatMap(p => p.rows).map(r => r.day))
+    const absentDays: string[] = []
+    for (let ms = Date.parse(`${job.dateStart}T00:00:00Z`); ms <= Date.parse(`${job.dateEnd}T00:00:00Z`); ms += 86_400_000) {
+      const day = new Date(ms).toISOString().slice(0, 10)
+      if (!reportedDays.has(day)) absentDays.push(day)
+    }
+    let activity: { readonly rows: ReadonlyArray<Ga4ActivityDay>; readonly skipped: Ga4ActivitySkipReason | null } | null = null
+    if (absentDays.length > 0 && !thresholded) {
+      const activityBodies: string[] = []
+      const activityPages: Array<{ rows: ReadonlyArray<Ga4ActivityDay> }> = []
+      let skipped: Ga4ActivitySkipReason | null = null
+      for (let page = 0; page < MAX_REPORT_PAGES && skipped === null; page++) {
+        const offset = activityPages.reduce((n, p) => n + p.rows.length, 0)
+        const answer = yield* authorized(token => runReport(config.api, token, binding.property, propertyActivityReportBody(request, offset)))
+        if (isOutcome(answer)) {
+          // A still-retryable provider answer aborts the attempt (nothing is written); an exhausted or
+          // permanent refusal degrades to no derivation: the filtered answer is valid evidence on its own.
+          if ("retry" in answer) return answer
+          skipped = "PROVIDER_ERROR"
+          break
+        }
+        const parsed = parseActivityReport(answer.json, request, binding.propertyTimeZone)
+        if (!parsed.ok) {
+          skipped = parsed.reason === "PROPERTY_TIME_ZONE_CHANGED" ? "PROPERTY_TIME_ZONE_CHANGED"
+            : parsed.reason === "RESPONSE_SAMPLED" ? "SAMPLED" : parsed.reason === "RESPONSE_DATA_LOSS" ? "DATA_LOSS" : "RESPONSE_UNEXPECTED"
+          break
+        }
+        activityPages.push(parsed.page)
+        activityBodies.push(answer.text)
+        const collected = offset + parsed.page.rows.length
+        if (collected >= parsed.page.rowCount || parsed.page.rows.length === 0) break
+        if (page === MAX_REPORT_PAGES - 1) { skipped = "RESPONSE_UNEXPECTED"; break }
+      }
+      bodies.push(...activityBodies)
+      activity = skipped === null
+        ? { rows: activityPages.flatMap(p => p.rows), skipped: null }
+        : { rows: [], skipped }
+      if (skipped !== null) yield* log("ga4 activity probe skipped", { jobId: job.id, bindingId: binding.id, reason: skipped, absentDays: absentDays.length })
+    }
+    const evidence = observationEvidence(request, pages, activity)
+    const explicitRows = evidence.response.rows.map(r => ({ day: r.day, value: r.keyEvents }))
+    const derivedRows = (evidence.response.derivedZeroDays ?? []).map(day => ({ day, value: 0 }))
+    const rows = [...explicitRows, ...derivedRows].sort((a, b) => a.day.localeCompare(b.day))
+    const days = rows.map(r => r.day)
     if (new Set(days).size !== days.length) return fail("RESPONSE_UNEXPECTED")
     const responseDigest = observationDigest(evidence)
     // Stored verbatim as the import's raw text: request, normalized answer and Google's own response bodies. No credential is in any of them.
     const rawText = canonicalJson({ schema: GA4_IMPORT_SCHEMA, jobId: job.id, bindingId: binding.id, connectionId, evidence, responseDigest, providerResponses: bodies })
     const recorded = yield* repo.recordObservation(job, workerId, {
-      rawText, responseDigest, rows: evidence.response.rows.map(r => ({ day: r.day, value: r.keyEvents })),
+      rawText, responseDigest, rows,
       subjectToThresholding: evidence.response.subjectToThresholding, quota: pages[pages.length - 1]?.quota ?? null,
     })
-    yield* log("ga4 sync recorded", { jobId: job.id, bindingId: binding.id, outcome: recorded.outcome, days: days.length })
+    yield* log("ga4 sync recorded", { jobId: job.id, bindingId: binding.id, outcome: recorded.outcome, days: days.length, derivedZeroDays: derivedRows.length })
     return DONE
   })
 

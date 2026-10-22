@@ -92,8 +92,20 @@ keepEmptyRows: true, limit 1000, returnPropertyQuota: true
 - The stored daily value is **`keyEvents`**, found by header name. `eventCount`
   is kept in the evidence so the two are never confused (they differ when the
   key event counts once per session).
-- A day without a row stays absent and resolves as `MISSING`. A zero is
-  recorded only when Google returns a row whose value is `"0"`.
+- Google documents that only recorded data can be displayed (`runReport`
+  `keepEmptyRows`): a day with zero occurrences of the selected key event has
+  no row, even with `keepEmptyRows`. For every requested day without a row, the
+  synchronization therefore reads one unfiltered property-activity report
+  (dimensions `date`, metrics `eventCount`, same window, `keepEmptyRows`).
+  A day where that report proves recorded activity (eventCount ≥ 1) and the
+  key-event report has no row is recorded as zero and listed in the
+  observation evidence as a derived zero; the probe's own answer is stored with
+  it. A day the property recorded nothing about stays absent and resolves as
+  `MISSING` — missing is not zero. A zero is recorded directly when Google
+  returns a row whose value is `"0"`. Derivation is never attempted from a
+  suspect answer: if the filtered report is thresholded, or the activity probe
+  is sampled, rolled into "(other)", thresholded, refused or malformed, the
+  probe result is recorded as skipped and those days stay absent.
 - Refused, nothing recorded: a response time zone different from the binding's
   (`PROPERTY_TIME_ZONE_CHANGED`), sampled data (`RESPONSE_SAMPLED`), data rolled
   into "(other)" (`RESPONSE_DATA_LOSS`), a foreign event, a day outside the
@@ -126,7 +138,7 @@ binding that is claimed at that moment.
 
 | Case | Result |
 | --- | --- |
-| Initial synchronization | One import with every day Google reported; days without a row are `MISSING` |
+| Initial synchronization | One import with every day Google reported (explicit rows plus derived zeros from proven property activity); days with neither stay `MISSING` |
 | Repeated identical answer, same or overlapping window | `UNCHANGED`: a sync run confirms the latest import; no new import |
 | Google revises a day | A new import; the day resolves to the newest collection; every earlier value stays in its import and is listed in the series' `revisions` (oldest first). Not a conflict |
 | A day Google stops reporting | A new import without that day; the earlier value still resolves (W3: a later import that does not report a day cannot erase it) |
@@ -229,10 +241,10 @@ import, row, report, execution receipt and observation byte-identical.
 
 | Claim | Test |
 | --- | --- |
-| OAuth request, PKCE, identity, scopes, cipher, report reading, errors without secrets | `packages/ga4/test/ga4.test.ts` |
+| OAuth request, PKCE, identity, scopes, cipher, report reading, zero derivation, errors without secrets | `packages/ga4/test/ga4.test.ts` |
 | provenance cannot be forged, binding/observation guards, ciphertext-only, append-only | `packages/db/src/growth-ga4.integration.test.ts` |
 | OAuth flow, CSRF/state, cross-account, unauthorized property, revoked token, disconnect, redaction | `apps/api/src/growth-ga4.integration.test.ts` |
-| aggregation, time zone, idempotency, revisions, missing days, outages, quota, refresh, suspension, concurrency, crash recovery, scheduling, W4 and W5 | `apps/worker/src/ga4-sync.integration.test.ts` |
+| aggregation, time zone, idempotency, revisions, missing days, derived zeros, outages, quota, refresh, suspension, concurrency, crash recovery, scheduling, W4 and W5 | `apps/worker/src/ga4-sync.integration.test.ts` |
 | plain-language states and report wording | `apps/web/tests/growth-ga4.test.ts` |
 | fresh, replay, populated, incompatible databases | `scripts/verify-marketing-w8-migrations.py` |
 | built API and worker over real HTTP, independent Google stand-in, no secret in responses, logs or evidence | `scripts/ga4-measurement-runtime-smoke.py` (CI) |
