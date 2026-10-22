@@ -304,7 +304,8 @@ suite("growth client reports over HTTP (immutable snapshots, revocable shares, n
     await execute(f, id)
     await importMetric(f, importBody(ga4Csv()))
     const tables = ["growth_metric_imports", "growth_metric_rows", "growth_measurement_plans", "growth_opportunity_events", "growth_initiative_actions", "interventions"]
-    const counts = async () => Promise.all(tables.map(async t => Number((await pool.query(`SELECT count(*)::int AS n FROM ${t}`)).rows[0].n)))
+    // Counted for this fixture's business only: other test files share the database and run in parallel.
+    const counts = async () => Promise.all(tables.map(async t => Number((await pool.query(`SELECT count(*)::int AS n FROM ${t} WHERE business_id=$1`, [f.businessId])).rows[0].n)))
     const before = await counts()
     const { report } = await ok<GrowthReportPublishResult>(publish(f, id, publishBody(await preview(f, id))))
     expect(await counts()).toEqual(before)
