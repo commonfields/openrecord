@@ -16,7 +16,7 @@ export function NewProductPage() {
   const [error, setError] = useState<string | null>(null)
   const [requestKey] = useState(() => crypto.randomUUID())
   return <div className="max-w-2xl space-y-4 pb-4">
-    <PageHeader title="Add a product" back={{ to: "/clients", label: "Products and clients" }} description="Define the product you operate and the outcome you want to measure." />
+    <PageHeader title="Add a product" back={{ to: "/clients", label: "Clients" }} description="Define the product you operate and the outcome you want to measure." />
     <Panel><form className="grid gap-4 p-5" onSubmit={async e => {
       e.preventDefault(); const form = new FormData(e.currentTarget); setBusy(true); setError(null)
       try {

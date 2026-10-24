@@ -74,6 +74,17 @@ export const Growth = {
   plan: (id: string, opportunityId: string) => api<{ plan: GrowthPlanRead | null }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/measurement-plan`),
   declarePlan: (id: string, opportunityId: string, input: GrowthMeasurementPlanInput) => api<{ plan: GrowthPlanRead }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/measurement-plan`, { method: "POST", body: JSON.stringify(input) }),
   evaluation: (id: string, opportunityId: string) => api<{ evaluation: GrowthOutcomeEvaluation }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/evaluation`),
+  /** How many daily imports exist for one metric definition, or null when the
+   * count is unknown (no definition, or the read failed). The stage strip
+   * uses this for measurement availability and claims nothing beyond it. */
+  importsCount: async (id: string, definitionId: string): Promise<number | null> => {
+    try {
+      const r = await api<{ imports: ReadonlyArray<unknown> }>(`${base(id)}/metrics/${encodeURIComponent(definitionId)}/imports`)
+      return r.imports.length
+    } catch {
+      return null
+    }
+  },
 }
 export const profileFromForm = (form: FormData): GrowthProfileInput => {
   const sourceKind = form.get("sourceKind")

@@ -19,15 +19,22 @@ import { Ga4Panel } from "@/components/growth-ga4"
 type ImportResult = { result: { import: GrowthMetricImport; coverage: GrowthMetricCoverage; replayed: boolean } }
 const STATUS_LABELS = { OK: "Reported", MISSING: "Missing", UNAVAILABLE: "No import", CONFLICT: "Conflicting" } as const
 
-export const measurementError = (err: unknown): string => {
+export const measurementError = (err: unknown, sourceKind?: string): string => {
   if (!(err instanceof ApiError)) return "The measurement request failed. Try again."
   const reason = typeof err.body["reason"] === "string" ? err.body["reason"] : ""
+  const ga4File = sourceKind === "GA4_AGGREGATE_EXPORT"
   const reasons: Record<string, string> = {
     ExportSize: "The CSV is larger than 1 MB. Export fewer days at a time.",
     TooManyRows: "The CSV has more than 10,000 rows.",
-    MissingHeader: "The first CSV row must be exactly `date,value` for operator files.",
-    MissingColumn: "The CSV header needs one `date` and one `value` column.",
-    UnexpectedColumn: "Unexpected CSV column. Only `date,value` is accepted for operator files.",
+    MissingHeader: ga4File
+      ? "The first row must be the GA4 export header (date, session source, session medium, sessions, key events)."
+      : "The first CSV row must be exactly `date,value` for operator files.",
+    MissingColumn: ga4File
+      ? "The GA4 export needs a date column and a key-events column."
+      : "The CSV header needs one `date` and one `value` column.",
+    UnexpectedColumn: ga4File
+      ? "A column in this file is not part of a GA4 aggregate export. Paste the export rows: date, session source, session medium, sessions, key events."
+      : "Unexpected CSV column. Only `date,value` is accepted for operator files.",
     MalformedRow: "A CSV row has the wrong number of columns.",
     InvalidDate: "A CSV date is not a real calendar day (YYYY-MM-DD).",
     DateOutsideRange: "A CSV row is dated outside the declared range. Adjust the range or the row.",
@@ -64,7 +71,7 @@ function ImportForm({ businessId, definitionId, sourceKind, done }: { businessId
       const input = { provenance: String(form.get("provenance")), dateStart: String(form.get("dateStart")), dateEnd: String(form.get("dateEnd")), csv: String(form.get("csv") ?? "") }
       const { result } = await api<ImportResult>(`/api/growth/clients/${encodeURIComponent(businessId)}/metrics/${encodeURIComponent(definitionId)}/imports`, { method: "POST", body: JSON.stringify(input) })
       await done(result.import, result.coverage, result.replayed)
-    } catch (err) { setError(measurementError(err)) } finally { setBusy(false) }
+    } catch (err) { setError(measurementError(err, sourceKind)) } finally { setBusy(false) }
   }}>
     <p className="text-xs text-muted-foreground">
       {sourceKind === "GA4_AGGREGATE_EXPORT"
