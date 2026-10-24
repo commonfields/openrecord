@@ -1,0 +1,25 @@
+# Keep images small and contexts clean; never ship local env files or secrets.
+**/node_modules
+**/dist
+**/target
+.git
+.env
+.env.*
+!.env.example
+deploy/.env
+*.log
+coverage
+.turbo
+.DS_Store
+apps/web/dist
+tauri-app
+target
+Formula
+research
+docs
+website
+fixtures
+schemas
+templates
+*.md
+!pnpm-lock.yaml
