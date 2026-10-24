@@ -46,7 +46,7 @@ export function PageHeader({
       ) : null}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-sm leading-snug font-medium tracking-tight text-balance">{title}</h1>
+          <h1 className="text-base leading-snug font-semibold tracking-tight text-balance">{title}</h1>
           {description ? <div className="max-w-prose text-xs leading-relaxed text-muted-foreground">{description}</div> : null}
           {meta ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-1 text-xs text-muted-foreground">{meta}</div> : null}
         </div>
