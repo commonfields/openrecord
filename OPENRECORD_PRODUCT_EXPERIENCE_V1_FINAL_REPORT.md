@@ -91,5 +91,6 @@ W0–W8 behavior, API contracts and the validation agent's W7/W8 work are untouc
 
 ## 9. PR and merge status
 
-- PR: feat(web): product experience v1 — growth-first client list, visible Goal→Plan→Execute→Measure→Report workflow — opened against `main` after re-merge of `a498f515`; CI required to pass before merge; merge deferred while the concurrent validation agent's changes were checked for overlap (none: its PR #74 touched no `apps/web` files).
-- No production deployment.
+- PR #76 (`feat/product-experience-v1`) — **merged** into `main` as `d7383c2` after all CI checks passed (CLI + hosted matrices, both green).
+- Rebased onto `fd3972f` (PR #75, hosted-pilot) before the merge; zero file overlap with the concurrent agents' work at rebase time and at merge time.
+- This file's status section was finalized post-merge; no production deployment was performed.
