@@ -35,7 +35,10 @@ def session():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
 try:
-    env = dict(os.environ, PORT=str(port), APP_BASE_URL=base, NINE_ROUTER_ENABLED="false", WORKER_POLL_MS="50")
+    # This smoke queues a mock-provider check run on purpose (MOCK_ADAPTER_PASS);
+    # production deployments do not set the fixture flag, and the API refuses
+    # mock check-runs without it.
+    env = dict(os.environ, PORT=str(port), APP_BASE_URL=base, NINE_ROUTER_ENABLED="false", WORKER_POLL_MS="50", RECORD_ALLOW_FIXTURE="1")
     for app, entry in [("api", "server"), ("worker", "runner")]:
         processes.append(subprocess.Popen(["node", "--import", "tsx", f"dist/{entry}.js"], cwd=root / "apps" / app,
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))

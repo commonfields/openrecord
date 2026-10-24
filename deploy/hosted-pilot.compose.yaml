@@ -1,0 +1,114 @@
+# OpenRecord hosted pilot stack: web (Caddy) + api + worker + PostgreSQL 16.
+#
+# Usage (from the repository root):
+#   cp deploy/.env.example deploy/.env      # then fill in the values
+#   docker compose -f deploy/hosted-pilot.compose.yaml --env-file deploy/.env up -d --build
+#
+# PostgreSQL is only reachable on the private compose network: it publishes no
+# ports. Administrative access runs through the api/db containers (see
+# scripts/hosted-pilot-backup.sh), never through a published database port.
+
+name: openrecord-pilot
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openrecord}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-openrecord}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: api
+    image: openrecord-pilot-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-openrecord}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-openrecord}
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in deploy/.env}
+      PORT: "3001"
+      NINE_ROUTER_ENABLED: "${NINE_ROUTER_ENABLED:-false}"
+      OPENRECORD_BUILD_COMMIT: ${OPENRECORD_BUILD_COMMIT:-}
+    # Optional provider credentials (Gemini, GitHub execution, GA4 OAuth,
+    # 9Router) are injected only when the operator creates deploy/provider.env;
+    # an absent or empty file means every provider integration stays safely
+    # disabled. An empty-string key would be rejected as invalid configuration.
+    env_file:
+      - path: ./provider.env
+        required: false
+    # Migrations run before serving; they are idempotent and advisory-locked,
+    # so the worker races safely. tsx is not hoisted to the workspace root, so
+    # each step runs from its own package directory (same as `pnpm start`).
+    command: >
+      sh -c "cd /app/packages/db && node --import tsx src/migrate.ts &&
+             cd /app/apps/api && exec node --import tsx dist/server.js"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [internal]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: worker
+    image: openrecord-pilot-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-openrecord}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-openrecord}
+      NINE_ROUTER_ENABLED: "${NINE_ROUTER_ENABLED:-false}"
+      OPENRECORD_BUILD_COMMIT: ${OPENRECORD_BUILD_COMMIT:-}
+    env_file:
+      - path: ./provider.env
+        required: false
+    command: >
+      sh -c "cd /app/packages/db && node --import tsx src/migrate.ts &&
+             cd /app/apps/worker && exec node --import tsx dist/runner.js"
+    networks: [internal]
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: web
+    image: openrecord-pilot-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      PILOT_SITE: ${PILOT_SITE:-:80}
+      PILOT_AUTO_HTTPS: ${PILOT_AUTO_HTTPS:-off}
+    ports:
+      # Local pilot: host 8080 -> container 80 over plain HTTP.
+      # Public pilot: set PILOT_AUTO_HTTPS=on + PILOT_SITE=<domain> and map
+      # 80:80 and 443:443 so Caddy can answer the ACME challenge.
+      - "${PILOT_HTTP_PORT:-8080}:80"
+      - "${PILOT_HTTPS_PORT:-}:443"
+    networks: [internal]
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
