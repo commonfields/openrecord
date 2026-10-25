@@ -5,14 +5,13 @@
 # serves both, so session cookies (HttpOnly, SameSite=Lax, Secure when the
 # origin is https) and the configured APP_BASE_URL match the browser origin.
 #
-# Local pilot (no domain):  PILOT_SITE=":80"   PILOT_AUTO_HTTPS="off"
-# Public pilot:             PILOT_SITE="pilot.example.com" PILOT_AUTO_HTTPS="on"
+# Local pilot (no domain):  PILOT_SITE=":80"
+# Public pilot:             PILOT_SITE="pilot.example.com"
 #                           (Caddy obtains and renews the certificate; ports
 #                           80 and 443 must be reachable from the internet)
 
-{
-	auto_https {$PILOT_AUTO_HTTPS:off}
-}
+# Caddy enables automatic HTTPS for a hostname and disables it for :80.
+# There is no auto_https "on" value; use its native site-address behavior.
 
 {$PILOT_SITE::80} {
 	encode gzip zstd

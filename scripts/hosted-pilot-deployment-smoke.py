@@ -157,13 +157,16 @@ try:
     # ---- the pilot workflow over the browser origin ----------------------
     email = f"pilot-operator-{uuid.uuid4().hex[:10]}@pilot.test"
     password = "hosted-pilot-operator-password"
-    s, signup, _ = client.call("POST", "/api/auth/signup", {"email": email, "password": password, "accountName": "Hosted pilot agency"})
+    s, signup, signup_headers = client.call("POST", "/api/auth/signup", {"email": email, "password": password, "accountName": "Hosted pilot agency"})
     check("P.05 agency operator account created through the deployed origin", s in (200, 201), f"{s} {signup}")
     cookie_header = None
     s, me, headers = client.call("GET", "/api/auth/me")
     check("P.06 the session cookie authenticates the operator (HttpOnly, server-side session)", s == 200 and "userId" in (me or {}), f"{s}")
-    cookie_secure = "secure" in json.dumps(headers).lower()
-    check("P.07 session cookie behavior matches the origin scheme (no Secure over local http; Secure on https origins)", True, f"secure flag present: {cookie_secure}")
+    cookie = next((v for k, v in signup_headers.items() if k.lower() == "set-cookie"), "")
+    cookie_flags = {part.strip().lower() for part in cookie.split(";")[1:]}
+    check("P.07 session cookie behavior matches the origin scheme",
+          "httponly" in cookie_flags and "samesite=lax" in cookie_flags
+          and (("secure" in cookie_flags) == base.startswith("https://")))
 
     product = {"name": "Pilot Client (TEST)", "websiteUrl": "https://pilot-client.test", "engagement": "CLIENT", "category": "TEST pilot services",
         "audience": "TEST pilot audience", "valueProposition": "TEST positioning", "goalStatement": "Increase booked appointments",
@@ -237,6 +240,9 @@ try:
     anon = Client()
     s, public_report, _ = anon.call("GET", f"/api/public/growth-reports/{share['publicId']}", origin=False)
     check("P.16 public share URL readable from an unauthenticated session", s == 200 and public_report and public_report.get("report"), f"{s}")
+    client.ok("POST", f"{base_c}/reports/{report_id}/share/revoke")
+    revoked_status, _, _ = anon.call("GET", f"/api/public/growth-reports/{share['publicId']}", origin=False)
+    check("P.16b revoked public share is denied to the same anonymous session", revoked_status == 404)
 
     # ---- production security behavior ------------------------------------
     s, refused, _ = client.call("POST", f"/api/businesses/{biz}/check-runs", {"questionId": str(uuid.uuid4()), "provider": "mock"})
@@ -279,7 +285,8 @@ try:
           run is not None, json.dumps(run)[:150] if run else "")
 
     # ---- isolation of the database ---------------------------------------
-    inspect = sh("docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", "openrecord-pilot-db-1")
+    db_container = compose("ps", "-q", "db").stdout.strip()
+    inspect = sh("docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", db_container)
     bindings = (inspect.stdout or "").strip()
     check("P.24 PostgreSQL publishes no host port (private compose network only)",
           inspect.returncode == 0 and bindings in ("{}", '{"5432/tcp":null}'), bindings[:120])

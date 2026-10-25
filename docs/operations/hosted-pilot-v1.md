@@ -69,7 +69,7 @@ evaluation → decision → report → share). Stop with
 
 1. Point a DNS A/AAAA record for the pilot domain at the host.
 2. In `deploy/.env`: set `APP_BASE_URL=https://<domain>`, `PILOT_SITE=<domain>`,
-   `PILOT_AUTO_HTTPS=on`, `PILOT_HTTP_PORT=80`, `PILOT_HTTPS_PORT=443`, and map
+   `PILOT_HTTP_PORT=80`, `PILOT_HTTPS_PORT=443`, and map
    both ports in compose so Caddy can answer the ACME challenge.
 3. `up -d --build` as above; Caddy obtains and renews the certificate.
 4. GA4 OAuth compatibility: with a public https origin, set
