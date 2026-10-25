@@ -98,13 +98,16 @@ function Palette({ close }: { close: () => void }) {
     if (bid) {
       const base = `/businesses/${bid}`
       const pages: Array<[string, string, ReactNode, string]> = [
-        ["Overview", "overview", <LayoutGridIcon key="i" />, "today dashboard analytics"],
-        ["Issues", "issues", <InboxIcon key="i" />, "wrong claims inbox review"],
-        ["Representations", "representations", <GlobeIcon key="i" />, "sources drift in sync"],
-        ["Truth", "truth", <BookCheckIcon key="i" />, "facts approved"],
-        ["Checks", "checks", <RadarIcon key="i" />, "questions run"],
-        ["Search", "search", <SearchIcon key="i" />, "website seo findings"],
-        ["Prospect assay", "assay", <FlaskConicalIcon key="i" />, "assay prospect"],
+        ["Agent", "agent", <LayoutGridIcon key="i" />, "chat setup status plan report"],
+        ["Channels", "channels", <GlobeIcon key="i" />, "connections integrations analytics ga4 github social"],
+        ["Work", "work", <InboxIcon key="i" />, "initiatives approvals executions"],
+        ["Results", "results", <LayoutGridIcon key="i" />, "today dashboard analytics overview"],
+        ["AI answer issues", "issues", <InboxIcon key="i" />, "wrong claims inbox review"],
+        ["Facts on the web", "representations", <GlobeIcon key="i" />, "representations sources drift in sync"],
+        ["Approved facts", "truth", <BookCheckIcon key="i" />, "truth facts approved"],
+        ["AI answer checks", "checks", <RadarIcon key="i" />, "checks questions run"],
+        ["Website checks", "search", <SearchIcon key="i" />, "search website seo findings"],
+        ["Prospect research", "assay", <FlaskConicalIcon key="i" />, "assay prospect"],
         ["Discover sources", "representations/discovery", <TelescopeIcon key="i" />, "discovery scan"],
       ]
       for (const [label, path, icon, keywords] of pages) out.push({ id: `page:${path}`, group: activeBusiness?.name ?? "Workspace", label, icon, keywords, run: go(`${base}/${path}`) })
@@ -121,7 +124,7 @@ function Palette({ close }: { close: () => void }) {
         })
       }
     }
-    out.push({ id: "action:new-business", group: "Actions", label: "New business", icon: <PlusIcon />, run: go("/businesses?new=1") })
+    out.push({ id: "action:new-business", group: "Actions", label: "New business", icon: <PlusIcon />, keywords: "set up add website", run: go("/start") })
     out.push({
       id: "action:settings",
       group: "Actions",
@@ -141,7 +144,7 @@ function Palette({ close }: { close: () => void }) {
         group: "Switch business",
         label: b.name,
         icon: <span className={`flex size-4 items-center justify-center rounded text-[0.5625rem] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
-        run: go(`/businesses/${b.id}/overview`),
+        run: go(`/businesses/${b.id}/agent`),
       })
     }
     if (bid) {

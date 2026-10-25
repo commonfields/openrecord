@@ -13,6 +13,9 @@ import { agentEvidencePath } from "@/lib/agent-evidence"
 import { notifyAgentChats } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { COMMANDS, PlanCard, ReportCard, StatusCard, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
+import { SetupFlow, SetupStartForm, useSetup } from "@/components/setup-flow"
+import type { SetupView } from "@/lib/setup"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean }
 // Failures stay out of the conversation: an unreachable agent shows in the
@@ -151,8 +154,8 @@ function ProposalCard({ session, businessName, proposal }: { session: AgentSessi
 
 // ---- the conversation ----
 
-function Thread({ session, businessName, compact, placeholder }: {
-  session: AgentSession; businessName: string; compact?: boolean; placeholder: string
+function Thread({ session, businessName, compact, placeholder, extra, onCommand }: {
+  session: AgentSession; businessName: string; compact?: boolean; placeholder: string; extra?: ReactNode; onCommand?: (c: AgentCommand) => void
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -201,12 +204,14 @@ function Thread({ session, businessName, compact, placeholder }: {
                   <button type="button" className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50" disabled={session.busy} onClick={session.retry}>Retry</button>
                 </>
               ) : null}
+              {onCommand && !session.failed.retry && session.failed.note.includes("isn't set up") ? <span className="block">Commands still work without it: /setup, /status, /plan, /report.</span> : null}
             </p>
           ) : null}
+          {extra ? <div className="space-y-4 pt-4">{extra}</div> : null}
         </div>
       </div>
       <div className={cn("mx-auto w-full max-w-3xl shrink-0", compact ? "px-3 pb-3" : "px-4 pb-4 sm:px-6")}>
-        <Composer onSend={session.send} disabled={session.busy || !session.ready} placeholder={session.unavailable ?? placeholder} autoFocus compact={!!compact} />
+        <Composer onSend={session.send} onCommand={onCommand} disabled={session.busy || !session.ready} placeholder={session.unavailable ?? placeholder} autoFocus compact={!!compact} />
         {compact ? null : <p className="pt-2 text-center text-[0.6875rem] text-muted-foreground">Private conversation for {businessName}. Nothing runs or is sent without your approval.</p>}
       </div>
     </div>
@@ -389,8 +394,31 @@ export function AgentChat(props: { businessId: string; businessName: string; onC
   return <OverviewAgent key={props.businessId} {...props} />
 }
 
+type FeedItem = { id: string; command: AgentCommand }
+
+/** Cards produced by typed commands. Each reads current state when shown. */
+function CommandFeed({ items, businessId, setup, setupPinned, onSetup }: { items: FeedItem[]; businessId: string; setup: SetupView | null; setupPinned: boolean; onSetup: (s: SetupView) => void }) {
+  return (
+    <>
+      {items.map(item =>
+        item.command === "setup" ? (
+          setup ? (setupPinned ? null : <SetupFlow key={item.id} setup={setup} onChange={onSetup} />) : <SetupStartForm key={item.id} businessId={businessId} onStarted={onSetup} autoFocus />
+        ) : item.command === "status" ? <StatusCard key={item.id} businessId={businessId} setup={setup} />
+          : item.command === "plan" ? <PlanCard key={item.id} businessId={businessId} setup={setup} />
+            : <ReportCard key={item.id} businessId={businessId} />,
+      )}
+    </>
+  )
+}
+
 function OverviewAgent({ businessId, businessName, onConversationChange }: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
   const session = useAgentSession(businessId)
+  const { setup, set: setSetup } = useSetup(businessId)
+  const [feed, setFeed] = useState<FeedItem[]>([])
+  const runCommand = (command: AgentCommand) => setFeed(f => [...f.filter(x => x.command !== command), { id: uid(), command }])
+  // Setup stays in the thread until the first initiative has a decision.
+  const setupPinned = setup !== null && (setup.step !== "DONE" || setup.opportunity?.status === "PROPOSED")
+  const commandFeed = <CommandFeed items={feed} businessId={businessId} setup={setup} setupPinned={setupPinned} onSetup={setSetup} />
   const { setMinimal, setWorkspace, setFocus } = useChrome()
   const active = session.active
   const split = active && session.hasWork
@@ -422,15 +450,28 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
   )
 
   if (!active) {
+    const crowded = setupPinned || feed.length > 0
     return (
-      <div className="flex flex-1 flex-col items-center justify-center pb-[12vh]">
+      <div className={cn("flex flex-1 flex-col items-center", crowded ? "justify-start pt-[6vh] pb-10" : "justify-center pb-[12vh]")}>
         {chatPane}
-        <div className="w-full max-w-3xl space-y-7">
+        <div className="w-full max-w-3xl space-y-6">
           <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
-            What should we look into for <span className="name-shimmer">{businessName}</span>?
+            {setupPinned ? <>Let's set up <span className="name-shimmer">{setup?.brief?.businessName ?? businessName}</span></> : <>What should we look into for <span className="name-shimmer">{businessName}</span>?</>}
           </h1>
+          {setupPinned && setup ? <SetupFlow setup={setup} onChange={setSetup} /> : null}
+          {commandFeed}
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-          <Composer onSend={session.send} disabled={!session.ready || session.busy} placeholder={session.unavailable ?? `Ask about stored evidence for ${businessName}`} />
+          <Composer onSend={session.send} onCommand={runCommand} disabled={!session.ready || session.busy} placeholder={session.unavailable ? `${session.unavailable}. Type / for commands` : `Ask about ${businessName}, or type / for commands`} />
+          {!setup && feed.length === 0 ? (
+            <div className="flex flex-wrap justify-center gap-2" aria-label="Commands">
+              {COMMANDS.map(c => (
+                <button key={c.key} type="button" onClick={() => runCommand(c.key)}
+                  className="flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground shadow-(--control-shadow) transition-colors hover:text-foreground [&_svg]:size-3.5">
+                  {c.icon}/{c.key}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
     )
@@ -460,7 +501,8 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
       ) : (
         <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
           <ConversationHeader session={session} />
-          <Thread session={session} businessName={businessName} placeholder="Reply to the agent" />
+          <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+            extra={setupPinned && setup ? <><SetupFlow setup={setup} onChange={setSetup} />{commandFeed}</> : commandFeed} />
         </section>
       )}
     </>
@@ -535,12 +577,15 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 
 function Composer({
   onSend,
+  onCommand,
   placeholder,
   autoFocus,
   disabled,
   compact,
 }: {
   onSend: (text: string) => void
+  /** Typed application commands (/setup, /status, ...). They run without the model. */
+  onCommand?: ((command: AgentCommand) => void) | undefined
   disabled: boolean
   placeholder: string
   autoFocus?: boolean
@@ -555,10 +600,23 @@ function Composer({
 
   useEffect(() => () => recognitionRef.current?.stop(), [])
 
-  const canSend = !disabled && text.trim().length > 0 && text.trim().length <= 4000
+  const command = onCommand ? parseCommand(text) : null
+  const matches = onCommand ? commandMatches(text) : []
+  const [menuIndex, setMenuIndex] = useState(0)
+  const menuOpen = matches.length > 0
+  const canSend = command !== null || (!disabled && text.trim().length > 0 && text.trim().length <= 4000)
 
+  const run = (c: AgentCommand) => {
+    recognitionRef.current?.stop()
+    onCommand?.(c)
+    setText("")
+    setMenuIndex(0)
+    textRef.current?.focus()
+  }
   const submit = () => {
+    if (menuOpen && !command) return run(matches[Math.min(menuIndex, matches.length - 1)]!.key)
     if (!canSend) return
+    if (command) return run(command)
     recognitionRef.current?.stop()
     onSend(text.trim())
     setText("")
@@ -616,6 +674,25 @@ function Composer({
         }}
         className={cn("relative cursor-text border border-border bg-background shadow-(--float-shadow)", compact ? "rounded-2xl" : "rounded-3xl")}
       >
+        {menuOpen ? (
+          <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-xl border bg-popover p-1 text-left shadow-(--float-shadow-strong)">
+            {matches.map((c, i) => (
+              <li key={c.key} role="option" aria-selected={i === menuIndex}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => run(c.key)}
+                  onMouseEnter={() => setMenuIndex(i)}
+                  className={cn("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs [&_svg]:size-3.5 [&_svg]:text-muted-foreground", i === menuIndex && "bg-accent")}
+                >
+                  {c.icon}
+                  <span className="font-medium">/{c.key}</span>
+                  <span className="truncate text-muted-foreground">{c.description}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
         </label>
@@ -626,12 +703,34 @@ function Composer({
           rows={1}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
-          disabled={disabled}
+          disabled={disabled && !onCommand}
+          aria-expanded={onCommand ? menuOpen : undefined}
+          aria-autocomplete={onCommand ? "list" : undefined}
           maxLength={4000}
           onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") } }}
           onKeyDown={(e) => {
+            if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault()
+              setMenuIndex(i => (i + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length)
+              return
+            }
+            if (menuOpen && e.key === "Tab") {
+              e.preventDefault()
+              setText(`/${matches[Math.min(menuIndex, matches.length - 1)]!.key}`)
+              return
+            }
+            if (menuOpen && e.key === "Escape") {
+              e.preventDefault()
+              setText("")
+              return
+            }
+            if (menuOpen && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              submit()
+              return
+            }
             const sendCombo = preferences.enterToSend ? !e.shiftKey && !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey
-            if (e.key === "Enter" && sendCombo && !e.nativeEvent.isComposing) {
+            if (e.key === "Enter" && (sendCombo || command !== null) && !e.nativeEvent.isComposing) {
               e.preventDefault()
               submit()
             } else if (e.key === "Escape" && listening) {

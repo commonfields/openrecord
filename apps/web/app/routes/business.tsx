@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react"
-import { Link, Outlet, useParams, useSearchParams } from "react-router"
+import { useCallback, useEffect } from "react"
+import { Link, Navigate, Outlet, useParams, useSearchParams } from "react-router"
 import { Building2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AgentChat } from "@/components/agent-chat"
 import { useChrome } from "@/components/app-shell"
 import { EmptyState } from "@/components/page"
@@ -33,55 +32,28 @@ export function BusinessLayout() {
   return <Outlet />
 }
 
-type OverviewView = "today" | "agent"
-
+/** Kept for links made before the four-area workspace: ?view= or the landing
+ * preference decides between the agent and results. */
 export function Overview() {
-  const { activeBusiness } = useWorkspace()
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const { preferences } = usePreferences()
-  // ?view= wins; otherwise the landing view from settings.
   const requested = params.get("view")
-  const view: OverviewView = requested === "today" || requested === "agent" ? requested : preferences.landingView
-  const [chatting, setChatting] = useState(false)
-  const showSwitcher = view === "today" || !chatting
-  // Today is a wide dashboard, so the sidebar steps aside while it is open
-  // (the agent view collapses it itself once a conversation starts).
+  const view = requested === "today" || requested === "agent" ? requested : preferences.landingView
+  return <Navigate to={view === "today" ? "../results" : "../agent"} replace />
+}
+
+export function AgentPage() {
+  const { activeBusiness } = useWorkspace()
+  const noop = useCallback(() => {}, [])
+  return <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} onConversationChange={noop} />
+}
+
+export function ResultsPage() {
+  // Results is a wide dashboard, so the sidebar steps aside while it is open.
   const { setFocus } = useChrome()
   useEffect(() => {
-    if (view !== "today") return
     setFocus(true)
     return () => setFocus(false)
-  }, [view, setFocus])
-
-  return (
-    <>
-      {view === "agent" ? (
-        <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} onConversationChange={setChatting} />
-      ) : (
-        <Today />
-      )}
-      {showSwitcher ? (
-        <div className="pointer-events-none sticky bottom-5 z-20 mt-auto flex justify-center pt-8">
-          <Tabs
-            value={view}
-            onValueChange={(v) => {
-              const next = new URLSearchParams(params)
-              next.set("view", v)
-              setParams(next, { replace: true })
-            }}
-            className="pointer-events-auto"
-          >
-            <TabsList className="h-10 rounded-full border border-sidebar-border bg-sidebar p-1 text-sidebar-foreground shadow-(--float-shadow-strong)">
-              <TabsTrigger value="agent" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-                Agent
-              </TabsTrigger>
-              <TabsTrigger value="today" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-                Today
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      ) : null}
-    </>
-  )
+  }, [setFocus])
+  return <Today />
 }

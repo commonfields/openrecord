@@ -4,6 +4,7 @@
 // mention or recommend this business? Every count shows its denominator,
 // recommendation counts come from human-reviewed samples only, each period
 // stands alone, and referral evidence sits in its own section.
+import { useActiveBusiness } from "@/lib/workspace"
 import { Link, useParams } from "react-router"
 import { PrinterIcon, TriangleAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -144,6 +145,7 @@ export function DiscoveryReportView({ report }: { report: Report }) {
 
 export function ClientDiscoveryReportPage() {
   const { id = "" } = useParams()
+  useActiveBusiness(id)
   const res = useApi(`discovery-report:${id}`, () => Discovery.report(id))
   if (res.loading && !res.data) return <Skeleton className="h-96 rounded-xl" />
   if (!res.data) {

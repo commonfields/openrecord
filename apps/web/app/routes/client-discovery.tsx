@@ -4,6 +4,7 @@
 // worker, reads exact answers and citations, reviews each candidate mention,
 // imports an optional GA4 export, and opens the agency report.
 // Detection only highlights candidates; every confirmed count is a human review.
+import { useActiveBusiness } from "@/lib/workspace"
 import { useState, type ReactNode } from "react"
 import { Link, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
@@ -406,6 +407,7 @@ function QuestionRow({ clientId, checks, statement, brand, open, onToggle, reloa
 
 export function ClientDiscoveryPage() {
   const { id = "" } = useParams()
+  useActiveBusiness(id)
   const [poll, setPoll] = useState(false)
   const res = useApi<DiscoveryResponse>(`discovery:${id}`, async () => {
     const r = await Discovery.get(id)
