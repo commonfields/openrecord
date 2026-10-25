@@ -385,7 +385,9 @@ function SearchBar({ collapsed, onOpen }: { collapsed: boolean; onOpen: () => vo
 function ViewTabs({ collapsed, view }: { collapsed: boolean; view: "agent" | "today" }) {
   const { activeBusiness } = useWorkspace()
   const nav = useNavigate()
-  if (!activeBusiness) return null
+  // Keep the collapsed rail focused on navigation icons. Switching between
+  // Agent and Work is available only after the user expands the sidebar.
+  if (!activeBusiness || collapsed) return null
   const base = `/businesses/${activeBusiness.id}`
   const trigger = "h-6 rounded-full px-2 text-xs text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)"
   return (
@@ -396,13 +398,9 @@ function ViewTabs({ collapsed, view }: { collapsed: boolean; view: "agent" | "to
         nav(v === "agent" ? `${base}/overview?view=agent` : `${base}/overview?view=today`)
       }}
     >
-      <TabsList className={cn("rounded-full", collapsed ? "flex-col items-center gap-1 bg-transparent p-0" : "grid h-9 w-full grid-cols-2 bg-sidebar-accent/60 p-1")}>
-        <TabsTrigger value="agent" className={cn(trigger, collapsed && "w-9 justify-center p-0 text-[0.625rem]")}>
-          Agent
-        </TabsTrigger>
-        <TabsTrigger value="today" className={cn(trigger, collapsed && "w-9 justify-center p-0 text-[0.625rem]")}>
-          Work
-        </TabsTrigger>
+      <TabsList className="grid h-9 w-full grid-cols-2 rounded-full bg-sidebar-accent/60 p-1">
+        <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
+        <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
       </TabsList>
     </Tabs>
   )

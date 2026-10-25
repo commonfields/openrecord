@@ -423,14 +423,14 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
 
   if (!active) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center pb-[12vh]">
+      <div className="flex flex-1 flex-col items-center justify-end px-4 pb-6 sm:px-6 lg:pb-8">
         {chatPane}
-        <div className="w-full max-w-3xl space-y-7">
+        <div className="w-full max-w-3xl space-y-4">
           <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
             What should we look into for <span className="name-shimmer">{businessName}</span>?
           </h1>
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-          <Composer onSend={session.send} disabled={!session.ready || session.busy} placeholder={session.unavailable ?? `Ask about stored evidence for ${businessName}`} />
+          <Composer compact onSend={session.send} disabled={!session.ready || session.busy} placeholder={session.unavailable ?? `Ask about stored evidence for ${businessName}`} />
         </div>
       </div>
     )
