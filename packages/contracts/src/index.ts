@@ -454,3 +454,9 @@ export interface AssayQueue {
   groups: Array<{ id: string; status: string; n: number; missing_samples: Array<{ sampleNumber: number; failureClass: string }> }>;
   facts: AssayFact[]; findings: AssayFinding[]
 }
+export * from "./growth.js"
+export * from "./growth-measurement.js"
+export * from "./growth-evaluation.js"
+export * from "./growth-report.js"
+export * from "./growth-execution.js"
+export * from "./growth-ga4.js"

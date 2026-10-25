@@ -2,12 +2,12 @@
 // Disposable PostgreSQL fixtures. No provider calls (approvals enqueue
 // QUEUED runs; no worker drains them here).
 import { randomUUID } from "node:crypto"
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { HttpApp } from "@effect/platform"
 import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import {
-  AgentProposalRepositoryLive,
+  GrowthRepositoriesLive, AgentProposalRepositoryLive,
   AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive,
   RecordRepositoryLive, AcquisitionRepositoryLive, SourceTargetRepositoryLive,
@@ -25,7 +25,7 @@ const suite = url ? describe : describe.skip
 suite("agent proposal-gated writes (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    AgentProposalRepositoryLive,
+    GrowthRepositoriesLive, AgentProposalRepositoryLive,
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
@@ -54,6 +54,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     RepoLayers.SiteVerificationRepositoryLive,
     RepoLayers.SiteOperatorEventRepositoryLive,
     RepoLayers.SiteGscRepositoryLive,
+    RepoLayers.GrowthMeasurementRepositoryLive,
   ).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
   )
@@ -67,6 +68,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     await web.dispose()
     await pool.end()
   })
+  afterEach(() => vi.unstubAllEnvs())
 
   const fixture = async () => {
     const account = (await pool.query("INSERT INTO accounts(name) VALUES ('TEST agent proposals') RETURNING id")).rows[0].id as string
@@ -87,6 +89,51 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     )
   const checksOf = async (business: string) =>
     Number((await pool.query("SELECT count(*)::int n FROM check_runs WHERE business_id = $1", [business])).rows[0].n)
+
+  it("returns only allowlisted development runtime facts for authenticated operators", async () => {
+    const f = await fixture()
+    const commit = "c".repeat(40)
+    vi.stubEnv("OPENRECORD_BUILD_COMMIT", commit)
+    vi.stubEnv("OPENRECORD_BUILD_DIRTY", "true")
+    const response = await call("GET", "/api/dev/runtime", f.session)
+    expect(response.status).toBe(200)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    const latest = await pool.query("SELECT filename FROM public.schema_migrations ORDER BY filename DESC LIMIT 1")
+    const body: unknown = await response.json()
+    expect(body).toEqual({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: true, latestMigration: latest.rows[0].filename, agentConfigured: true })
+    // Without launcher-provided metadata the commit is unknown, not guessed.
+    vi.stubEnv("OPENRECORD_BUILD_COMMIT", "")
+    vi.stubEnv("OPENRECORD_BUILD_DIRTY", "")
+    expect(await (await call("GET", "/api/dev/runtime", f.session)).json()).toMatchObject({ commitSha: null, shortCommitSha: null, dirtyAtStartup: null })
+    expect(JSON.stringify(body)).not.toMatch(/TEST-only-key|AGENT_API_KEY|DATABASE_URL|password|hostname|username|\/Users\//i)
+    expect((await call("GET", "/api/dev/runtime", null)).status).toBe(401)
+    expect((await call("GET", "/api/dev/runtime", randomUUID())).status).toBe(401)
+  })
+
+  it("hides runtime diagnostics in production even from authenticated operators", async () => {
+    const f = await fixture()
+    vi.stubEnv("NODE_ENV", "production")
+    expect((await call("GET", "/api/dev/runtime", f.session)).status).toBe(404)
+    expect((await call("GET", "/api/dev/runtime", null)).status).toBe(404)
+  })
+
+  const invalidConfigs: Array<ReadonlyArray<readonly [string, string]>> = [
+    [],
+    [["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"]],
+    [["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "  "]],
+    [["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "bad/model"], ["AGENT_API_KEY", "TEST-only-key"]],
+    [["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"], ["AGENT_TIMEOUT_MS", "0"]],
+  ]
+  it.each(invalidConfigs.map(entries => ({ entries })))("reports incomplete or invalid agent configuration as false (%j)", async ({ entries }) => {
+    const f = await fixture()
+    const config = ConfigProvider.fromMap(new Map(entries))
+    const unconfigured = HttpApp.toWebHandlerLayer(makeRouter(), Layer.merge(repos, Layer.setConfigProvider(config)))
+    try {
+      const response = await unconfigured.handler(new Request("http://localhost/api/dev/runtime", { headers: { cookie: `or_session=${f.session}` } }))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ agentConfigured: false })
+    } finally { await unconfigured.dispose() }
+  })
 
   it("proposes without executing; approval executes once with approver attribution", async () => {
     const f = await fixture()
@@ -219,7 +266,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
       [{ functionCall: { name: "read_record_outcomes", args: {} } }],
       [{ text: "This client has no record evidence. A missing record is not a positive finding." }],
       [{ functionCall: { name: "propose_check_run", args: { questionId: f.question } } }],
-      [{ text: "A re-check is proposed. Review and approve it before execution." }],
+      [{ text: `A re-check for ${f.question} is proposed (\`PROPOSED\`). Review and approve it before execution.` }],
     ]
     let round = 0
     const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -231,17 +278,27 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
       let revision = 0
       let conversationId: string | undefined
       for (const message of ["What problems does this client have?", "Show me the evidence", "Run another check"]) {
-        const response = await call("POST", `/api/businesses/${f.business}/agent/messages`, f.session, { message, requestId: randomUUID(), revision, conversationId })
+        const request = { message, requestId: randomUUID(), revision, conversationId }
+        const response = await call("POST", `/api/businesses/${f.business}/agent/messages`, f.session, request)
         expect(response.status).toBe(200)
-        const answer = await response.json() as { revision: number; conversationId: string; citations: Array<{ id: string }>; requestedModel: string }
+        const answer = await response.json() as { reply: string; revision: number; conversationId: string; citations: Array<{ id: string }>; requestedModel: string }
         revision = answer.revision; conversationId = answer.conversationId
         expect(answer.requestedModel).toBe("fixture-model")
+        expect(answer.reply).not.toContain(f.question)
+        if (revision === 3) {
+          expect(answer.citations).toContainEqual({ kind: "question", id: f.question, text: "Proposed buyer question" })
+          const replay = await call("POST", `/api/businesses/${f.business}/agent/messages`, f.session, request)
+          expect(replay.status).toBe(200)
+          expect(await replay.json()).toEqual(answer)
+        }
       }
       expect(revision).toBe(3)
       expect(transport).toHaveBeenCalledTimes(6)
       expect(await checksOf(f.business)).toBe(0)
-      const saved = await (await call("GET", `/api/businesses/${f.business}/agent/conversation`, f.session)).json() as { conversation: { messages: unknown[] } }
+      const saved = await (await call("GET", `/api/businesses/${f.business}/agent/conversation`, f.session)).json() as { conversation: { messages: Array<{ role: string; text: string; citations?: Array<{ id: string }> }> } }
       expect(saved.conversation.messages).toHaveLength(6)
+      expect(saved.conversation.messages.at(-1)?.text).toBe("A re-check for the referenced item is proposed (proposed). Review and approve it before execution.")
+      expect(saved.conversation.messages.at(-1)?.citations).toContainEqual({ kind: "question", id: f.question, text: "Proposed buyer question" })
       const foreign = await fixture()
       expect((await call("GET", `/api/businesses/${f.business}/agent/conversation`, foreign.session)).status).toBe(404)
       const proposal = (await (await call("GET", `/api/businesses/${f.business}/agent/proposals`, f.session)).json()) as { proposals: Array<{ id: string }> }

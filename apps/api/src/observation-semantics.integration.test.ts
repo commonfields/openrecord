@@ -22,6 +22,7 @@ suite("hosted observation semantics (TEST fixtures)", () => {
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
+    RepoLayers.GrowthRepositoriesLive,
     RepoLayers.AgentProposalRepositoryLive,
     RepoLayers.AssayRepositoryLive,
     RepoLayers.AssayReviewRepositoryLive,
@@ -48,6 +49,7 @@ suite("hosted observation semantics (TEST fixtures)", () => {
     RepoLayers.SiteVerificationRepositoryLive,
     RepoLayers.SiteOperatorEventRepositoryLive,
     RepoLayers.SiteGscRepositoryLive,
+    RepoLayers.GrowthMeasurementRepositoryLive,
   ).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
   )

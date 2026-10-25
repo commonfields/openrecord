@@ -1,4 +1,10 @@
+import { growthApi } from "./growth-routes.js"
+import { growthMeasurementApi } from "./growth-measurement-routes.js"
+import { growthReportApi } from "./growth-report-routes.js"
+import { growthExecutionApi } from "./growth-execution-routes.js"
+import { growthGa4Api } from "./growth-ga4-routes.js"
 import { agentOriginAllowed } from "./agent-origin.js"
+import { readStartupGit, runtimeDiagnostic } from "./runtime.js"
 // Effect API server: HttpRouter + HttpServer over Node.
 // One typed contract (packages/contracts) shared with apps/web.
 // Typed failures map deterministically to HTTP statuses (see domain/errors).
@@ -7,7 +13,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "@effect/platform"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { SqlClient } from "@effect/sql"
 import { AppBaseUrl } from "@openrecord/config"
 import {
@@ -28,6 +34,8 @@ import {
   SupersedeFactRequest,
 } from "@openrecord/contracts"
 import {
+  GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
@@ -370,6 +378,29 @@ export const requireSession = Effect.flatMap(HttpServerRequest.HttpServerRequest
 
 export const makeRouter = () => {
   const router = HttpRouter.empty
+  const runtimeApi = router.pipe(
+    // Unauthenticated liveness/readiness for load balancers, containers and
+    // operators. Reports only what a passing monitor needs: whether the
+    // process is serving, whether the database answers, and (when the
+    // deployment states it) the short commit it serves. No configuration, no
+    // secrets; full runtime metadata stays in /api/dev/runtime behind a
+    // session.
+    HttpRouter.get("/api/health", Effect.gen(function*() {
+      const sql = yield* Effect.serviceOption(SqlClient.SqlClient)
+      const db = yield* (sql === Option.none()
+        ? Effect.succeed(false)
+        : sql!.pipe(Effect.flatMap(s => s`SELECT 1 AS ok`), Effect.as(true), Effect.catchAll(() => Effect.succeed(false))))
+      const version = readStartupGit().shortCommitSha
+      return yield* json(db ? 200 : 503, { ok: db, db, version }, { "Cache-Control": "no-store" })
+    }).pipe(Effect.catchAll(() => json(503, { ok: false, db: false, version: null })))),
+    HttpRouter.get("/api/dev/runtime", Effect.gen(function*() {
+      if (process.env["NODE_ENV"] === "production") return yield* json(404, { _tag: "NotFound" })
+      // Runtime metadata is operator-only, using the same session boundary as other private API reads.
+      yield* requireSession
+      return yield* json(200, yield* runtimeDiagnostic, { "Cache-Control": "no-store" })
+    }).pipe(Effect.catchAll(e => json(e._tag === "NotAuthenticated" ? 401 : 500,
+      { _tag: e._tag === "NotAuthenticated" ? "NotAuthenticated" : "RuntimeUnavailable" })))),
+  )
 
   const withSession = <A, E, R>(
     run: (session: Session) => Effect.Effect<A, E, R>,
@@ -708,7 +739,12 @@ export const makeRouter = () => {
           const body = decodeRequest(RunCheckRequest, (yield* readJson) as unknown)
           if (!body) return yield* json(422, malformed)
           const questionId = body.questionId
-          const provider = body.provider ?? "mock"
+          // An omitted provider means the real hosted provider, never the fixture:
+          // mock evidence must not enter production data by default.
+          const provider = body.provider ?? "9router"
+          if (provider === "mock" && !recordFixtureAllowed()) {
+            return yield* json(409, { _tag: "CheckRunRefused", reason: "FixtureProviderDisabled" })
+          }
           const requestedModel = body.requestedModel ?? null
           const q = yield* QuestionRepository
           if (!(yield* q.getScoped(businessId, questionId))) return yield* json(404, { _tag: "QuestionNotFound" })
@@ -1497,13 +1533,15 @@ export const makeRouter = () => {
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
   )
-  return HttpRouter.concat(
+  return HttpRouter.concat(runtimeApi, HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), agentProposalApi(withSession))),
-  )
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), growthGa4Api(withSession)))))),
+  ))
 }
 
 export const RepoLayers = {
+  GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AssayRepositoryLive,
   AssayReviewRepositoryLive,

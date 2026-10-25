@@ -1,0 +1,32 @@
+# OpenRecord hosted pilot reverse proxy.
+#
+# Serves the built web SPA from /srv/openrecord-web and forwards every /api
+# request to the api service over the private compose network. One origin
+# serves both, so session cookies (HttpOnly, SameSite=Lax, Secure when the
+# origin is https) and the configured APP_BASE_URL match the browser origin.
+#
+# Local pilot (no domain):  PILOT_SITE=":80"
+# Public pilot:             PILOT_SITE="pilot.example.com"
+#                           (Caddy obtains and renews the certificate; ports
+#                           80 and 443 must be reachable from the internet)
+
+# Caddy enables automatic HTTPS for a hostname and disables it for :80.
+# There is no auto_https "on" value; use its native site-address behavior.
+
+{$PILOT_SITE::80} {
+	encode gzip zstd
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		root * /srv/openrecord-web
+		# Hashed Vite assets are immutable; the entry document must revalidate.
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

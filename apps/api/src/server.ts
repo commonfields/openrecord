@@ -4,6 +4,7 @@ import { Config, Effect, Layer } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { createServer } from "node:http"
 import {
+  GrowthRepositoriesLive,
   AgentProposalRepositoryLive,
   AuthRepositoryLive,
   AssayRepositoryLive,
@@ -39,10 +40,18 @@ import {
   ReobservationRepositoryLive,
   RecordRepositoryLive,
   AcquisitionRepositoryLive,
+  GrowthMeasurementRepositoryLive,
 } from "@openrecord/db"
+import { GitHubExecutionLive } from "@openrecord/site-operator"
+import { Ga4ProviderLive } from "@openrecord/ga4"
 import { makeRouter } from "./router.js"
 
 const Repos = Layer.mergeAll(
+  GitHubExecutionLive,
+  // W8: GA4 OAuth client, redirect URI and token encryption keys from server configuration only.
+  Ga4ProviderLive,
+  GrowthRepositoriesLive,
+  GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   RecordRepositoryLive,
   AcquisitionRepositoryLive,

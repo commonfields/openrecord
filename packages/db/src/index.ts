@@ -20,3 +20,13 @@ export * from "./acquisition-detect.js"
 export * from "./acquisition-ga4.js"
 export * from "./acquisition-view.js"
 export * from "./agent-referrals.js"
+
+export * from "./growth.js"
+export * from "./growth-measurement.js"
+export * from "./growth-evaluation.js"
+export * from "./growth-report.js"
+export * from "./growth-execution.js"
+export * from "./growth-ga4.js"
+export { evaluateGrowthOutcome, localDay, GROWTH_EVALUATION_LIMITATIONS, type GrowthEvaluationInput, type GrowthEvaluationActionRow } from "./growth-evaluation-rules.js"
+
+export { GrowthRepositoriesLive } from "./growth-repositories.js"

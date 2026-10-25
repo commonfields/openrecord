@@ -26,10 +26,14 @@ import { SiteFindingPage } from "./routes/site-finding"
 import { SiteRunPage } from "./routes/site-run"
 import { TruthPage } from "./routes/truth"
 import { ClientsPage } from "./routes/clients"
+import { ClientGrowthPage } from "./routes/client-growth"
+import ClientGrowthMeasurementPage from "./routes/client-growth-measurement"
+import { NewProductPage } from "./routes/product-new"
 import { ClientRecordPage } from "./routes/client"
 import { ClientDiscoveryPage } from "./routes/client-discovery"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
+import { PublicGrowthReportPage } from "./routes/public-growth-report"
 
 function App() {
   return (
@@ -41,6 +45,7 @@ function App() {
           <Route path="/signup" element={<SignUp />} />
           {/* The client-facing record: public, read-only, outside the workspace shell. */}
           <Route path="/open/:publicId" element={<PublicRecordPage />} />
+          <Route path="/reports/:publicId" element={<PublicGrowthReportPage />} />
           <Route
             element={
               <RequireAuth>
@@ -53,6 +58,9 @@ function App() {
             }
           >
             <Route path="/" element={<Navigate to="/clients" replace />} />
+            <Route path="/products/new" element={<NewProductPage />} />
+            <Route path="/clients/:id/growth" element={<ClientGrowthPage />} />
+            <Route path="/clients/:id/growth-measurement" element={<ClientGrowthMeasurementPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:id" element={<ClientRecordPage />} />
             <Route path="/clients/:id/discovery" element={<ClientDiscoveryPage />} />

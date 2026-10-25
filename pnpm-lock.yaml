@@ -50,6 +50,9 @@ importers:
       '@openrecord/fs-containment':
         specifier: workspace:*
         version: link:../../packages/fs-containment
+      '@openrecord/ga4':
+        specifier: workspace:*
+        version: link:../../packages/ga4
       '@openrecord/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -187,6 +190,9 @@ importers:
       '@openrecord/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@openrecord/ga4':
+        specifier: workspace:*
+        version: link:../../packages/ga4
       '@openrecord/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -352,6 +358,25 @@ importers:
       effect:
         specifier: 3.22.2
         version: 3.22.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.19.2)(yaml@2.7.0)
+
+  packages/ga4:
+    dependencies:
+      '@openrecord/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 3.22.2
+        version: 3.22.2
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3

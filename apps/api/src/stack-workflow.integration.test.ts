@@ -13,7 +13,7 @@ import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import {
-  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
+  ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, DiscoveryMatchRepositoryLive, DiscoveryObservationRepositoryLive,
   EvidenceLineageRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive, RecordRepository,
   RecordRepositoryLive, SourceTargetRepositoryLive,
 } from "@openrecord/db"
@@ -26,7 +26,7 @@ const MODEL = "gemini-fixture-measurement-model"
 suite("stack workflow: acquisition evidence -> operator investigation -> gated measurement -> private report (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AssayRepositoryLive, RepoLayers.AssayReviewRepositoryLive, RepoLayers.BusinessRepositoryLive,
@@ -38,6 +38,7 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
     RepoLayers.SiteFindingRepositoryLive, RepoLayers.SiteFindingEventRepositoryLive, RepoLayers.SiteFixProposalRepositoryLive,
     RepoLayers.SiteMutationRepositoryLive, RepoLayers.SiteVerificationRepositoryLive, RepoLayers.SiteOperatorEventRepositoryLive,
     RepoLayers.SiteGscRepositoryLive,
+    RepoLayers.GrowthMeasurementRepositoryLive,
   ).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const config = ConfigProvider.fromMap(new Map([
     ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-conversation-model"], ["AGENT_API_KEY", "TEST-only-key"],

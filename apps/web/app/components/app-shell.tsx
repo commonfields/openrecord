@@ -582,7 +582,9 @@ function Breadcrumbs() {
     crumbs.push({ label: "AI answer" })
   } else if (parts[0] === "clients") {
     crumbs.push({ label: "Clients", ...(parts[1] ? { to: "/clients" } : {}) })
-    if (parts[1]) crumbs.push({ label: "Client record" })
+    if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
+  } else if (parts[0] === "products" && parts[1] === "new") {
+    crumbs.push({ label: "Clients", to: "/clients" }, { label: "Add a product" })
   } else {
     crumbs.push({ label: "All businesses" })
   }
