@@ -341,6 +341,7 @@ function SearchBar({ collapsed, onOpen }: { collapsed: boolean; onOpen: () => vo
   const button = (
     <button
       type="button"
+      data-search-trigger
       onClick={onOpen}
       aria-label="Find in OpenRecord (F)"
       className={cn(

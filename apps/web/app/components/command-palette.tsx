@@ -18,7 +18,6 @@ import {
   SettingsIcon,
   TelescopeIcon,
 } from "lucide-react"
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { useSettings } from "@/components/settings-dialog"
 import { IssueStateBadge } from "@/components/status"
@@ -74,23 +73,16 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   )
 }
 
-// The search menu: the modal popup that shows the jump list when the search
-// bar is clicked (or F / ⌘K is pressed). Its design is self-contained and
-// props-driven — it knows nothing about who opens it or where it is mounted;
-// callers pass `open` and `onClose`, and the provider holds the state.
+// The search menu: a floating, non-modal menu anchored under the search bar,
+// not one big modal frame. Its design is split into two separated cards —
+// the query field, and the grouped results below it — and it knows nothing
+// about who opens it or where it is mounted (callers pass open / onClose).
 export function SearchMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="top-[12%] max-w-3xl translate-y-0 gap-0 overflow-hidden border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-(--float-shadow-strong) sm:max-w-3xl [&>button:last-child]:hidden">
-        <DialogTitle className="sr-only">Find in OpenRecord</DialogTitle>
-        <DialogDescription className="sr-only">Jump to a page, a business, a claim, or a fact.</DialogDescription>
-        {open ? <Palette close={onClose} /> : null}
-      </DialogContent>
-    </Dialog>
-  )
+  if (!open) return null
+  return <MenuSurface onClose={onClose} />
 }
 
-function Palette({ close }: { close: () => void }) {
+function MenuSurface({ onClose }: { onClose: () => void }) {
   const nav = useNavigate()
   const { businesses, activeBusiness } = useWorkspace()
   const { openSettings } = useSettings()
@@ -102,7 +94,7 @@ function Palette({ close }: { close: () => void }) {
   const facts = useApi(bid ? `palette-facts:${bid}` : null, () => Facts.list(bid ?? ""))
 
   const go = (to: string) => () => {
-    close()
+    onClose()
     nav(to)
   }
 
@@ -141,7 +133,7 @@ function Palette({ close }: { close: () => void }) {
       label: "Settings",
       icon: <SettingsIcon />,
       run: () => {
-        close()
+        onClose()
         openSettings("general")
       },
     })
@@ -212,10 +204,27 @@ function Palette({ close }: { close: () => void }) {
     else groups.push([item.group, [{ ...item, i }]])
   })
 
+  // Close when the user clicks anywhere outside the menu or its trigger.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (!t?.closest("[data-search-menu], [data-search-trigger]")) onClose()
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [onClose])
+
   return (
     <div
+      data-search-menu
+      role="dialog"
+      aria-label="Find in OpenRecord"
+      className="fixed top-[12%] left-1/2 z-50 flex w-[calc(100%-1.5rem)] max-w-3xl -translate-x-1/2 flex-col gap-1.5"
       onKeyDown={(e) => {
-        if (e.key === "ArrowDown") {
+        if (e.key === "Escape") {
+          e.preventDefault()
+          onClose()
+        } else if (e.key === "ArrowDown") {
           e.preventDefault()
           setIndex((x) => Math.min(filtered.length - 1, x + 1))
         } else if (e.key === "ArrowUp") {
@@ -227,59 +236,63 @@ function Palette({ close }: { close: () => void }) {
         }
       }}
     >
-      <div className="flex items-center gap-2.5 border-b border-sidebar-border px-4">
-        <SearchIcon className="size-4 text-muted-foreground" />
+      {/* The query field: its own card, detached from the menu below it */}
+      <div className="flex items-center gap-2.5 rounded-lg border border-sidebar-border bg-sidebar px-3 text-sidebar-foreground shadow-(--float-shadow-strong)">
+        <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
         <input
           autoFocus
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
           placeholder={activeBusiness ? `Find in ${activeBusiness.name}…` : "Find…"}
-          className="h-11 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+          className="h-11 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
           aria-label="Find"
         />
         <Kbd>Esc</Kbd>
       </div>
-      <div ref={listRef} className="max-h-[min(32rem,70vh)] overflow-y-auto p-1.5">
-        {filtered.length === 0 ? (
-          <p className="px-3 py-8 text-center text-xs text-muted-foreground">Nothing matches &ldquo;{q}&rdquo;.</p>
-        ) : (
-          groups.map(([group, list]) => (
-            <div key={group} className="pb-1">
-              <div className="px-2.5 pt-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{group}</div>
-              {list.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-index={item.i}
-                  onMouseMove={() => setIndex(item.i)}
-                  onClick={item.run}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
-                    index === item.i && "bg-sidebar-accent/70 text-sidebar-accent-foreground",
-                  )}
-                >
-                  {item.icon}
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.badge ? <IssueStateBadge state={item.badge} /> : null}
-                  {item.hint ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{item.hint}</span> : null}
-                  {index === item.i ? <CornerDownLeftIcon className="size-3.5!" /> : null}
-                </button>
-              ))}
-            </div>
-          ))
-        )}
-      </div>
-      <div className="flex items-center gap-3 border-t border-sidebar-border bg-sidebar-accent/40 px-4 py-2 text-[0.6875rem] text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Kbd>↑</Kbd>
-          <Kbd>↓</Kbd> move
-        </span>
-        <span className="flex items-center gap-1">
-          <Kbd>↵</Kbd> open
-        </span>
-        <span className="ml-auto flex items-center gap-1">
-          <Kbd>F</Kbd> or <Kbd>⌘K</Kbd> anywhere
-        </span>
+      {/* The menu: a separate card of grouped results, hints in its own footer */}
+      <div className="max-h-[min(32rem,70vh)] overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-(--float-shadow-strong)">
+        <div ref={listRef} className="max-h-[min(28rem,60vh)] overflow-y-auto p-1.5">
+          {filtered.length === 0 ? (
+            <p className="px-3 py-8 text-center text-xs text-muted-foreground">Nothing matches &ldquo;{q}&rdquo;.</p>
+          ) : (
+            groups.map(([group, list]) => (
+              <div key={group} className="pb-1">
+                <div className="px-2.5 pt-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{group}</div>
+                {list.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    data-index={item.i}
+                    onMouseMove={() => setIndex(item.i)}
+                    onClick={item.run}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+                      index === item.i && "bg-sidebar-accent/70 text-sidebar-accent-foreground",
+                    )}
+                  >
+                    {item.icon}
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.badge ? <IssueStateBadge state={item.badge} /> : null}
+                    {item.hint ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{item.hint}</span> : null}
+                    {index === item.i ? <CornerDownLeftIcon className="size-3.5!" /> : null}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-3 border-t border-sidebar-border bg-sidebar-accent/40 px-4 py-2 text-[0.6875rem] text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> move
+          </span>
+          <span className="flex items-center gap-1">
+            <Kbd>↵</Kbd> open
+          </span>
+          <span className="ml-auto flex items-center gap-1">
+            <Kbd>F</Kbd> or <Kbd>⌘K</Kbd> anywhere
+          </span>
+        </div>
       </div>
     </div>
   )
