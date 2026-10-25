@@ -20,7 +20,7 @@ const suite = url ? describe : describe.skip
 suite("hosted deployment path (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    RepoLayers.SetupRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive, EvidenceLineageRepositoryLive,
     RepoLayers.AssayRepositoryLive,
     RepoLayers.AssayReviewRepositoryLive,

@@ -25,7 +25,7 @@ const suite = url ? describe : describe.skip
 suite("agent proposal-gated writes (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    GrowthRepositoriesLive, AgentProposalRepositoryLive,
+    RepoLayers.SetupRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive,
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,

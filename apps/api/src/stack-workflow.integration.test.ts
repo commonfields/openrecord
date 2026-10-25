@@ -26,7 +26,7 @@ const MODEL = "gemini-fixture-measurement-model"
 suite("stack workflow: acquisition evidence -> operator investigation -> gated measurement -> private report (TEST fixtures)", () => {
   let pool: pg.Pool
   const repos = Layer.mergeAll(
-    GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    RepoLayers.SetupRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
     RepoLayers.AssayRepositoryLive, RepoLayers.AssayReviewRepositoryLive, RepoLayers.BusinessRepositoryLive,
