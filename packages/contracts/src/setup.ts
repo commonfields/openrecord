@@ -102,6 +102,8 @@ export interface ChannelEntry {
 
 export interface ChannelInventory {
   readonly channels: ReadonlyArray<ChannelEntry>
+  /** OpenRecord's own instruments. Not the business's accounts, so never "connected". */
+  readonly builtIn: ReadonlyArray<{ readonly key: string; readonly label: string; readonly available: boolean; readonly note: string; readonly action: ChannelEntry["action"] }>
   /** Always available without any integration. */
   readonly manual: ReadonlyArray<{ readonly key: string; readonly label: string; readonly note: string }>
 }
