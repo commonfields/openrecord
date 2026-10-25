@@ -143,7 +143,7 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     const proposed = (await ok<{ setup: SetupView }>(call("POST", `${path}/setup/propose`, a.cookie, { expectedRevision: reviewed.revision }))).setup
     expect(proposed.step).toBe("DONE")
     const o = proposed.opportunity!
-    expect(o).toMatchObject({ status: "PROPOSED", createdByActor: "ASSISTANT", title: "Describe the business in structured data on the homepage" })
+    expect(o).toMatchObject({ status: "PROPOSED", createdByActor: "ASSISTANT", title: "Identify the business in structured data on the homepage" })
     expect(o.evidence.map(e => e.type)).toEqual(["MODEL_SUGGESTION"])
     // Replaying propose (even with a stale revision) returns the same initiative.
     const replay = (await ok<{ setup: SetupView }>(call("POST", `${path}/setup/propose`, a.cookie, { expectedRevision: reviewed.revision }))).setup

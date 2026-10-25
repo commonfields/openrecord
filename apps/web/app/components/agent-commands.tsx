@@ -147,7 +147,8 @@ export function ReportCard({ businessId }: { businessId: string }) {
   const totals = goalTotals(data.series, 30)
   const label = data.profile?.primaryGoal.metricDefinition.label ?? "Goal metric"
   const fixes = data.search?.verifiedFixes ?? 0
-  const unsupported = (inventory.data?.inventory.channels ?? []).filter(c => c.state === "UNSUPPORTED" || c.state === "DISCOVERED").map(c => c.label)
+  // The website is read publicly, so it is never listed as unread.
+  const unsupported = (inventory.data?.inventory.channels ?? []).filter(c => c.key !== "website" && (c.state === "UNSUPPORTED" || c.state === "DISCOVERED")).map(c => c.label)
   const unknowns = [
     ...(totals?.any ? [] : [`${label} has no measurements yet, so no change can be shown.`]),
     ...(totals?.synthetic ? ["Some measurements are test data."] : []),

@@ -27,7 +27,8 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
   const counts = yield* sql`SELECT
       (SELECT count(*) FROM site_targets WHERE business_id = ${businessId} AND enabled) AS site_targets,
       (SELECT count(*) FROM growth_execution_targets WHERE business_id = ${businessId}) AS execution_targets,
-      (SELECT website_url FROM record_profiles WHERE business_id = ${businessId}) AS website_url`
+      (SELECT website_url FROM record_profiles WHERE business_id = ${businessId}) AS website_url,
+      (SELECT max(o.collected_at) FROM observations o JOIN check_runs c ON c.id = o.check_run_id WHERE c.business_id = ${businessId} AND c.provider <> 'mock') AS last_answer_at`
   const ga4Config = yield* Effect.serviceOption(Ga4Provider)
   const ga4Configured = Option.isSome(ga4Config) && ga4Config.value.configured
   const ga4Repo = yield* GrowthGa4Repository
@@ -43,6 +44,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
     ga4: { configured: ga4Configured, connections: connections.map(c => ({ status: c.status, statusReason: c.statusReason, googleEmail: c.googleEmail })), boundToBusiness: bindings.some(b => b.active) },
     github: { configured: Option.isSome(github) && github.value.transport !== null, targets: Number(counts[0]?.["execution_targets"] ?? 0) },
     answerProviders: catalog.providers.filter(p => p.id !== "mock" && p.enabled).map(p => p.id),
+    lastAnswerAt: counts[0]?.["last_answer_at"] ? new Date(counts[0]["last_answer_at"] as string | Date).toISOString() : null,
   })
 })
 

@@ -281,7 +281,7 @@ function ChatHistory() {
               </Link>
             </DropdownMenuItem>
           )) : (
-            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -292,7 +292,7 @@ function ChatHistory() {
   return (
     <SidebarGroup label="Chats">
       {chats === null ? null : chats.length === 0 ? (
-        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
       ) : (
         <>
           {shown.map((c) => {

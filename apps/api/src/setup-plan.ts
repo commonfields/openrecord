@@ -18,7 +18,7 @@ export const assessSetup = (signals: DiscoverySignals | null, failure: string | 
     if (c.noindex) findings.push({ key: "noindex", tone: "gap", text: "The homepage tells search engines not to index it." })
     findings.push(c.hasOrganizationData
       ? { key: "org-data", tone: "ok", text: "The homepage describes the business in structured data search engines and AI assistants can read." }
-      : { key: "org-data", tone: "gap", text: "No structured business data: search engines and AI assistants have to guess who you are." })
+      : { key: "org-data", tone: "gap", text: "No structured data on the homepage identifies the business (schema.org Organization), so search engines and AI assistants infer who you are from page text." })
     if (!c.hasTitle || !c.hasDescription)
       findings.push({ key: "snippet", tone: "gap", text: !c.hasTitle ? "The homepage has no title." : "The homepage has no description for search results." })
     const profiles = signals.channels.filter(ch => ch.kind !== "EMAIL").length
@@ -26,8 +26,8 @@ export const assessSetup = (signals: DiscoverySignals | null, failure: string | 
       ? { key: "profiles", tone: "ok", text: `${profiles} public ${profiles === 1 ? "profile is" : "profiles are"} linked from the homepage.` }
       : { key: "profiles", tone: "unknown", text: "No public profiles are linked from the homepage." })
   }
-  const answers = inventory.channels.find(ch => ch.key === "ai-answers")
-  findings.push(answers?.state === "CONNECTED"
+  const answers = inventory.builtIn.find(b => b.key === "ai-answers")
+  findings.push(answers?.available
     ? { key: "answers", tone: "unknown", text: "What AI assistants say about you has not been checked yet." }
     : { key: "answers", tone: "unknown", text: "AI answers cannot be checked on this server yet." })
   const ga4 = inventory.channels.find(ch => ch.key === "ga4")
@@ -56,8 +56,8 @@ const RULES: ReadonlyArray<Rule> = [
     uncertainty: `No baseline is measured. Any effect on ${brief.metricLabel.toLowerCase()} is unknown until it is measured.`,
   }) },
   { when: s => !s.checks.hasOrganizationData, build: ({ brief, site }) => ({
-    title: "Describe the business in structured data on the homepage",
-    problemStatement: `${site} has no structured business data, so search engines and AI assistants infer the name, offer and contact details from page text.`,
+    title: "Identify the business in structured data on the homepage",
+    problemStatement: `No structured data on ${site} identifies the business (schema.org Organization), so search engines and AI assistants infer the name, offer and contact details from page text.`,
     buyerIntent: `Get an accurate answer about ${brief.businessName} from a search engine or AI assistant`,
     proposedChange: "Add schema.org Organization data to the homepage with the confirmed name, website, contact details and public profiles.",
     expectedMechanism: "Machine-readable identity reduces guessing, which can make descriptions of the business in search and AI answers more accurate.",

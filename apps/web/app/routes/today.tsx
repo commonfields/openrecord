@@ -173,7 +173,7 @@ export function Today() {
 
       {trend === "goal" ? (
         <section className="space-y-3">
-          <div>
+          <div className="min-w-0 max-w-full">
             {switcher}
             <p className="mt-2 text-xs text-muted-foreground">
               {goalLabel} per day, from {overview.series?.sourceKind === "GA4_AGGREGATE_EXPORT" ? "Google Analytics" : "imported exports"} · last {days} days
@@ -273,7 +273,7 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+        <div className="min-w-0 max-w-full">
           {switcher}
           <p className="mt-2 text-xs text-muted-foreground">
             {subtitle} · last {days} days

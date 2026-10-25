@@ -90,10 +90,14 @@ function DiscoverStep({ host }: { host: string }) {
 const KIND_METRIC = { LEAD: "Leads", SIGNUP: "Signups", PURCHASE: "Purchases", BOOKING: "Bookings" } as const
 type Kind = keyof typeof KIND_METRIC
 
+// The business's current name unless the page names it more precisely; a new
+// business starts out named after its website.
 function guessName(setup: SetupView) {
-  if (setup.discovery.status !== "DONE") return new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
+  const host = new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
+  const existing = setup.businessName !== host ? setup.businessName : null
+  if (setup.discovery.status !== "DONE") return existing ?? host
   const s = setup.discovery.signals
-  return s.organization?.name ?? s.siteName ?? s.title?.split(/\s[|–—-]\s/)[0] ?? new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
+  return existing ?? s.organization?.name ?? s.siteName ?? s.title?.split(/\s[|–—-]\s/)[0] ?? host
 }
 
 function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: SetupView) => void }) {
@@ -342,7 +346,9 @@ const STATE_META: Record<ChannelEntry["state"], { label: string; variant: "suppo
   REVOKED: { label: "Access revoked", variant: "wrong" },
   UNHEALTHY: { label: "Not working", variant: "wrong" },
 }
-const CAPABILITY_LABEL: Record<ChannelCapability, string> = { DISCOVER: "Found", READ: "Read", PROPOSE: "Propose", EXECUTE: "Make changes", VERIFY: "Verify", MEASURE: "Measure" }
+const CAPABILITY_LABEL: Record<ChannelCapability, string> = { DISCOVER: "Public read", READ: "Read", PROPOSE: "Propose", EXECUTE: "Make changes", VERIFY: "Verify", MEASURE: "Measure" }
+// Why an offered capability is not active yet: a missing connection, or a step not done yet.
+const pendingNote = (state: ChannelEntry["state"]) => (state === "DISCOVERED" || state === "CONNECTED" ? " (not yet)" : " (once connected)")
 
 export function ChannelList({ inventory, showManual = true }: { inventory: ChannelInventory; showManual?: boolean }) {
   return (
@@ -362,7 +368,7 @@ export function ChannelList({ inventory, showManual = true }: { inventory: Chann
                 <p className="flex flex-wrap gap-1" aria-label="Capabilities">
                   {c.offered.map(cap => (
                     <span key={cap} className={cn("rounded-full px-1.5 py-px text-[0.625rem]", c.active.includes(cap) ? "bg-primary-ink/10 font-medium text-primary-ink" : "bg-muted text-muted-foreground")}>
-                      {CAPABILITY_LABEL[cap]}{c.active.includes(cap) ? "" : " (once connected)"}
+                      {CAPABILITY_LABEL[cap]}{c.active.includes(cap) ? "" : pendingNote(c.state)}
                     </span>
                   ))}
                 </p>
@@ -376,6 +382,20 @@ export function ChannelList({ inventory, showManual = true }: { inventory: Chann
           </li>
         ))}
       </ul>
+      {inventory.builtIn.length ? (
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium">Built into OpenRecord</p>
+          <ul className="space-y-1.5">
+            {inventory.builtIn.map(b => (
+              <li key={b.key} className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
+                <span className="font-medium text-foreground">{b.label}.</span>
+                <span className="min-w-0 flex-1">{b.note}</span>
+                {b.action ? <Button asChild size="sm" variant="outline"><Link to={b.action.href}>{b.action.label}</Link></Button> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {showManual ? (
         <div className="space-y-1.5">
           <p className="text-xs font-medium">Always available</p>

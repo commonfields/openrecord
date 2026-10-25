@@ -12,7 +12,10 @@ export interface ChannelFacts {
     readonly boundToBusiness: boolean
   }
   readonly github: { readonly configured: boolean; readonly targets: number }
+  /** Providers the server declares. A declaration is not proof they work. */
   readonly answerProviders: ReadonlyArray<string>
+  /** When a real (non-fixture) AI answer was last collected for this business. */
+  readonly lastAnswerAt: string | null
 }
 
 const PROFILE_LABELS: Record<DiscoveredChannelKind, string> = {
@@ -26,7 +29,6 @@ const OFFERED = {
   website: ["DISCOVER", "PROPOSE", "VERIFY"],
   ga4: ["READ", "MEASURE"],
   github: ["EXECUTE", "VERIFY"],
-  answers: ["READ"],
   searchConsole: [],
 } as const satisfies Record<string, ReadonlyArray<ChannelCapability>>
 
@@ -82,14 +84,6 @@ export const deriveChannelInventory = (f: ChannelFacts): ChannelInventory => {
             note: "Your administrator must allow this business's repository before OpenRecord can open pull requests.", action: null },
   )
 
-  channels.push(
-    f.answerProviders.length > 0
-      ? { key: "ai-answers", label: "AI assistant answers", identity: f.answerProviders.join(", "), state: "CONNECTED", active: [...OFFERED.answers], offered: [...OFFERED.answers],
-          note: "Asks AI assistants your buyers' questions and keeps their exact answers. A mention is not a recommendation.", action: { kind: "OPEN", label: "Run a check", href: `${base}/checks` } }
-      : { key: "ai-answers", label: "AI assistant answers", identity: null, state: "UNSUPPORTED", active: [], offered: [...OFFERED.answers],
-          note: "No AI provider is configured on this server, so answers cannot be checked yet.", action: null },
-  )
-
   channels.push({ key: "search-console", label: "Google Search Console", identity: null, state: "UNSUPPORTED", active: [], offered: [...OFFERED.searchConsole],
     note: "Not available yet. Search traffic is not measured.", action: null })
 
@@ -98,8 +92,20 @@ export const deriveChannelInventory = (f: ChannelFacts): ChannelInventory => {
       active: ["DISCOVER"], offered: ["DISCOVER"],
       note: "Linked from your homepage. No integration: OpenRecord cannot read, post or measure here. Record work you do here by hand.", action: null })
 
+  const day = (iso: string) => iso.slice(0, 10)
   return {
     channels,
+    builtIn: [{
+      key: "ai-answers",
+      label: "AI answer checks",
+      available: f.answerProviders.length > 0,
+      note: f.answerProviders.length === 0
+        ? "No AI provider is configured on this server, so answers cannot be checked yet."
+        : f.lastAnswerAt
+          ? `Asks AI assistants your buyers' questions and keeps their exact answers. Last answer collected ${day(f.lastAnswerAt)}. A mention is not a recommendation.`
+          : `Configured on this server (${f.answerProviders.join(", ")}), but no answer has been collected for this business yet. The first check confirms it works.`,
+      action: f.answerProviders.length > 0 ? { kind: "OPEN", label: "Run a check", href: `${base}/checks` } : null,
+    }],
     manual: [
       { key: "attest", label: "Record work you did", note: "Log a change on any channel. It is marked as attested by you, not verified." },
       { key: "import", label: "Import daily numbers", note: "Upload a daily export for your goal metric." },

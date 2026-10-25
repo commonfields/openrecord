@@ -12,7 +12,7 @@ const brief: SetupBrief = { businessName: "Acme", category: "Plumbing", audience
   conversionKind: "LEAD", metricLabel: "Calls", reportingTimeZone: "UTC", factIds: [] }
 const facts = (overrides: Partial<ChannelFacts> = {}): ChannelFacts => ({
   businessId: "b1", websiteUrl: "https://www.acme.test/", discovery: null, siteTargets: 0,
-  ga4: { configured: false, connections: [], boundToBusiness: false }, github: { configured: false, targets: 0 }, answerProviders: [], ...overrides,
+  ga4: { configured: false, connections: [], boundToBusiness: false }, github: { configured: false, targets: 0 }, answerProviders: [], lastAnswerAt: null, ...overrides,
 })
 
 describe("setup step", () => {
@@ -30,7 +30,7 @@ describe("first initiative", () => {
   it("picks the most urgent bounded change from the homepage", () => {
     const pick = (s: DiscoverySignals | null) => firstInitiative({ goalId: "00000000-0000-4000-8000-000000000001", brief, websiteUrl: "https://acme.test/", signals: s, readOn: "2026-10-25" }).title
     expect(pick(signals({ noindex: true, hasOrganizationData: false }))).toBe("Let search engines index the homepage")
-    expect(pick(signals({ hasOrganizationData: false }))).toBe("Describe the business in structured data on the homepage")
+    expect(pick(signals({ hasOrganizationData: false }))).toBe("Identify the business in structured data on the homepage")
     expect(pick(signals({ hasDescription: false }))).toBe("Write a clear homepage title and description")
     expect(pick(signals())).toBe("Answer the questions buyers ask AI assistants")
     expect(pick(null)).toBe("Answer the questions buyers ask AI assistants")
@@ -52,7 +52,6 @@ describe("channel inventory", () => {
     expect(byKey["profile:EMAIL"]).toMatchObject({ state: "DISCOVERED", identity: "hi@acme.test" })
     expect(byKey["ga4"]).toMatchObject({ state: "UNSUPPORTED", active: [], action: null })
     expect(byKey["github"]).toMatchObject({ state: "UNSUPPORTED", active: [] })
-    expect(byKey["ai-answers"]).toMatchObject({ state: "UNSUPPORTED" })
     expect(byKey["search-console"]).toMatchObject({ state: "UNSUPPORTED", offered: [] })
     expect(inv.channels.filter(c => c.state === "CONNECTED")).toEqual([])
   })
@@ -71,6 +70,14 @@ describe("channel inventory", () => {
     const gh = (targets: number) => deriveChannelInventory(facts({ github: { configured: true, targets } })).channels.find(c => c.key === "github")!
     expect(gh(0)).toMatchObject({ state: "PERMISSION_REQUIRED", active: [] })
     expect(gh(1)).toMatchObject({ state: "CONNECTED", active: ["EXECUTE", "VERIFY"] })
+  })
+
+  it("treats AI answer checks as a declared instrument, not a connected account", () => {
+    const answers = (lastAnswerAt: string | null, providers = ["gemini"]) => deriveChannelInventory(facts({ answerProviders: providers, lastAnswerAt })).builtIn.find(b => b.key === "ai-answers")!
+    expect(deriveChannelInventory(facts({ answerProviders: ["gemini"] })).channels.find(c => c.key === "ai-answers")).toBeUndefined()
+    expect(answers(null, [])).toMatchObject({ available: false, action: null })
+    expect(answers(null).note).toMatch(/no answer has been collected for this business yet/)
+    expect(answers("2026-10-20T10:00:00.000Z").note).toMatch(/Last answer collected 2026-10-20/)
   })
 
   it("keeps unknowns unknown in the assessment", () => {
