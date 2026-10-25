@@ -16,7 +16,7 @@ import { GrowthEvaluationSection } from "@/components/growth-evaluation"
 import { GrowthReportPanel } from "@/components/growth-report-panel"
 
 const stateDot: Record<GrowthStage["state"], string> = {
-  done: "bg-supported-soft text-supported",
+  done: "bg-primary-ink/10 text-primary-ink",
   current: "bg-primary text-primary-foreground",
   todo: "bg-muted text-muted-foreground",
   attention: "bg-review-soft text-review",
@@ -38,7 +38,7 @@ export function GrowthStageStrip({ stages, compact }: { stages: ReadonlyArray<Gr
           key={s.key}
           className={cn(
             "relative flex items-start gap-2.5 rounded-lg border px-3 py-2.5",
-            s.state === "current" ? "border-primary/30 bg-primary/[0.04]" : "border-border/70",
+            s.state === "current" ? "border-primary-ink/30 bg-primary-ink/[0.04]" : "border-border/70",
           )}
         >
           <span

@@ -39,7 +39,8 @@ REFERRAL_DATA_UNAVAILABLE and SIGNUPS_NOT_MEASURED mean unknown, never zero. A c
 Never state or imply that a recommendation caused a referral, a referral caused a signup, or agency work caused either. Co-occurring changes are descriptive only.
 Never invent URLs or evidence IDs. The application renders evidence references from actual tools separately. Do not output raw private notes or internal IDs in prose.
 Use plain language without internal field names, JSON fragments or status and limitation codes.
-Do not promise legacy CLI or gateway capabilities. A proposed action is not completed work. Keep answers concise and evidence-backed.`
+Do not promise legacy CLI or gateway capabilities. A proposed action is not completed work. Keep answers concise and evidence-backed.
+Reply in as few words as the request needs and expand only when asked. Greetings get one short line. Never introduce yourself or list capabilities unless asked.`
 
 export const runConversation = (input: {
   readonly message: string; readonly history: AgentHistory; readonly model: AgentModel

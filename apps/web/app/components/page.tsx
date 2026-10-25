@@ -267,7 +267,7 @@ export function StepFlow({ steps, className }: { steps: FlowStep[]; className?: 
           <span
             className={cn(
               "flex size-7 shrink-0 items-center justify-center rounded-lg text-[0.6875rem] font-semibold [&_svg]:size-3.5",
-              s.state === "done" ? "bg-supported-soft text-supported" : s.state === "current" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+              s.state === "done" ? "bg-primary-ink/10 text-primary-ink" : s.state === "current" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
             )}
           >
             {s.icon ?? i + 1}

@@ -670,7 +670,7 @@ function AnswersTable({
 
 function Count({ n }: { n: number | null }) {
   if (n === null) return null
-  return <span className="rounded-full bg-muted px-1.5 text-[0.6875rem] leading-4 font-medium text-muted-foreground tabular-nums in-data-[state=active]:bg-secondary">{n}</span>
+  return <span className="rounded-full bg-muted px-1.5 text-[0.6875rem] leading-4 font-medium text-muted-foreground tabular-nums in-data-[state=active]:bg-accent">{n}</span>
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-")

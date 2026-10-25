@@ -4,7 +4,7 @@ import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import pg from "pg"
-import { deleteConversation, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
+import { deleteConversation, listConversations, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 
@@ -35,6 +35,22 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     expect(await run(sendConversation(f, { ...body, requestId: randomUUID() }, respond))).toMatchObject({ _tag: "Left", left: { reason: "STALE" } })
     expect((await run(deleteConversation(f)))._tag).toBe("Right")
     expect(await run(loadConversation(f))).toMatchObject({ _tag: "Right", right: null })
+  })
+  it("lists only the user's own non-empty conversations, newest first, titled by the first question", async () => {
+    const a = await fixture(), b = await fixture()
+    const second = (await pool.query("INSERT INTO businesses(account_id,name) VALUES ($1,'TEST Second') RETURNING id", [a.accountId])).rows[0].id as string
+    await run(sendConversation(a, { message: "  First   question  ", requestId: randomUUID(), revision: 0 }, respond))
+    await run(sendConversation(a, { message: "Follow-up", requestId: randomUUID(), revision: 1 }, respond))
+    await run(sendConversation({ ...a, businessId: second }, { message: "Other business", requestId: randomUUID(), revision: 0 }, respond))
+    await run(sendConversation(b, { message: "Someone else", requestId: randomUUID(), revision: 0 }, respond))
+    const listed = await run(listConversations(a))
+    expect(listed).toMatchObject({ _tag: "Right", right: [
+      { businessId: second, businessName: "TEST Second", title: "Other business", messages: 2, isClient: false },
+      { businessId: a.businessId, title: "First question", messages: 4 },
+    ] })
+    expect(listed._tag === "Right" && listed.right.length).toBe(2)
+    await run(deleteConversation(a))
+    expect(await run(listConversations(a))).toMatchObject({ _tag: "Right", right: [{ businessId: second }] })
   })
   it("refuses foreign business, conversation and same-account user histories", async () => {
     const a = await fixture(), b = await fixture()

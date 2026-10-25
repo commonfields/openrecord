@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: openrecord
       POSTGRES_PASSWORD: openrecord
@@ -8,6 +9,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - openrecord-pg:/var/lib/postgresql/data
+      # The long-lived dev database (businesses, conversations, check runs).
+      # An external named volume so recreating this project never resets it.
+      - openrecord_openrecord-pg:/var/lib/postgresql/data
 volumes:
-  openrecord-pg:
+  openrecord_openrecord-pg:
+    external: true

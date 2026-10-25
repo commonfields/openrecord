@@ -90,7 +90,7 @@ export function ClientsPage() {
         <Panel>
           <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center">
             <div className="space-y-3">
-              <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink">
                 <FileCheck2Icon className="size-4" />
               </span>
               <h2 className="text-sm font-medium">Add a client, set its goal, then run the loop</h2>
@@ -186,7 +186,7 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
             <span className="block truncate text-muted-foreground" title={progress}>{progress}</span>
           ) : null}
           <span className="mt-0.5 flex items-center gap-2 text-[11px]">
-            <span className="font-medium text-primary">Growth workspace</span>
+            <span className="font-medium text-primary-ink">Growth workspace</span>
             <Link to={`/clients/${c.businessId}`} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>Record</Link>
             <Link to={`/clients/${c.businessId}/discovery`} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>AI Discovery</Link>
           </span>

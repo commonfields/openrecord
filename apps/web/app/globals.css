@@ -4,8 +4,8 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* One accent (deep green, "checked against your
-   facts"); status hues are reserved for verdicts and run states. */
+/* Brand: deep navy primary (#020c44) and periwinkle secondary (#7096f9);
+   status hues are reserved for verdicts and run states. */
 :root {
   /* Warm neutrals (hue ~85): an off-white canvas with pure-white cards, so
      surfaces separate by tone and a soft ring shadow instead of hard borders. */
@@ -16,10 +16,13 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.43 0.075 168);
-  --primary-foreground: oklch(0.985 0.01 168);
-  --secondary: oklch(0.965 0.004 84.6);
-  --secondary-foreground: oklch(0.205 0 0);
+  --primary: #020c44;
+  --primary-foreground: oklch(0.985 0.005 265);
+  /* Brand as text, icons and tints. Equals --primary in light; in dark it
+     lifts so navy marks stay legible while fills stay navy. */
+  --primary-ink: #020c44;
+  --secondary: #7096f9;
+  --secondary-foreground: #020c44;
   --muted: oklch(0.965 0.004 84.6);
   --muted-foreground: oklch(0.556 0.008 84.6);
   --accent: oklch(0.95 0.005 84.6);
@@ -27,7 +30,7 @@
   --destructive: oklch(0.577 0.215 27.3);
   --border: oklch(0.912 0.006 84.6);
   --input: oklch(0.9 0.006 84.6);
-  --ring: oklch(0.43 0.075 168 / 0.45);
+  --ring: oklch(0.199 0.105 265.2 / 0.45);
 
   --sidebar: oklch(0.972 0.002 286);
   --sidebar-foreground: oklch(0.32 0.01 285.9);
@@ -97,10 +100,11 @@
   --card-foreground: oklch(0.96 0.002 84.6);
   --popover: oklch(0.235 0.004 84.6);
   --popover-foreground: oklch(0.96 0.002 84.6);
-  --primary: oklch(0.72 0.11 168);
-  --primary-foreground: oklch(0.2 0.03 168);
-  --secondary: oklch(0.255 0.004 84.6);
-  --secondary-foreground: oklch(0.96 0.002 84.6);
+  --primary: #020c44;
+  --primary-foreground: oklch(0.985 0.005 265);
+  --primary-ink: oklch(0.8 0.09 266);
+  --secondary: #7096f9;
+  --secondary-foreground: #020c44;
   --muted: oklch(0.25 0.004 84.6);
   --muted-foreground: oklch(0.7 0.008 84.6);
   --accent: oklch(0.26 0.004 84.6);
@@ -108,7 +112,7 @@
   --destructive: oklch(0.62 0.2 25);
   --border: oklch(1 0 0 / 0.085);
   --input: oklch(1 0 0 / 0.13);
-  --ring: oklch(0.72 0.11 168 / 0.45);
+  --ring: oklch(0.8 0.09 266 / 0.45);
 
   --sidebar: oklch(0.17 0.004 286);
   --sidebar-foreground: oklch(0.8 0.006 286);
@@ -169,6 +173,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-ink: var(--primary-ink);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -232,6 +237,78 @@ html[data-reduce-motion] *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
+}
+
+/* Page entry: direct children rise in one after another. A nested .rise-in
+   (a grid of cards) is not animated itself; its own children carry on the
+   stagger from --rise-base. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes reveal-x {
+  from {
+    clip-path: inset(-4px 100% -4px -4px);
+  }
+  to {
+    clip-path: inset(-4px -4px -4px -4px);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rise-in > :not(.rise-in) {
+    animation: rise-in 600ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    animation-delay: var(--rise-base, 0ms);
+  }
+  .rise-in > :nth-child(2) { animation-delay: calc(var(--rise-base, 0ms) + 60ms); }
+  .rise-in > :nth-child(3) { animation-delay: calc(var(--rise-base, 0ms) + 120ms); }
+  .rise-in > :nth-child(4) { animation-delay: calc(var(--rise-base, 0ms) + 180ms); }
+  .rise-in > :nth-child(5) { animation-delay: calc(var(--rise-base, 0ms) + 240ms); }
+  .rise-in > :nth-child(6) { animation-delay: calc(var(--rise-base, 0ms) + 300ms); }
+  .rise-in > :nth-child(n + 7) { animation-delay: calc(var(--rise-base, 0ms) + 360ms); }
+  /* Sparklines draw from left to right; the clip lifts once they finish. */
+  .reveal-x {
+    animation: reveal-x 1100ms cubic-bezier(0.65, 0, 0.35, 1) 200ms backwards;
+  }
+  /* Agent thinking: a soft light sweeps across the text, left to right. */
+  .thinking {
+    animation: thinking-sweep 1.4s linear infinite;
+  }
+  .name-shimmer {
+    animation: thinking-sweep 4.5s linear infinite;
+  }
+}
+
+/* The text itself carries the light: muted base, foreground highlight band.
+   Tokens flip with the theme, so both modes keep the same contrast step. */
+.thinking {
+  background-image: linear-gradient(to right, var(--muted-foreground) 42%, var(--foreground) 50%, var(--muted-foreground) 58%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+/* The business name in the agent greeting: brand ink with a slow band of
+   light passing left to right. */
+.name-shimmer {
+  --shimmer-light: color-mix(in oklch, var(--secondary) 45%, white);
+  background-image: linear-gradient(to right, var(--primary-ink) 40%, var(--shimmer-light) 50%, var(--primary-ink) 60%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.dark .name-shimmer {
+  --shimmer-light: white;
+}
+@keyframes thinking-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 html.theme-switching *,

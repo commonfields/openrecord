@@ -1,9 +1,8 @@
-import { AgentChat } from "@/components/agent-chat"
 // One client's record, operated by the agency: identity, three approved
 // facts with one question each, checks on the live surface, human review,
 // agency actions, the weekly re-check and its outcome, and the share URL.
-import { useState, type ReactNode } from "react"
-import { Link, useParams } from "react-router"
+import { useEffect, useState, type ReactNode } from "react"
+import { Link, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
 import {
   ArrowRightIcon,
@@ -19,15 +18,18 @@ import {
   GlobeIcon,
   LinkIcon,
   LoaderCircleIcon,
+  Link2OffIcon,
   PenLineIcon,
   PlayIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -36,6 +38,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, PageHeader, Panel, PanelHeader, domainOf } from "@/components/page"
 import { Spinner } from "@/components/spinner"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { AgentWorkspace } from "@/components/agent-chat"
 import { SearchSuggestions } from "@/components/search-suggestions"
 import { errorMessage, formatDate, formatDateTime, relativeTime, sentenceCase } from "@/lib/format"
 import { ApiError } from "@/lib/api"
@@ -151,8 +155,12 @@ function EditClientDialog({ record, reload, open, onOpenChange }: { record: Oper
   )
 }
 
-function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
-  clientId: string; clientName: string; slot: 1 | 2 | 3; current: OperatorRecord["slots"][number] | undefined; reload: () => Promise<void>; onDone?: () => void
+// Writing a fact saves a draft; approving is the agency confirming the client
+// stands behind that exact version. Both are offered here so the usual case is
+// one click, and a draft is never left without a visible way to approve it.
+function SlotEditor({ clientId, clientName, slot, current, reload, onSaved, onCancel }: {
+  clientId: string; clientName: string; slot: 1 | 2 | 3; current: OperatorRecord["slots"][number] | undefined; reload: () => Promise<void>
+  onSaved?: (approved: boolean) => void; onCancel?: () => void
 }) {
   const item = current?.item
   const [label, setLabel] = useState(item?.fact.predicate ?? "")
@@ -164,66 +172,96 @@ function SlotEditor({ clientId, clientName, slot, current, reload, onDone }: {
   const [question, setQuestion] = useState(item?.question.prompt ?? "")
   const { busy, run } = useAction(reload)
   const dirty = !item || label !== item.fact.predicate || value !== item.fact.valueText || valueType !== item.fact.valueType || sourceKind !== (item.fact.sourceKind ?? "WEBSITE") || source !== item.sourceUrl || question !== item.question.prompt
-  const save = () =>
+  const [approveOnSave, setApproveOnSave] = useState(true)
+  const complete = !!label.trim() && !!value.trim() && !!question.trim()
+  const save = (approve: boolean) =>
     run(
-      () =>
-        Records.saveSlot(clientId, slot, {
+      async () => {
+        const { item: saved } = await Records.saveSlot(clientId, slot, {
           subject: item?.fact.subject ?? clientName, predicate: label.trim(), valueText: value.trim(), valueType, sourceKind, sourceUrl: source.trim(), question: question.trim(),
           ...(item ? { validFrom: item.fact.validFrom, validUntil: item.fact.validUntil } : {}),
-        }),
-      "Saved. Approve this version before it is checked.",
+        })
+        if (!approve) return
+        try {
+          await Records.approve(clientId, saved.id)
+        } catch (e) {
+          // The draft is saved; show it (with its Approve button) and say why approval failed.
+          await reload()
+          onSaved?.(false)
+          throw e
+        }
+      },
+      approve ? `Fact ${slot} saved and approved` : `Fact ${slot} saved as a draft. Approve it once the client confirms.`,
     ).then((saved) => {
-      if (saved) onDone?.()
+      if (saved) onSaved?.(approve)
     })
   return (
     <form
       className="grid gap-3"
       onSubmit={(e) => {
         e.preventDefault()
-        void save()
+        void save(approveOnSave)
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_9rem]">
-        <div className="grid gap-1.5"><Label htmlFor={`label-${slot}`} className="text-xs">Fact</Label><Input id={`label-${slot}`} placeholder="Check-in time" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={200} /></div>
-        <div className="grid gap-1.5"><Label htmlFor={`value-${slot}`} className="text-xs">Approved value</Label><Input id={`value-${slot}`} placeholder="3:00 PM" value={value} onChange={(e) => setValue(e.target.value)} maxLength={500} /></div>
-        <div className="grid gap-1.5">
-          <Label className="text-xs">Type</Label>
-          <Select value={valueType} onValueChange={(v) => setValueType(v as ValueType)}>
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>{(["TEXT", "BOOLEAN", "NUMBER", "CURRENCY", "DATE", "URL", "ENUM"] as const).map((t) => <SelectItem key={t} value={t}>{sentenceCase(t)}</SelectItem>)}</SelectContent>
-          </Select>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-1.5"><Label htmlFor={`label-${slot}`} className="text-xs">Fact</Label><Input id={`label-${slot}`} placeholder="Check-in time" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={200} autoFocus={!item} /></div>
+        <div className="grid gap-1.5"><Label htmlFor={`value-${slot}`} className="text-xs">Value the client confirms</Label><Input id={`value-${slot}`} placeholder="3:00 PM" value={value} onChange={(e) => setValue(e.target.value)} maxLength={500} /></div>
+      </div>
+      <div className="grid gap-1.5"><Label htmlFor={`question-${slot}`} className="text-xs">Question a buyer would ask</Label><Input id={`question-${slot}`} placeholder={`What time is check-in at ${clientName}?`} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} /></div>
+      <div className="grid gap-1.5"><Label htmlFor={`source-${slot}`} className="text-xs">Source URL (where this fact is published)</Label><Input id={`source-${slot}`} type="url" value={source} onChange={(e) => setSource(e.target.value)} maxLength={2000} /></div>
+      <details className="group">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground">
+          <ChevronRightIcon className="size-3 transition-transform group-open:rotate-90" />
+          Value type and truth authority
+          <span className="text-muted-foreground/80"> · {sentenceCase(valueType)} · {SOURCE_KIND_LABELS[sourceKind]}</span>
+        </summary>
+        <div className="mt-2 grid gap-3 sm:grid-cols-[9rem_1fr]">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Type</Label>
+            <Select value={valueType} onValueChange={(v) => setValueType(v as ValueType)}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>{(["TEXT", "BOOLEAN", "NUMBER", "CURRENCY", "DATE", "URL", "ENUM"] as const).map((t) => <SelectItem key={t} value={t}>{sentenceCase(t)}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Truth authority</Label>
+            <Select value={sourceKind} onValueChange={(v) => setSourceKind(v as SourceKind)}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="BUSINESS_APPROVED">Business-approved</SelectItem>
+                <SelectItem value="WEBSITE">Website (default)</SelectItem>
+                <SelectItem value="PUBLIC_SOURCE_UNAPPROVED">Public source, unapproved</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[0.6875rem] text-muted-foreground">Unapproved public-source facts are never presented as business truth.</p>
+          </div>
+        </div>
+      </details>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3">
+        <label htmlFor={`approve-${slot}`} className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-xs">
+          <Checkbox id={`approve-${slot}`} className="mt-px" checked={approveOnSave} onCheckedChange={(v) => setApproveOnSave(v === true)} />
+          <span className="min-w-0">
+            <span className="font-medium">The client confirmed this value</span>
+            <span className="block text-[0.6875rem] text-muted-foreground">Approves this version on save. Leave unticked to save a draft; drafts are not checked or shown to the client.</span>
+          </span>
+        </label>
+        <div className="flex items-center gap-2">
+          {onCancel ? (
+            <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          ) : null}
+          <Button type="submit" size="sm" disabled={busy || !dirty || !complete}>
+            {busy ? <Spinner /> : approveOnSave ? <ShieldCheckIcon /> : null}
+            {approveOnSave ? "Save and approve" : "Save draft"}
+          </Button>
         </div>
       </div>
-      <div className="grid gap-1.5">
-        <Label className="text-xs">Truth authority</Label>
-        <Select value={sourceKind} onValueChange={(v) => setSourceKind(v as SourceKind)}>
-          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="BUSINESS_APPROVED">Business-approved</SelectItem>
-            <SelectItem value="WEBSITE">Website (default)</SelectItem>
-            <SelectItem value="PUBLIC_SOURCE_UNAPPROVED">Public source, unapproved</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-[0.6875rem] text-muted-foreground">Unapproved public-source facts are never presented as business truth.</p>
-      </div>
-      <div className="grid gap-1.5"><Label htmlFor={`source-${slot}`} className="text-xs">Source URL (where this fact is published)</Label><Input id={`source-${slot}`} type="url" value={source} onChange={(e) => setSource(e.target.value)} maxLength={2000} /></div>
-      <div className="grid gap-1.5"><Label htmlFor={`question-${slot}`} className="text-xs">Question a buyer would ask</Label><Input id={`question-${slot}`} placeholder={`What time is check-in at ${clientName}?`} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} /></div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" size="sm" disabled={busy || !dirty || !label.trim() || !value.trim() || !question.trim()}>
-          {busy ? <Spinner /> : null}
-          {item ? "Save new version" : "Save fact"}
-        </Button>
-        {onDone && item ? (
-          <Button type="button" size="sm" variant="ghost" onClick={onDone}>
-            Cancel
-          </Button>
-        ) : null}
-        {item && (current?.history.length ?? 0) > 1 ? (
-          <span className="text-[0.6875rem] text-muted-foreground">
-            Version {current!.history.length}. Earlier checks keep the question and fact they used; a changed question or fact makes the next comparison indeterminate.
-          </span>
-        ) : null}
-      </div>
+      {item && (current?.history.length ?? 0) > 1 ? (
+        <p className="text-[0.6875rem] text-muted-foreground">
+          Version {current!.history.length}. Earlier checks keep the question and fact they used; a changed question or fact makes the next comparison indeterminate.
+        </p>
+      ) : null}
     </form>
   )
 }
@@ -488,6 +526,7 @@ function ActionForm({ record, reload }: { record: OperatorRecord; reload: () => 
 
 function Share({ record, reload }: { record: OperatorRecord; reload: () => Promise<void> }) {
   const { busy, run } = useAction(reload)
+  const [revoking, setRevoking] = useState(false)
   const id = record.profile.businessId
   if (!record.share)
     return (
@@ -525,11 +564,21 @@ function Share({ record, reload }: { record: OperatorRecord; reload: () => Promi
           variant="ghost"
           className="text-destructive hover:text-destructive"
           disabled={busy}
-          onClick={() => { if (window.confirm("Revoke this link? It stops working immediately and cannot be re-enabled.")) void run(() => Records.revoke(id), "Link revoked") }}
+          onClick={() => setRevoking(true)}
         >
           Revoke link
         </Button>
       </div>
+      <ConfirmDialog
+        open={revoking}
+        onOpenChange={setRevoking}
+        tone="destructive"
+        icon={<Link2OffIcon />}
+        title="Revoke the share link?"
+        description="Anyone who has the link loses access immediately. A revoked link cannot be re-enabled."
+        confirmLabel="Revoke link"
+        onConfirm={() => run(() => Records.revoke(id), "Link revoked")}
+      />
       <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">Anyone with the link can read the reviewed record. Unreviewed answers and internal notes are never shown.</p>
     </div>
   )
@@ -544,7 +593,7 @@ type Step = { key: StepKey; label: string; hint: string; state: StepState }
 function Steps({ steps, onSelect }: { steps: Step[]; onSelect: (key: StepKey) => void }) {
   return (
     <nav aria-label="Record progress">
-      <ol className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1 sm:grid-cols-3 lg:grid-cols-6">
+      <ol className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1 @xl:grid-cols-3 @4xl:grid-cols-6">
         {steps.map((s, i) => (
           <li key={s.key} className="min-w-0">
             <button
@@ -559,7 +608,7 @@ function Steps({ steps, onSelect }: { steps: Step[]; onSelect: (key: StepKey) =>
               <span
                 className={cn(
                   "flex size-[1.125rem] shrink-0 items-center justify-center rounded-full text-[0.625rem] font-semibold tabular-nums [&_svg]:size-2.5",
-                  s.state === "done" ? "bg-supported-soft text-supported" : s.state === "current" ? "bg-review text-white" : "bg-muted text-muted-foreground",
+                  s.state === "done" ? "bg-primary-ink/10 text-primary-ink" : s.state === "current" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
                 )}
               >
                 {s.state === "done" ? <CheckIcon strokeWidth={3} /> : i + 1}
@@ -579,7 +628,7 @@ function Steps({ steps, onSelect }: { steps: Step[]; onSelect: (key: StepKey) =>
 function NextStep({ title, detail, done, children }: { title: string; detail?: ReactNode; done?: boolean; children?: ReactNode }) {
   return (
     <div id="record-next" className={cn("flex scroll-mt-4 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-2.5", done ? "bg-muted/30" : "border-review/25 bg-review-soft/40")}>
-      {done ? <CheckIcon className="size-4 shrink-0 text-supported" /> : <ArrowRightIcon className="size-4 shrink-0 text-review" />}
+      {done ? <CheckIcon className="size-4 shrink-0 text-primary-ink" /> : <ArrowRightIcon className="size-4 shrink-0 text-review" />}
       <div className="min-w-0 flex-1">
         <p className="font-medium">
           {done ? null : <span className="text-review">Next · </span>}
@@ -747,51 +796,98 @@ function EvidenceHistory({ record, slot, latest, initial }: {
 // One fact as a row you can scan: what it is, the approved value, a dot per
 // sample (your decisions) and its state. Opening it shows the question, the
 // answers to review, the comparison and the evidence history.
-function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, onAllReviewed }: {
+function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, onAllReviewed, onSaved, onApproved }: {
   id: string; record: OperatorRecord; slot: 1 | 2 | 3; latest: OperatorRecord["runs"][number] | undefined; initial: OperatorRecord["runs"][number] | undefined
   reload: () => Promise<void>; open: boolean; onToggle: () => void; onAllReviewed: () => void
+  onSaved?: (approved: boolean) => void; onApproved?: () => void
 }) {
   const s = record.slots.find((x) => x.slot === slot)
-  const [editing, setEditing] = useState(!s)
+  const [editingSaved, setEditingSaved] = useState(false)
   const { busy, run } = useAction(reload)
   const latestChecks = checksFor(record, latest?.id, slot)
   const baseline = checksFor(record, initial?.id, slot)
   const item = s?.item
-  const finding = s?.finding
+  // An empty slot is always its editor; a saved fact opens as its summary.
+  const editing = !item || editingSaved
+  const draft = !!item && !item.approval
+  // Before any check of this fact has finished there is nothing to review: say
+  // it is approved (or being checked) rather than showing "needs review".
+  const inFlight = (c: RecordCheck) => c.status === "QUEUED" || c.status === "RUNNING"
+  const checking = latestChecks.some(inFlight)
+  const finding = s && [...latestChecks, ...baseline].some((c) => !inFlight(c)) ? s.finding : undefined
   const reviewed = latestChecks.filter((c) => c.judgment).length
   const answered = latestChecks.filter((c) => c.observation).length
   const waiting = latestChecks.filter(needsReview).length
+  const approve = () => {
+    if (!item) return
+    void run(() => Records.approve(id, item.id), `Fact ${slot} approved`).then((ok) => {
+      if (ok) onApproved?.()
+    })
+  }
 
   return (
-    <Panel id={`fact-${slot}`} className="scroll-mt-4">
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-[0.6875rem] font-semibold text-muted-foreground tabular-nums">{slot}</span>
-        <span className="min-w-0 flex-1">
-          <span className={cn("block truncate font-medium", !item && "text-muted-foreground")}>{item ? item.fact.predicate : "Add a fact"}</span>
-          <span className="block truncate text-muted-foreground">{item ? item.fact.valueText : "A fact the client stands behind, and the question a buyer would ask."}</span>
-        </span>
-        {latestChecks.length ? (
-          <span className="hidden shrink-0 items-center gap-2 sm:flex">
-            <span className="flex items-center gap-1" aria-hidden>
-              {latestChecks.map((c) => <span key={c.id} className={cn("size-2 rounded-full", sampleDot(c))} />)}
-            </span>
-            <span className={cn("w-16 text-right text-[0.6875rem] tabular-nums", waiting ? "font-medium text-review" : "text-muted-foreground")}>
-              {waiting ? `${waiting} to review` : `${reviewed}/${answered} done`}
-            </span>
+    <Panel id={`fact-${slot}`} className={cn("scroll-mt-4", draft && "ring-1 ring-partial/30")}>
+      <div className="flex items-center gap-2 pr-3 transition-colors hover:bg-muted/30">
+        <button type="button" aria-expanded={open} onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left">
+          <span
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center rounded-md text-[0.6875rem] font-semibold tabular-nums [&_svg]:size-3",
+              item?.approval ? "bg-primary-ink/10 text-primary-ink" : draft ? "bg-partial-soft text-partial" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {slot}
           </span>
+          <span className="min-w-0 flex-1">
+            <span className={cn("block truncate font-medium", !item && "text-muted-foreground")}>{item ? item.fact.predicate : `Fact ${slot}`}</span>
+            <span className="block truncate text-muted-foreground">{item ? item.fact.valueText : "A fact the client stands behind, and the question a buyer would ask."}</span>
+          </span>
+          {latestChecks.length ? (
+            <span className="hidden shrink-0 items-center gap-2 sm:flex">
+              <span className="flex items-center gap-1" aria-hidden>
+                {latestChecks.map((c) => <span key={c.id} className={cn("size-2 rounded-full", sampleDot(c))} />)}
+              </span>
+              <span className={cn("w-16 text-right text-[0.6875rem] tabular-nums", waiting ? "font-medium text-review" : "text-muted-foreground")}>
+                {waiting ? `${waiting} to review` : answered ? `${reviewed}/${answered} done` : checking ? "Checking…" : "No answer"}
+              </span>
+            </span>
+          ) : null}
+          {!item ? (
+            <span className="shrink-0 text-[0.6875rem] text-muted-foreground">Not written</span>
+          ) : draft ? (
+            <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE["ACTION_RECORDED"], !editing && "max-sm:hidden")}>Draft</span>
+          ) : finding ? (
+            <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE[finding.state])}>{FINDING_STATE_LABELS[finding.state]}</span>
+          ) : checking ? null : (
+            <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE["AGREEMENT"])}>Approved</span>
+          )}
+        </button>
+        {draft && !editing ? (
+          <Button size="sm" className="h-7 shrink-0 text-xs" disabled={busy} onClick={approve} title="Approve this version once the client confirms it">
+            {busy ? <Spinner /> : <ShieldCheckIcon />}
+            Approve
+          </Button>
         ) : null}
-        {item && !item.approval ? (
-          <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE["ACTION_RECORDED"])}>Not approved</span>
-        ) : finding ? (
-          <span className={cn("shrink-0 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium", FINDING_TONE[finding.state])}>{FINDING_STATE_LABELS[finding.state]}</span>
-        ) : null}
-        <ChevronDownIcon className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
-      </button>
+        <button type="button" tabIndex={-1} aria-hidden onClick={onToggle} className="shrink-0 py-3 text-muted-foreground">
+          <ChevronDownIcon className={cn("size-4 transition-transform", open && "rotate-180")} />
+        </button>
+      </div>
 
       {open ? (
         <div className="space-y-4 border-t px-4 py-4">
           {editing ? (
-            <SlotEditor key={item?.id ?? "new"} clientId={id} clientName={record.profile.name} slot={slot} current={s} reload={reload} {...(item ? { onDone: () => setEditing(false) } : {})} />
+            <SlotEditor
+              key={item?.id ?? "new"}
+              clientId={id}
+              clientName={record.profile.name}
+              slot={slot}
+              current={s}
+              reload={reload}
+              onSaved={(approved) => {
+                setEditingSaved(false)
+                onSaved?.(approved)
+              }}
+              {...(item ? { onCancel: () => setEditingSaved(false) } : {})}
+            />
           ) : item ? (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
@@ -799,7 +895,7 @@ function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, o
                   <span className="text-muted-foreground">Question </span>“{item.question.prompt}”
                 </p>
                 <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.6875rem] text-muted-foreground">
-                  <ShieldCheckIcon className={cn("size-3 shrink-0", item.approval ? "text-supported" : "text-partial")} />
+                  <ShieldCheckIcon className={cn("size-3 shrink-0", item.approval ? "text-primary-ink" : "text-partial")} />
                   <span title={item.fact.sourceKind === "PUBLIC_SOURCE_UNAPPROVED" ? "Derived from public pages only; not business truth" : undefined}>
                     {SOURCE_KIND_LABELS[item.fact.sourceKind] ?? item.fact.sourceKind}
                   </span>
@@ -815,16 +911,19 @@ function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, o
                 </p>
                 {finding && finding.samples.reviewed > 0 ? <p className="text-[0.6875rem] text-muted-foreground">{finding.samples.statement}</p> : null}
               </div>
-              <Button size="icon-sm" variant="ghost" aria-label="Edit fact" title="Edit fact" onClick={() => setEditing(true)}>
+              <Button size="icon-sm" variant="ghost" aria-label="Edit fact" title="Edit fact" onClick={() => setEditingSaved(true)}>
                 <PenLineIcon />
               </Button>
             </div>
           ) : null}
 
-          {item && !item.approval && !editing ? (
+          {draft && !editing ? (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-partial/25 bg-partial-soft/60 px-3 py-2">
-              <span className="min-w-0 flex-1">Not approved: it will not be checked or shown to the client.</span>
-              <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => Records.approve(id, item.id), "Fact approved")}>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">Draft: confirm it with the client, then approve.</span>
+                <span className="block text-[0.6875rem] text-muted-foreground">Until it is approved, this fact is not checked and not shown on the shared record.</span>
+              </span>
+              <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={approve}>
                 {busy ? <Spinner /> : <ShieldCheckIcon />}
                 Approve fact
               </Button>
@@ -893,19 +992,44 @@ type RunView = OperatorRecord["runs"][number]
 // in flight finish and their answers are kept, like any other evidence.
 function StopRunButton({ clientId, run, reload, className }: { clientId: string; run: RunView; reload: () => Promise<void>; className?: string }) {
   const { busy, run: act } = useAction(reload)
+  const [confirming, setConfirming] = useState(false)
   const label = run.kind === "INITIAL" ? "first check" : "weekly re-check"
-  const stop = () => {
-    if (!window.confirm(`Stop this ${label}?\n\nQuestions that have not been sent are cancelled. Any question already in progress finishes and is kept.`)) return
-    void act(async () => {
+  const waiting = run.checks.filter((c) => c.status === "QUEUED").length
+  const inProgress = run.checks.filter((c) => c.status === "RUNNING").length
+  const stop = () =>
+    act(async () => {
       const r = await Records.cancelRun(clientId, run.id)
       toast.success(r.cancelled ? `Stopped ${r.cancelled} question${r.cancelled === 1 ? "" : "s"}${r.stillRunning ? `; ${r.stillRunning} in progress will finish` : ""}` : `${r.stillRunning} in progress will finish`)
     })
-  }
   return (
-    <Button size="sm" variant="outline" className={cn("border-wrong/40 text-wrong hover:bg-wrong-soft hover:text-wrong", className)} disabled={busy} onClick={stop}>
-      {busy ? <Spinner /> : <CircleStopIcon />}
-      Stop {label}
-    </Button>
+    <>
+      <Button size="sm" variant="outline" className={cn("border-wrong/40 text-wrong hover:bg-wrong-soft hover:text-wrong", className)} disabled={busy} onClick={() => setConfirming(true)}>
+        {busy ? <Spinner /> : <CircleStopIcon />}
+        Stop {label}
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        tone="destructive"
+        icon={<CircleStopIcon />}
+        title={`Stop the ${label}?`}
+        description="Questions that have not been sent are cancelled. A question already in progress finishes and its answer is kept."
+        confirmLabel={`Stop ${label}`}
+        cancelLabel="Keep running"
+        onConfirm={stop}
+      >
+        <dl className="grid grid-cols-2 gap-2">
+          <div className="rounded-lg bg-muted/50 px-3 py-2">
+            <dt className="text-[0.6875rem] text-muted-foreground">Will be cancelled</dt>
+            <dd className="font-medium tabular-nums">{waiting} not sent yet</dd>
+          </div>
+          <div className="rounded-lg bg-muted/50 px-3 py-2">
+            <dt className="text-[0.6875rem] text-muted-foreground">Will finish</dt>
+            <dd className="font-medium tabular-nums">{inProgress} in progress</dd>
+          </div>
+        </dl>
+      </ConfirmDialog>
+    </>
   )
 }
 
@@ -914,7 +1038,9 @@ function RunBar({ clientId, run, reload }: { clientId: string; run: RunView; rel
   const finished = run.checks.filter((c) => c.status !== "QUEUED" && c.status !== "RUNNING").length
   const started = run.checks.some((c) => c.status !== "QUEUED")
   const waitingMs = Date.now() - Date.parse(run.createdAt)
-  const stalled = !started && waitingMs > 2 * 60_000
+  // The worker polls every second, so a check that has not started after 30
+  // seconds almost always means no worker is running.
+  const stalled = !started && waitingMs > 30_000
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-2.5 text-xs shadow-(--card-shadow)", stalled ? "bg-partial-soft/70 text-partial" : "bg-review-soft/60 text-review")}>
       {stalled ? <TriangleAlertIcon className="size-4 shrink-0" /> : <LoaderCircleIcon className="size-4 shrink-0 animate-spin" />}
@@ -922,9 +1048,14 @@ function RunBar({ clientId, run, reload }: { clientId: string; run: RunView; rel
         <span className="font-medium">{run.kind === "INITIAL" ? "First check" : "Weekly re-check"}</span>
         {" · "}
         {finished} of {total} done
-        {stalled
-          ? ` · Waiting since ${formatDateTime(run.createdAt)} and no question has started. The check worker may not be running. Stop it if you started it by mistake.`
-          : " · This page updates on its own."}
+        {stalled ? (
+          <>
+            {" · No question has started since "}{formatDateTime(run.createdAt)}.
+            <span className="block text-[0.6875rem] opacity-90">
+              Nothing has been sent yet. The check worker does not seem to be running: start it (<code className="font-mono">pnpm --filter @openrecord/worker dev</code>) and this check begins on its own, or stop it.
+            </span>
+          </>
+        ) : started ? " · Asking the questions. This page updates on its own." : " · Waiting for the check worker to pick it up…"}
       </span>
       <div className="h-1.5 w-28 overflow-hidden rounded-full bg-current/15" aria-hidden>
         <div className="h-full rounded-full bg-current transition-[width]" style={{ width: `${total ? (finished / total) * 100 : 0}%` }} />
@@ -932,6 +1063,105 @@ function RunBar({ clientId, run, reload }: { clientId: string; run: RunView; rel
       <StopRunButton clientId={clientId} run={run} reload={reload} className="h-7 bg-card text-xs" />
     </div>
   )
+}
+
+type RunRequest = { kind: "INITIAL" | "FOLLOW_UP"; redo: boolean; label: string }
+
+// What a run will ask, before it asks. The facts read as they do on the page
+// (number, name, the value the client confirmed) with the exact question each
+// one sends; facts left out are listed with the reason.
+function RunCheckDialog({ request, onOpenChange, facts, surface, samples, onConfirm }: {
+  request: RunRequest | null; onOpenChange: (open: boolean) => void; facts: FactSlot[]
+  surface: RecordResponse["surface"]; samples: number; onConfirm: (r: RunRequest) => Promise<boolean>
+}) {
+  const asked = facts.filter((f) => f.item?.approval)
+  const skipped = facts.filter((f) => !f.item?.approval)
+  const perFact = request?.kind === "FOLLOW_UP" ? samples : 1
+  const total = asked.length * perFact
+  const fixture = surface.provider === "mock"
+  const surfaceName = surface.provider === "gemini" ? "Gemini with Google Search" : fixture ? "Test fixture" : surface.provider
+  const copy = !request ? null
+    : request.kind === "FOLLOW_UP"
+      ? { title: "Run the weekly re-check", confirm: "Run weekly re-check", description: "Asks the same questions again. The answers are compared with the first check once you review them." }
+      : request.redo
+        ? { title: "Redo the first check", confirm: "Redo first check", description: "The new answers become the first check that weekly re-checks compare against. The earlier answers stay in the history." }
+        : { title: "Run the first check", confirm: "Run first check", description: "Each approved fact sends one question. You review every answer before anything appears on the client's record." }
+  return (
+    <ConfirmDialog
+      open={request !== null}
+      onOpenChange={onOpenChange}
+      wide
+      icon={request?.kind === "FOLLOW_UP" ? <RefreshCwIcon /> : <PlayIcon />}
+      title={copy?.title}
+      description={copy?.description}
+      confirmLabel={copy?.confirm}
+      confirmIcon={request?.kind === "FOLLOW_UP" ? <RefreshCwIcon /> : <PlayIcon />}
+      footnote="You can stop it while questions are waiting."
+      onConfirm={() => (request ? onConfirm(request) : Promise.resolve(false))}
+    >
+      <section aria-label="Questions" className="overflow-hidden rounded-xl border bg-card shadow-(--card-shadow)">
+        <div className="flex items-baseline justify-between border-b px-3.5 py-2">
+          <span className="font-medium">Questions</span>
+          <span className="text-[0.6875rem] text-muted-foreground tabular-nums">{asked.length} of 3 facts{perFact > 1 ? ` · ${perFact} times each` : ""}</span>
+        </div>
+        <ol className="divide-y">
+          {asked.map(({ slot, item }) => (
+            <li key={slot} className="flex gap-3 px-3.5 py-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary-ink/10 text-[0.6875rem] font-semibold text-primary-ink tabular-nums">{slot}</span>
+              <span className="min-w-0 flex-1 space-y-0.5">
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="truncate font-medium">{item!.fact.predicate}</span>
+                  <span className="truncate text-muted-foreground">{item!.fact.valueText}</span>
+                </span>
+                <span className="block text-muted-foreground">
+                  <span className="text-foreground/80">“{item!.question.prompt}”</span>
+                </span>
+              </span>
+              {perFact > 1 ? <span className="shrink-0 self-center rounded-md bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground tabular-nums">×{perFact}</span> : null}
+            </li>
+          ))}
+          {skipped.map(({ slot, item }) => (
+            <li key={slot} className="flex items-center gap-3 px-3.5 py-2 text-muted-foreground">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-[0.6875rem] font-semibold tabular-nums">{slot}</span>
+              <span className="min-w-0 flex-1 truncate">{item ? item.fact.predicate : `Fact ${slot}`}</span>
+              <span className="shrink-0 text-[0.6875rem]">{item ? "Draft · not asked" : "Not written · not asked"}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+      <dl className="grid grid-cols-3 divide-x overflow-hidden rounded-xl border bg-muted/30">
+        <div className="min-w-0 px-3.5 py-2.5">
+          <dt className="text-[0.6875rem] text-muted-foreground">AI surface</dt>
+          <dd className={cn("truncate font-medium", fixture && "text-partial")} title={`${surfaceName} · ${surface.model}`}>{surfaceName}</dd>
+          <dd className="truncate text-[0.6875rem] text-muted-foreground">{fixture ? "No live AI is asked" : surface.model}</dd>
+        </div>
+        <div className="min-w-0 px-3.5 py-2.5">
+          <dt className="text-[0.6875rem] text-muted-foreground">Sends</dt>
+          <dd className="font-medium tabular-nums">{total} question{total === 1 ? "" : "s"}</dd>
+          <dd className="truncate text-[0.6875rem] text-muted-foreground">{perFact > 1 ? `${perFact} answers per fact` : "One answer per fact"}</dd>
+        </div>
+        <div className="min-w-0 px-3.5 py-2.5">
+          <dt className="text-[0.6875rem] text-muted-foreground">Takes</dt>
+          <dd className="font-medium">Usually under a minute</dd>
+          <dd className="truncate text-[0.6875rem] text-muted-foreground">Nothing runs on a schedule</dd>
+        </div>
+      </dl>
+    </ConfirmDialog>
+  )
+}
+
+type FactSlot = { slot: 1 | 2 | 3; item: OperatorRecord["slots"][number]["item"] | undefined }
+
+// Consecutive runs that were stopped before any answer read as one row, with
+// the count: they produced nothing to compare and would otherwise fill the list.
+function stackStopped(runs: OperatorRecord["runs"]) {
+  const rows: Array<{ run: OperatorRecord["runs"][number]; stopped: number }> = []
+  for (const run of runs) {
+    const last = rows.at(-1)
+    if (run.status === "CANCELLED" && last?.run.status === "CANCELLED" && last.run.kind === run.kind) last.stopped++
+    else rows.push({ run, stopped: run.status === "CANCELLED" ? 1 : 0 })
+  }
+  return rows
 }
 
 const reveal = (elementId: string, then?: () => void) =>
@@ -944,10 +1174,20 @@ export function ClientRecordPage() {
   const { id = "" } = useParams()
   const [poll, setPoll] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
-  const [chatting, setChatting] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
+  // ?agent=1 (from the sidebar's chat history) opens the agent beside the record.
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    if (params.get("agent") === null) return
+    setAgentOpen(true)
+    const next = new URLSearchParams(params)
+    next.delete("agent")
+    setParams(next, { replace: true })
+  }, [params, setParams])
   // undefined: follow the record (open the fact that needs you); null: all closed.
   const [openSlot, setOpenSlot] = useState<number | null | undefined>(undefined)
   const [actionOpen, setActionOpen] = useState(false)
+  const [runRequest, setRunRequest] = useState<RunRequest | null>(null)
   const res = useApi<RecordResponse>(`record:${id}`, async () => {
     const r = await Records.get(id)
     setPoll(r.record.activeRun)
@@ -994,12 +1234,47 @@ export function ClientRecordPage() {
   const reviewingFollowUp = latest?.kind === "FOLLOW_UP" && unreviewed > 0
   const shareActive = record.share?.status === "ACTIVE"
   const unapprovedSlot = facts.find((f) => !f.item?.approval)?.slot
-  const shownSlot = openSlot === undefined ? (waitingFacts[0]?.slot ?? (approved === 0 ? 1 : null)) : openSlot
+  // Before the first check the facts are still being set up: written, then
+  // approved with the client. The layout is the same; the next step says what is left.
+  const setup = !initial && !active
+  const drafts = facts.filter((f) => f.item && !f.item.approval)
+  const emptySlot = facts.find((f) => !f.item)
+  const settingUp = !initial && (drafts.length > 0 || !!emptySlot)
+  const shownSlot = openSlot !== undefined ? openSlot
+    : setup ? (emptySlot?.slot ?? null)
+    : (waitingFacts[0]?.slot ?? (approved === 0 ? 1 : null))
 
   const openFact = (slot: number) => {
     setOpenSlot(slot)
     reveal(`fact-${slot}`)
   }
+  // Before the first check, after a fact is saved or approved: open the next
+  // fact that still needs writing (or, after an approval, approving), otherwise
+  // close the facts and bring the next step into view.
+  const setupAdvance = (slot: number, approvedNow: boolean) => {
+    if (!setup) return
+    const others = [...facts.filter((f) => f.slot > slot), ...facts.filter((f) => f.slot < slot)]
+    const target = others.find((f) => !f.item) ?? (approvedNow ? others.find((f) => !f.item?.approval) : undefined)
+    if (target) openFact(target.slot)
+    else {
+      setOpenSlot(null)
+      reveal("record-next")
+    }
+  }
+  const approveDrafts = () =>
+    void run(async () => {
+      try {
+        for (const f of drafts) await Records.approve(id, f.item!.id)
+      } catch (e) {
+        await reload() // show the approvals that did go through
+        throw e
+      }
+    },`${drafts.length === 1 ? "Fact" : `${drafts.length} facts`} approved`).then((ok) => {
+      if (ok) {
+        setOpenSlot(null)
+        reveal("record-next")
+      }
+    })
   const openAction = () => {
     setActionOpen(true)
     reveal("record-action", () => document.querySelector<HTMLTextAreaElement>("#record-action textarea")?.focus({ preventScroll: true }))
@@ -1014,16 +1289,10 @@ export function ClientRecordPage() {
       reveal("record-next")
     }
   }
-  const start = (kind: "INITIAL" | "FOLLOW_UP", label: string) => {
-    const samples = initial?.sampleCount ?? 1
-    const questions = approved * (kind === "FOLLOW_UP" ? samples : 1)
-    const what = kind === "FOLLOW_UP" ? "Run the weekly re-check now?" : initial ? "Redo the first check?" : "Run the first check now?"
-    if (!window.confirm(`${what}\n\nThis asks ${surface.model} ${questions} new question${questions === 1 ? "" : "s"}. You can stop it from this page while questions are still waiting.`)) return
-    void run(() => Records.run(id, kind), label)
-  }
+  const start = (kind: "INITIAL" | "FOLLOW_UP", label: string) => setRunRequest({ kind, label, redo: kind === "INITIAL" && !!initial })
 
   const next: StepKey | null =
-    approved === 0 ? "facts"
+    approved === 0 || settingUp ? "facts"
     : !initial ? "check"
     : initialWaiting > 0 ? "review"
     : !hasFollowUp && record.actions.length === 0 ? "action"
@@ -1032,17 +1301,17 @@ export function ClientRecordPage() {
     : null
   const current: StepKey | null = active ? (active.kind === "INITIAL" ? "check" : "recheck") : next
   const done: Record<StepKey, boolean> = {
-    facts: approved >= 1,
+    facts: approved >= 1 && !settingUp,
     check: !!initial,
-    review: !!initial && initialWaiting === 0,
+    review: !!initial && initialWaiting === 0 && active?.id !== initial.id,
     action: record.actions.length > 0,
     recheck: hasFollowUp && !reviewingFollowUp,
     share: shareActive,
   }
   const steps: Step[] = ([
-    { key: "facts", label: "Approve facts", hint: `${approved} of 3 approved` },
+    { key: "facts", label: "Approve facts", hint: `${approved} of 3 approved${!initial && drafts.length ? ` · ${drafts.length} draft${drafts.length === 1 ? "" : "s"}` : ""}` },
     { key: "check", label: "First check", hint: initial ? relativeTime(initial.createdAt) : "Not run yet" },
-    { key: "review", label: "Review answers", hint: !initial ? "After the first check" : initialWaiting ? `${initialWaiting} left to review` : "All reviewed" },
+    { key: "review", label: "Review answers", hint: !initial ? "After the first check" : initialWaiting ? `${initialWaiting} left to review` : active?.id === initial.id ? "Waiting for answers" : "All reviewed" },
     { key: "action", label: "Agency action", hint: record.actions.length ? `${record.actions.length} recorded` : "Log what you changed" },
     { key: "recheck", label: "Weekly re-check", hint: !hasFollowUp ? "Same questions again" : reviewingFollowUp ? `${unreviewed} left to review` : "Compared with first" },
     { key: "share", label: "Share", hint: shareActive ? "Link active" : "Send the record" },
@@ -1054,11 +1323,18 @@ export function ClientRecordPage() {
     else if (key === "share") reveal("record-share")
     else reveal("record-checks")
   }
+  const agentButton = (
+    <Button size="sm" variant={agentOpen ? "secondary" : "outline"} aria-pressed={agentOpen} onClick={() => setAgentOpen((v) => !v)}>
+      <SparklesIcon />
+      Agent
+    </Button>
+  )
   const reviewFirst = waitingFacts[0]
   const waitingDetail = waitingFacts.map((f) => `Fact ${f.slot} · ${f.item?.fact.predicate ?? ""} (${f.waiting})`).join("  ·  ")
 
   return (
-    <div className="space-y-4 pb-4">
+    <AgentWorkspace open={agentOpen} onClose={() => setAgentOpen(false)} businessId={id} businessName={record.profile.name}>
+    <div className="@container space-y-4 pb-4">
       <PageHeader
         back={{ to: "/clients", label: "Clients" }}
         title={record.profile.name}
@@ -1079,37 +1355,52 @@ export function ClientRecordPage() {
           </>
         }
         actions={
-          active ? (
+          <>
+          {agentButton}
+          {active ? (
             <StopRunButton clientId={id} run={active} reload={reload} />
-          ) : !initial ? (
-            <Button size="sm" disabled={busy || approved === 0} onClick={() => start("INITIAL", "First check started")}>
-              <PlayIcon />
-              Run first check
-            </Button>
-          ) : (
+          ) : !initial ? null : (
+            // The next-step banner carries the action for the current step, so
+            // the top bar only offers runs the banner is not already showing.
             <>
               {!hasFollowUp ? (
                 <Button size="sm" variant="outline" disabled={busy} onClick={() => start("INITIAL", "First check started again")}>
                   Redo first check
                 </Button>
               ) : null}
-              <Button size="sm" variant={next === "recheck" && !reviewingFollowUp ? "default" : "outline"} disabled={busy} onClick={() => start("FOLLOW_UP", "Weekly re-check started")}>
-                <RefreshCwIcon />
-                Run weekly re-check
-              </Button>
+              {next === "recheck" || next === "action" ? null : (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => start("FOLLOW_UP", "Weekly re-check started")}>
+                  <RefreshCwIcon />
+                  Run weekly re-check
+                </Button>
+              )}
             </>
-          )
+          )}
+          </>
         }
       />
 
-      <details className="rounded-xl border p-4" open={chatting || undefined}>
-        <summary className="cursor-pointer text-xs font-medium">Investigate with the agent</summary>
-        <div className="pt-4"><AgentChat businessId={id} businessName={record.profile.name} onConversationChange={setChatting} /></div>
-      </details>
       <Steps steps={steps} onSelect={selectStep} />
 
       {active ? (
         <RunBar clientId={id} run={active} reload={reload} />
+      ) : next === "facts" && emptySlot && !initial ? (
+        <NextStep
+          title={`Write fact ${emptySlot.slot}`}
+          detail={`The value the client confirms, where it is published, and the question a buyer would ask.${drafts.length ? ` ${drafts.length} draft${drafts.length === 1 ? " is" : "s are"} waiting for approval.` : ""}`}
+        >
+          {approved ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => start("INITIAL", "First check started")}>Run with {approved} fact{approved === 1 ? "" : "s"}</Button> : null}
+          {drafts.length ? <Button size="sm" variant="outline" disabled={busy} onClick={approveDrafts}><ShieldCheckIcon />Approve {drafts.length === 1 ? "draft" : `${drafts.length} drafts`}</Button> : null}
+          <Button size="sm" onClick={() => openFact(emptySlot.slot)}><PenLineIcon />Write fact {emptySlot.slot}</Button>
+        </NextStep>
+      ) : next === "facts" && drafts.length ? (
+        <NextStep
+          title={`Approve ${drafts.length === 1 ? `fact ${drafts[0]!.slot}` : `${drafts.length} drafts`} with the client`}
+          detail="Approve only the values the client has confirmed. Drafts are not checked or shown on the record."
+        >
+          {approved ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => start("INITIAL", "First check started")}>Run with {approved} approved</Button> : null}
+          <Button size="sm" disabled={busy} onClick={approveDrafts}>{busy ? <Spinner /> : <ShieldCheckIcon />}Approve {drafts.length === 1 ? "fact" : `${drafts.length} drafts`}</Button>
+        </NextStep>
       ) : next === "facts" ? (
         <NextStep title="Approve a fact" detail="Each approved fact gets one question a buyer would ask, sent to the live AI surface.">
           <Button size="sm" onClick={() => openFact(unapprovedSlot ?? 1)}>Open fact {unapprovedSlot ?? 1}</Button>
@@ -1139,7 +1430,7 @@ export function ClientRecordPage() {
         <NextStep done title="The record is up to date" detail="Run another weekly re-check after the agency's next change." />
       )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-2">
           {facts.map(({ slot }) => (
             <FactCard
@@ -1153,17 +1444,19 @@ export function ClientRecordPage() {
               open={shownSlot === slot}
               onToggle={() => setOpenSlot(shownSlot === slot ? null : slot)}
               onAllReviewed={() => factReviewed(slot)}
+              onSaved={(approvedNow) => setupAdvance(slot, approvedNow)}
+              onApproved={() => setupAdvance(slot, true)}
             />
           ))}
         </div>
 
-        <div className="space-y-3 lg:sticky lg:top-0">
+        <div className="grid items-start gap-3 @2xl:grid-cols-2 @4xl:sticky @4xl:top-0 @4xl:grid-cols-1">
           <Panel id="record-checks" className="scroll-mt-4">
             <PanelHeader title="Checks" description={`${surface.provider === "gemini" ? "Gemini with Google Search" : surface.provider} · ${surface.model}`} />
             <div className="p-2 pt-1">
               {record.runs.length ? (
                 <ul>
-                  {[...record.runs].reverse().map((r) => {
+                  {stackStopped([...record.runs].reverse()).map(({ run: r, stopped: stoppedRuns }) => {
                     const stopped = r.checks.filter((c) => c.status === "FAILED" && c.failureClass === "CANCELLED").length
                     const failed = r.checks.filter((c) => c.status === "FAILED").length - stopped
                     const finished = r.checks.filter((c) => c.status !== "QUEUED" && c.status !== "RUNNING").length
@@ -1184,7 +1477,7 @@ export function ClientRecordPage() {
                         <span className="min-w-0 flex-1">
                           <span className="block font-medium">{r.kind === "INITIAL" ? "First check" : "Weekly re-check"}</span>
                           <span className="block text-[0.6875rem] text-muted-foreground">
-                            {running ? `${finished} of ${r.checks.length} done` : RUN_STATUS_LABELS[r.status]}
+                            {running ? `${finished} of ${r.checks.length} done` : r.status === "CANCELLED" ? `Stopped before any answer${stoppedRuns > 1 ? ` · ${stoppedRuns} times` : ""}` : RUN_STATUS_LABELS[r.status]}
                             {failed > 0 && !running ? ` · ${failed} failed` : ""}
                             {stopped > 0 && r.status !== "CANCELLED" ? ` · ${stopped} stopped` : ""}
                           </span>
@@ -1224,7 +1517,16 @@ export function ClientRecordPage() {
         </div>
       </div>
 
+      <RunCheckDialog
+        request={runRequest}
+        onOpenChange={(open) => (open ? undefined : setRunRequest(null))}
+        facts={facts}
+        surface={surface}
+        samples={initial?.sampleCount ?? 1}
+        onConfirm={(r) => run(() => Records.run(id, r.kind), r.label)}
+      />
       <EditClientDialog key={`${record.profile.name}-${record.profile.websiteUrl}`} record={record} reload={reload} open={editOpen} onOpenChange={setEditOpen} />
     </div>
+    </AgentWorkspace>
   )
 }

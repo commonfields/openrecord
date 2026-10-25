@@ -143,7 +143,7 @@ function SettingsDialog({
                       className={cn(
                         "flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2 text-left text-xs whitespace-nowrap outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
                         section === item.id
-                          ? "bg-sidebar-accent font-medium text-foreground [&_svg]:text-primary"
+                          ? "bg-sidebar-accent font-medium text-foreground [&_svg]:text-primary-ink"
                           : "text-sidebar-foreground [&_svg]:text-muted-foreground",
                       )}
                     >
@@ -269,7 +269,7 @@ function GeneralSection() {
                 onClick={() => setPreference("theme", t.id)}
                 className={cn(
                   "group rounded-xl border p-2 text-left outline-none transition-[box-shadow,background-color] focus-visible:ring-[3px] focus-visible:ring-ring",
-                  selected ? "border-primary/50 shadow-[0_0_0_1px_var(--primary)]" : "hover:bg-muted/50",
+                  selected ? "border-primary-ink/50 shadow-[0_0_0_1px_var(--primary-ink)]" : "hover:bg-muted/50",
                 )}
               >
                 {t.id === "system" ? (
@@ -283,7 +283,7 @@ function GeneralSection() {
                 <div className="mt-2 flex items-center gap-1.5 px-0.5 text-xs">
                   <Icon className="size-3.5 text-muted-foreground" />
                   <span className="font-medium">{t.label}</span>
-                  {selected ? <CheckIcon className="ml-auto size-4 text-primary" /> : null}
+                  {selected ? <CheckIcon className="ml-auto size-4 text-primary-ink" /> : null}
                 </div>
               </button>
             )

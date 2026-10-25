@@ -4,6 +4,7 @@ import { Building2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AgentChat } from "@/components/agent-chat"
+import { useChrome } from "@/components/app-shell"
 import { EmptyState } from "@/components/page"
 import { usePreferences } from "@/lib/preferences"
 import { useWorkspace } from "@/lib/workspace"
@@ -43,6 +44,14 @@ export function Overview() {
   const view: OverviewView = requested === "today" || requested === "agent" ? requested : preferences.landingView
   const [chatting, setChatting] = useState(false)
   const showSwitcher = view === "today" || !chatting
+  // Today is a wide dashboard, so the sidebar steps aside while it is open
+  // (the agent view collapses it itself once a conversation starts).
+  const { setFocus } = useChrome()
+  useEffect(() => {
+    if (view !== "today") return
+    setFocus(true)
+    return () => setFocus(false)
+  }, [view, setFocus])
 
   return (
     <>

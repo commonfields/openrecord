@@ -241,7 +241,7 @@ export function ClientGrowthPage() {
     <Panel><PanelHeader title="Product and primary goal" description="A human-authored objective with an exact metric definition. GitHub and Google Analytics connections are optional; daily CSV exports measure on their own.">{profile ? <Button size="sm" variant="outline" onClick={() => setEditing(!editing)}>{editing ? "Close editor" : "Edit profile"}</Button> : null}</PanelHeader>
       {!profile || editing ? <ProfileEditor key={profile?.updatedAt ?? "new"} businessId={id} profile={profile} done={async () => { setEditing(false); await state.reload() }} /> : <div className="grid gap-4 p-5 text-xs sm:grid-cols-2">
         <div className="space-y-2"><p className="font-medium">{profile.category}</p><p>{profile.audience}</p><p className="text-muted-foreground">{profile.valueProposition}</p></div>
-        <div className="space-y-2"><h2 className="font-medium text-primary">{profile.primaryGoal.statement}</h2>
+        <div className="space-y-2"><h2 className="font-medium text-primary-ink">{profile.primaryGoal.statement}</h2>
           <p>{profile.primaryGoal.metricDefinition.label} ({GROWTH_GOAL_LABELS[profile.primaryGoal.metricDefinition.conversionKind]})</p>
           <p>{profile.primaryGoal.metricDefinition.sourceIdentity}: {profile.primaryGoal.metricDefinition.sourceKind === "GA4_AGGREGATE_EXPORT" ? profile.primaryGoal.metricDefinition.eventName : "Operator aggregate CSV"}</p>
           <p>{profile.primaryGoal.metricDefinition.countingSemantics}, {profile.primaryGoal.metricDefinition.unit}{profile.primaryGoal.metricDefinition.currency ? ` (${profile.primaryGoal.metricDefinition.currency})` : ""}. Reporting timezone: {profile.primaryGoal.metricDefinition.reportingTimeZone}.</p>
@@ -264,7 +264,7 @@ function FirstUsePanel() {
   return <Panel>
     <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center">
       <div className="space-y-3">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary"><TargetIcon className="size-4" /></span>
+        <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink"><TargetIcon className="size-4" /></span>
         <h2 className="text-sm font-medium">Start with one goal and its exact metric</h2>
         <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
           Define what this client wants to improve and how it is counted, then propose specific initiatives against it.
