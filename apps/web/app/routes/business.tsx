@@ -61,27 +61,36 @@ export function Overview() {
         <Today />
       )}
       {showSwitcher ? (
-        <div className="pointer-events-none sticky bottom-5 z-20 mt-auto flex justify-center pt-8">
-          <Tabs
-            value={view}
-            onValueChange={(v) => {
-              const next = new URLSearchParams(params)
-              next.set("view", v)
-              setParams(next, { replace: true })
-            }}
-            className="pointer-events-auto"
-          >
-            <TabsList className="h-10 rounded-full border border-sidebar-border bg-sidebar p-1 text-sidebar-foreground shadow-(--float-shadow-strong)">
-              <TabsTrigger value="agent" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-                Agent
-              </TabsTrigger>
-              <TabsTrigger value="today" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-                Today
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
+        <BottomNavigation
+          view={view}
+          onChange={(v) => {
+            const next = new URLSearchParams(params)
+            next.set("view", v)
+            setParams(next, { replace: true })
+          }}
+        />
       ) : null}
     </>
+  )
+}
+
+// The bottom navigation: the floating pill pinned near the bottom edge that
+// switches between the agent and today views. Its design is self-contained
+// and purely presentational — the active view and view changes arrive as
+// props, while the URL query keeps the state.
+function BottomNavigation({ view, onChange }: { view: OverviewView; onChange: (view: string) => void }) {
+  return (
+    <div className="pointer-events-none sticky bottom-5 z-20 mt-auto flex justify-center pt-8">
+      <Tabs value={view} onValueChange={onChange} className="pointer-events-auto">
+        <TabsList className="h-10 rounded-full border border-sidebar-border bg-sidebar p-1 text-sidebar-foreground shadow-(--float-shadow-strong)">
+          <TabsTrigger value="agent" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
+            Agent
+          </TabsTrigger>
+          <TabsTrigger value="today" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
+            Today
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </div>
   )
 }

@@ -203,6 +203,7 @@ export function AppShell() {
 function SidebarBody() {
   const { collapsed } = useContext(SidebarStateContext)
   const { activeBusiness, overview } = useWorkspace()
+  const { open } = useCommandPalette()
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
@@ -211,7 +212,7 @@ function SidebarBody() {
     <>
       <div className={cn("flex shrink-0 flex-col gap-2 pt-2", collapsed ? "items-center px-1.5" : "px-2")}>
         <BusinessSwitcher />
-        <FindButton />
+        <SearchBar collapsed={collapsed} onOpen={open} />
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
@@ -332,13 +333,15 @@ function SidebarGroup({ label, children }: { label: string; children: ReactNode 
   )
 }
 
-function FindButton() {
-  const { collapsed } = useContext(SidebarStateContext)
-  const { open } = useCommandPalette()
+// The search bar: an input-shaped trigger that opens the search menu (the
+// command palette). Its design is self-contained — where it sits comes in as
+// `collapsed` and how the menu opens as `onOpen`, so it is decoupled from both
+// the sidebar and the menu itself.
+function SearchBar({ collapsed, onOpen }: { collapsed: boolean; onOpen: () => void }) {
   const button = (
     <button
       type="button"
-      onClick={open}
+      onClick={onOpen}
       aria-label="Find in OpenRecord (F)"
       className={cn(
         "flex items-center gap-2 rounded-md border bg-card text-xs text-muted-foreground shadow-(--control-shadow) outline-none transition-colors hover:text-foreground",

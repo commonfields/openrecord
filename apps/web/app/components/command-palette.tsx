@@ -48,9 +48,12 @@ const isTyping = (t: EventTarget | null) => {
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)
 }
 
+// The provider owns only state: the keyboard shortcut and open/close. It
+// renders the search menu, and anything can trigger it via `useCommandPalette`.
 export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const ctx = useMemo(() => ({ open: () => setOpen(true) }), [])
+  const onClose = useMemo(() => () => setOpen(false), [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,14 +69,24 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   return (
     <PaletteContext.Provider value={ctx}>
       {children}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="top-[12%] max-w-3xl translate-y-0 gap-0 overflow-hidden border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-(--float-shadow-strong) sm:max-w-3xl [&>button:last-child]:hidden">
-          <DialogTitle className="sr-only">Find in OpenRecord</DialogTitle>
-          <DialogDescription className="sr-only">Jump to a page, a business, a claim, or a fact.</DialogDescription>
-          {open ? <Palette close={() => setOpen(false)} /> : null}
-        </DialogContent>
-      </Dialog>
+      <SearchMenu open={open} onClose={onClose} />
     </PaletteContext.Provider>
+  )
+}
+
+// The search menu: the modal popup that shows the jump list when the search
+// bar is clicked (or F / ⌘K is pressed). Its design is self-contained and
+// props-driven — it knows nothing about who opens it or where it is mounted;
+// callers pass `open` and `onClose`, and the provider holds the state.
+export function SearchMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
+      <DialogContent className="top-[12%] max-w-3xl translate-y-0 gap-0 overflow-hidden border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-(--float-shadow-strong) sm:max-w-3xl [&>button:last-child]:hidden">
+        <DialogTitle className="sr-only">Find in OpenRecord</DialogTitle>
+        <DialogDescription className="sr-only">Jump to a page, a business, a claim, or a fact.</DialogDescription>
+        {open ? <Palette close={onClose} /> : null}
+      </DialogContent>
+    </Dialog>
   )
 }
 
