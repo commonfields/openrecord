@@ -385,11 +385,11 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
 // Starts as one centered conversation with the sidebar collapsed. As soon as
 // the agent does work, the chat slides left into its own card and the work it
 // read and prepared fills the content panel on the right.
-export function AgentChat(props: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+export function AgentChat(props: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   return <OverviewAgent key={props.businessId} {...props} />
 }
 
-function OverviewAgent({ businessId, businessName, onConversationChange }: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   const session = useAgentSession(businessId)
   const { setMinimal, setWorkspace, setFocus } = useChrome()
   const active = session.active
@@ -423,14 +423,14 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
 
   if (!active) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center pb-[12vh]">
+      <div className="flex flex-1 flex-col items-center justify-end px-4 pb-6 sm:px-6 lg:pb-8">
         {chatPane}
-        <div className="w-full max-w-3xl space-y-7">
+        <div className="w-full max-w-3xl space-y-4">
           <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
             What should we look into for <span className="name-shimmer">{businessName}</span>?
           </h1>
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-          <Composer onSend={session.send} disabled={!session.ready || session.busy} placeholder={session.unavailable ?? `Ask about stored evidence for ${businessName}`} />
+          <Composer compact onSend={session.send} disabled={!session.ready || session.busy} placeholder={session.unavailable ?? `Ask about stored evidence for ${businessName}`} />
         </div>
       </div>
     )
