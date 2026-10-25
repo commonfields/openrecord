@@ -14,11 +14,10 @@ import {
   totalClaims,
   type ModelSeries,
 } from "@/components/charts"
-import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, StatStrip, type Stat } from "@/components/page"
-import { ControlBadge, IssueStateBadge, RepresentationStateBadge } from "@/components/status"
-import { AnalyticsApi, ApiError, Facts, Issues, Representations, type Analytics, type VerdictCounts } from "@/lib/api"
+import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, type Stat } from "@/components/page"
+import { GoalTrend, HealthStrip, NextActions, PointsDelta, SourcesPanel, accuracy, isMissing, pct, reviewed, useOverviewData } from "@/components/today-overview"
+import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
 import { OUTCOME_LABELS, Records } from "@/lib/record"
-import { groupClaims } from "@/lib/issues"
 import { errorMessage, relativeTime, sentenceCase } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
@@ -33,9 +32,6 @@ function shortDate(iso: string): string {
   return new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
 }
 
-const reviewed = (c: VerdictCounts) => c.supported + c.wrong + c.partial + c.unknown
-const accuracy = (c: VerdictCounts) => (reviewed(c) ? c.supported / reviewed(c) : null)
-const pct = (n: number | null, digits = 0) => (n === null ? "—" : `${(n * 100).toFixed(digits)}%`)
 const sumCounts = (rows: VerdictCounts[]): VerdictCounts =>
   rows.reduce(
     (t, r) => ({ supported: t.supported + r.supported, wrong: t.wrong + r.wrong, partial: t.partial + r.partial, unknown: t.unknown + r.unknown, unreviewed: t.unreviewed + r.unreviewed }),
@@ -78,6 +74,14 @@ function useModelStats(a: Analytics | null) {
 type ModelStats = NonNullable<ReturnType<typeof useModelStats>>
 
 type MetricKey = "answers" | "accuracy" | "wrong" | "partial" | "unreviewed" | "checks"
+type TrendKey = MetricKey | "goal"
+// What the trend switcher offers; partial and needs-review stay reachable by URL.
+const trendTabs: ReadonlyArray<{ key: MetricKey; label: string }> = [
+  { key: "accuracy", label: "Correct answers" },
+  { key: "wrong", label: "Wrong answers" },
+  { key: "answers", label: "Answers collected" },
+  { key: "checks", label: "Checks run" },
+]
 
 const metricMeta: Record<MetricKey, { label: string; tone?: Stat["tone"]; goodWhenUp?: boolean; percent?: boolean }> = {
   answers: { label: "Answers collected" },
@@ -101,10 +105,14 @@ export function Today() {
   const { activeBusiness } = useWorkspace()
   const [params, setParams] = useSearchParams()
   const days: Period = periods.includes(Number(params.get("days")) as Period) ? (Number(params.get("days")) as Period) : 30
-  const metric: MetricKey = (Object.keys(metricMeta) as MetricKey[]).includes(params.get("metric") as MetricKey) ? (params.get("metric") as MetricKey) : "answers"
+  const requested = params.get("metric")
   const { data, loading, error } = useApi(`analytics:${id}:${days}`, () => AnalyticsApi.get(id, days))
   const a = data?.analytics ?? null
   const stats = useModelStats(a)
+  const overview = useOverviewData(id, days)
+  const goalLabel = overview.profile?.primaryGoal.metricDefinition.label ?? null
+  const trend: TrendKey =
+    requested === "goal" && goalLabel !== null ? "goal" : (Object.keys(metricMeta) as MetricKey[]).includes(requested as MetricKey) ? (requested as MetricKey) : "accuracy"
 
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -112,11 +120,25 @@ export function Today() {
     setParams(next, { replace: true })
   }
 
+  // Scrolls sideways on narrow screens instead of overflowing the page.
+  const switcher = (
+    <Tabs value={trend} onValueChange={(v) => setParam("metric", v)} className="max-w-full overflow-x-auto">
+      <TabsList>
+        {trendTabs.map((t) => (
+          <TabsTrigger key={t.key} value={t.key}>
+            {t.label}
+          </TabsTrigger>
+        ))}
+        {goalLabel !== null ? <TabsTrigger value="goal">{goalLabel}</TabsTrigger> : null}
+      </TabsList>
+    </Tabs>
+  )
+
   return (
     <div className="rise-in space-y-6 pb-4">
       <PageHeader
         title={activeBusiness?.name ?? "Overview"}
-        description="Answers collected from configured providers, and human judgments against your approved facts."
+        description={`How AI and the web describe ${activeBusiness?.name ?? "this business"}, and what to fix next.`}
         actions={
           <>
             <Select value={String(days)} onValueChange={(v) => setParam("days", v)}>
@@ -146,78 +168,41 @@ export function Today() {
         }
       />
 
-      {error && !a ? (
-        <EmptyState icon={<BarChart3Icon />} title="Analytics could not load" description={errorMessage(error)} />
-      ) : (
-        <>
-          <Kpis a={a} stats={stats} loading={loading} metric={metric} onMetric={(m) => setParam("metric", m)} />
-          <HeroChart a={a} stats={stats} loading={loading} metric={metric} days={days} />
-          <div className="rise-in grid gap-4 [--rise-base:180ms] lg:grid-cols-2">
-            <AnswerCollectionCard stats={stats} loading={loading} days={days} />
-            <AccuracyByModelCard a={a} stats={stats} loading={loading} />
-            <NeedsALookCard businessId={id} />
-            <QuestionsCard businessId={id} a={a} loading={loading} days={days} />
-            <CitationsCard a={a} loading={loading} days={days} />
-            <RecordOutcomesCard businessId={id} />
+      <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
+      <NextActions businessId={id} data={overview} checks={a ? a.current.checks : null} />
+
+      {trend === "goal" ? (
+        <section className="space-y-3">
+          <div>
+            {switcher}
+            <p className="mt-2 text-xs text-muted-foreground">
+              {goalLabel} per day, from {overview.series?.sourceKind === "GA4_AGGREGATE_EXPORT" ? "Google Analytics" : "imported exports"} · last {days} days
+            </p>
           </div>
-        </>
+          <GoalTrend data={overview} days={days} formatDate={shortDate} />
+        </section>
+      ) : error && !a ? (
+        <EmptyState icon={<BarChart3Icon />} title="Answer analytics could not load" description={errorMessage(error)} />
+      ) : (
+        <HeroChart a={a} stats={stats} loading={loading} metric={trend} days={days} switcher={switcher} />
       )}
+
+      <SourcesPanel businessId={id} data={overview} />
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium">AI answer details</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">Which providers answered, what buyers asked, and the sources they cited · last {days} days</p>
+        </div>
+        <div className="rise-in grid gap-4 [--rise-base:180ms] lg:grid-cols-2">
+          <AnswerCollectionCard stats={stats} loading={loading} days={days} />
+          <AccuracyByModelCard a={a} stats={stats} loading={loading} />
+          <QuestionsCard businessId={id} a={a} loading={loading} days={days} />
+          <CitationsCard a={a} loading={loading} days={days} />
+          <RecordOutcomesCard businessId={id} />
+        </div>
+      </section>
     </div>
-  )
-}
-
-/* ------------------------------------------------------------------ KPIs */
-
-function Kpis({ a, stats, loading, metric, onMetric }: { a: Analytics | null; stats: ModelStats | null; loading: boolean; metric: MetricKey; onMetric: (m: MetricKey) => void }) {
-  const values: Record<MetricKey, { value: ReactNode; delta: ReactNode }> | null = useMemo(() => {
-    if (!a || !stats) return null
-    const acc = accuracy(a.current)
-    const prevAcc = accuracy(a.previous)
-    return {
-      answers: { value: stats.total.toLocaleString(), delta: <Delta now={stats.total} prev={stats.prevTotal} /> },
-      accuracy: {
-        value: pct(acc),
-        delta: acc !== null && prevAcc !== null ? <PointsDelta pts={Math.round((acc - prevAcc) * 100)} /> : null,
-      },
-      wrong: { value: a.current.wrong.toLocaleString(), delta: <Delta now={a.current.wrong} prev={a.previous.wrong} goodWhenUp={false} /> },
-      partial: { value: a.current.partial.toLocaleString(), delta: <Delta now={a.current.partial} prev={a.previous.partial} goodWhenUp={false} /> },
-      unreviewed: { value: a.current.unreviewed.toLocaleString(), delta: <Delta now={a.current.unreviewed} prev={a.previous.unreviewed} goodWhenUp={false} /> },
-      checks: { value: a.current.checks.toLocaleString(), delta: <Delta now={a.current.checks} prev={a.previous.checks} goodWhenUp /> },
-    }
-  }, [a, stats])
-
-  const stats_: Stat[] = (Object.keys(metricMeta) as MetricKey[]).map((k) => ({
-    key: k,
-    label: metricMeta[k].label,
-    value: loading || !values ? <Skeleton className="h-5 w-14" /> : values[k].value,
-    delta: loading || !values ? null : values[k].delta,
-    ...(metricMeta[k].tone ? { tone: metricMeta[k].tone } : {}),
-    active: metric === k,
-    onSelect: () => onMetric(k),
-  }))
-  return <StatStrip stats={stats_} />
-}
-
-function Delta({ now, prev, goodWhenUp }: { now: number; prev: number; goodWhenUp?: boolean }) {
-  if (!prev) return now ? <span className="text-muted-foreground">New</span> : null
-  const change = (now - prev) / prev
-  if (Math.abs(change) < 0.005) return <span className="text-muted-foreground">0%</span>
-  const good = change > 0 === goodWhenUp
-  return (
-    <span className={goodWhenUp === undefined ? "text-muted-foreground" : good ? "text-supported" : "text-wrong"} title="Change vs previous period">
-      {change > 0 ? "+" : ""}
-      {(change * 100).toFixed(Math.abs(change) < 0.1 ? 1 : 0)}%
-    </span>
-  )
-}
-
-function PointsDelta({ pts }: { pts: number }) {
-  if (pts === 0) return <span className="text-muted-foreground">0 pts</span>
-  return (
-    <span className={pts > 0 ? "text-supported" : "text-wrong"} title="Change vs previous period, in percentage points">
-      {pts > 0 ? "+" : ""}
-      {pts} pts
-    </span>
   )
 }
 
@@ -231,7 +216,7 @@ const verdictShareMeta = {
 } as const
 type VerdictShareMetric = keyof typeof verdictShareMeta
 
-function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; stats: ModelStats | null; loading: boolean; metric: MetricKey; days: number }) {
+function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics | null; stats: ModelStats | null; loading: boolean; metric: MetricKey; days: number; switcher: ReactNode }) {
   const [view, setView] = useState<"trend" | "split">("trend")
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
   const [focus, setFocus] = useState<string | null>(null)
@@ -289,8 +274,8 @@ function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; s
     <section className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xs leading-tight font-medium">{meta.label} over time</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          {switcher}
+          <p className="mt-2 text-xs text-muted-foreground">
             {subtitle} · last {days} days
           </p>
         </div>
@@ -523,90 +508,6 @@ function AccuracyByModelCard({ a, stats, loading }: { a: Analytics | null; stats
   )
 }
 
-function NeedsALookCard({ businessId }: { businessId: string }) {
-  const issues = useApi(`issues:${businessId}`, () => Issues.list(businessId))
-  const representations = useApi(`representations:${businessId}`, () => Representations.list(businessId))
-  const facts = useApi(`facts:${businessId}`, () => Facts.list(businessId))
-  const [tab, setTab] = useState<"claims" | "sources">("claims")
-  const loading = issues.loading || representations.loading || facts.loading
-  const groups = useMemo(() => groupClaims(issues.data?.issues ?? [], "frequent").slice(0, 6), [issues.data])
-  const reps = representations.data?.representations ?? []
-  const drift = reps.filter((r) => r.finding.state !== "IN_SYNC")
-  const max = Math.max(1, ...groups.map((g) => g.occurrences.length))
-  const activeFacts = (facts.data?.facts ?? []).filter((f) => f.status === "ACTIVE").length
-
-  return (
-    <Panel className="shadow-(--card-shadow-raised)">
-      <PanelHeader title="Needs a look" description={`${activeFacts} approved facts · ${reps.filter((r) => r.finding.state === "IN_SYNC").length} of ${reps.length} sources in sync`}>
-        <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
-          <Link to={`/businesses/${businessId}/${tab === "claims" ? "issues" : "representations"}`}>
-            View all
-            <ArrowRightIcon />
-          </Link>
-        </Button>
-      </PanelHeader>
-      <div className="px-4 pt-2">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "claims" | "sources")}>
-          <TabsList>
-            <TabsTrigger value="claims">Repeated claims</TabsTrigger>
-            <TabsTrigger value="sources">
-              Sources <span className="text-muted-foreground tabular-nums">{drift.length}</span>
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-      <div className="p-2">
-        {loading ? (
-          <ListSkeleton />
-        ) : tab === "claims" ? (
-          groups.length === 0 ? (
-            <p className="px-2 py-8 text-center text-xs text-muted-foreground">Nothing disagrees with your approved truth right now.</p>
-          ) : (
-            <div className="space-y-1">
-            {groups.map((g) => {
-              const target = g.occurrences.find((o) => o.state !== "NEEDS_REVIEW") ?? g.latest
-              return (
-                <Link
-                  key={g.key}
-                  to={target.state === "NEEDS_REVIEW" ? `/observations/${target.observation_id}?claim=${target.claim_id}` : `/businesses/${businessId}/issues/${target.claim_id}`}
-                  className="block rounded-md transition-colors hover:bg-foreground/[0.03]"
-                >
-                  <ShareRow share={g.occurrences.length / max} value={`${g.occurrences.length}×`}>
-                    <span className="min-w-0 flex-1 truncate">{g.text}</span>
-                    <IssueStateBadge state={g.state} />
-                  </ShareRow>
-                </Link>
-              )
-            })}
-            </div>
-          )
-        ) : drift.length === 0 ? (
-          <p className="px-2 py-8 text-center text-xs text-muted-foreground">{reps.length ? "Every tracked source matches your approved facts." : "No sources are tracked yet."}</p>
-        ) : (
-          <div className="space-y-1">
-          {drift.slice(0, 6).map((r) => (
-            <Link
-              key={r.binding_id}
-              to={`/businesses/${businessId}/representations/${r.binding_id}`}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-foreground/[0.03]"
-            >
-              <RepresentationStateBadge state={r.finding.state} />
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{sentenceCase(r.fact.predicate)}</span>{" "}
-                <span className="text-muted-foreground">
-                  shows {r.effective_observation?.extracted_value ?? "nothing yet"}, approved {r.fact.valueText}
-                </span>
-              </span>
-              <ControlBadge control={r.source.control} />
-            </Link>
-          ))}
-          </div>
-        )}
-      </div>
-    </Panel>
-  )
-}
-
 function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a: Analytics | null; loading: boolean; days: number }) {
   const [tab, setTab] = useState<"questions" | "facts">("questions")
   return (
@@ -770,7 +671,9 @@ function RecordOutcomesCard({ businessId }: { businessId: string }) {
     { label: "No comparison yet", value: counts.none },
   ].filter((r) => r.value > 0)
   const max = Math.max(1, ...rows.map((r) => r.value))
-  const missing = rec.error instanceof ApiError && rec.error.status === 404
+  const missing = isMissing(rec.error)
+  // Only client records have outcomes; elsewhere the card would just be a prompt.
+  if (missing || (rec.loading && !rec.data) || (!rec.error && slots.length === 0)) return null
   return (
     <Panel className="shadow-(--card-shadow-raised)">
       <PanelHeader title="Record outcomes" description="Before/after comparisons in this business's client record">
@@ -782,11 +685,7 @@ function RecordOutcomesCard({ businessId }: { businessId: string }) {
         </Button>
       </PanelHeader>
       <div className="p-2">
-        {rec.loading && !rec.data ? (
-          <ListSkeleton />
-        ) : missing || (!rec.error && slots.length === 0) ? (
-          <p className="px-2 py-8 text-center text-xs text-muted-foreground">This business has no client record yet. Add one to track corrections over time.</p>
-        ) : rec.error ? (
+        {rec.error ? (
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">{errorMessage(rec.error)}</p>
         ) : (
           <div className="space-y-1">
