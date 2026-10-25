@@ -1,0 +1,59 @@
+# Connect your local AI subscriptions
+
+Use Settings → Agent to connect Codex, Claude Code, OpenCode, or Cursor installed on your computer. Keep that computer and the bridge running while you chat.
+
+## Connect a computer
+
+1. Install Node 24 and the provider's official CLI on your computer.
+2. Sign in through the provider's official CLI. OpenRecord does not collect subscription passwords or tokens.
+3. Open Settings → Agent in OpenRecord.
+4. Download `openrecord-bridge.mjs` and keep it in a folder you control.
+5. Enter a computer name and select **Get pairing code**.
+6. Run the displayed pairing command from the folder containing the download. Do not share the command or code.
+7. Keep the terminal open. Provider cards appear after discovery. Settings refreshes every five seconds.
+8. Enable the provider you want to use.
+9. Select its model in the chat composer and send a message.
+
+Pairing codes expire after ten minutes and work once. A new pairing replaces the bridge's local configuration. Stop the old bridge and revoke its connection in Settings before pairing again.
+
+If a provider needs sign-in, run the command on its card in another terminal. The command selects that specific local account instance. Discovery repeats within 30 seconds while the bridge is idle.
+
+## Restart or update the bridge
+
+From the download folder, run:
+
+```sh
+node openrecord-bridge.mjs run
+```
+
+To update, stop the bridge, download the script again, and run it again. The private configuration remains in `~/.openrecord/bridge.json`.
+
+After a crash, confirm that no bridge process remains before removing only `~/.openrecord/bridge.lock`. Never delete the configuration to clear a lock.
+
+## Add another account
+
+Stop the bridge before changing its configuration. For providers that support a separate credential directory, add a named instance with that directory:
+
+```sh
+node openrecord-bridge.mjs add --driver codex --name "Work Codex" --home /absolute/path/to/work-codex
+```
+
+The bridge does not copy credentials. Run `node openrecord-bridge.mjs run`, then use the new card's sign-in command. Codex uses `CODEX_HOME`, Claude Code uses `CLAUDE_CONFIG_DIR`, and OpenCode uses `OPENCODE_CONFIG_DIR`. Cursor uses its CLI's existing account configuration and does not support a separate account directory through this bridge.
+
+Use `--binary /absolute/path/to/cli` when adding an instance that needs a particular installed executable.
+
+## Stop or disconnect
+
+Use **Stop** in chat to cancel the active conversation turn. An interrupted provider request may still count against the provider's usage limit.
+
+Disable a provider to block new turns and cancel its active jobs. Revoke a bridge in Settings to disconnect that computer. Revocation does not sign you out of the provider's CLI.
+
+## Resolve unavailable providers
+
+If a card says **Offline**, restart the bridge and check the computer's connection. If the CLI is missing, install it through the provider's official instructions.
+
+An unknown sign-in state means the provider's discovery protocol did not confirm authentication. It does not mean that sign-in succeeded. A model catalog also does not prove that your subscription permits generation.
+
+If a turn reaches a usage limit, select another enabled model yourself or wait for the provider's limit to reset. OpenRecord never silently changes providers. Existing API-key environment variables or CLI billing settings may select paid API usage instead of a subscription. Check the provider's own configuration before sending a turn.
+
+For deployment boundaries and current limits, read [Local provider runtime](../engineering/harness-runtime-v1.md).

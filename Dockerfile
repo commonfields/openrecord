@@ -25,7 +25,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY eslint.config.mjs ./
 COPY packages ./packages
 COPY apps ./apps
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 # The web SPA is built for the reverse proxy; api/worker/packages produce dist/.
 RUN pnpm --filter @openrecord/web build \
     && pnpm --filter '!@openrecord/web' build

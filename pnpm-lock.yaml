@@ -127,6 +127,9 @@ importers:
         specifier: 3.7.0
         version: 3.7.0
     devDependencies:
+      '@openrecord/bridge':
+        specifier: workspace:*
+        version: link:../../packages/bridge
       '@openrecord/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -224,6 +227,31 @@ importers:
       '@types/pg':
         specifier: 8.11.0
         version: 8.11.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.19.2)(yaml@2.7.0)
+
+  packages/bridge:
+    dependencies:
+      '@openrecord/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 3.22.2
+        version: 3.22.2
+      tsx:
+        specifier: 4.19.2
+        version: 4.19.2
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       typescript:
         specifier: 5.9.3
         version: 5.9.3

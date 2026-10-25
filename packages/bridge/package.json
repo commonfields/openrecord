@@ -1,0 +1,16 @@
+{
+  "name": "@openrecord/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src --max-warnings 0",
+    "test": "vitest run",
+    "build": "node build.mjs"
+  },
+  "dependencies": { "@openrecord/contracts": "workspace:*", "effect": "3.22.2", "tsx": "4.19.2" },
+  "devDependencies": { "@types/node": "24.10.1", "typescript": "5.9.3", "vitest": "3.2.4", "esbuild": "0.25.12" },
+  "engines": { "node": ">=24 <25" }
+}

@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
 import { useChrome, usePaneSlot } from "@/components/app-shell"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { modKey } from "@/components/settings-dialog"
+import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link } from "react-router"
-import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentProposal } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentMessage, type AgentProposal } from "@/lib/api"
 import { agentEvidencePath } from "@/lib/agent-evidence"
 import { notifyAgentChats } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
@@ -16,8 +16,9 @@ import { cn } from "@/lib/utils"
 import { COMMANDS, PlanCard, ReportCard, StatusCard, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { SetupFlow, SetupStartForm, useSetup } from "@/components/setup-flow"
 import type { SetupView } from "@/lib/setup"
+import { HARNESS_DRIVERS, HARNESS_NAMES, modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog, type ModelOption } from "@/lib/harness"
 
-type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean }
+type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -25,11 +26,27 @@ const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"
   : "The agent isn't available right now"
 const notSentText = (e: unknown) => e instanceof ApiError && e.status === 409
   ? "Changed in another tab. Reload to continue"
+  : e instanceof ApiError && e.body["reason"] === "RATE_LIMITED" ? "No reply. This provider reached a usage limit. Choose another model or try again later"
+  : e instanceof ApiError && e.body["reason"] === "CONTEXT_LIMIT" ? "No reply. This conversation is too large for the provider. Start a new conversation or shorten the message"
   : e instanceof ApiError && e.body["reason"] === "UNCONFIGURED" ? "Not sent. The agent isn't set up yet"
-  : "Not sent"
+  : "No reply"
 
 let nextId = 0
 const uid = () => `m${Date.now()}-${nextId++}`
+
+// Server messages → display messages. The provider/model note comes either
+// from the send response or, on historical messages, from the recorded
+// inference; both render the same way in the thread.
+function toDisplayMessages(messages: AgentMessage[]): Message[] {
+  return messages.map(m => ({
+    ...m,
+    id: uid(),
+    ...(m.toolCalls ? { tools: m.toolCalls } : {}),
+    ...(m.inference
+      ? { provider: m.inference.provider, ...(m.inference.requestedModel ? { model: m.inference.requestedModel } : {}) }
+      : {}),
+  }))
+}
 
 // Minimal shape of the Web Speech API; not in the TS DOM lib.
 type Recognition = {
@@ -68,6 +85,10 @@ export function useAgentSession(businessId: string, enabled = true) {
   // Why the conversation could not load, and the last message that got no reply.
   const [unavailable, setUnavailable] = useState<string | null>(null)
   const [failed, setFailed] = useState<{ text: string; note: string; retry: boolean } | null>(null)
+  // Which provider the next turn runs on, and its current catalog, shared by
+  // chat and composer. The server re-validates every selection at send time.
+  const { catalog } = useHarnessCatalog({ enabled, pollMs: 30_000 })
+  const { selection, choose, request: selectionField, sendable } = useAgentSelection(catalog)
 
   const refreshProposals = () => void Agent.proposals(businessId).then(r => { if (mounted.current) setProposals(r.proposals) }).catch(() => {})
 
@@ -80,7 +101,7 @@ export function useAgentSession(businessId: string, enabled = true) {
       if (!live) return
       if (r.conversation) {
         setConversationId(r.conversation.id); setRevision(r.conversation.revision)
-        setMessages(r.conversation.messages.map(m => ({ ...m, id: uid(), ...(m.toolCalls ? { tools: m.toolCalls } : {}) })))
+        setMessages(toDisplayMessages(r.conversation.messages))
       }
       setReady(true)
     }).catch(e => { if (live) setUnavailable(unavailableText(e)) })
@@ -90,12 +111,15 @@ export function useAgentSession(businessId: string, enabled = true) {
 
   const send = (text: string) => {
     if (pending.current || !ready) return
+    // A turn cannot start on a selection known to be missing; the server has
+    // the final word on anything else.
+    if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Thinking", pending: true }])
-    void Agent.send(businessId, text, crypto.randomUUID(), revision, conversationId).then(r => {
+    void Agent.send(businessId, text, crypto.randomUUID(), revision, conversationId, selectionField).then(r => {
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
-      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations }])
+      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}) }])
       refreshProposals()
       notifyAgentChats()
     }).catch((e: unknown) => {
@@ -106,7 +130,7 @@ export function useAgentSession(businessId: string, enabled = true) {
       void Agent.load(businessId).then(r => {
         if (mounted.current && r.conversation && r.conversation.revision > revision) {
           setConversationId(r.conversation.id); setRevision(r.conversation.revision)
-          setMessages(r.conversation.messages.map(m => ({ ...m, id: uid(), ...(m.toolCalls ? { tools: m.toolCalls } : {}) })))
+          setMessages(toDisplayMessages(r.conversation.messages))
         }
       }).catch(() => {})
     }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
@@ -132,6 +156,15 @@ export function useAgentSession(businessId: string, enabled = true) {
   // same delete: the next message opens a new conversation.
   const startNew = clear
 
+  // Asks the server to stop the turn in flight; the pending send settles on
+  // its own once the backend records the cancellation.
+  const stopTurn = () => {
+    if (!pending.current) return
+    void Agent.cancel(businessId).catch(() => {
+      if (mounted.current) toast.error("Couldn't stop the agent. Try again.")
+    })
+  }
+
   // Work the agent produced: proposals to decide on, accepted drafts, and the
   // turns where it read stored evidence.
   const openProposals = proposals.filter(p => p.status === "PROPOSED")
@@ -141,7 +174,7 @@ export function useAgentSession(businessId: string, enabled = true) {
     : [])
   const hasWork = openProposals.length > 0 || keptDrafts.length > 0 || reads.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, refreshProposals }
+  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -188,6 +221,15 @@ function Thread({ session, businessName, compact, placeholder, extra, onCommand 
                       {m.tools && m.tools.length > 0 ? (
                         <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
                       ) : null}
+                      {m.provider ? (
+                        // Which provider answered, exactly as the server
+                        // recorded it. Conversations loaded from the server
+                        // carry no provider, so the line only appears on live
+                        // replies.
+                        <p className="text-[0.6875rem] text-muted-foreground">
+                          {m.model ? `Answered by ${m.provider} · ${m.model}` : `Answered by ${m.provider}`}
+                        </p>
+                      ) : null}
                     </div>
                   )}
                   <CopyButton text={m.text} className={m.role === "user" ? "-mr-1.5" : "-ml-1.5"} />
@@ -211,7 +253,16 @@ function Thread({ session, businessName, compact, placeholder, extra, onCommand 
         </div>
       </div>
       <div className={cn("mx-auto w-full max-w-3xl shrink-0", compact ? "px-3 pb-3" : "px-4 pb-4 sm:px-6")}>
-        <Composer onSend={session.send} onCommand={onCommand} disabled={session.busy || !session.ready} placeholder={session.unavailable ?? placeholder} autoFocus compact={!!compact} />
+        <Composer
+          onSend={session.send}
+          onCommand={onCommand}
+          disabled={session.busy || !session.ready}
+          modelBlocked={!session.sendable}
+          placeholder={composerPlaceholder(session, placeholder)}
+          autoFocus
+          compact={!!compact}
+          session={session}
+        />
         {compact ? null : <p className="pt-2 text-center text-[0.6875rem] text-muted-foreground">Private conversation for {businessName}. Nothing runs or is sent without your approval.</p>}
       </div>
     </div>
@@ -461,7 +512,15 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
           {setupPinned && setup ? <SetupFlow setup={setup} onChange={setSetup} /> : null}
           {commandFeed}
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-          <Composer onSend={session.send} onCommand={runCommand} disabled={!session.ready || session.busy} placeholder={session.unavailable ? `${session.unavailable}. Type / for commands` : `Ask about ${businessName}, or type / for commands`} />
+          <Composer
+            onSend={session.send}
+            onCommand={runCommand}
+            disabled={!session.ready || session.busy}
+            modelBlocked={!session.sendable}
+            placeholder={composerPlaceholder(session, session.unavailable ? `${session.unavailable}. Type / for commands` : `Ask about ${businessName}, or type / for commands`)}
+            autoFocus
+            session={session}
+          />
           {!setup && feed.length === 0 ? (
             <div className="flex flex-wrap justify-center gap-2" aria-label="Commands">
               {COMMANDS.map(c => (
@@ -575,6 +634,95 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
   )
 }
 
+// Composer copy that explains why typing is disabled without pretending:
+// unreachable agent, or a selection known to be missing.
+function composerPlaceholder(session: AgentSession, fallback: string): string {
+  if (session.selection.status === "unavailable") return "The model you used is unavailable now — pick another model below"
+  if (session.selection.status === "unset") return "Pick a model for the agent below"
+  return session.unavailable ?? fallback
+}
+
+// The model picker shown in every agent layout's composer tray. It lists the
+// hosted default when configured, then enabled ready models per provider, and
+// a path to Settings → Agent to manage providers. Locked while a turn is in
+// flight.
+function ModelSelector({ session, locked }: { session: AgentSession; locked: boolean }) {
+  const { openSettings } = useSettings()
+  const { catalog, selection, choose } = session
+  const MANAGE = "openrecord:manage"
+  const options: ModelOption[] = catalog ? modelOptions(catalog) : []
+  const value = selectionValue(selection, options)
+  const unavailable = selection.status === "unavailable"
+  return (
+    <Select
+      {...(value !== undefined ? { value } : {})}
+      disabled={locked}
+      onValueChange={(v) => {
+        // Manage opens Settings and never changes the picked model.
+        if (v === MANAGE) return openSettings("agent")
+        // Option values are not parsed: model ids may contain colons, so the
+        // selection maps back through the exact option that carried it.
+        const option = options.find(o => o.value === v)
+        if (option && option.kind === "instance") {
+          return choose({ target: "instance", instanceId: option.instance.id, model: option.model.id })
+        }
+        return choose({ target: "hosted" })
+      }}
+    >
+      <SelectTrigger aria-label="Agent model" className="w-auto max-w-40 self-start px-2.5">
+        <SelectValue placeholder={unavailable ? "Model unavailable" : "Model"}>{value ? undefined : selectionLabel(selection)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start" className="max-h-80 w-64">
+        {catalog === null ? (
+          <div role="status" className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">
+            Checking providers…
+          </div>
+        ) : (
+          <>
+            {options.length === 0 ? (
+              <div className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">
+                No agent model is ready. Pair a bridge or ask the server admin to enable a hosted provider.
+              </div>
+            ) : null}
+            {HARNESS_DRIVERS.map(driver => {
+              const items = options.filter(o => o.kind === "instance" && o.instance.driver === driver)
+              if (!items.length) return null
+              return (
+                <div key={driver} role="group" aria-label={HARNESS_NAMES[driver]}>
+                  <div className="px-2 pt-1.5 pb-1 text-[0.6875rem] font-medium text-muted-foreground">{HARNESS_NAMES[driver]}</div>
+                  {items.map(o =>
+                    o.kind === "instance" ? (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.instance.name} · {o.model.name}
+                      </SelectItem>
+                    ) : null,
+                  )}
+                </div>
+              )
+            })}
+            {options.some(o => o.kind === "hosted") ? (
+              (() => {
+                const hosted = options.find(o => o.kind === "hosted")
+                // Exhaustive: hosted exists, non-null here.
+                return hosted && hosted.kind === "hosted" ? (
+                  <SelectItem value={hosted.value}>OpenRecord hosted · {hosted.model}</SelectItem>
+                ) : null
+              })()
+            ) : null}
+            {unavailable ? (
+              <div role="note" className="px-2 py-1.5 text-[0.6875rem] text-wrong">
+                The model you used is unavailable now. Pick another one.
+              </div>
+            ) : null}
+            <div aria-hidden className="mx-2 my-1 h-px bg-border" />
+            <SelectItem value={MANAGE}>Manage providers…</SelectItem>
+          </>
+        )}
+      </SelectContent>
+    </Select>
+  )
+}
+
 function Composer({
   onSend,
   onCommand,
@@ -582,6 +730,8 @@ function Composer({
   autoFocus,
   disabled,
   compact,
+  session,
+  modelBlocked,
 }: {
   onSend: (text: string) => void
   /** Typed application commands (/setup, /status, ...). They run without the model. */
@@ -590,7 +740,14 @@ function Composer({
   placeholder: string
   autoFocus?: boolean
   compact?: boolean
+  /** Present in agent layouts: enables the model selector and the stop button. */
+  session?: AgentSession
+  /** No usable selection: ordinary messages are gated, commands still run. */
+  modelBlocked?: boolean
 }) {
+  // While a turn is in flight the composer shows Stop instead of Send and the
+  // model selection is locked until the server settles the turn.
+  const inFlight = session?.busy ?? false
   const { preferences } = usePreferences()
   const [text, setText] = useState("")
   const [listening, setListening] = useState(false)
@@ -604,7 +761,9 @@ function Composer({
   const matches = onCommand ? commandMatches(text) : []
   const [menuIndex, setMenuIndex] = useState(0)
   const menuOpen = matches.length > 0
-  const canSend = command !== null || (!disabled && text.trim().length > 0 && text.trim().length <= 4000)
+  // Commands are deterministic and never need a model: they stay submittable
+  // even when no selection is usable. Only ordinary messages are gated.
+  const canSend = command !== null || (!disabled && !modelBlocked && text.trim().length > 0 && text.trim().length <= 4000)
 
   const run = (c: AgentCommand) => {
     recognitionRef.current?.stop()
@@ -742,25 +901,43 @@ function Composer({
         />
 
         <div className="flex items-center justify-end px-3 pb-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
+          {inFlight && session ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <Button
-                  type="submit"
+                  type="button"
                   size="icon-sm"
-                  className="rounded-full disabled:bg-muted-foreground/25 disabled:text-background disabled:opacity-100"
-                  disabled={!canSend}
-                  aria-label="Send message"
+                  className="rounded-full text-foreground"
+                  onClick={session.stopTurn}
+                  aria-label="Stop the agent"
                 >
-                  <ArrowUpIcon />
+                  <SquareIcon className="size-3 fill-current" />
                 </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{preferences.enterToSend ? "Send (Enter). Shift Enter adds a new line." : `Send (${modKey} Enter). Enter adds a new line.`}</TooltipContent>
-          </Tooltip>
+              </TooltipTrigger>
+              <TooltipContent>Stop the agent</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    type="submit"
+                    size="icon-sm"
+                    className="rounded-full disabled:bg-muted-foreground/25 disabled:text-background disabled:opacity-100"
+                    disabled={!canSend}
+                    aria-label="Send message"
+                  >
+                    <ArrowUpIcon />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{preferences.enterToSend ? "Send (Enter). Shift Enter adds a new line." : `Send (${modKey} Enter). Enter adds a new line.`}</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
       <div className={cn("flex min-h-9 items-center gap-1 py-0.5", compact ? "px-3" : "px-4")}>
+        {session ? <ModelSelector session={session} locked={inFlight} /> : null}
         <span className="text-[0.6875rem] text-muted-foreground">Text only</span>
         {preferences.voiceInput ? (
           <Tooltip>

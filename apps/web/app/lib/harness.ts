@@ -1,0 +1,273 @@
+// Agent providers (Settings → Agent connection + the composer model
+// selector): the typed client for the harness catalog and the browser-side
+// provider selection shared by every agent layout.
+//
+// Endpoint paths are the ones the backend serves today; the shared route
+// table in @openrecord/contracts does not carry them yet, so they are kept
+// here as the client-side source of truth next to their response types.
+import type {
+  HarnessBridge,
+  HarnessCatalog,
+  HarnessDriver,
+  HarnessInstance,
+  HarnessModel,
+  HarnessSelection,
+} from "@openrecord/contracts"
+import { HARNESS_NAMES } from "@openrecord/contracts"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { api } from "./api"
+
+export type { HarnessBridge, HarnessCatalog, HarnessDriver, HarnessInstance, HarnessModel, HarnessSelection }
+export { HARNESS_NAMES }
+
+export const HARNESS_DRIVERS = ["codex", "claude", "opencode", "cursor"] as const satisfies readonly HarnessDriver[]
+
+export const Harness = {
+  catalog: () => api<HarnessCatalog>("/api/agent/providers"),
+  pair: (name: string) =>
+    api<{ code: string; expiresAt: string }>("/api/agent/bridges/pairs", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeBridge: (bridgeId: string) => api<{ revoked: boolean }>(`/api/agent/bridges/${bridgeId}`, { method: "DELETE" }),
+  setEnabled: (instanceId: string, enabled: boolean) =>
+    api<{ updated: boolean }>(`/api/agent/providers/${instanceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+  refresh: (instanceId: string) =>
+    api<{ requested: boolean }>(`/api/agent/providers/${instanceId}/refresh`, { method: "POST", body: "{}" }),
+}
+
+// The setup run on a paired machine. The code is a short-lived capability:
+// it grants connection only, and provider work uses CLI credentials that stay
+// on that machine. Run from the folder where the downloaded bridge sits.
+export function pairCommand(code: string): string {
+  const origin = typeof window === "undefined" ? "" : window.location.origin
+  return `node openrecord-bridge.mjs pair --server ${origin} --code ${code}`
+}
+
+// Signs a driver's CLI tool in on the machine that runs the bridge. Existing
+// credentials stay local; the app never sees them.
+export function loginCommand(driver: HarnessDriver, localId?: string): string {
+  return localId
+    ? `node openrecord-bridge.mjs login --instance ${localId}`
+    : `node openrecord-bridge.mjs login --driver ${driver}`
+}
+
+// ---- model selection ----
+
+// An instance offers turns only while the user turned it on, the bridge
+// reports it ready with at least one model, and it did not just report its
+// CLI tool signed out (unknown sign-in state is tolerated; the server has
+// the final say).
+export function instanceReady(instance: HarnessInstance): boolean {
+  return (
+    instance.enabled &&
+    instance.installed &&
+    instance.auth !== "unauthenticated" &&
+    instance.state === "ready" &&
+    instance.models.length > 0
+  )
+}
+
+export type ModelOption =
+  | { kind: "hosted"; value: string; provider: string; model: string }
+  | { kind: "instance"; value: string; instance: HarnessInstance; model: HarnessModel }
+
+// Hosted first, then one group per provider in the fixed driver order.
+export function modelOptions(catalog: HarnessCatalog): ModelOption[] {
+  const options: ModelOption[] = []
+  if (catalog.hosted) {
+    options.push({ kind: "hosted", value: "hosted", provider: catalog.hosted.provider, model: catalog.hosted.model })
+  }
+  for (const driver of HARNESS_DRIVERS) {
+    for (const instance of catalog.instances.filter(i => i.driver === driver && instanceReady(i))) {
+      for (const model of instance.models) {
+        options.push({ kind: "instance", value: `${instance.id}:${model.id}`, instance, model })
+      }
+    }
+  }
+  return options
+}
+
+// What the user picked. Lives in browser-local storage: it is a convenience,
+// not a credential. The server re-validates it on every turn.
+export type StoredSelection = { target: "hosted" } | { target: "instance"; instanceId: string; model: string }
+
+export type AgentSelection =
+  | { status: "hosted"; provider: string; model: string; explicit: boolean }
+  | { status: "instance"; instance: HarnessInstance; model: HarnessModel }
+  // Remembered but not yet checked against a loaded catalog. Sending is
+  // allowed; the server has the final say.
+  | { status: "unknown"; stored: StoredSelection | null }
+  // The catalog loaded and it is gone: disabled, offline or model dropped.
+  // Never silently re-routed to another provider.
+  | { status: "unavailable"; stored: { target: "instance"; instanceId: string; model: string } }
+  // Catalog loaded, nothing remembered and no hosted default either.
+  | { status: "unset" }
+
+const SELECTION_KEY = "openrecord:agent-selection"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+export function loadStoredSelection(): StoredSelection | null {
+  try {
+    const raw = window.localStorage.getItem(SELECTION_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) return null
+    if (parsed["target"] === "hosted") return { target: "hosted" }
+    if (
+      parsed["target"] === "instance" &&
+      typeof parsed["instanceId"] === "string" &&
+      typeof parsed["model"] === "string"
+    ) {
+      return { target: "instance", instanceId: parsed["instanceId"], model: parsed["model"] }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function storeSelection(selection: StoredSelection | null): void {
+  try {
+    if (selection === null) window.localStorage.removeItem(SELECTION_KEY)
+    else window.localStorage.setItem(SELECTION_KEY, JSON.stringify(selection))
+  } catch {
+    // Storage unavailable; the choice still applies for this session.
+  }
+}
+
+export function resolveSelection(catalog: HarnessCatalog | null, stored: StoredSelection | null): AgentSelection {
+  if (!catalog) return { status: "unknown", stored }
+  if (stored && stored.target === "instance") {
+    const instance = catalog.instances.find(i => i.id === stored.instanceId)
+    const model = instance && instanceReady(instance) ? instance.models.find(m => m.id === stored.model) : undefined
+    if (instance && model) return { status: "instance", instance, model }
+    return { status: "unavailable", stored }
+  }
+  if (catalog.hosted) {
+    // Omitting the selection resolves to the hosted default, with or without
+    // an explicit hosted pick.
+    return { status: "hosted", provider: catalog.hosted.provider, model: catalog.hosted.model, explicit: stored?.target === "hosted" }
+  }
+  return { status: "unset" }
+}
+
+// The request field for Agent.send. undefined means "hosted default": both
+// an explicit hosted pick and no preference at all ride the hosted path.
+export function selectionRequest(selection: AgentSelection): HarnessSelection | undefined {
+  switch (selection.status) {
+    case "hosted":
+    case "unset":
+      return undefined
+    case "instance":
+      return { instanceId: selection.instance.id, model: selection.model.id }
+    case "unavailable":
+      return undefined // never sent — the turn is blocked in the composer instead
+    case "unknown":
+      return selection.stored && selection.stored.target === "instance"
+        ? { instanceId: selection.stored.instanceId, model: selection.stored.model }
+        : undefined
+  }
+}
+
+// A turn cannot start on a selection known to be missing.
+export function selectionSendable(selection: AgentSelection): boolean {
+  return selection.status !== "unavailable" && selection.status !== "unset"
+}
+
+export function selectionValue(selection: AgentSelection, options: readonly ModelOption[]): string | undefined {
+  const candidate =
+    selection.status === "hosted"
+      ? "hosted"
+      : selection.status === "instance"
+        ? `${selection.instance.id}:${selection.model.id}`
+        : selection.status === "unknown" && selection.stored && selection.stored.target === "instance"
+          ? `${selection.stored.instanceId}:${selection.stored.model}`
+          : ""
+  return options.some(o => o.value === candidate) && candidate !== "" ? candidate : undefined
+}
+
+export function selectionLabel(selection: AgentSelection): string {
+  switch (selection.status) {
+    case "hosted":
+      return `Hosted · ${selection.model}`
+    case "instance":
+      return `${HARNESS_NAMES[selection.instance.driver]} · ${selection.model.name}`
+    case "unknown":
+      return selection.stored && selection.stored.target === "instance" ? selection.stored.model : "Model"
+    case "unavailable":
+      return "Model unavailable"
+    case "unset":
+      return "Model"
+  }
+}
+
+// ---- hooks ----
+
+export function useHarnessCatalog({
+  pollMs,
+  enabled = true,
+}: {
+  pollMs?: number
+  enabled?: boolean
+} = {}): { catalog: HarnessCatalog | null; loading: boolean; error: string | null; reload: () => Promise<void> } {
+  const [catalog, setCatalog] = useState<HarnessCatalog | null>(null)
+  const [loading, setLoading] = useState(enabled)
+  const [error, setError] = useState<string | null>(null)
+  const generation = useRef(0)
+
+  const load = useCallback(async () => {
+    const gen = ++generation.current
+    setLoading(true)
+    try {
+      const next = await Harness.catalog()
+      if (generation.current !== gen) return
+      setCatalog(next)
+      setError(null)
+    } catch (e) {
+      if (generation.current !== gen) return
+      setError(e instanceof Error && e.message ? e.message : "Couldn't load providers")
+    } finally {
+      if (generation.current === gen) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!enabled) {
+      generation.current++
+      setCatalog(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
+    void load()
+    if (!pollMs) return
+    const timer = window.setInterval(() => void load(), pollMs)
+    return () => window.clearInterval(timer)
+  }, [enabled, pollMs, load])
+
+  return { catalog, loading, error, reload: load }
+}
+
+// Selection shared across agent layouts: read once from storage, then kept in
+// state; the resolved value always reflects the freshest catalog.
+export function useAgentSelection(catalog: HarnessCatalog | null): {
+  selection: AgentSelection
+  choose: (next: StoredSelection | null) => void
+  request: HarnessSelection | undefined
+  sendable: boolean
+} {
+  const [stored, setStored] = useState<StoredSelection | null>(loadStoredSelection)
+  const choose = useCallback((next: StoredSelection | null) => {
+    storeSelection(next)
+    setStored(next)
+  }, [])
+  const selection = useMemo(() => resolveSelection(catalog, stored), [catalog, stored])
+  return { selection, choose, request: selectionRequest(selection), sendable: selectionSendable(selection) }
+}

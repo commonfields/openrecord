@@ -6,6 +6,9 @@ import { AgentProposalRepository } from "@openrecord/db"
 import { AGENT_TOOLS, runAgentTool, type AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent } from "./agent-model.js"
 import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
+import type { HarnessSelection } from "@openrecord/contracts"
+import { harnessModel } from "./harness-model.js"
+import { resolveHarness } from "./harness-store.js"
 
 export interface AgentToolCall { readonly tool: string; readonly summary: string }
 export interface AgentCitation { readonly kind: string; readonly id: string; readonly text: string }
@@ -98,15 +101,24 @@ export const runConversation = (input: {
   return yield* Effect.fail(new AgentModelError({ reason: "TOOL_LIMIT" }))
 })
 
-export const handleAgentMessage = (accountId: string, userId: string, businessId: string, message: string, history: AgentHistory = []) =>
+export const handleAgentMessage = (accountId: string, userId: string, businessId: string, message: string, history: AgentHistory = [], selection?: HarnessSelection,
+  assertActive: Effect.Effect<void, AgentModelError, import("@effect/sql").SqlClient.SqlClient> = Effect.void) =>
   Effect.gen(function*() {
-    const model = yield* configuredAgentModel
+    const model = selection ? yield* harnessModel({ accountId,userId,businessId },selection) : yield* configuredAgentModel
     // Capture Effect services in a dispatcher; the pure loop is fixture-testable.
     const context = yield* Effect.context<import("./agent-tools.js").AgentToolDeps>()
-    const dispatch = (name: string, args: unknown) => dispatchAgentTool(accountId, userId, businessId, name, args).pipe(Effect.provide(context))
-    const answer = yield* runConversation({ message, history, model: model.invoke, dispatch })
-    return { ...answer, provider: model.provider, requestedModel: model.requestedModel }
-  }).pipe(Effect.timeoutFail({ duration: 90000, onTimeout: () => new AgentModelError({ reason: "TIMEOUT" }) }))
+    const guard = Effect.gen(function*() {
+      yield* assertActive
+      if (selection) yield* resolveHarness({ accountId,userId },selection)
+    })
+    const dispatch = (name: string, args: unknown) => guard.pipe(Effect.andThen(dispatchAgentTool(accountId,userId,businessId,name,args)),Effect.provide(context))
+    const modelContext = yield* Effect.context<import("@effect/sql").SqlClient.SqlClient>()
+    const watchCancellation = Effect.forever(guard.pipe(Effect.andThen(Effect.sleep("500 millis"))))
+    const invoke: AgentModel = input => guard.pipe(Effect.andThen(Effect.raceFirst(model.invoke(input),watchCancellation)),Effect.provide(modelContext),
+      Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason:"UNAVAILABLE" })))
+    const answer = yield* runConversation({ message, history, model: invoke, dispatch })
+    return { ...answer, provider: model.provider, requestedModel: model.requestedModel, ...(selection ? { instanceId:selection.instanceId } : {}) }
+  }).pipe(Effect.timeoutFail({ duration: 540000, onTimeout: () => new AgentModelError({ reason: "TIMEOUT" }) }))
 
 export const dispatchAgentTool = (accountId: string, userId: string, businessId: string, name: string, args: unknown) => Effect.gen(function*() {
       if (name === "propose_growth_opportunity") return yield* dispatchGrowthProposal(accountId, userId, businessId, args)
