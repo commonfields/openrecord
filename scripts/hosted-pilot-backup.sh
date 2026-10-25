@@ -45,7 +45,7 @@ case "$cmd" in
     $compose exec -T "$db_service" pg_restore -U "$db_user" -d "$restore_db" --no-owner --exit-on-error < "$dump"
     # Compare live vs restored on the tables that carry business evidence.
     tables="accounts users businesses buyer_questions record_profiles interventions growth_metric_imports growth_metric_rows growth_reports growth_report_shares"
-    counts_sql="SELECT count(*) FROM ($(for t in $tables; do echo "SELECT '$t' AS t, count(*) FROM $t UNION ALL"; done | sed '$s/ UNION ALL$//') x ORDER BY t)"
+    counts_sql="SELECT t, n FROM ($(for t in $tables; do echo "SELECT '$t' AS t, count(*) AS n FROM $t UNION ALL"; done | sed '$s/ UNION ALL$//')) x ORDER BY t"
     # Content integrity, not just row counts: digest the immutable evidence
     # payloads (report snapshots, raw observations, import rows) row by row.
     content_sql="SELECT md5(coalesce(string_agg(h, '' ORDER BY h_id), '')) FROM (

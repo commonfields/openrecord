@@ -115,6 +115,9 @@ jobs:
       - name: All workspace builds
         run: pnpm build
 
+      - name: Hosted proxy configuration (local HTTP and hostname HTTPS, no deployment)
+        run: python3 scripts/verify-hosted-pilot-proxy.py
+
       - name: Built hosted runtime smoke (disposable CI database)
         env:
           HOSTED_SMOKE_ALLOWED: "1"

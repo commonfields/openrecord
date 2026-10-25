@@ -33,9 +33,10 @@ browser ──> caddy (web) ──static SPA──> built apps/web (immutable as
   network (`scripts/hosted-pilot-backup.sh`).
 
 Version identification: the deployment writes its git commit to
-`OPENRECORD_BUILD_COMMIT` (`scripts/hosted-pilot-release.sh`); the API exposes
-it at `/api/dev/runtime` (operator session) and `/api/health` reports process
-+ database readiness for containers and load balancers.
+`OPENRECORD_BUILD_COMMIT` (`scripts/hosted-pilot-release.sh`); `/api/health`
+exposes the short commit and process/database readiness. `/api/dev/runtime`
+has fuller operator-only diagnostics in development; it returns 404 in
+production.
 
 ## Files
 
@@ -69,7 +70,7 @@ evaluation → decision → report → share). Stop with
 
 1. Point a DNS A/AAAA record for the pilot domain at the host.
 2. In `deploy/.env`: set `APP_BASE_URL=https://<domain>`, `PILOT_SITE=<domain>`,
-   `PILOT_AUTO_HTTPS=on`, `PILOT_HTTP_PORT=80`, `PILOT_HTTPS_PORT=443`, and map
+   `PILOT_HTTP_PORT=80`, `PILOT_HTTPS_PORT=443`, and map
    both ports in compose so Caddy can answer the ACME challenge.
 3. `up -d --build` as above; Caddy obtains and renews the certificate.
 4. GA4 OAuth compatibility: with a public https origin, set
@@ -79,9 +80,9 @@ evaluation → decision → report → share). Stop with
 
 ## Operations
 
-- **Health**: `GET /api/health` → `200 {"ok":true,"db":true}` or `503` when the
+- **Health**: `GET /api/health` → `200 {"ok":true,"db":true,"version":"<short commit>"}` or `503` when the
   database does not answer; used by the compose healthcheck and safe for load
-  balancers. Version: `GET /api/dev/runtime` (operator session only).
+  balancers. `version` is null when the deployment did not state its commit.
 - **Logs**: `docker compose -f deploy/hosted-pilot.compose.yaml logs`. The
   applications log ids and codes, never credentials or customer payloads; the
   deployment smoke asserts this against the configured secrets.
