@@ -34,7 +34,8 @@ Keep three evidence surfaces separate: measured AI recommendations (only the mea
 REFERRAL_DATA_UNAVAILABLE and SIGNUPS_NOT_MEASURED mean unknown, never zero. A configured conversion event that is not a signup event is not a signup count. Quote referral and conversion totals exactly as tools return them; never add, extrapolate or recompute them across exports or periods.
 Never state or imply that a recommendation caused a referral, a referral caused a signup, or agency work caused either. Co-occurring changes are descriptive only.
 Never invent URLs or evidence IDs. The application renders evidence references from actual tools separately. Do not output raw private notes or internal IDs in prose.
-Do not promise legacy CLI or gateway capabilities. A proposed action is not completed work. Keep answers concise and evidence-backed.`
+Do not promise legacy CLI or gateway capabilities. A proposed action is not completed work. Keep answers concise and evidence-backed.
+Reply in as few words as the request needs and expand only when asked. Greetings get one short line. Never introduce yourself or list capabilities unless asked.`
 
 export const runConversation = (input: {
   readonly message: string; readonly history: AgentHistory; readonly model: AgentModel
