@@ -10,7 +10,7 @@ import { FactRepository } from "./repositories.js"
 import { GrowthRepository, type GrowthRefused } from "./growth.js"
 import type { Session } from "./auth.js"
 
-export class SetupRefused extends Data.TaggedError("SetupRefused")<{ readonly reason: "SetupNotFound" | "SetupStale" | "WebsiteInUse" | "DiscoveryPending" | "BriefRequired" | "ChannelsRequired" | "NotRetryable" | "FactsManagedByRepository"; readonly businessId?: string }> {}
+export class SetupRefused extends Data.TaggedError("SetupRefused")<{ readonly reason: "SetupNotFound" | "SetupStale" | "WebsiteInUse" | "DiscoveryPending" | "BriefRequired" | "ChannelsRequired" | "NotRetryable" | "SetupComplete" | "FactsManagedByRepository"; readonly businessId?: string }> {}
 type SetupError = SqlError | RowDecodeError | SetupRefused | GrowthRefused | RecordRefused
 export type SetupEffect<A, R = never> = Effect.Effect<A, SetupError, R>
 
@@ -57,6 +57,15 @@ export const setupHost = (url: string): string => new URL(url).hostname.toLowerC
 export const setupKey = (setupId: string, purpose: string): string => {
   const h = createHash("sha256").update(`${setupId}:${purpose}`).digest("hex")
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`
+}
+
+/** Whether the recorded homepage read shows this value for a contact fact. */
+export const websiteShows = (signals: DiscoverySignals | null, predicate: string, value: string): boolean => {
+  if (!signals) return false
+  if (predicate === "phone_number") return signals.organization?.telephone === value
+  if (predicate === "contact_email")
+    return signals.organization?.email === value || signals.channels.some(c => c.kind === "EMAIL" && c.url === `mailto:${value}`)
+  return false
 }
 
 export type DiscoveryResult = { readonly signals: DiscoverySignals } | { readonly failure: string }
@@ -118,6 +127,10 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
         const clients = yield* sql`SELECT p.business_id, p.website_url FROM record_profiles p JOIN businesses b ON b.id = p.business_id
           WHERE b.account_id = ${session.accountId} ORDER BY p.created_at, p.business_id`
         const match = clients.find(c => { try { return setupHost(String(c["website_url"])) === host } catch { return false } })
+        if (match) {
+          const adopted = yield* byBusiness(session.accountId, String(match["business_id"]))
+          if (adopted) return { setup: adopted, created: false }
+        }
         businessId = match ? String(match["business_id"]) : (yield* (yield* RecordRepository).createClient(session, { name: host, websiteUrl: input.websiteUrl, engagement: "CLIENT" })).businessId
       }
       yield* sql`INSERT INTO business_setups (account_id, business_id, website_url, website_host, goal_statement, started_by_user_id)
@@ -127,15 +140,16 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
 
     get: (accountId, businessId) => byBusiness(accountId, businessId),
 
-    claim: scope => sql`WITH candidate AS (
+    claim: scope => sql`UPDATE business_setups SET discovery_status = 'FAILED', discovery_failure = 'ABANDONED', claim_token = NULL, revision = revision + 1, updated_at = now()
+        WHERE discovery_status = 'FETCHING' AND claimed_at < now() - interval '5 minutes' AND discovery_attempts >= 3
+          AND (${scope?.businessId ?? null}::uuid IS NULL OR business_id = ${scope?.businessId ?? null}::uuid)`.pipe(Effect.zipRight(sql`WITH candidate AS (
         SELECT id FROM business_setups
         WHERE (discovery_status = 'QUEUED' OR (discovery_status = 'FETCHING' AND claimed_at < now() - interval '5 minutes'))
           AND discovery_attempts < 3
           AND (${scope?.businessId ?? null}::uuid IS NULL OR business_id = ${scope?.businessId ?? null}::uuid)
         ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
       ) UPDATE business_setups s SET discovery_status = 'FETCHING', claimed_at = now(), claim_token = gen_random_uuid(), discovery_attempts = discovery_attempts + 1
-      FROM candidate c WHERE s.id = c.id RETURNING s.id`.pipe(
-      Effect.flatMap(rows => rows[0] ? select(sql`s.id = ${String(rows[0]["id"])}`).pipe(Effect.flatMap(one)) : Effect.succeed(null))),
+      FROM candidate c WHERE s.id = c.id RETURNING s.id`), Effect.flatMap(rows => rows[0] ? select(sql`s.id = ${String(rows[0]["id"])}`).pipe(Effect.flatMap(one)) : Effect.succeed(null))),
 
     complete: (claimed, result) => sql.withTransaction(Effect.gen(function*() {
       const current = yield* sql`SELECT discovery_status, claim_token FROM business_setups WHERE id = ${claimed.id} FOR UPDATE`
@@ -158,6 +172,8 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
 
     confirm: (session, businessId, input) => sql.withTransaction(Effect.gen(function*() {
       const row = yield* locked(session, businessId, input.expectedRevision)
+      // The first initiative was planned against this goal; changing the goal now goes through the growth workspace.
+      if (row.opportunityId) return yield* Effect.fail(new SetupRefused({ reason: "SetupComplete" }))
       // A failed discovery never blocks setup: the operator can describe the business by hand.
       if (row.discoveryStatus === "QUEUED" || row.discoveryStatus === "FETCHING") return yield* Effect.fail(new SetupRefused({ reason: "DiscoveryPending" }))
       const mode = yield* sql`SELECT writer FROM business_authority_mode WHERE business_id = ${businessId}`
@@ -168,11 +184,13 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
       const now = new Date().toISOString()
       const factIds: string[] = []
       for (const fact of input.facts) {
-        const active = (yield* facts.listByBusiness(businessId)).find(f => f.status === "ACTIVE" && f.subject === input.businessName && f.predicate === fact.predicate)
+        const active = (yield* facts.listByBusiness(businessId)).find(f => f.status === "ACTIVE" && f.predicate === fact.predicate)
         if (active && active.valueText === fact.valueText) { factIds.push(active.id); continue }
+        // "WEBSITE" only when the homepage read actually showed this value; anything else is the operator's word.
+        const sourceKind = websiteShows(row.discovery, fact.predicate, fact.valueText) ? "WEBSITE" : "MANUAL"
         const saved = active
-          ? yield* facts.supersede({ businessId, factId: active.id, valueText: fact.valueText, valueType: "TEXT", validFrom: now, validUntil: null, sourceKind: "WEBSITE" })
-          : yield* facts.create({ businessId, subject: input.businessName, predicate: fact.predicate, valueText: fact.valueText, valueType: "TEXT", validFrom: now, validUntil: null, sourceKind: "WEBSITE" })
+          ? yield* facts.supersede({ businessId, factId: active.id, valueText: fact.valueText, valueType: "TEXT", validFrom: now, validUntil: null, sourceKind })
+          : yield* facts.create({ businessId, subject: input.businessName, predicate: fact.predicate, valueText: fact.valueText, valueType: "TEXT", validFrom: now, validUntil: null, sourceKind })
         factIds.push(saved.id)
       }
       yield* (yield* GrowthRepository).saveProfile(session, businessId, {

@@ -48,6 +48,15 @@ describe("extractBusinessSignals", () => {
     expect(s.checks).toMatchObject({ hasDescription: false, hasOrganizationData: false, noindex: true })
   })
 
+  it("walks deeply nested structured data without exhausting the stack", () => {
+    const depth = 50_000
+    const nested = `${'{"@graph":['.repeat(depth)}{"@type":"Organization","name":"Deep"}${"]}".repeat(depth)}`
+    const s = extractBusinessSignals(page("", `<script type="application/ld+json">${nested}</script>`), "https://deep.test/")
+    expect(s.organization).toBeNull()
+    const shallow = `${'{"@graph":['.repeat(3)}{"@type":"Organization","name":"Near"}${"]}".repeat(3)}`
+    expect(extractBusinessSignals(page("", `<script type="application/ld+json">${shallow}</script>`), "https://near.test/").organization?.name).toBe("Near")
+  })
+
   it("survives malformed structured data and an empty page", () => {
     const s = extractBusinessSignals(page("", `<script type="application/ld+json">{not json</script>`), "https://empty.test/")
     expect(s).toMatchObject({ title: null, description: null, organization: null, headings: [], pages: [], channels: [] })

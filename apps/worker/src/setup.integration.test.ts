@@ -58,6 +58,14 @@ suite("setup homepage discovery (injected transport, no network)", () => {
     expect(fetched.length).toBe(before)
   })
 
+  it("fails a run abandoned three times instead of leaving setup stuck", async () => {
+    const host = `${randomUUID()}.test`
+    const { businessId } = await setup(host)
+    await pool.query("UPDATE business_setups SET discovery_status='FETCHING', discovery_attempts=3, claimed_at=now()-interval '10 minutes' WHERE business_id=$1", [businessId])
+    await runOnce(businessId)
+    expect(await row(businessId)).toMatchObject({ discovery_status: "FAILED", discovery_failure: "ABANDONED" })
+  })
+
   it("lets a stale claim be re-run without the lost run overwriting it", async () => {
     const host = `${randomUUID()}.test`
     const { businessId } = await setup(host)

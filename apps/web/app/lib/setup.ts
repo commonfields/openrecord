@@ -39,6 +39,7 @@ export const setupError = (e: unknown): string => {
     if (reason === "SetupStale") return "This changed in another tab. Reload to continue."
     if (reason === "WebsiteInUse") return "Another business in this workspace already uses that website."
     if (reason === "DiscoveryPending") return "Still reading the website. Try again in a moment."
+    if (reason === "SetupComplete") return "Setup is finished. Change the goal from the growth workspace."
     if (reason === "FactsManagedByRepository") return "This business's facts are managed from a repository, so they can't be set here."
     if (e.status === 422) return "Check the highlighted fields and try again."
   }

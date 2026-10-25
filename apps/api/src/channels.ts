@@ -79,7 +79,7 @@ export const deriveChannelInventory = (f: ChannelFacts): ChannelInventory => {
           note: "Not configured on this server. Website changes are made by you and recorded as attested work.", action: null }
       : f.github.targets > 0
         ? { key: "github", label: "GitHub website changes", identity: null, state: "CONNECTED", active: [...OFFERED.github], offered: [...OFFERED.github],
-            note: "One supported change: remove an accidental noindex tag through a pull request you merge. OpenRecord never merges.", action: null }
+            note: "Configured by your administrator for this business's repository. One supported change: remove an accidental noindex tag through a pull request you merge. Access is checked each time a change runs; OpenRecord never merges.", action: null }
         : { key: "github", label: "GitHub website changes", identity: null, state: "PERMISSION_REQUIRED", active: [], offered: [...OFFERED.github],
             note: "Your administrator must allow this business's repository before OpenRecord can open pull requests.", action: null },
   )

@@ -99,6 +99,30 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     expect(resumed.setup).toMatchObject({ id: first.setup.id, step: "DISCOVER", revision: first.setup.revision })
   })
 
+  it("labels a fact as website-sourced only when the homepage read showed that value", async () => {
+    const a = await account()
+    const { setup } = await ok<{ setup: SetupView }>(call("POST", "/api/setup", a.cookie, { websiteUrl: `https://${randomUUID()}.test/` }))
+    const path = `/api/businesses/${setup.businessId}`
+    await discover(setup.businessId, { signals: { version: 1, requestedUrl: setup.websiteUrl, finalUrl: setup.websiteUrl, status: 200, bodyDigest: null, fetchedAt: new Date().toISOString(),
+      ...extractBusinessSignals(`<script type="application/ld+json">{"@type":"Organization","name":"X","telephone":"+1 555 0100"}</script><a href="mailto:hi@x.test">mail</a>`, setup.websiteUrl) } })
+    const found = (await ok<{ setup: SetupView }>(call("GET", `${path}/setup`, a.cookie))).setup
+    await ok(call("POST", `${path}/setup/confirm`, a.cookie, brief(found.revision, { facts: [
+      { predicate: "phone_number", valueText: "+1 555 0100" }, { predicate: "contact_email", valueText: "hi@x.test" }, { predicate: "starting_price", valueText: "$1" },
+    ] })))
+    const kinds = Object.fromEntries((await pool.query("SELECT predicate, source_kind FROM authoritative_facts WHERE business_id=$1", [setup.businessId])).rows.map(r => [r.predicate, r.source_kind]))
+    expect(kinds).toEqual({ phone_number: "WEBSITE", contact_email: "WEBSITE", starting_price: "MANUAL" })
+  })
+
+  it("returns the existing setup when adoption finds a client that is already set up", async () => {
+    const a = await account()
+    const host = `${randomUUID()}.test`
+    const created = await ok<{ client: { businessId: string } }>(call("POST", "/api/record/clients", a.cookie, { name: "TEST Existing", websiteUrl: `https://${host}`, engagement: "CLIENT" }))
+    const first = await ok<{ setup: SetupView }>(call("POST", "/api/setup", a.cookie, { websiteUrl: `https://other-${host}/`, businessId: created.client.businessId }))
+    const again = await ok<{ setup: SetupView; created: boolean }>(call("POST", "/api/setup", a.cookie, { websiteUrl: `https://${host}/` }))
+    expect(again).toMatchObject({ created: false, setup: { id: first.setup.id } })
+    expect(await businesses(a.accountId)).toBe(1)
+  })
+
   it("adopts an existing client on the same website instead of creating a second business", async () => {
     const a = await account()
     const host = `${randomUUID()}.test`
@@ -150,6 +174,11 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     expect(replay.opportunity?.id).toBe(o.id)
     expect(Number((await pool.query("SELECT count(*) FROM growth_opportunities WHERE business_id=$1", [setup.businessId])).rows[0].count)).toBe(1)
 
+    // The goal the initiative was planned against cannot be swapped by re-confirming setup.
+    const late = await call("POST", `${path}/setup/confirm`, a.cookie, brief(replay.revision, { goalStatement: "Something else" }))
+    expect(late.status).toBe(409)
+    expect(await late.json()).toMatchObject({ reason: "SetupComplete" })
+
     // Approval stays a separate human decision on the existing route.
     const approved = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `/api/growth/clients/${setup.businessId}/opportunities/${o.id}/approve`, a.cookie,
       { expectedStatus: "PROPOSED", expectedRevision: o.revision, idempotencyKey: randomUUID(), reason: "TEST operator approval" }))
@@ -176,6 +205,11 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     const rows = (await pool.query("SELECT value_text, status, version FROM authoritative_facts WHERE business_id=$1 ORDER BY version", [setup.businessId])).rows
     expect(rows).toEqual([{ value_text: "Mon to Fri 8am to 6pm", status: "SUPERSEDED", version: 1 }, { value_text: "Mon to Sat 8am to 6pm", status: "ACTIVE", version: 2 }])
     expect(second.brief?.factIds).toHaveLength(1)
+    // Renaming the business supersedes the same fact instead of adding a second active one.
+    await ok(call("POST", `${path}/setup/confirm`, a.cookie, brief(second.revision, { businessName: "TEST Lumen Family Dental", facts: [{ predicate: "opening_hours", valueText: "Every day 8am to 6pm" }] })))
+    expect(Number((await pool.query("SELECT count(*) FROM authoritative_facts WHERE business_id=$1 AND status='ACTIVE'", [setup.businessId])).rows[0].count)).toBe(1)
+    // Nothing on the (unreadable) homepage showed these values, so they are the operator's word.
+    expect((await pool.query("SELECT DISTINCT source_kind FROM authoritative_facts WHERE business_id=$1", [setup.businessId])).rows).toEqual([{ source_kind: "MANUAL" }])
   })
 
   it("refuses to rewrite recorded discovery or point the initiative at another business", async () => {

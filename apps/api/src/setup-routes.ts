@@ -11,7 +11,7 @@ import { loadProviderCatalog } from "./provider-catalog.js"
 import { assessSetup, firstInitiative, setupStep } from "./setup-plan.js"
 
 const STATUS: Record<SetupRefused["reason"], number> = {
-  SetupNotFound: 404, SetupStale: 409, WebsiteInUse: 409, DiscoveryPending: 409, BriefRequired: 409, ChannelsRequired: 409, NotRetryable: 409, FactsManagedByRepository: 409,
+  SetupNotFound: 404, SetupStale: 409, WebsiteInUse: 409, DiscoveryPending: 409, BriefRequired: 409, ChannelsRequired: 409, NotRetryable: 409, FactsManagedByRepository: 409, SetupComplete: 409,
 }
 const failure = (e: unknown) => {
   if (e instanceof SetupRefused) return json(STATUS[e.reason], { _tag: "SetupRefused", reason: e.reason, ...(e.businessId ? { businessId: e.businessId } : {}) })
@@ -26,7 +26,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
   const sql = yield* PgClient.PgClient
   const counts = yield* sql`SELECT
       (SELECT count(*) FROM site_targets WHERE business_id = ${businessId} AND enabled) AS site_targets,
-      (SELECT count(*) FROM growth_execution_targets WHERE business_id = ${businessId}) AS execution_targets,
+      (SELECT count(*) FROM growth_execution_targets t JOIN site_targets s ON s.id = t.site_target_id AND s.enabled WHERE t.business_id = ${businessId}) AS execution_targets,
       (SELECT website_url FROM record_profiles WHERE business_id = ${businessId}) AS website_url,
       (SELECT max(o.collected_at) FROM observations o JOIN check_runs c ON c.id = o.check_run_id WHERE c.business_id = ${businessId} AND c.provider <> 'mock') AS last_answer_at`
   const ga4Config = yield* Effect.serviceOption(Ga4Provider)

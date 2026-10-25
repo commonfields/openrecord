@@ -59,13 +59,17 @@ const channelOf = (url: URL): BusinessChannelKind | null => {
 const ORG_TYPES = new Set(["Organization", "Corporation", "LocalBusiness", "OnlineBusiness", "OnlineStore", "ProfessionalService", "Store", "SoftwareApplication", "Restaurant"])
 
 type JsonLdNode = Record<string, unknown>
-const nodesOf = (value: unknown): JsonLdNode[] => {
-  if (Array.isArray(value)) return value.flatMap(nodesOf)
-  if (value && typeof value === "object") {
+// Bounded walk: a hostile page can nest structured data arbitrarily deep.
+const nodesOf = (value: unknown, depth = 0, out: JsonLdNode[] = []): JsonLdNode[] => {
+  if (depth > 6 || out.length >= 200) return out
+  if (Array.isArray(value)) {
+    for (const v of value.slice(0, 200)) nodesOf(v, depth + 1, out)
+  } else if (value && typeof value === "object") {
     const node = value as JsonLdNode
-    return [node, ...("@graph" in node ? nodesOf(node["@graph"]) : [])]
+    out.push(node)
+    if ("@graph" in node) nodesOf(node["@graph"], depth + 1, out)
   }
-  return []
+  return out
 }
 const typeOf = (node: JsonLdNode): string[] => {
   const t = node["@type"]

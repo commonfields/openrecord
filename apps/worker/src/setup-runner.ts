@@ -26,6 +26,14 @@ export const makeSetupRunnerLive = (fetchOptions: SafeFetchOptions = {}) => Laye
         return true
       }
       const finalUrl = evidence.finalUrl ?? claimed.websiteUrl
+      let extracted: ReturnType<typeof extractBusinessSignals>
+      try {
+        extracted = extractBusinessSignals(new TextDecoder().decode(evidence.body!), finalUrl)
+      } catch {
+        // A page the extractor cannot handle is a recorded failure, never a stuck job.
+        yield* setups.complete(claimed, { failure: "EXTRACTION_FAILED" })
+        return true
+      }
       const signals: DiscoverySignals = {
         version: 1,
         requestedUrl: claimed.websiteUrl,
@@ -33,7 +41,7 @@ export const makeSetupRunnerLive = (fetchOptions: SafeFetchOptions = {}) => Laye
         status: evidence.status,
         bodyDigest: evidence.bodyDigest ?? null,
         fetchedAt: new Date().toISOString(),
-        ...extractBusinessSignals(new TextDecoder().decode(evidence.body!), finalUrl),
+        ...extracted,
       }
       yield* setups.complete(claimed, { signals })
       return true
