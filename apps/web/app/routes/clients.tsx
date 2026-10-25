@@ -60,7 +60,7 @@ export function ClientsPage() {
         <Panel>
           <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center">
             <div className="space-y-3">
-              <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink">
                 <FileCheck2Icon className="size-4" />
               </span>
               <h2 className="text-sm font-medium">A record you can hand to the client</h2>
@@ -77,9 +77,9 @@ export function ClientsPage() {
               className="lg:grid-cols-2"
               steps={[
                 { key: "add", label: "Add the client", hint: "Name and website", state: "current" },
-                { key: "facts", label: "Approve three facts", hint: "One buyer question each", state: "todo" },
-                { key: "check", label: "Check the live surface", hint: "Then review every answer", state: "todo" },
-                { key: "share", label: "Share and re-check", hint: "Read-only link, weekly comparison", state: "todo" },
+                { key: "facts", label: "Write three facts", hint: "One buyer question each", state: "todo" },
+                { key: "approve", label: "Approve with the client", hint: "Only approved facts are checked", state: "todo" },
+                { key: "check", label: "Run and review", hint: "First check, then weekly re-checks", state: "todo" },
               ]}
             />
           </div>
@@ -173,7 +173,7 @@ function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New client</DialogTitle>
-          <DialogDescription>Next you approve three facts with the client and run the first check.</DialogDescription>
+          <DialogDescription>Next: write three facts, approve the ones the client confirms, then run the first check.</DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"

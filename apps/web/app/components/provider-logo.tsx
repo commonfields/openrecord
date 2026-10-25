@@ -38,7 +38,7 @@ const BRANDS: Record<string, Brand> = {
   ollama: { icon: siOllama, label: "Ollama" },
   openrouter: { icon: siOpenrouter, label: "OpenRouter" },
   mock: { icon: null, label: "Mock", tile: "border border-dashed border-border bg-transparent text-muted-foreground ring-0", glyph: "M" },
-  "9router": { icon: null, label: "9Router", tile: "bg-primary/15 text-primary ring-primary/30", glyph: "9" },
+  "9router": { icon: null, label: "9Router", tile: "bg-primary-ink/15 text-primary-ink ring-primary-ink/30", glyph: "9" },
 }
 
 export function providerBrand(provider: string): Brand {

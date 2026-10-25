@@ -113,7 +113,7 @@ export function Today() {
   }
 
   return (
-    <div className="space-y-6 pb-4">
+    <div className="rise-in space-y-6 pb-4">
       <PageHeader
         title={activeBusiness?.name ?? "Overview"}
         description="Answers collected from configured providers, and human judgments against your approved facts."
@@ -152,7 +152,7 @@ export function Today() {
         <>
           <Kpis a={a} stats={stats} loading={loading} metric={metric} onMetric={(m) => setParam("metric", m)} />
           <HeroChart a={a} stats={stats} loading={loading} metric={metric} days={days} />
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rise-in grid gap-4 [--rise-base:180ms] lg:grid-cols-2">
             <AnswerCollectionCard stats={stats} loading={loading} days={days} />
             <AccuracyByModelCard a={a} stats={stats} loading={loading} />
             <NeedsALookCard businessId={id} />
@@ -256,6 +256,10 @@ function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; s
     return trimmed.map((r, i) => ({ date: r.date, value: r.value ?? "", avg: avg[i] ?? "" }))
   }, [a, stats, metric, window])
 
+  // Stable between renders: a new array would make the charts draw in again
+  // every time a model is hovered.
+  const providerRows = useMemo(() => stats?.rows.slice(1) ?? [], [stats])
+
   const splitLabel = metric === "answers" ? "By provider" : metric === "checks" ? null : "Verdict share"
   // The split view answers the complementary question: not how many, but
   // what share of the day's verdicts the selected one represents.
@@ -306,7 +310,7 @@ function HeroChart({ a, stats, loading, metric, days }: { a: Analytics | null; s
         <ChartEmpty days={days} what={metric === "answers" ? "answers" : "claims"} />
       ) : view === "split" && metric === "answers" ? (
         <div className="space-y-3">
-          <ModelSmallMultiples rows={stats.rows.slice(1)} series={stats.series} hidden={hidden} focus={focus} />
+          <ModelSmallMultiples rows={providerRows} series={stats.series} hidden={hidden} focus={focus} />
           <ul className="flex flex-wrap gap-1" onMouseLeave={() => setFocus(null)}>
             {stats.ranked.map((m) => {
               const off = hidden.has(m.series.key)

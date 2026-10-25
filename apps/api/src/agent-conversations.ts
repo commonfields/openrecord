@@ -18,6 +18,30 @@ export const loadConversation = (scope: ConversationScope) => Effect.gen(functio
     AND business_id = ${scope.businessId} AND user_id = ${scope.userId} AND expires_at > now()`
   return rows[0] ? yield* parse(rows[0]) : null
 })
+// The signed-in user's saved conversations in this account, newest first, for
+// the chat history. Titled by the first question asked; empty ones are skipped.
+export type ConversationSummary = {
+  readonly businessId: string; readonly businessName: string; readonly isClient: boolean
+  readonly title: string; readonly messages: number; readonly updatedAt: string
+}
+export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const rows = yield* sql`SELECT c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at,
+      jsonb_array_length(c.messages) AS message_count,
+      (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message
+    FROM agent_conversations c
+    JOIN businesses b ON b.id = c.business_id AND b.account_id = c.account_id
+    JOIN account_users au ON au.account_id = c.account_id AND au.user_id = c.user_id
+    LEFT JOIN record_profiles rp ON rp.business_id = c.business_id
+    WHERE c.account_id = ${scope.accountId} AND c.user_id = ${scope.userId}
+      AND c.expires_at > now() AND jsonb_array_length(c.messages) > 0
+    ORDER BY c.updated_at DESC LIMIT 30`
+  return rows.map((r): ConversationSummary => ({
+    businessId: String(r["business_id"]), businessName: String(r["name"]), isClient: r["is_client"] === true,
+    title: String(r["first_message"] ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+    messages: Number(r["message_count"]), updatedAt: new Date(r["updated_at"] as string | Date).toISOString(),
+  }))
+})
 export const deleteConversation = (scope: ConversationScope) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   // Delete also fences an in-flight response: its lease cannot recreate the row.

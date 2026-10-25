@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router"
 import {
   BookCheckIcon,
@@ -13,6 +13,7 @@ import {
   KeyboardIcon,
   LayoutGridIcon,
   LogOutIcon,
+  MessagesSquareIcon,
   PanelLeftIcon,
   PlusIcon,
   RadarIcon,
@@ -39,17 +40,33 @@ import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth } from "@/lib/api"
-import { initial, markColor } from "@/lib/format"
+import { initial, markColor, relativeTime } from "@/lib/format"
+import { chatPath, useAgentChats } from "@/lib/agent-chats"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
 type SidebarState = { collapsed: boolean; inSheet: boolean }
 const SidebarStateContext = createContext<SidebarState>({ collapsed: false, inSheet: false })
 
-// Lets page content (e.g. an active agent chat) ask the shell header to get
-// out of the way. Reset on every navigation.
-const ChromeContext = createContext<{ setMinimal: (v: boolean) => void }>({ setMinimal: () => undefined })
+// Lets page content (e.g. an agent chat) adjust the shell: hide the header's
+// breadcrumbs, take the full height to lay out its own scrolling panes
+// (workspace), or collapse the sidebar for as long as it needs the room
+// (focus; it comes back as it was). Pages turn these off when they unmount.
+const ChromeContext = createContext<{ setMinimal: (v: boolean) => void; setWorkspace: (v: boolean) => void; setFocus: (v: boolean) => void }>({
+  setMinimal: () => undefined,
+  setWorkspace: () => undefined,
+  setFocus: () => undefined,
+})
 export const useChrome = () => useContext(ChromeContext)
+
+// Where a page can put a pane that sits on the canvas beside the content
+// panel, the way the sidebar does (the client page's agent chat). The page
+// says whether it is open with setPane so narrow screens can give it the room.
+const PaneSlotContext = createContext<{ slot: HTMLElement | null; setPane: (v: boolean) => void }>({
+  slot: null,
+  setPane: () => undefined,
+})
+export const usePaneSlot = () => useContext(PaneSlotContext)
 
 const COLLAPSED_KEY = "openrecord:sidebar-collapsed"
 
@@ -65,9 +82,23 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [minimal, setMinimal] = useState(false)
+  const [workspace, setWorkspace] = useState(false)
+  const [focus, setFocus] = useState(false)
+  // While focused the sidebar is collapsed unless the user opens it again; the
+  // saved preference is left untouched.
+  const [focusSidebar, setFocusSidebar] = useState(false)
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null)
+  const [paneSlot, setPaneSlot] = useState<HTMLElement | null>(null)
+  const [pane, setPane] = useState(false)
+  const paneContext = useMemo(() => ({ slot: paneSlot, setPane }), [paneSlot])
   const location = useLocation()
-  const chrome = useMemo(() => ({ setMinimal }), [])
+  const chrome = useMemo(() => ({ setMinimal, setWorkspace, setFocus }), [])
+  const sidebarCollapsed = focus ? !focusSidebar : collapsed
+  const toggleSidebar = () => (focus ? setFocusSidebar((v) => !v) : setCollapsed((c) => !c))
+
+  useEffect(() => {
+    if (!focus) setFocusSidebar(false)
+  }, [focus])
 
   useEffect(() => {
     try {
@@ -81,29 +112,31 @@ export function AppShell() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "b" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        setCollapsed((c) => !c)
+        toggleSidebarRef.current()
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [])
+  const toggleSidebarRef = useRef(toggleSidebar)
+  toggleSidebarRef.current = toggleSidebar
 
   useEffect(() => setMobileOpen(false), [location.pathname])
-  useEffect(() => setMinimal(false), [location.pathname])
 
   return (
     <ChromeContext.Provider value={chrome}>
+    <PaneSlotContext.Provider value={paneContext}>
     <HeaderSlotContext.Provider value={headerSlot}>
     <CommandPaletteProvider>
     <div className="flex h-svh overflow-hidden bg-sidebar">
       <aside
-        data-collapsed={collapsed}
+        data-collapsed={sidebarCollapsed}
         className={cn(
-          "hidden h-svh shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200 ease-out md:flex",
-          collapsed ? "w-[3.25rem]" : "w-64",
+          "hidden h-svh shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] md:flex",
+          sidebarCollapsed ? "w-[3.25rem]" : "w-64",
         )}
       >
-        <SidebarStateContext.Provider value={{ collapsed, inSheet: false }}>
+        <SidebarStateContext.Provider value={{ collapsed: sidebarCollapsed, inSheet: false }}>
           <SidebarBody />
         </SidebarStateContext.Provider>
       </aside>
@@ -119,8 +152,11 @@ export function AppShell() {
       </Sheet>
 
       {/* Content sits on the sidebar-colored canvas as an inset, rounded panel
-          that scrolls on its own, so the chrome reads as one layer below it. */}
-      <div className="flex min-w-0 flex-1 flex-col p-2 md:pl-0">
+          that scrolls on its own, so the chrome reads as one layer below it.
+          A page's pane (the agent chat) shares the canvas, left of the panel. */}
+      <div className="@container flex min-w-0 flex-1">
+      <div ref={setPaneSlot} className="contents" />
+      <div className={cn("flex min-w-0 flex-1 flex-col p-2 md:pl-0", pane && "max-lg:hidden")}>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-sidebar-border bg-background shadow-(--panel-shadow)">
         <header className="flex h-12 shrink-0 items-center gap-2 px-3 lg:px-5">
           <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
@@ -132,8 +168,8 @@ export function AppShell() {
                 variant="ghost"
                 size="icon-sm"
                 className="hidden md:inline-flex"
-                onClick={() => setCollapsed((c) => !c)}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                onClick={toggleSidebar}
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               >
                 <PanelLeftIcon />
               </Button>
@@ -148,16 +184,18 @@ export function AppShell() {
           )}
           <div ref={setHeaderSlot} className="ml-auto flex shrink-0 items-center gap-2 [&_[data-slot=button]]:h-8 [&_[data-slot=button]]:px-2.5 [&_[data-slot=button]]:text-xs [&_[data-slot=button]_svg]:size-3.5" />
         </header>
-        <main className="relative min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex min-h-full w-full max-w-[1400px] flex-col px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
+        <main className={cn("relative min-h-0 flex-1", workspace ? "overflow-hidden" : "overflow-y-auto")}>
+          <div className={cn("flex w-full flex-col", workspace ? "h-full" : "mx-auto min-h-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8")}>
             <Outlet />
           </div>
         </main>
         </div>
       </div>
+      </div>
     </div>
     </CommandPaletteProvider>
     </HeaderSlotContext.Provider>
+    </PaneSlotContext.Provider>
     </ChromeContext.Provider>
   )
 }
@@ -192,12 +230,95 @@ function SidebarBody() {
           <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
           <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
         </SidebarGroup>
+        <ChatHistory />
       </nav>
 
       <div className={cn("shrink-0 py-2", collapsed ? "px-1.5" : "px-2")}>
         <AccountMenu />
       </div>
     </>
+  )
+}
+
+// Saved agent conversations, newest first. Each opens where it was held: a
+// client's record with the agent beside it, or the business's agent view.
+const CHATS_SHOWN = 6
+
+function ChatHistory() {
+  const { collapsed } = useContext(SidebarStateContext)
+  const chats = useAgentChats()
+  const location = useLocation()
+  const [all, setAll] = useState(false)
+  const here = (path: string) => {
+    const [pathname] = path.split("?")
+    return location.pathname === pathname && (pathname!.startsWith("/clients/") || new URLSearchParams(location.search).get("view") === "agent")
+  }
+
+  if (collapsed) {
+    return (
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger
+              aria-label="Chats"
+              className="flex h-7 w-9 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground data-[state=open]:bg-sidebar-accent [&_svg]:size-3.5"
+            >
+              <MessagesSquareIcon />
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">Chats</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent side="right" align="start" className="w-72 rounded-xl p-1.5 shadow-(--float-shadow-strong)">
+          <DropdownMenuLabel className="text-[0.625rem] font-medium text-muted-foreground">Chats</DropdownMenuLabel>
+          {chats?.length ? chats.map((c) => (
+            <DropdownMenuItem key={c.businessId} asChild className="rounded-md">
+              <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
+                <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
+                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+              </Link>
+            </DropdownMenuItem>
+          )) : (
+            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  const shown = all ? chats ?? [] : (chats ?? []).slice(0, CHATS_SHOWN)
+  return (
+    <SidebarGroup label="Chats">
+      {chats === null ? null : chats.length === 0 ? (
+        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+      ) : (
+        <>
+          {shown.map((c) => {
+            const to = chatPath(c)
+            const active = here(to)
+            return (
+              <Link
+                key={c.businessId}
+                to={to}
+                aria-current={active ? "page" : undefined}
+                title={`${c.title} · ${c.businessName}`}
+                className={cn(
+                  "flex flex-col rounded-md px-2 py-1 outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  active && "bg-sidebar-accent text-sidebar-accent-foreground",
+                )}
+              >
+                <span className={cn("truncate text-xs", active && "font-medium")}>{c.title || "Untitled chat"}</span>
+                <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+              </Link>
+            )
+          })}
+          {chats.length > CHATS_SHOWN ? (
+            <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-[0.6875rem] text-muted-foreground hover:text-foreground">
+              {all ? "Show fewer" : `Show all ${chats.length}`}
+            </button>
+          ) : null}
+        </>
+      )}
+    </SidebarGroup>
   )
 }
 
@@ -255,7 +376,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
         "group/link relative flex h-7 items-center gap-2 rounded-md text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
-          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary"
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary-ink"
           : "[&_svg]:text-muted-foreground",
       )}
     >
@@ -357,7 +478,7 @@ function AccountMenu() {
   const name = email ? email.split("@")[0] ?? email : "Your account"
 
   const avatar = (size: string) => (
-    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary", size)}>
+    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-primary-ink/10 text-xs font-semibold text-primary-ink", size)}>
       {email ? email.charAt(0).toUpperCase() : <UserRoundIcon className="size-4" />}
     </span>
   )

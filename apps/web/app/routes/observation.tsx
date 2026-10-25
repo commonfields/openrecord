@@ -311,7 +311,7 @@ function CitationRow({
         {citation.attributed ? <span> · attributed</span> : null}
       </p>
       {match ? (
-        <Link to={`/businesses/${businessId}/representations/${match.binding_id}`} className="mt-0.5 inline-block text-[0.6875rem] font-medium text-primary hover:underline">
+        <Link to={`/businesses/${businessId}/representations/${match.binding_id}`} className="mt-0.5 inline-block text-[0.6875rem] font-medium text-primary-ink hover:underline">
           View tracked representation
         </Link>
       ) : null}

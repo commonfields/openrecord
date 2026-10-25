@@ -100,6 +100,19 @@ function VerdictTooltipBody({ counts, title }: { counts: VerdictCounts; title?: 
 
 type Datum = Record<string, number | string>
 
+// Charts draw in when they first appear and glide to new values when the data
+// changes. "auto" follows the system's reduced-motion setting; the in-app
+// setting switches it off too.
+function useChartMotion(duration = 1100) {
+  const { preferences } = usePreferences()
+  return {
+    isAnimationActive: preferences.reduceMotion ? false : ("auto" as const),
+    animationDuration: duration,
+    animationBegin: 150,
+    animationEasing: "ease-in-out" as const,
+  }
+}
+
 // Rounded data-end only on the topmost non-zero segment of each stack.
 function stackShape(order: readonly string[], key: string, color: string, surface: string) {
   return function StackSegment(props: unknown) {
@@ -128,6 +141,7 @@ export function StackedDailyChart({
   formatDate: (d: string) => string
 }) {
   const colors = useCssColors([...series.map((s) => s.cssVar), "--card", "--chart-axis", "--chart-grid", "--accent"])
+  const motion = useChartMotion(800)
   const order = series.map((s) => s.key)
   const surface = colors["--card"] || "transparent"
 
@@ -174,7 +188,7 @@ export function StackedDailyChart({
               name={s.label}
               stackId="stack"
               maxBarSize={28}
-              isAnimationActive={false}
+              {...motion}
               fill={colors[s.cssVar] ?? "currentColor"}
               shape={stackShape(order, s.key, colors[s.cssVar] ?? "currentColor", surface)}
             />
@@ -280,6 +294,7 @@ export function ModelTrendChart({
   const tick = { fontSize: 10.5, fill: colors["--chart-axis"] }
   const gid = useId().replace(/:/g, "")
   const focused = focus ? visible.find((s) => s.key === focus) ?? null : null
+  const motion = useChartMotion()
 
   return (
     <div style={{ height }} className="w-full">
@@ -343,7 +358,7 @@ export function ModelTrendChart({
                   )
                 }
                 activeDot={dim ? false : { r: 3.5, strokeWidth: 1.5, stroke: colors["--card"] ?? "transparent" }}
-                isAnimationActive={false}
+                {...motion}
               />
             )
           })}
@@ -387,6 +402,7 @@ export function AreaTrendChart({
   const gid = useId().replace(/:/g, "")
   const color = colors[cssVar] || "currentColor"
   const tick = { fontSize: 10.5, fill: colors["--chart-axis"] }
+  const motion = useChartMotion()
 
   return (
     <div style={{ height }} className="w-full">
@@ -445,7 +461,7 @@ export function AreaTrendChart({
             strokeWidth={2}
             fill={`url(#${gid}-fill)`}
             connectNulls
-            isAnimationActive={false}
+            {...motion}
             activeDot={{ r: 3.5, strokeWidth: 2, stroke: colors["--card"] || "transparent", fill: color }}
           />
           {compareKey ? (
@@ -461,7 +477,7 @@ export function AreaTrendChart({
               dot={false}
               activeDot={false}
               connectNulls
-              isAnimationActive={false}
+              {...motion}
             />
           ) : null}
         </ComposedChart>
@@ -481,7 +497,7 @@ export function Sparkline({ values, cssVar = "--muted-foreground", className }: 
   const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 2 - ((v - min) / span) * (h - 4)] as const)
   const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ")
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden className={cn("h-5 w-full overflow-visible", className)}>
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden className={cn("reveal-x h-5 w-full overflow-visible", className)}>
       <path d={`${line} L${w},${h} L0,${h} Z`} fill={`var(${cssVar})`} opacity={0.08} />
       <path d={line} fill="none" stroke={`var(${cssVar})`} strokeWidth={1.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
     </svg>

@@ -409,7 +409,7 @@ function SearchOnboarding({ businessId, onCreated, gscStatus }: { businessId: st
       <Panel>
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-center">
           <div className="space-y-3">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink">
               <GlobeIcon className="size-4" />
             </span>
             <h2 className="text-sm font-medium">See the site the way search engines do</h2>

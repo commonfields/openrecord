@@ -86,7 +86,7 @@ import {
   loadRepresentations,
 } from "./reads.js"
 import { loadInterventions, recordIntervention } from "./interventions.js"
-import { deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
+import { deleteConversation, listConversations, loadConversation, sendConversation } from "./agent-conversations.js"
 import { createBinding, createTarget } from "./tracking.js"
 import { loadIssueLoop } from "./issue-loop.js"
 import { loadIssuePacket } from "./packet-read.js"
@@ -1299,6 +1299,10 @@ export const makeRouter = () => {
         return json(500, { _tag: "AgentRequestFailed" })
       })),
     ),
+    // Chat history: every saved conversation of the signed-in user in this account.
+    HttpRouter.get("/api/agent/conversations", withSession(session => Effect.gen(function*() {
+      return yield* json(200, { conversations: yield* listConversations({ accountId: session.accountId, userId: session.userId }) })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
     HttpRouter.get("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext
       const businessId = params["id"] ?? ""

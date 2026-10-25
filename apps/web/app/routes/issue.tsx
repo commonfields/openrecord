@@ -344,7 +344,7 @@ export function CitationCard({ businessId, citation: c }: { businessId: string; 
             <RepresentationStateBadge state={c.tracked.finding} />
           </MiniStat>
           <MiniStat label="Evidence">
-            <Link to={`/businesses/${businessId}/representations/${c.tracked.binding_id}`} className="text-primary hover:underline">
+            <Link to={`/businesses/${businessId}/representations/${c.tracked.binding_id}`} className="text-primary-ink hover:underline">
               View tracked representation
             </Link>
           </MiniStat>
@@ -744,7 +744,7 @@ function IssueLoopSection({
               {stages.map((s, idx) => (
                 <li key={s.label} className="relative flex gap-3 pb-4 last:pb-0">
                   {idx < stages.length - 1 ? (
-                    <span aria-hidden className={cn("absolute top-6 bottom-0 left-[9px] w-px", s.status === "done" ? "bg-supported/40" : "bg-border")} />
+                    <span aria-hidden className={cn("absolute top-6 bottom-0 left-[9px] w-px", s.status === "done" ? "bg-primary-ink/30" : "bg-border")} />
                   ) : null}
                   <StageDot status={s.status} />
                   <div className="min-w-0 flex-1 pt-px">
@@ -825,7 +825,7 @@ function StageDot({ status }: { status: StageStatus }) {
   const base = "relative z-10 flex size-[19px] shrink-0 items-center justify-center rounded-full border shadow-(--badge-shadow) [&_svg]:size-3"
   if (status === "done")
     return (
-      <span className={cn(base, "border-supported/30 bg-supported-soft text-supported")}>
+      <span className={cn(base, "border-primary-ink/25 bg-primary-ink/10 text-primary-ink")}>
         <CheckIcon strokeWidth={3} />
       </span>
     )
