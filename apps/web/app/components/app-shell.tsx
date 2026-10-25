@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { useSettings } from "@/components/settings-dialog"
@@ -204,21 +205,30 @@ function SidebarBody() {
   const { collapsed } = useContext(SidebarStateContext)
   const { activeBusiness, overview } = useWorkspace()
   const { open } = useCommandPalette()
+  const location = useLocation()
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
+  // Separate chatting from working: the tabs follow the page's view. The
+  // agent conversation on the business overview is the Agent side (the Chats
+  // list shows with it); every other page — including the overview's today
+  // dashboard — is the Work side (the workspace pages show with it).
+  const onOverview = base !== null && location.pathname === `${base}/overview`
+  const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
+  const agent = onOverview && view === "agent"
 
   return (
     <>
       <div className={cn("flex shrink-0 flex-col gap-2 pt-2", collapsed ? "items-center px-1.5" : "px-2")}>
         <BusinessSwitcher />
         <SearchBar collapsed={collapsed} onOpen={open} />
+        {base ? <ViewTabs collapsed={collapsed} view={agent ? "agent" : "today"} /> : null}
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
-        {base ? (
+        {base && !agent ? (
           <SidebarGroup label="Workspace">
-            <SidebarLink to={`${base}/overview`} icon={<LayoutGridIcon />} label="Overview" />
+            <SidebarLink to={`${base}/overview?view=today`} icon={<LayoutGridIcon />} label="Overview" />
             <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect assay" />
             <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Search" />
             <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="Issues" count={attention} />
@@ -231,7 +241,7 @@ function SidebarBody() {
           <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
           <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
         </SidebarGroup>
-        <ChatHistory />
+        {base && agent ? <ChatHistory /> : null}
       </nav>
 
       <div className={cn("shrink-0 py-2", collapsed ? "px-1.5" : "px-2")}>
@@ -364,6 +374,37 @@ function SearchBar({ collapsed, onOpen }: { collapsed: boolean; onOpen: () => vo
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent side="right">Find (F)</TooltipContent>
     </Tooltip>
+  )
+}
+
+// The agent / work tabs: the switcher that used to float over the business
+// overview, now under the search bar in the sidebar. "Agent" opens the agent
+// conversation (the Chats list sits beside it); "Work" opens the overview's
+// today dashboard (the workspace pages sit beside it). The state lives in
+// the URL (?view=agent|today), exactly as it did for the floating pill.
+function ViewTabs({ collapsed, view }: { collapsed: boolean; view: "agent" | "today" }) {
+  const { activeBusiness } = useWorkspace()
+  const nav = useNavigate()
+  if (!activeBusiness) return null
+  const base = `/businesses/${activeBusiness.id}`
+  const trigger = "h-6 rounded-full px-2 text-xs text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)"
+  return (
+    <Tabs
+      value={view}
+      onValueChange={(v) => {
+        if (v === view) return
+        nav(v === "agent" ? `${base}/overview?view=agent` : `${base}/overview?view=today`)
+      }}
+    >
+      <TabsList className={cn("rounded-full", collapsed ? "flex-col items-center gap-1 bg-transparent p-0" : "grid h-9 w-full grid-cols-2 bg-sidebar-accent/60 p-1")}>
+        <TabsTrigger value="agent" className={cn(trigger, collapsed && "w-9 justify-center p-0 text-[0.625rem]")}>
+          Agent
+        </TabsTrigger>
+        <TabsTrigger value="today" className={cn(trigger, collapsed && "w-9 justify-center p-0 text-[0.625rem]")}>
+          Work
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
   )
 }
 

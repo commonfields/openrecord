@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { Link, Outlet, useParams, useSearchParams } from "react-router"
 import { Building2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AgentChat } from "@/components/agent-chat"
 import { useChrome } from "@/components/app-shell"
 import { EmptyState } from "@/components/page"
@@ -37,15 +36,14 @@ type OverviewView = "today" | "agent"
 
 export function Overview() {
   const { activeBusiness } = useWorkspace()
-  const [params, setParams] = useSearchParams()
   const { preferences } = usePreferences()
+  const [params] = useSearchParams()
   // ?view= wins; otherwise the landing view from settings.
   const requested = params.get("view")
   const view: OverviewView = requested === "today" || requested === "agent" ? requested : preferences.landingView
-  const [chatting, setChatting] = useState(false)
-  const showSwitcher = view === "today" || !chatting
   // Today is a wide dashboard, so the sidebar steps aside while it is open
-  // (the agent view collapses it itself once a conversation starts).
+  // (the agent view collapses it itself once a conversation starts). The
+  // Agent / Work switcher lives in the sidebar, under the search bar.
   const { setFocus } = useChrome()
   useEffect(() => {
     if (view !== "today") return
@@ -56,41 +54,10 @@ export function Overview() {
   return (
     <>
       {view === "agent" ? (
-        <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} onConversationChange={setChatting} />
+        <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} />
       ) : (
         <Today />
       )}
-      {showSwitcher ? (
-        <BottomNavigation
-          view={view}
-          onChange={(v) => {
-            const next = new URLSearchParams(params)
-            next.set("view", v)
-            setParams(next, { replace: true })
-          }}
-        />
-      ) : null}
     </>
-  )
-}
-
-// The bottom navigation: the floating pill pinned near the bottom edge that
-// switches between the agent and today views. Its design is self-contained
-// and purely presentational — the active view and view changes arrive as
-// props, while the URL query keeps the state.
-function BottomNavigation({ view, onChange }: { view: OverviewView; onChange: (view: string) => void }) {
-  return (
-    <div className="pointer-events-none sticky bottom-5 z-20 mt-auto flex justify-center pt-8">
-      <Tabs value={view} onValueChange={onChange} className="pointer-events-auto">
-        <TabsList className="h-10 rounded-full border border-sidebar-border bg-sidebar p-1 text-sidebar-foreground shadow-(--float-shadow-strong)">
-          <TabsTrigger value="agent" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-            Agent
-          </TabsTrigger>
-          <TabsTrigger value="today" className="h-8 rounded-full px-4 text-xs data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)">
-            Today
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-    </div>
   )
 }

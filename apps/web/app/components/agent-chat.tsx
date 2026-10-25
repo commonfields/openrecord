@@ -385,11 +385,11 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
 // Starts as one centered conversation with the sidebar collapsed. As soon as
 // the agent does work, the chat slides left into its own card and the work it
 // read and prepared fills the content panel on the right.
-export function AgentChat(props: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+export function AgentChat(props: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   return <OverviewAgent key={props.businessId} {...props} />
 }
 
-function OverviewAgent({ businessId, businessName, onConversationChange }: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   const session = useAgentSession(businessId)
   const { setMinimal, setWorkspace, setFocus } = useChrome()
   const active = session.active
