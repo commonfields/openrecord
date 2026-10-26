@@ -4,7 +4,7 @@ import { HttpApp } from "@effect/platform"
 import { Effect, Layer, Redacted, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
+import { AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, SetupRepositoryLive } from "@openrecord/db"
 import { HarnessCatalog, type HarnessReport } from "@openrecord/contracts"
 import { harnessApi } from "./harness-routes.js"
 import { requireSession } from "./router.js"
@@ -26,7 +26,7 @@ import {
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
 suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", () => {
-  const repos = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive).pipe(
+  const repos = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, SetupRepositoryLive).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))
   )
   const run = async <A, E>(

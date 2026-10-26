@@ -40,13 +40,15 @@ export const assessSetup = (signals: DiscoverySignals | null, failure: string | 
   return { findings, measurement: measured ? "CONNECTED" : hasGoal ? "MANUAL_ONLY" : "NONE" }
 }
 
-type Rule = { readonly when: (s: DiscoverySignals) => boolean; readonly build: (ctx: Ctx) => Omit<GrowthOpportunityFields, "goalId" | "audience" | "targetUrl" | "source" | "baselineAvailability"> }
-type Ctx = { readonly brief: SetupBrief; readonly site: string }
+export type WebsiteCheckKey = "homepage.noindex" | "homepage.organization-data" | "homepage.snippet"
+type Rule = { readonly key: WebsiteCheckKey; readonly when: (s: DiscoverySignals) => boolean; readonly build: (ctx: RuleCtx) => Omit<GrowthOpportunityFields, "goalId" | "audience" | "targetUrl" | "source" | "baselineAvailability"> }
+type RuleCtx = { readonly brief: SetupBrief; readonly site: string }
 
 /** Ordered from most to least urgent; the first match becomes the first
- * initiative. Each one is bounded to the homepage the operator gave. */
-const RULES: ReadonlyArray<Rule> = [
-  { when: s => s.checks.noindex, build: ({ brief }) => ({
+ * initiative. Each one is bounded to the homepage the operator gave. The
+ * agent's first-improvement workflow diagnoses with the same rules. */
+export const WEBSITE_RULES: ReadonlyArray<Rule> = [
+  { key: "homepage.noindex", when: s => s.checks.noindex, build: ({ brief }) => ({
     title: "Let search engines index the homepage",
     problemStatement: "The homepage carries a noindex instruction, so search engines are told to leave it out of results.",
     buyerIntent: `Find ${brief.businessName} when searching for ${brief.category.toLowerCase()}`,
@@ -55,7 +57,7 @@ const RULES: ReadonlyArray<Rule> = [
     assumptions: "The noindex instruction is accidental.",
     uncertainty: `No baseline is measured. Any effect on ${brief.metricLabel.toLowerCase()} is unknown until it is measured.`,
   }) },
-  { when: s => !s.checks.hasOrganizationData, build: ({ brief, site }) => ({
+  { key: "homepage.organization-data", when: s => !s.checks.hasOrganizationData, build: ({ brief, site }) => ({
     title: "Identify the business in structured data on the homepage",
     problemStatement: `No structured data on ${site} identifies the business (schema.org Organization), so search engines and AI assistants infer the name, offer and contact details from page text.`,
     buyerIntent: `Get an accurate answer about ${brief.businessName} from a search engine or AI assistant`,
@@ -64,7 +66,7 @@ const RULES: ReadonlyArray<Rule> = [
     assumptions: "The confirmed brief is accurate and the site can be edited.",
     uncertainty: `Search engines and AI assistants decide independently whether to use structured data. Any effect on ${brief.metricLabel.toLowerCase()} is unmeasured.`,
   }) },
-  { when: s => !s.checks.hasTitle || !s.checks.hasDescription, build: ({ brief }) => ({
+  { key: "homepage.snippet", when: s => !s.checks.hasTitle || !s.checks.hasDescription, build: ({ brief }) => ({
     title: "Write a clear homepage title and description",
     problemStatement: "The homepage is missing a title or description, so search results show whatever text search engines pick.",
     buyerIntent: `Understand what ${brief.businessName} offers from a search result`,
@@ -86,7 +88,7 @@ const FALLBACK: Rule["build"] = ({ brief }) => ({
 
 export const firstInitiative = (input: { readonly goalId: string; readonly brief: SetupBrief; readonly websiteUrl: string; readonly signals: DiscoverySignals | null; readonly readOn: string }): GrowthOpportunityFields => {
   const site = new URL(input.websiteUrl).hostname.replace(/^www\./, "")
-  const rule = input.signals ? RULES.find(r => r.when(input.signals!)) : undefined
+  const rule = input.signals ? WEBSITE_RULES.find(r => r.when(input.signals!)) : undefined
   const fields = (rule?.build ?? FALLBACK)({ brief: input.brief, site })
   return {
     ...fields,

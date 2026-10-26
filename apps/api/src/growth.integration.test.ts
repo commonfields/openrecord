@@ -22,7 +22,7 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     RepoLayers.GrowthRepositoriesLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.BusinessRepositoryLive,
     RepoLayers.DiscoveryScopeRepositoryLive, RepoLayers.FactRepositoryLive,
-    RepoLayers.ProductReadRepositoryLive, RepoLayers.QuestionRepositoryLive,
+    RepoLayers.ProductReadRepositoryLive, RepoLayers.QuestionRepositoryLive, RepoLayers.SetupRepositoryLive,
   )
     .pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const web = HttpApp.toWebHandlerLayer(growthApi(run => Effect.flatMap(requireSession, ({ session }) => run(session))), repos)

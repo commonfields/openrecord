@@ -94,3 +94,7 @@ Private client reports (`prepare_client_report`) add four distinct sections buil
 No OAuth, analytics account access, tracker or public endpoint is added. The model still cannot approve, publish or execute. Evaluation is fixture-only: tests use deterministic model fixtures and TEST data; no live model was evaluated.
 
 Report selection uses UTC calendar-day overlap for full GA4 export periods; it does not establish exact temporal alignment with recommendation measurements. The referral tool bounds the import index and measured-surface list to 20 entries, reports the full counts, and caps source-medium examples at 10 per assistant. The conversation runtime also refuses tool payloads above its existing context limit.
+
+## First-improvement workflow
+
+`/setup <request>` in a business chat runs the versioned first-improvement workflow with a narrowed toolset and a propose-only write. See [ECC-informed marketing skills V1](ecc-marketing-skills-v1.md).
