@@ -38,14 +38,20 @@ describe("navigation", () => {
     expect(finding).not.toMatch(/score/i)
   })
 
-  it("breadcrumbs cover every product section in existing style", () => {
-    expect(sectionTitles).toMatchObject({
-      overview: "Overview",
-      issues: "Issues",
-      representations: "Representations",
-      truth: "Truth",
-      checks: "Checks",
-      facts: "Truth",
+  it("breadcrumbs name the four workspace areas and the evidence tools in plain language", () => {
+    expect(sectionTitles).toEqual({
+      agent: "Agent",
+      channels: "Channels",
+      work: "Work",
+      results: "Results",
+      overview: "Agent",
+      assay: "Prospect research",
+      search: "Website checks",
+      issues: "AI answer issues",
+      representations: "Facts on the web",
+      truth: "Approved facts",
+      checks: "AI answer checks",
+      facts: "Approved facts",
     })
   })
 

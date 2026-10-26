@@ -1,7 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router"
 import {
+  BarChart3Icon,
   BookCheckIcon,
+  BriefcaseIcon,
+  ChevronDownIcon,
+  RadioTowerIcon,
+  SparklesIcon,
   Building2Icon,
   FileCheck2Icon,
   FlaskConicalIcon,
@@ -11,7 +16,6 @@ import {
   GlobeIcon,
   InboxIcon,
   KeyboardIcon,
-  LayoutGridIcon,
   LogOutIcon,
   MessagesSquareIcon,
   PanelLeftIcon,
@@ -37,7 +41,6 @@ import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth } from "@/lib/api"
@@ -215,7 +218,7 @@ function SidebarBody() {
   // dashboard — is the Work side (the workspace pages show with it).
   const onOverview = base !== null && location.pathname === `${base}/overview`
   const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
-  const agent = onOverview && view === "agent"
+  const agent = (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
 
   return (
     <>
@@ -226,16 +229,16 @@ function SidebarBody() {
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
-        {base && !agent ? (
-          <SidebarGroup label="Workspace">
-            <SidebarLink to={`${base}/overview?view=today`} icon={<LayoutGridIcon />} label="Overview" />
-            <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect assay" />
-            <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Search" />
-            <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="Issues" count={attention} />
-            <SidebarLink to={`${base}/representations`} icon={<GlobeIcon />} label="Representations" />
-            <SidebarLink to={`${base}/truth`} icon={<BookCheckIcon />} label="Truth" />
-            <SidebarLink to={`${base}/checks`} icon={<RadarIcon />} label="Checks" />
-          </SidebarGroup>
+        {base ? (
+          <>
+            <SidebarGroup label="Workspace">
+              <SidebarLink to={`${base}/agent`} icon={<SparklesIcon />} label="Agent" />
+              <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
+              <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
+              <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
+            </SidebarGroup>
+            <EvidenceTools base={base} />
+          </>
         ) : null}
         <SidebarGroup label="Agency">
           <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
@@ -289,7 +292,7 @@ function ChatHistory() {
               </Link>
             </DropdownMenuItem>
           )) : (
-            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -300,7 +303,7 @@ function ChatHistory() {
   return (
     <SidebarGroup label="Chats">
       {chats === null ? null : chats.length === 0 ? (
-        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
       ) : (
         <>
           {shown.map((c) => {
@@ -330,6 +333,39 @@ function ChatHistory() {
         </>
       )}
     </SidebarGroup>
+  )
+}
+
+// Specialist views stay one click away, folded until needed; they open on
+// their own when the current page is one of them.
+const EVIDENCE_TOOLS = ["search", "issues", "representations", "truth", "checks", "assay", "facts"]
+
+function EvidenceTools({ base }: { base: string }) {
+  const { collapsed } = useContext(SidebarStateContext)
+  const location = useLocation()
+  const here = EVIDENCE_TOOLS.some(t => location.pathname.startsWith(`${base}/${t}`))
+  const [open, setOpen] = useState(here)
+  useEffect(() => { if (here) setOpen(true) }, [here])
+  const links = (
+    <>
+      <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Website checks" />
+      <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="AI answer issues" />
+      <SidebarLink to={`${base}/representations`} icon={<GlobeIcon />} label="Facts on the web" />
+      <SidebarLink to={`${base}/truth`} icon={<BookCheckIcon />} label="Approved facts" />
+      <SidebarLink to={`${base}/checks`} icon={<RadarIcon />} label="AI answer checks" />
+      <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect research" />
+    </>
+  )
+  if (collapsed) return open ? <div className="flex flex-col gap-px">{links}</div> : null
+  return (
+    <div className="flex flex-col">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex items-center gap-1 rounded-md px-2 pb-1 text-left text-[0.625rem] font-medium text-muted-foreground hover:text-foreground">
+        Evidence tools
+        <ChevronDownIcon className={cn("size-3 transition-transform", open ? "" : "-rotate-90")} />
+      </button>
+      {open ? <div className="flex flex-col gap-px">{links}</div> : null}
+    </div>
   )
 }
 
@@ -395,7 +431,7 @@ function ViewTabs({ collapsed, view }: { collapsed: boolean; view: "agent" | "to
       value={view}
       onValueChange={(v) => {
         if (v === view) return
-        nav(v === "agent" ? `${base}/overview?view=agent` : `${base}/overview?view=today`)
+        nav(v === "agent" ? `${base}/agent` : `${base}/results`)
       }}
     >
       <TabsList className="grid h-9 w-full grid-cols-2 rounded-full bg-sidebar-accent/60 p-1">
@@ -464,7 +500,6 @@ function BusinessMark({ name, className }: { name: string | null; className?: st
 function BusinessSwitcher() {
   const { collapsed } = useContext(SidebarStateContext)
   const { businesses, activeBusiness } = useWorkspace()
-  const [createOpen, setCreateOpen] = useState(false)
   const nav = useNavigate()
 
   return (
@@ -495,20 +530,19 @@ function BusinessSwitcher() {
         <DropdownMenuContent align="start" side={collapsed ? "right" : "bottom"} className="w-60">
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Businesses</DropdownMenuLabel>
           {businesses.map((b) => (
-            <DropdownMenuItem key={b.id} onSelect={() => nav(`/businesses/${b.id}/overview`)}>
+            <DropdownMenuItem key={b.id} onSelect={() => nav(`/businesses/${b.id}/agent`)}>
               <BusinessMark name={b.name} className="size-6 text-xs" />
               <span className="truncate">{b.name}</span>
               {activeBusiness?.id === b.id ? <CheckIcon className="ml-auto text-foreground" /> : null}
             </DropdownMenuItem>
           ))}
           {businesses.length > 0 ? <DropdownMenuSeparator /> : null}
-          <DropdownMenuItem onSelect={() => setCreateOpen(true)}>
+          <DropdownMenuItem onSelect={() => nav("/start")}>
             <PlusIcon />
             New business
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <CreateBusinessDialog open={createOpen} onOpenChange={setCreateOpen} />
     </>
   )
 }
@@ -596,26 +630,26 @@ function Breadcrumbs() {
 
   if (parts[0] === "businesses" && activeBusiness) {
     const base = `/businesses/${activeBusiness.id}`
-    crumbs.push({ label: activeBusiness.name, to: `${base}/overview` })
+    crumbs.push({ label: activeBusiness.name, to: `${base}/agent` })
     const section = parts[2] ?? ""
     const detail = parts[3]
     if (section === "search" && detail === "sites" && parts[5] === "findings" && parts[6]) {
-      crumbs.push({ label: "Search", to: `${base}/search` })
+      crumbs.push({ label: sectionTitles["search"] ?? "Website checks", to: `${base}/search` })
       crumbs.push({ label: "Finding" })
     } else if (section === "search" && detail) {
-      crumbs.push({ label: "Search", to: `${base}/search` })
-      crumbs.push({ label: detail === "sites" ? "Site" : (sectionTitles[detail] ?? "Search") })
+      crumbs.push({ label: sectionTitles["search"] ?? "Website checks", to: `${base}/search` })
+      crumbs.push({ label: detail === "sites" ? "Site" : (sectionTitles[detail] ?? "Website checks") })
     } else if ((section === "issues" || section === "representations") && detail) {
-      const parent = section === "issues" ? "Issues" : "Representations"
-      const child = section === "issues" ? "Issue" : detail === "discovery" ? "Discovery" : "Representation"
+      const parent = sectionTitles[section] ?? section
+      const child = section === "issues" ? "Issue" : detail === "discovery" ? "Discovery" : "Fact on the web"
       crumbs.push({ label: parent, to: `${base}/${section}` })
       crumbs.push({ label: child })
     } else {
-      crumbs.push({ label: sectionTitles[section] ?? "Overview" })
+      crumbs.push({ label: sectionTitles[section] ?? "Agent" })
     }
   } else if (parts[0] === "observations") {
     if (activeBusiness) {
-      crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/overview` })
+      crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
       crumbs.push(
         new URLSearchParams(location.search).has("claim")
           ? { label: "Issues", to: `/businesses/${activeBusiness.id}/issues` }
@@ -625,7 +659,10 @@ function Breadcrumbs() {
     crumbs.push({ label: "AI answer" })
   } else if (parts[0] === "clients") {
     crumbs.push({ label: "Clients", ...(parts[1] ? { to: "/clients" } : {}) })
+    if (parts[1] && activeBusiness?.id === parts[1]) crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
     if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
+  } else if (parts[0] === "start") {
+    crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {
     crumbs.push({ label: "Clients", to: "/clients" }, { label: "Add a product" })
   } else {

@@ -1,6 +1,7 @@
 // One client's record, operated by the agency: identity, three approved
 // facts with one question each, checks on the live surface, human review,
 // agency actions, the weekly re-check and its outcome, and the share URL.
+import { useActiveBusiness } from "@/lib/workspace"
 import { useEffect, useState, type ReactNode } from "react"
 import { Link, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
@@ -1172,6 +1173,7 @@ const reveal = (elementId: string, then?: () => void) =>
 
 export function ClientRecordPage() {
   const { id = "" } = useParams()
+  useActiveBusiness(id)
   const [poll, setPoll] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)

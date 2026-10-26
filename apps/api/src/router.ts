@@ -1,4 +1,5 @@
 import { growthApi } from "./growth-routes.js"
+import { setupApi } from "./setup-routes.js"
 import { growthMeasurementApi } from "./growth-measurement-routes.js"
 import { growthReportApi } from "./growth-report-routes.js"
 import { growthExecutionApi } from "./growth-execution-routes.js"
@@ -36,6 +37,7 @@ import {
 import {
   GrowthRepositoriesLive,
   GrowthMeasurementRepositoryLive,
+  SetupRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
@@ -1535,12 +1537,13 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(runtimeApi, HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), growthGa4Api(withSession)))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(growthGa4Api(withSession), setupApi(withSession))))))),
   ))
 }
 
 export const RepoLayers = {
   GrowthRepositoriesLive,
+  SetupRepositoryLive,
   GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AssayRepositoryLive,

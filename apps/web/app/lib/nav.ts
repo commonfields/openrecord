@@ -20,15 +20,21 @@ export const workspaceNav = (base: string): WorkspaceNavItem[] => [
   { id: "checks", label: "Checks", path: `${base}/checks`, icon: "checks" },
 ]
 
+// Breadcrumb names. The four workspace areas come first; the specialist
+// evidence tools keep their routes but read in plain language.
 export const sectionTitles: Record<string, string> = {
-  overview: "Overview",
-  assay: "Prospect assay",
-  search: "Search",
-  issues: "Issues",
-  representations: "Representations",
-  truth: "Truth",
-  checks: "Checks",
-  facts: "Truth",
+  agent: "Agent",
+  channels: "Channels",
+  work: "Work",
+  results: "Results",
+  overview: "Agent",
+  assay: "Prospect research",
+  search: "Website checks",
+  issues: "AI answer issues",
+  representations: "Facts on the web",
+  truth: "Approved facts",
+  checks: "AI answer checks",
+  facts: "Approved facts",
 }
 
 export type RepresentationFilter = "ALL" | "IN_SYNC" | "DRIFT" | "UNKNOWN"

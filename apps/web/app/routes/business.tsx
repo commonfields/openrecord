@@ -1,5 +1,5 @@
-import { useEffect } from "react"
-import { Link, Outlet, useParams, useSearchParams } from "react-router"
+import { useCallback, useEffect } from "react"
+import { Link, Navigate, Outlet, useParams, useSearchParams } from "react-router"
 import { Building2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentChat } from "@/components/agent-chat"
@@ -32,32 +32,28 @@ export function BusinessLayout() {
   return <Outlet />
 }
 
-type OverviewView = "today" | "agent"
-
+/** Kept for links made before the four-area workspace: ?view= or the landing
+ * preference decides between the agent and results. */
 export function Overview() {
-  const { activeBusiness } = useWorkspace()
-  const { preferences } = usePreferences()
   const [params] = useSearchParams()
-  // ?view= wins; otherwise the landing view from settings.
+  const { preferences } = usePreferences()
   const requested = params.get("view")
-  const view: OverviewView = requested === "today" || requested === "agent" ? requested : preferences.landingView
-  // Today is a wide dashboard, so the sidebar steps aside while it is open
-  // (the agent view collapses it itself once a conversation starts). The
-  // Agent / Work switcher lives in the sidebar, under the search bar.
+  const view = requested === "today" || requested === "agent" ? requested : preferences.landingView
+  return <Navigate to={view === "today" ? "../results" : "../agent"} replace />
+}
+
+export function AgentPage() {
+  const { activeBusiness } = useWorkspace()
+  const noop = useCallback(() => {}, [])
+  return <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} onConversationChange={noop} />
+}
+
+export function ResultsPage() {
+  // Results is a wide dashboard, so the sidebar steps aside while it is open.
   const { setFocus } = useChrome()
   useEffect(() => {
-    if (view !== "today") return
     setFocus(true)
     return () => setFocus(false)
-  }, [view, setFocus])
-
-  return (
-    <>
-      {view === "agent" ? (
-        <AgentChat businessId={activeBusiness?.id ?? ""} businessName={activeBusiness?.name ?? "this business"} />
-      ) : (
-        <Today />
-      )}
-    </>
-  )
+  }, [setFocus])
+  return <Today />
 }

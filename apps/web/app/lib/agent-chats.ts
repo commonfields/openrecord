@@ -6,10 +6,9 @@ import { Agent, type AgentChatSummary } from "@/lib/api"
 const EVENT = "openrecord:agent-chats"
 export const notifyAgentChats = () => window.dispatchEvent(new Event(EVENT))
 
-// Where a saved conversation opens: a client's record page with the agent
-// beside it, or the business overview's agent view.
-export const chatPath = (c: Pick<AgentChatSummary, "businessId" | "isClient">) =>
-  c.isClient ? `/clients/${encodeURIComponent(c.businessId)}?agent=1` : `/businesses/${encodeURIComponent(c.businessId)}/overview?view=agent`
+// Every saved conversation opens in its business's agent workspace; it is the
+// same conversation the client record's side panel shows.
+export const chatPath = (c: Pick<AgentChatSummary, "businessId">) => `/businesses/${encodeURIComponent(c.businessId)}/agent`
 
 export function useAgentChats() {
   const [chats, setChats] = useState<AgentChatSummary[] | null>(null)
