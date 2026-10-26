@@ -6,6 +6,7 @@ import { Schema } from "effect"
 import {
   HARNESS_NAMES,
   HarnessAnswer,
+  HarnessReasoningEffort,
   type HarnessDriver,
   type HarnessJob,
   type HarnessModel,
@@ -28,24 +29,23 @@ const BINARY: Record<HarnessDriver, string> = {
   cursor: "agent"
 }
 const resolvedBinaries = new Map<string, string>()
+const AcpConfigOptions = Schema.Array(Schema.Struct({
+  id: Schema.String,
+  category: Schema.optional(Schema.String),
+  options: Schema.optional(Schema.Array(Schema.Struct({ value: Schema.String, name: Schema.String })))
+}))
+const AcpConfigResponse = Schema.Struct({ configOptions: Schema.optional(AcpConfigOptions) })
 const MODELS = Schema.Struct({
   models: Schema.optional(
     Schema.Struct({ availableModels: Schema.Array(Schema.Struct({ modelId: Schema.String, name: Schema.String })) })
   ),
   sessionId: Schema.String,
-  configOptions: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        id: Schema.String,
-        category: Schema.optional(Schema.String),
-        options: Schema.optional(Schema.Array(Schema.Struct({ value: Schema.String, name: Schema.String })))
-      })
-    )
-  )
+  configOptions: Schema.optional(AcpConfigOptions)
 })
 const CodexModels = Schema.Struct({
   data: Schema.Array(
-    Schema.Struct({ id: Schema.String, model: Schema.optional(Schema.String), displayName: Schema.String })
+    Schema.Struct({ id: Schema.String, model: Schema.optional(Schema.String), displayName: Schema.String,
+      supportedReasoningEfforts: Schema.optional(Schema.Array(Schema.Struct({ reasoningEffort: Schema.String }))) })
   )
 })
 
@@ -116,6 +116,29 @@ function acpModels(session: typeof MODELS.Type): HarnessModel[] {
   return options.map((o) => ({ id: o.value, name: o.name }))
 }
 
+function reasoningOption(options: typeof AcpConfigResponse.Type["configOptions"]) {
+  return options?.find(option => option.category === "thought_level" || option.id === "effort")
+}
+
+async function discoverAcpModels(rpc: RpcProcess, session: typeof MODELS.Type): Promise<HarnessModel[]> {
+  const models = acpModels(session)
+  const modelOption = session.configOptions?.find(option => option.category === "model" || option.id === "model")
+  if (!modelOption) return models
+  const found: HarnessModel[] = []
+  const deadline = Date.now() + 45000
+  for (const model of models) {
+    if (Date.now() >= deadline) { found.push(model); continue }
+    try {
+      const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: modelOption.id, value: model.id }))
+      const reasoningEfforts = [...new Set((reasoningOption(changed.configOptions)?.options ?? []).map(option => option.value).filter(Schema.is(HarnessReasoningEffort)))]
+      found.push({ ...model, ...(reasoningEfforts.length ? { reasoningEfforts } : {}) })
+    } catch {
+      return [...found, ...models.slice(found.length)]
+    }
+  }
+  return found
+}
+
 export async function withWorkspace<A>(act: (cwd: string) => Promise<A>) {
   const cwd = await mkdtemp(join(tmpdir(), "openrecord-harness-"))
   try {
@@ -183,7 +206,10 @@ export async function probe(instance: LocalInstance): Promise<HarnessReport> {
                     ? "unknown"
                     : "unauthenticated",
               state: catalog.data.length ? "ready" : "unavailable",
-              models: catalog.data.map((m) => ({ id: m.model ?? m.id, name: m.displayName }))
+              models: catalog.data.map(m => {
+                const reasoningEfforts = [...new Set((m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).filter(Schema.is(HarnessReasoningEffort)))]
+                return { id: m.model ?? m.id, name: m.displayName, ...(reasoningEfforts.length ? { reasoningEfforts } : {}) }
+              })
             }
           } finally {
             rpc.close()
@@ -210,10 +236,12 @@ export async function probe(instance: LocalInstance): Promise<HarnessReport> {
             ]
           }
         }
-        const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, AbortSignal.timeout(25000))
+        // OpenCode returns its complete catalog after every model selection.
+        // Keep discovery bounded without applying the smaller single-turn budget.
+        const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, AbortSignal.timeout(instance.driver === "opencode" ? 60000 : 25000), undefined, instance.driver === "opencode" ? 8000000 : 1000000)
         try {
           const session = await initializeAcp(rpc, cwd),
-            models = acpModels(session)
+            models = instance.driver === "opencode" ? await discoverAcpModels(rpc, session) : acpModels(session)
           return { ...installed, auth: "unknown", state: models.length ? "ready" : "unavailable", models }
         } finally {
           rpc.close()
@@ -276,6 +304,7 @@ export function parseAnswer(raw: string): HarnessAnswer {
 
 export async function execute(instance: LocalInstance, job: HarnessJob, signal: AbortSignal): Promise<HarnessAnswer> {
   if (instance.id !== job.localId || instance.driver !== job.driver) throw new BridgeFailure("UNAVAILABLE")
+  if (job.input.reasoningEffort && instance.driver !== "codex" && instance.driver !== "opencode") throw new BridgeFailure("UNAVAILABLE")
   return withWorkspace(async (cwd) => {
     const binary = resolvedBinaries.get(instance.id) ?? instance.binary ?? BINARY[instance.driver],
       env = environment(instance)
@@ -364,6 +393,7 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
           'web_search="disabled"',
           "-c",
           "project_doc_max_bytes=0",
+          ...(job.input.reasoningEffort ? ["-c", `model_reasoning_effort="${job.input.reasoningEffort}"`] : []),
           "--model",
           job.model,
           "--output-schema",
@@ -400,16 +430,22 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
     try {
       const session = await initializeAcp(rpc, cwd)
       const choices = acpModels(session)
+      let configOptions = session.configOptions
       if (!choices.some((m) => m.id === job.model)) throw new BridgeFailure("UNAVAILABLE")
-      if (session.models) await rpc.request("session/set_model", { sessionId: session.sessionId, modelId: job.model })
-      else {
-        const option = session.configOptions?.find((o) => o.category === "model" || o.id === "model")
-        if (!option) throw new BridgeFailure("UNAVAILABLE")
-        await rpc.request("session/set_config_option", {
+      const option = session.configOptions?.find((o) => o.category === "model" || o.id === "model")
+      if (option) {
+        const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", {
           sessionId: session.sessionId,
           configId: option.id,
           value: job.model
-        })
+        }))
+        configOptions = changed.configOptions
+      } else if (session.models) await rpc.request("session/set_model", { sessionId: session.sessionId, modelId: job.model })
+      else throw new BridgeFailure("UNAVAILABLE")
+      if (job.input.reasoningEffort) {
+        const effort = reasoningOption(configOptions)
+        if (!effort?.options?.some(option => option.value === job.input.reasoningEffort)) throw new BridgeFailure("UNAVAILABLE")
+        await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: effort.id, value: job.input.reasoningEffort })
       }
       const result = Schema.decodeUnknownSync(Schema.Struct({ stopReason: Schema.String }))(
         await rpc.request("session/prompt", {

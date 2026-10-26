@@ -6,7 +6,6 @@ import {
   BriefcaseIcon,
   ChevronDownIcon,
   RadioTowerIcon,
-  SparklesIcon,
   Building2Icon,
   FileCheck2Icon,
   FlaskConicalIcon,
@@ -18,6 +17,7 @@ import {
   KeyboardIcon,
   LogOutIcon,
   MessagesSquareIcon,
+  SquarePenIcon,
   PanelLeftIcon,
   PlusIcon,
   RadarIcon,
@@ -26,6 +26,8 @@ import {
   UserRoundIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
+import { toast } from "sonner"
 import { CommandPaletteProvider, useCommandPalette } from "@/components/command-palette"
 import { HeaderSlotContext } from "@/components/page"
 import { sectionTitles } from "@/lib/nav"
@@ -43,9 +45,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
-import { Auth } from "@/lib/api"
+import { Agent, Auth } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
-import { chatPath, useAgentChats } from "@/lib/agent-chats"
+import { ChatActivityProvider, chatPath, useAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -128,6 +130,7 @@ export function AppShell() {
   useEffect(() => setMobileOpen(false), [location.pathname])
 
   return (
+    <ChatActivityProvider>
     <ChromeContext.Provider value={chrome}>
     <PaneSlotContext.Provider value={paneContext}>
     <HeaderSlotContext.Provider value={headerSlot}>
@@ -180,6 +183,7 @@ export function AppShell() {
             </TooltipTrigger>
             <TooltipContent side="bottom">Toggle sidebar (Ctrl B)</TooltipContent>
           </Tooltip>
+          <ViewTabs />
           {minimal ? null : (
             <>
               <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
@@ -201,50 +205,56 @@ export function AppShell() {
     </HeaderSlotContext.Provider>
     </PaneSlotContext.Provider>
     </ChromeContext.Provider>
+    </ChatActivityProvider>
   )
+}
+
+function useAgentView() {
+  const { activeBusiness } = useWorkspace()
+  const location = useLocation()
+  const { preferences } = usePreferences()
+  const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
+  const onOverview = base !== null && location.pathname === `${base}/overview`
+  const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
+  return (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
 }
 
 function SidebarBody() {
   const { collapsed } = useContext(SidebarStateContext)
   const { activeBusiness, overview } = useWorkspace()
   const { open } = useCommandPalette()
-  const location = useLocation()
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
-  // Separate chatting from working: the tabs follow the page's view. The
-  // agent conversation on the business overview is the Agent side (the Chats
-  // list shows with it); every other page — including the overview's today
-  // dashboard — is the Work side (the workspace pages show with it).
-  const onOverview = base !== null && location.pathname === `${base}/overview`
-  const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
-  const agent = (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
+  const agent = useAgentView()
 
   return (
     <>
       <div className={cn("flex shrink-0 flex-col gap-2 pt-2", collapsed ? "items-center px-1.5" : "px-2")}>
         <BusinessSwitcher />
-        <SearchBar collapsed={collapsed} onOpen={open} />
-        {base ? <ViewTabs collapsed={collapsed} view={agent ? "agent" : "today"} /> : null}
+        <div className={cn("flex w-full items-center justify-between", collapsed && "flex-col gap-1")}>
+          <SearchButton onOpen={open} />
+          {base && activeBusiness ? <NewChatButton base={base} businessId={activeBusiness.id} /> : null}
+        </div>
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
-        {base ? (
-          <>
-            <SidebarGroup label="Workspace">
-              <SidebarLink to={`${base}/agent`} icon={<SparklesIcon />} label="Agent" />
-              <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
-              <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
-              <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
-            </SidebarGroup>
-            <EvidenceTools base={base} />
-          </>
-        ) : null}
-        <SidebarGroup label="Agency">
-          <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
-          <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
-        </SidebarGroup>
-        {base && agent ? <ChatHistory /> : null}
+        {agent ? <ChatHistory /> : <>
+          {base ? (
+            <>
+              <SidebarGroup label="Workspace">
+                <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
+                <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
+                <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
+              </SidebarGroup>
+              <EvidenceTools base={base} />
+            </>
+          ) : null}
+          <SidebarGroup label="Agency">
+            <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
+            <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
+          </SidebarGroup>
+        </>}
       </nav>
 
       <div className={cn("shrink-0 py-2", collapsed ? "px-1.5" : "px-2")}>
@@ -265,7 +275,7 @@ function ChatHistory() {
   const [all, setAll] = useState(false)
   const here = (path: string) => {
     const [pathname] = path.split("?")
-    return location.pathname === pathname && (pathname!.startsWith("/clients/") || new URLSearchParams(location.search).get("view") === "agent")
+    return location.pathname === pathname
   }
 
   if (collapsed) {
@@ -288,6 +298,7 @@ function ChatHistory() {
             <DropdownMenuItem key={c.businessId} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
                 <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
+                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
                 <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             </DropdownMenuItem>
@@ -303,7 +314,7 @@ function ChatHistory() {
   return (
     <SidebarGroup label="Chats">
       {chats === null ? null : chats.length === 0 ? (
-        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
+        <p className="px-2 py-1 text-sm leading-relaxed text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
       ) : (
         <>
           {shown.map((c) => {
@@ -320,13 +331,14 @@ function ChatHistory() {
                   active && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
               >
-                <span className={cn("truncate text-xs", active && "font-medium")}>{c.title || "Untitled chat"}</span>
-                <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
+                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
+                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             )
           })}
           {chats.length > CHATS_SHOWN ? (
-            <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-[0.6875rem] text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:text-foreground">
               {all ? "Show fewer" : `Show all ${chats.length}`}
             </button>
           ) : null}
@@ -360,7 +372,7 @@ function EvidenceTools({ base }: { base: string }) {
   return (
     <div className="flex flex-col">
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
-        className="flex items-center gap-1 rounded-md px-2 pb-1 text-left text-[0.625rem] font-medium text-muted-foreground hover:text-foreground">
+        className="flex items-center gap-1 rounded-md px-2 pb-1 text-left text-sm font-medium text-muted-foreground hover:text-foreground">
         Evidence tools
         <ChevronDownIcon className={cn("size-3 transition-transform", open ? "" : "-rotate-90")} />
       </button>
@@ -373,68 +385,83 @@ function SidebarGroup({ label, children }: { label: string; children: ReactNode 
   const { collapsed } = useContext(SidebarStateContext)
   return (
     <div className="flex flex-col">
-      {collapsed ? null : <div className="px-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{label}</div>}
+      {collapsed ? null : <div className="px-2 pb-1 text-sm font-medium text-muted-foreground">{label}</div>}
       <div className="flex flex-col gap-px">{children}</div>
     </div>
   )
 }
 
-// The search bar: an input-shaped trigger that opens the search menu (the
-// command palette). Its design is self-contained — where it sits comes in as
-// `collapsed` and how the menu opens as `onOpen`, so it is decoupled from both
-// the sidebar and the menu itself.
-function SearchBar({ collapsed, onOpen }: { collapsed: boolean; onOpen: () => void }) {
-  const button = (
-    <button
-      type="button"
-      data-search-trigger
-      onClick={onOpen}
-      aria-label="Find in OpenRecord (F)"
-      className={cn(
-        "flex items-center gap-2 rounded-md border bg-card text-xs text-muted-foreground shadow-(--control-shadow) outline-none transition-colors hover:text-foreground",
-        collapsed ? "size-9 justify-center" : "h-7 w-full px-2",
-      )}
-    >
-      <SearchIcon className="size-3.5 shrink-0" />
-      {collapsed ? null : (
-        <>
-          <span className="flex-1 text-left">Find…</span>
-          <kbd className="shrink-0 whitespace-nowrap font-sans text-[0.5625rem] leading-none text-muted-foreground">F</kbd>
-        </>
-      )}
-    </button>
-  )
-  if (!collapsed) return button
+function SearchButton({ onOpen }: { onOpen: () => void }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-sm" data-search-trigger onClick={onOpen} aria-label="Find in OpenRecord (F)">
+          <SearchIcon className="size-4" />
+        </Button>
+      </TooltipTrigger>
       <TooltipContent side="right">Find (F)</TooltipContent>
     </Tooltip>
   )
 }
 
-// The agent / work tabs: the switcher that used to float over the business
-// overview, now under the search bar in the sidebar. "Agent" opens the agent
-// conversation (the Chats list sits beside it); "Work" opens the overview's
-// today dashboard (the workspace pages sit beside it). The state lives in
-// the URL (?view=agent|today), exactly as it did for the floating pill.
-function ViewTabs({ collapsed, view }: { collapsed: boolean; view: "agent" | "today" }) {
+function NewChatButton({ base, businessId }: { base: string; businessId: string }) {
+  const [busy, setBusy] = useState(false)
+  const { forget } = useChatActivity()
+  const start = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await Agent.clear(businessId)
+      forget(businessId)
+      window.location.assign(`${base}/agent`)
+    } catch {
+      toast.error("Couldn't start a new chat. Try again.")
+      setBusy(false)
+    }
+  }
+  return (
+    <AlertDialog>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <AlertDialogTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" disabled={busy}><SquarePenIcon className="size-4" /></Button>
+          </AlertDialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">New chat</TooltipContent>
+      </Tooltip>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Start a new chat?</AlertDialogTitle>
+          <AlertDialogDescription>OpenRecord keeps one chat per business. Starting a new chat deletes the current conversation for this business.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <Button type="button" disabled={busy} onClick={() => void start()}>{busy ? "Starting…" : "Start new chat"}</Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+// Header tabs share the route-derived view with the sidebar content.
+function ViewTabs() {
   const { activeBusiness } = useWorkspace()
   const nav = useNavigate()
-  // Keep the collapsed rail focused on navigation icons. Switching between
-  // Agent and Work is available only after the user expands the sidebar.
-  if (!activeBusiness || collapsed) return null
+  const agent = useAgentView()
+  const view = agent ? "agent" : "today"
+  if (!activeBusiness) return null
   const base = `/businesses/${activeBusiness.id}`
-  const trigger = "h-6 rounded-full px-2 text-xs text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-(--card-shadow)"
+  const trigger = "h-full min-h-0 self-stretch rounded-[3px] px-1 text-[0.6875rem] text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
   return (
     <Tabs
+      className="shrink-0"
       value={view}
       onValueChange={(v) => {
         if (v === view) return
         nav(v === "agent" ? `${base}/agent` : `${base}/results`)
       }}
     >
-      <TabsList className="grid h-9 w-full grid-cols-2 rounded-full bg-sidebar-accent/60 p-1">
+      <TabsList aria-label="Workspace view" className="grid h-6 w-auto grid-cols-2 items-stretch rounded-md border border-sidebar-border bg-sidebar-accent/60 p-0.5">
         <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
         <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
       </TabsList>
@@ -452,7 +479,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
       to={to}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "group/link relative flex h-7 items-center gap-2 rounded-md text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary-ink"
@@ -509,7 +536,7 @@ function BusinessSwitcher() {
           <button
             className={cn(
               "flex items-center gap-2 rounded-md text-left outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
-              collapsed ? "size-9 justify-center" : "h-9 w-full px-1.5",
+              collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
           >
@@ -517,8 +544,8 @@ function BusinessSwitcher() {
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
-                  <span className="block truncate text-[0.6875rem] text-muted-foreground">
+                  <span className="block truncate text-base font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
                     {activeBusiness ? "Business" : "Choose a business"}
                   </span>
                 </span>
@@ -565,8 +592,8 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-2 rounded-md text-left text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
-            collapsed ? "size-9 justify-center" : "h-9 w-full px-1.5",
+            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
+            collapsed ? "h-14 w-9 justify-center" : "min-h-16 w-full px-2.5 py-4",
           )}
           aria-label="Account menu"
         >
@@ -574,7 +601,7 @@ function AccountMenu() {
           {collapsed ? null : (
             <>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium text-foreground">{name}</span>
+                <span className="block truncate text-base font-medium text-foreground">{name}</span>
               </span>
               <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
             </>

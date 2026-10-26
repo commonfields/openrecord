@@ -159,7 +159,8 @@ export class RpcProcess {
     cwd: string,
     env: NodeJS.ProcessEnv,
     private signal: AbortSignal,
-    private notification: (method: string, params: unknown) => void = () => {}
+    private notification: (method: string, params: unknown) => void = () => {},
+    private maxOutputBytes = 1000000
   ) {
     this.child = launch(binary, args, cwd, env, signal)
     this.lines = createInterface({ input: this.child.stdout })
@@ -169,7 +170,7 @@ export class RpcProcess {
     this.child.once("close", () => this.close(new BridgeFailure("UNAVAILABLE")))
     this.child.stdout.on("data", (chunk) => {
       this.bytes += Buffer.byteLength(chunk)
-      if (this.bytes > 1000000) this.close(new BridgeFailure("MALFORMED"))
+      if (this.bytes > this.maxOutputBytes) this.close(new BridgeFailure("MALFORMED"))
     })
     this.lines.on("line", (line) => {
       try {

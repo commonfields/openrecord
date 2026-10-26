@@ -21,4 +21,12 @@ describe("harness wire boundaries", () => {
     ])
       expect(() => Schema.decodeUnknownSync(HarnessJobResult)(value)).toThrow()
   })
+  it("accepts only declared reasoning-level values", () => {
+    for (const reasoningEffort of ["high", "max", "thinking"]) {
+      expect(Schema.decodeUnknownSync(HarnessSelection)({ instanceId, model: "fixture", reasoningEffort }).reasoningEffort).toBe(reasoningEffort)
+    }
+    for (const reasoningEffort of ["--unsafe", "high\nflag", "invented", 42]) {
+      expect(() => Schema.decodeUnknownSync(HarnessSelection)({ instanceId, model: "fixture", reasoningEffort })).toThrow()
+    }
+  })
 })

@@ -47,6 +47,31 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
       })
     }, 20000)
   }
+  it("discovers supported reasoning levels and passes the selected level to Codex", async () => {
+    const i = instance("codex")
+    const status = await probe(i)
+    expect(status.models[0]?.reasoningEfforts).toEqual(["low", "high"])
+    const request = job(i)
+    expect(await execute(i, { ...request, input: { ...request.input, reasoningEffort: "high" } }, AbortSignal.timeout(10000))).toMatchObject({ text: "TEST Codex reply (high)" })
+    const unsupported = instance("cursor")
+    const other = job(unsupported)
+    await expect(execute(unsupported, { ...other, input: { ...other.input, reasoningEffort: "high" } }, AbortSignal.timeout(10000))).rejects.toMatchObject({ reason: "UNAVAILABLE" })
+  }, 20000)
+
+  it("discovers OpenCode reasoning per model and applies native effort before prompting", async () => {
+    const i = instance("opencode")
+    const status = await probe(i)
+    expect(status.models).toEqual([
+      { id: "fixture-model", name: "TEST model", reasoningEfforts: ["none", "low", "high", "max"] },
+      { id: "fixture-thinking", name: "TEST thinking model", reasoningEfforts: ["none", "thinking"] }
+    ])
+    const request = job(i)
+    for (const [model, reasoningEffort] of [["fixture-model", "max"], ["fixture-thinking", "thinking"]] as const) {
+      expect(await execute(i, { ...request, model, input: { ...request.input, reasoningEffort } }, AbortSignal.timeout(10000))).toMatchObject({ text: `TEST ACP reply (${reasoningEffort})` })
+    }
+    await expect(execute(i, { ...request, model: "fixture-thinking", input: { ...request.input, reasoningEffort: "high" } }, AbortSignal.timeout(10000))).rejects.toMatchObject({ reason: "UNAVAILABLE" })
+  }, 20000)
+
   it("does not inherit application or unrelated provider secrets", () => {
     const source = {
       PATH: "/bin",

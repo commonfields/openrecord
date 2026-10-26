@@ -101,6 +101,9 @@ export const activateHarness = (session: Session, id: string, enabled: boolean) 
       WHERE i.id=${id} AND i.account_id=${session.accountId} AND i.user_id=${session.userId}
       AND b.id=i.bridge_id AND b.revoked_at IS NULL RETURNING i.id`
         if (!updated.length) return yield* fail("NOT_FOUND")
+        if (enabled)
+          yield* sql`UPDATE agent_bridges b SET refresh_requested=true FROM agent_harness_instances i
+      WHERE i.id=${id} AND i.bridge_id=b.id AND b.revoked_at IS NULL`
         if (!enabled)
           yield* sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()
       WHERE instance_id=${id} AND status IN ('QUEUED','RUNNING')`
@@ -132,6 +135,8 @@ export const resolveHarness = (session: Session, selection: HarnessSelection) =>
     if (!instance.enabled || !instance.installed || instance.state !== "ready" || instance.auth === "unauthenticated")
       return yield* fail("UNAVAILABLE")
     if (!instance.models.some((m) => m.id === selection.model)) return yield* fail("MODEL_UNAVAILABLE")
+    if (selection.reasoningEffort && ((instance.driver !== "codex" && instance.driver !== "opencode") || !instance.models.find(m => m.id === selection.model)?.reasoningEfforts?.includes(selection.reasoningEffort)))
+      return yield* fail("MODEL_UNAVAILABLE")
     return instance
   })
 
@@ -205,10 +210,11 @@ export const invokeHarness = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const instance = yield* resolveHarness(scope, selection)
-    if (Buffer.byteLength(JSON.stringify(input), "utf8") > 100000) return yield* fail("CONTEXT_LIMIT")
+    const jobInput = { ...input, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
+    if (Buffer.byteLength(JSON.stringify(jobInput), "utf8") > 100000) return yield* fail("CONTEXT_LIMIT")
     const id = randomUUID()
     yield* sql`INSERT INTO agent_harness_jobs(id,instance_id,bridge_id,account_id,user_id,business_id,model,input)
-    VALUES(${id},${instance.id},${instance.bridgeId},${scope.accountId},${scope.userId},${scope.businessId},${selection.model},${JSON.stringify(input)}::jsonb)`
+    VALUES(${id},${instance.id},${instance.bridgeId},${scope.accountId},${scope.userId},${scope.businessId},${selection.model},${JSON.stringify(jobInput)}::jsonb)`
     return yield* Effect.gen(function* () {
       for (let attempt = 0; attempt < 200; attempt++) {
         yield* resolveHarness(scope, selection)

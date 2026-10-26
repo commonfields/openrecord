@@ -57,6 +57,18 @@ export function loginCommand(driver: HarnessDriver, localId?: string): string {
 
 // ---- model selection ----
 
+export function harnessStatusLabel(instance: HarnessInstance, checking: boolean): string | null {
+  if (!instance.enabled) return null
+  if (instance.state === "offline") return "Bridge offline"
+  if (!instance.installed) return "Not installed"
+  if (checking) return "Checking authentication…"
+  if (instance.auth === "unauthenticated") return "Authentication failed"
+  if (instance.state === "error" || instance.state === "unavailable") return "Connection failed"
+  if (instance.state === "usage_limited") return "Usage limited"
+  if (instance.auth === "unknown") return "Authentication status unavailable"
+  return "Connected"
+}
+
 // An instance offers turns only while the user turned it on, the bridge
 // reports it ready with at least one model, and it did not just report its
 // CLI tool signed out (unknown sign-in state is tolerated; the server has

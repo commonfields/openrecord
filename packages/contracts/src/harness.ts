@@ -4,9 +4,11 @@ const Text = (max: number) => Schema.String.pipe(Schema.minLength(1), Schema.max
 const ModelId = Text(200).pipe(Schema.filter((value) => !value.startsWith("-") && !/[\u0000-\u001f\u007f]/.test(value)))
 export const HarnessDriver = Schema.Literal("codex", "claude", "opencode", "cursor")
 export type HarnessDriver = typeof HarnessDriver.Type
-export const HarnessModel = Schema.Struct({ id: ModelId, name: Text(200) })
+export const HarnessReasoningEffort = Schema.Literal("none", "minimal", "low", "medium", "high", "xhigh", "max", "thinking")
+export type HarnessReasoningEffort = typeof HarnessReasoningEffort.Type
+export const HarnessModel = Schema.Struct({ id: ModelId, name: Text(200), reasoningEfforts: Schema.optional(Schema.Array(HarnessReasoningEffort).pipe(Schema.minItems(1), Schema.maxItems(8))) })
 export type HarnessModel = typeof HarnessModel.Type
-export const HarnessSelection = Schema.Struct({ instanceId: Schema.UUID, model: ModelId })
+export const HarnessSelection = Schema.Struct({ instanceId: Schema.UUID, model: ModelId, reasoningEffort: Schema.optional(HarnessReasoningEffort) })
 export type HarnessSelection = typeof HarnessSelection.Type
 
 // A bridge may report availability; only the signed-in user controls activation.
@@ -73,6 +75,7 @@ export const HarnessAnswer = Schema.Union(
 )
 export type HarnessAnswer = typeof HarnessAnswer.Type
 export const HarnessModelInput = Schema.Struct({
+  reasoningEffort: Schema.optional(HarnessReasoningEffort),
   system: Schema.String.pipe(Schema.maxLength(16000)),
   contents: Schema.Array(Schema.Struct({ role: Schema.Literal("user", "model"), parts: Schema.Array(Schema.Unknown) })),
   tools: Schema.Array(Schema.Unknown)

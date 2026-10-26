@@ -3,6 +3,7 @@ import { SqlClient } from "@effect/sql"
 import { Data, Effect, Schema } from "effect"
 import { handleAgentMessage, type AgentHistory } from "./agent.js"
 import type { HarnessSelection } from "@openrecord/contracts"
+import { HarnessReasoningEffort } from "@openrecord/contracts"
 import { AgentModelError } from "./agent-model.js"
 
 export class AgentConversationRefused extends Data.TaggedError("AgentConversationRefused")<{
@@ -10,7 +11,7 @@ export class AgentConversationRefused extends Data.TaggedError("AgentConversatio
 }> {}
 const Citation = Schema.Struct({ kind: Schema.String, id: Schema.String, text: Schema.String })
 const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promptTokens: Schema.NullOr(Schema.Number), outputTokens: Schema.NullOr(Schema.Number), thoughtTokens: Schema.NullOr(Schema.Number), totalTokens: Schema.NullOr(Schema.Number) })
-const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), usage: Schema.Array(Usage) })) })
+const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number })
 const parse = Schema.decodeUnknown(Conversation)
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
@@ -88,7 +89,7 @@ export const sendConversation = (scope: ConversationScope, body: {
       if (!active.length) return yield* Effect.fail(new AgentModelError({ reason:"UNAVAILABLE" }))
     }).pipe(Effect.mapError(() => new AgentModelError({ reason:"UNAVAILABLE" })))
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive)
-    const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId } : {}) } }].slice(-24)
+    const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-24)
     const response = { ...reply, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
       last_request_id = ${body.requestId}, last_request_digest=${digest}, last_reply = ${JSON.stringify(response)}::jsonb, lease_id = NULL, lease_until = NULL,

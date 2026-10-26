@@ -89,13 +89,12 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
     version: "TEST",
     auth: "authenticated",
     state: "ready",
-    models: [{ id: "fixture-model", name: "TEST model" }]
+    models: [{ id: "fixture-model", name: "TEST model", reasoningEfforts: ["low", "high"] }]
   })
-  const connect = async (scope: Awaited<ReturnType<typeof fixture>>) => {
+  const connect = async (scope: Awaited<ReturnType<typeof fixture>>, status = report()) => {
     const pair = await run(createPair(scope, "TEST laptop"))
     const registered = await run(registerBridge(pair.code))
     const bridge = await run(authenticateBridge(registered.token))
-    const status = report()
     await run(pollHarnessJobs(bridge, [status]))
     const instance = (await run(harnessCatalog(scope))).instances[0]!
     return { pair, registered, bridge, status, instance }
@@ -148,6 +147,8 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
       reason: "UNAVAILABLE"
     })
     await run(activateHarness(a, c.instance.id, true))
+    expect((await run(pollHarnessJobs(c.bridge, [c.status], false))).refresh).toBe(true)
+    expect((await run(pollHarnessJobs(c.bridge, [c.status], false))).refresh).toBe(false)
     await expect(
       run(
         invokeHarness(
@@ -164,13 +165,21 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
     await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "not-advertised" }))).rejects.toMatchObject({
       reason: "MODEL_UNAVAILABLE"
     })
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model", reasoningEffort: "medium" }))).rejects.toMatchObject({ reason: "MODEL_UNAVAILABLE" })
+  })
+  it("allows only the native reasoning levels advertised by an enabled OpenCode model", async () => {
+    const a = await fixture()
+    const c = await connect(a, { ...report(), driver: "opencode", models: [{ id: "fixture-model", name: "TEST model", reasoningEfforts: ["none", "thinking"] }] })
+    await run(activateHarness(a, c.instance.id, true))
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model", reasoningEffort: "thinking" }))).resolves.toMatchObject({ driver: "opencode" })
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model", reasoningEffort: "high" }))).rejects.toMatchObject({ reason: "MODEL_UNAVAILABLE" })
   })
   it("binds one claim to one selected model and refuses foreign, duplicate and late completion", async () => {
     const a = await fixture(),
       c = await connect(a),
       other = await connect(await fixture())
     await run(activateHarness(a, c.instance.id, true))
-    const selection = { instanceId: c.instance.id, model: "fixture-model" }
+    const selection = { instanceId: c.instance.id, model: "fixture-model", reasoningEffort: "high" as const }
     const pending = run(
       invokeHarness(a, selection, {
         system: "TEST",
@@ -192,6 +201,7 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
     }
     const job = claimed?.job
     expect(job?.model).toBe("fixture-model")
+    expect(job?.input.reasoningEffort).toBe("high")
     if (!job) throw new Error("TEST job was not claimed")
     const result = {
       lease: job.lease,

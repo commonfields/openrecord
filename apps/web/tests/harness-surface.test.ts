@@ -5,8 +5,10 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import type { HarnessCatalog, HarnessInstance } from "@openrecord/contracts"
+import { filterModels, modelProvider } from "../app/components/agent-model-picker"
 import {
   HARNESS_NAMES,
+  harnessStatusLabel,
   instanceReady,
   loginCommand,
   modelOptions,
@@ -24,6 +26,130 @@ const settingsDialog = () => read("../app/components/settings-dialog.tsx")
 const harnessSettings = () => read("../app/components/harness-settings.tsx")
 
 describe("agent workspace presentation", () => {
+  it("keeps work in the conversation, slows the shimmer, and exposes only supported reasoning levels", () => {
+    const chat = agentChat()
+    const overview = chat.slice(chat.indexOf("function OverviewAgent("), chat.indexOf("export function AgentWorkspace("))
+    expect(overview).not.toContain("<AgentPane")
+    expect(overview).not.toContain("const split")
+    expect(overview).not.toContain("setFocus")
+    expect(overview).toContain("work={session.hasWork ? <WorkPane")
+    expect(chat).toContain('aria-label="Reasoning effort"')
+    expect(chat).toContain("session.reasoningEfforts.length")
+    expect(chat).toContain("{ ...selectionField, reasoningEffort }")
+    expect(read("../app/globals.css")).toContain("thinking-sweep 4.5s linear infinite")
+  })
+  it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
+    expect(agentChat()).toContain("activity.start(businessId, requestId, text)")
+    expect(agentChat()).toContain("activity.finish(businessId, requestId, true)")
+    expect(read("../app/components/app-shell.tsx")).toContain('c.working ? <span role="status" className="thinking text-xs">Working…')
+    const picker = read("../app/components/agent-model-picker.tsx")
+    expect(picker).toContain("p-0 text-xs text-muted-foreground")
+    expect(agentChat()).toContain("p-0 text-xs text-muted-foreground shadow-none")
+    expect(agentChat()).not.toContain("<span>Reasoning</span>")
+    expect(agentChat()).toContain('<SelectValue>{session.reasoningEffort ?? "Reasoning"}</SelectValue>')
+    expect(agentChat()).not.toContain("{session.reasoningEfforts.length ? <div")
+    expect(agentChat()).toContain("disabled={inFlight || session.reasoningEfforts.length === 0}")
+    expect(agentChat()).toContain("This provider hasn't reported reasoning controls for this model.")
+  })
+
+  it("separates chat history from Work navigation and keeps header tabs compact", () => {
+    const shell = read("../app/components/app-shell.tsx")
+    const sidebar = shell.slice(shell.indexOf("function SidebarBody()"), shell.indexOf("const CHATS_SHOWN"))
+    expect(sidebar.includes("{agent ? <ChatHistory /> : <>")).toBe(true)
+    expect(sidebar.includes('label="Agent"')).toBe(false)
+    for (const label of ["Channels", "Work", "Results", "Clients", "All businesses"]) {
+      expect(sidebar.includes(`label="${label}"`)).toBe(true)
+    }
+    const tabs = shell.slice(shell.indexOf("function ViewTabs("), shell.indexOf("function SidebarLink("))
+    expect(tabs.includes("h-full min-h-0 self-stretch rounded-[3px]")).toBe(true)
+    expect(tabs.includes("grid-cols-2 items-stretch rounded-md border border-sidebar-border")).toBe(true)
+    expect(tabs.includes("grid h-6 w-auto")).toBe(true)
+    expect(tabs.includes("rounded-[3px] px-1 text-[0.6875rem]")).toBe(true)
+    expect(tabs.includes("data-[state=active]:shadow-(--card-shadow)")).toBe(false)
+    expect(sidebar.indexOf('label="Results"')).toBeLessThan(sidebar.indexOf('label="Channels"'))
+    expect(sidebar.includes("<ViewTabs")).toBe(false)
+    const header = shell.slice(shell.indexOf("<header"), shell.indexOf("</header>"))
+    expect(header.includes("<ViewTabs />")).toBe(true)
+    expect(header.indexOf("<ViewTabs />")).toBeLessThan(header.indexOf("<Breadcrumbs />"))
+    expect(tabs.includes("rounded-full")).toBe(false)
+  })
+
+  it("uses plain sidebar search and new-chat icons with confirmation before clearing", () => {
+    const shell = read("../app/components/app-shell.tsx")
+    expect(shell.includes("<SearchButton onOpen={open} />")).toBe(true)
+    expect(shell.includes("<NewChatButton base={base}")).toBe(true)
+    expect(shell.includes("Find…")).toBe(false)
+    const newChat = shell.slice(shell.indexOf("function NewChatButton("), shell.indexOf("function ViewTabs("))
+    expect(newChat.includes("<AlertDialogTrigger asChild>")).toBe(true)
+    expect(newChat.includes("deletes the current conversation")).toBe(true)
+    expect(newChat.includes("await Agent.clear(businessId)")).toBe(true)
+    expect(newChat.includes("Couldn't start a new chat")).toBe(true)
+    expect(newChat.includes("<SquarePenIcon")).toBe(true)
+  })
+
+  it("uses readable sidebar navigation and a plain account control", () => {
+    const shell = read("../app/components/app-shell.tsx")
+    expect(shell.includes("group/link relative flex h-9 items-center gap-2 rounded-md text-base")).toBe(true)
+    const account = shell.slice(shell.indexOf("function AccountMenu()"))
+    const trigger = account.slice(0, account.indexOf("</DropdownMenuTrigger>"))
+    expect(trigger.includes("rounded-md text-left text-base")).toBe(true)
+    expect(trigger.includes("border-sidebar-border")).toBe(false)
+    expect(trigger.includes("shadow-(--card-shadow)")).toBe(false)
+    expect(trigger.includes("bg-card")).toBe(false)
+    expect(account.includes("min-h-16 w-full px-2.5 py-4")).toBe(true)
+    expect(account.includes('aria-label="Account menu"')).toBe(true)
+  })
+
+  it("keeps the narrow composer low and multiline controls at the bottom without a scrollbar", () => {
+    const chat = agentChat()
+    expect(chat.includes("max-w-6xl")).toBe(false)
+    expect(chat.includes("max-w-3xl shrink-0 pb-2")).toBe(true)
+    expect(chat.includes("dark:bg-[#262626]")).toBe(true)
+    expect(chat.includes("border-border bg-[#fafafa] px-3 py-2")).toBe(true)
+    expect(chat.includes("relative flex min-h-12 cursor-text")).toBe(true)
+    expect(chat.includes("cursor-text items-end")).toBe(true)
+    expect(chat.includes("items-end gap-3 rounded-xl")).toBe(true)
+    expect(chat.includes("size-8 shrink-0 self-end")).toBe(true)
+    expect(chat.includes("flex shrink-0 self-end items-center")).toBe(true)
+    expect(chat.includes("overflow-y-auto")).toBe(true)
+    expect(chat.includes("[scrollbar-width:none] [&::-webkit-scrollbar]:hidden")).toBe(true)
+    expect(chat.includes("disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50")).toBe(true)
+    expect(chat.includes("disabled={!canSend}")).toBe(true)
+  })
+
+  it("scrolls command results independently above the anchored composer and omits helper labels", () => {
+    const chat = agentChat()
+    const overview = chat.slice(chat.indexOf("function OverviewAgent"), chat.indexOf("// ----", chat.indexOf("function OverviewAgent") + 1))
+    expect(chat.includes("setWorkspace(true)")).toBe(true)
+    expect(chat.includes("const crowded")).toBe(false)
+    expect(overview.includes('aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto"')).toBe(true)
+    expect(overview.includes("max-w-3xl shrink-0 pb-2")).toBe(true)
+    expect(chat.includes("Stored evidence")).toBe(false)
+    expect(chat.includes("Approval required")).toBe(false)
+  })
+
+  it("keeps Results measurement-focused without the Work action queue", () => {
+    const results = read("../app/routes/today.tsx")
+    expect(results.includes("NextActions"), "Results must not render Do next").toBe(false)
+    expect(results).toContain("<HealthStrip")
+    expect(results).toContain("<SourcesPanel")
+    expect(read("../app/routes/work.tsx")).toContain("<NextActions")
+  })
+
+  it("places chat actions and voice inside the input, with the model in a separate toolbar", () => {
+    const chat = agentChat()
+    const composer = chat.slice(chat.indexOf("function Composer"), chat.indexOf("function CheckProposal"))
+    const toolbar = composer.indexOf('role="toolbar" aria-label="Chat options"')
+    expect(toolbar).toBeGreaterThan(0)
+    expect(composer.indexOf('aria-label="Chat actions"')).toBeLessThan(toolbar)
+    expect(composer.indexOf('"Start voice input"')).toBeLessThan(toolbar)
+    expect(composer.indexOf("<ModelSelector")).toBeGreaterThan(toolbar)
+    expect(composer.includes("min-h-28"), "input stays compact").toBe(false)
+    expect(composer.includes('className="w-full space-y-0.5"')).toBe(true)
+    expect(composer.includes("min-h-6 flex-wrap")).toBe(true)
+    expect(chat.includes("Describe a task or ask a question")).toBe(true)
+  })
+
   it("does not override sidebar focus when opening the Work destination", () => {
     const business = read("../app/routes/business.tsx")
     const results = business.slice(business.indexOf("export function ResultsPage"))
@@ -34,11 +160,12 @@ describe("agent workspace presentation", () => {
   it("omits the empty-chat greeting and keeps the model menu trigger text-only", () => {
     const chat = agentChat()
     expect(chat.includes("What should we look into for"), "empty chat greeting removed").toBe(false)
-    const trigger = chat.match(/<SelectTrigger aria-label="Agent model" className="([^"]+)"/)
+    const picker = read("../app/components/agent-model-picker.tsx")
+    const trigger = picker.match(/aria-label="Agent model" disabled=\{locked\} className="([^"]+)"/)
     expect(trigger?.[1]).toContain("border-0")
     expect(trigger?.[1]).toContain("bg-transparent")
     expect(trigger?.[1]).toContain("shadow-none")
-    expect(chat).toContain("<SelectContent")
+    expect(picker).toContain("<Popover.Content")
   })
 })
 
@@ -70,6 +197,27 @@ function catalog(overrides: Partial<HarnessCatalog> = {}): HarnessCatalog {
 }
 
 describe("model options from the catalog", () => {
+  it("hides disabled-provider status and distinguishes failed authentication from unknown or offline", () => {
+    expect(harnessStatusLabel(instance({ enabled: false, auth: "unauthenticated" }), false)).toBeNull()
+    expect(harnessStatusLabel(instance(), true)).toBe("Checking authentication…")
+    expect(harnessStatusLabel(instance({ auth: "unauthenticated" }), false)).toBe("Authentication failed")
+    expect(harnessStatusLabel(instance({ auth: "unknown" }), false)).toBe("Authentication status unavailable")
+    expect(harnessStatusLabel(instance({ state: "offline" }), true)).toBe("Bridge offline")
+    expect(harnessStatusLabel(instance(), false)).toBe("Connected")
+  })
+
+  it("filters models by provider and case-insensitive name or id without changing option identities", () => {
+    const codex = instance()
+    const opencode = instance({ driver: "opencode", models: [{ id: "vendor/model:free", name: "GLM Flash" }, { id: "other", name: "Other" }] })
+    const options = modelOptions(catalog({ hosted: HOSTED, instances: [codex, opencode] }))
+    expect([...new Set(options.map(modelProvider))]).toEqual(["hosted", "codex", "opencode"])
+    expect(filterModels(options, "opencode", " FLASH ").map(o => o.value)).toEqual([`${opencode.id}:vendor/model:free`])
+    expect(filterModels(options, "all", "model:free")).toEqual(filterModels(options, "opencode", "glm"))
+    expect(filterModels(options, "codex", "flash")).toEqual([])
+    expect(filterModels(options, "all", "")).toEqual(options)
+    expect(filterModels([], "all", "x")).toEqual([])
+  })
+
   it("lists hosted first, then enabled ready instances per provider", () => {
     const codex = instance()
     const claude = instance({ driver: "claude", name: "Home laptop", models: [{ id: "claude-x", name: "Claude X" }] })
@@ -268,8 +416,9 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain("Couldn't load providers")
     expect(dialog).toContain("Retry")
     expect(dialog).toContain("Offline")
-    expect(dialog).toContain("Needs sign-in on this machine")
-    expect(dialog).toContain("Sign-in state unknown")
+    expect(dialog).toContain("harnessStatusLabel")
+    expect(dialog).not.toContain("<Badge")
+    expect(dialog).toContain("{instance.enabled ? <>")
     // The downloaded bridge and its prerequisites, where the pair/login
     // commands run. The code is a capability: copy says so.
     expect(dialog).toContain('href={BRIDGE_SCRIPT} download')
@@ -282,10 +431,24 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain("Harness.refresh")
     expect(dialog).toContain("Harness.revokeBridge")
     expect(dialog).toContain("pairCommand")
+    expect(dialog).toContain("<ProviderLogo")
+    expect(dialog).toContain("onClick={connect}>Connect")
+    expect(dialog).toContain("node openrecord-bridge.mjs run")
   })
 })
 
 describe("composer model selector and stop control", () => {
+  it("opens the model menu above the trigger with a compact panel and blue selection check", () => {
+    const chat = read("../app/components/agent-model-picker.tsx")
+    expect(chat.includes('<Popover.Content side="top" align="end" sideOffset={8}')).toBe(true)
+    expect(chat.includes("Model · next reply")).toBe(false)
+    expect(chat.includes("dark:bg-[#303030]")).toBe(true)
+    expect(chat.includes("size-4 shrink-0 text-secondary")).toBe(true)
+    expect(chat.includes('aria-label="Model providers"')).toBe(true)
+    expect(chat.includes('aria-label="Search models"')).toBe(true)
+    expect(chat.includes("Enable fast mode")).toBe(false)
+  })
+
   it("is present in every layout and locked while a turn is in flight", () => {
     const chat = agentChat()
     expect([...chat.matchAll(/session=\{session\}/g)].length).toBeGreaterThanOrEqual(3)
@@ -293,36 +456,46 @@ describe("composer model selector and stop control", () => {
     expect(chat).toContain("locked={inFlight}")
     expect(chat).toContain("Manage providers")
     expect(chat).toContain('openSettings("agent")')
-    expect(chat).toContain('aria-label="Agent model"')
+    expect(read("../app/components/agent-model-picker.tsx")).toContain('aria-label="Agent model"')
   })
 
   it("shows a stop button wired to the session cancel, replacing send in flight", () => {
     const chat = agentChat()
+    const stop = chat.slice(chat.indexOf("{inFlight && session ? ("), chat.indexOf(") : text.trim().length > 0 ? ("))
+    expect(stop.includes('variant="secondary"'), "Stop needs the contrasting blue button palette").toBe(true)
+    expect(stop.includes("text-foreground"), "page text color must not override the stop icon contrast").toBe(false)
     expect(chat).toContain('aria-label="Stop the agent"')
     expect(chat).toContain("stopTurn")
     expect(chat).toContain("Agent.cancel")
   })
 
-  it("keeps /setup /status /plan /report usable without a model", () => {
+  it("runs slash commands through the selected agent in all layouts without rendering workflow cards", () => {
     const chat = agentChat()
     // The selection gate never folds into the Composer's disabled prop, so
     // the textarea and command submit stay enabled in every layout.
     expect(chat).not.toMatch(/disabled=\{session\.busy \|\| !session\.ready \|\| !session\.sendable/)
     expect(chat).not.toMatch(/disabled=\{!session\.ready \|\| session\.busy \|\| !session\.sendable/)
-    // The gate is its own prop, checked only against ordinary sends.
     expect(chat).toContain("modelBlocked={!session.sendable}")
     expect(chat).toContain("!modelBlocked && text.trim().length > 0")
-    // Commands stay submittable with the gate on; text typed while blocked is
-    // preserved rather than cleared.
-    expect(chat).toContain("Commands are deterministic and never need a model")
-    expect(chat).toContain("command !== null ||")
+    expect(chat).toContain("Choose an available model before running a command.")
+    expect(chat).toContain("session.send(`/${command}`)")
+    expect(chat).toContain('text: "Working…", pending: true')
+    expect(chat).not.toContain("<CommandFeed")
+    expect(chat).not.toContain("<StatusCard")
+    expect(chat).not.toContain("<SetupFlow")
+    expect(chat).toContain("onCommand={onCommand}")
+    const pane = chat.slice(chat.indexOf("function AgentPane("), chat.indexOf("// ---- overview"))
+    expect(pane).toContain("onCommand: (c: AgentCommand) => void")
+    expect([...chat.matchAll(/onCommand=\{runCommand\}/g)].length).toBeGreaterThanOrEqual(3)
   })
 
-  it("labels completed replies with the provider and model", () => {
+  it("keeps provider metadata without displaying an attribution line or duplicate chat actions", () => {
     const chat = agentChat()
-    expect(chat).toContain("Answered by")
-    // Live replies: from the send response. History: from the persisted
-    // inference, rendered exactly the same way.
+    expect(chat).not.toContain("Answered by")
+    expect(chat).not.toContain('aria-label="Delete conversation"')
+    expect(chat).not.toContain('aria-label="Start a new conversation"')
+    expect(chat).toContain("thinking text-base leading-relaxed")
+    expect(chat).toContain("text-base leading-relaxed whitespace-pre-wrap")
     expect(chat).toContain("provider: r.provider")
     expect(chat).toContain("model: r.requestedModel")
     expect(chat).toContain("toDisplayMessages")
@@ -334,6 +507,6 @@ describe("composer model selector and stop control", () => {
     const chat = agentChat()
     expect(chat).toContain("!session.sendable")
     expect(chat).toContain('session.selection.status === "unavailable"')
-    expect(chat).toContain("The model you used is unavailable now")
+    expect(read("../app/components/agent-model-picker.tsx")).toContain("The model you used is unavailable now")
   })
 })
