@@ -8,10 +8,10 @@ import { useChrome, usePaneSlot } from "@/components/app-shell"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
-import { Link } from "react-router"
+import { Link, useNavigate, useSearchParams } from "react-router"
 import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentMessage, type AgentProposal } from "@/lib/api"
 import { agentEvidencePath } from "@/lib/agent-evidence"
-import { notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
+import { chatPath, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -73,7 +73,10 @@ type AgentSession = ReturnType<typeof useAgentSession>
 // One business's private conversation and the proposals it produced. Loads
 // when enabled (a closed side panel costs nothing) and stays scoped to the
 // business it was opened for.
-export function useAgentSession(businessId: string, enabled = true) {
+export function useAgentSession(businessId: string | null, enabled = true) {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const requestedConversationId = searchParams.get("chat") ?? undefined
   const activity = useChatActivity()
   const [messages, setMessages] = useState<Message[]>([])
   const [conversationId, setConversationId] = useState<string | undefined>()
@@ -96,33 +99,35 @@ export function useAgentSession(businessId: string, enabled = true) {
   const reasoningEffort = reasoningChoice && reasoningChoice.key === reasoningKey && reasoningEfforts.includes(reasoningChoice.effort) ? reasoningChoice.effort : undefined
   const chooseReasoning = (effort: HarnessReasoningEffort | undefined) => setReasoningChoice(effort && reasoningKey ? { key: reasoningKey, effort } : null)
 
-  const refreshProposals = () => void Agent.proposals(businessId).then(r => { if (mounted.current) setProposals(r.proposals) }).catch(() => {})
+  const refreshProposals = () => { if (businessId !== null) void Agent.proposals(businessId).then(r => { if (mounted.current) setProposals(r.proposals) }).catch(() => {}) }
 
   useEffect(() => {
     mounted.current = true
-    if (!enabled || !businessId) return () => { mounted.current = false }
+    if (!enabled || businessId === "") return () => { mounted.current = false }
     let live = true
     setMessages([]); setConversationId(undefined); setRevision(0); setReady(false); setFailed(null); setUnavailable(null); setProposals([])
-    void Agent.load(businessId).then(r => {
+    void Agent.load(businessId, requestedConversationId).then(async r => {
+      if (!r.conversation && !requestedConversationId && live) r = await Agent.create(businessId, crypto.randomUUID())
       if (!live) return
+      if (!r.conversation) { setUnavailable("This conversation is no longer available"); return }
       if (r.conversation) {
         setConversationId(r.conversation.id); setRevision(r.conversation.revision)
         setMessages(toDisplayMessages(r.conversation.messages))
       }
       setReady(true)
     }).catch(e => { if (live) setUnavailable(unavailableText(e)) })
-    void Agent.proposals(businessId).then(r => { if (live) setProposals(r.proposals) }).catch(() => {})
+    if (businessId !== null) void Agent.proposals(businessId).then(r => { if (live) setProposals(r.proposals) }).catch(() => {})
     return () => { live = false; mounted.current = false }
-  }, [businessId, enabled])
+  }, [businessId, enabled, requestedConversationId])
 
   const send = (text: string) => {
-    if (pending.current || !ready) return
+    if (pending.current || !ready || !conversationId) return
     // A turn cannot start on a selection known to be missing; the server has
     // the final word on anything else.
     if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
-    activity.start(businessId, requestId, text)
+    activity.start(businessId, requestId, text, conversationId)
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Working…", pending: true }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
     void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
@@ -138,7 +143,7 @@ export function useAgentSession(businessId: string, enabled = true) {
       setMessages(m => m.slice(0, -1))
       setFailed({ text, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
       refreshProposals()
-      void Agent.load(businessId).then(r => {
+      void Agent.load(businessId, conversationId).then(r => {
         if (mounted.current && r.conversation && r.conversation.revision > revision) {
           setConversationId(r.conversation.id); setRevision(r.conversation.revision)
           setMessages(toDisplayMessages(r.conversation.messages))
@@ -149,10 +154,11 @@ export function useAgentSession(businessId: string, enabled = true) {
   const clear = () => {
     if (pending.current) return
     pending.current = true; setBusy(true)
-    void Agent.clear(businessId).then(() => {
-      activity.forget(businessId)
-      if (mounted.current) { setMessages([]); setConversationId(undefined); setRevision(0); setFailed(null); setReady(true) }
+    void Agent.clear(businessId, conversationId).then(async () => {
+      activity.forget(businessId, conversationId)
       notifyAgentChats()
+      const { conversation } = await Agent.create(businessId, crypto.randomUUID())
+      if (mounted.current) void navigate(chatPath({ businessId, id: conversation.id }))
     }).catch(() => { if (mounted.current) toast.error("Couldn't delete the conversation. Try again.") }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
   }
   // Sends the message that got no reply again, in place of the unanswered copy.
@@ -163,16 +169,20 @@ export function useAgentSession(businessId: string, enabled = true) {
     send(text)
   }
 
-  // "New conversation" returns to an empty thread. The backend keeps exactly
-  // one conversation per business and user, so starting fresh goes through the
-  // same delete: the next message opens a new conversation.
-  const startNew = clear
+  const startNew = () => {
+    if (pending.current) return
+    pending.current = true; setBusy(true)
+    void Agent.create(businessId, crypto.randomUUID()).then(({ conversation }) => {
+      void navigate(chatPath({ businessId, id: conversation.id }))
+    }).catch(() => { if (mounted.current) toast.error("Couldn't start a new chat. Try again.") })
+      .finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
+  }
 
   // Asks the server to stop the turn in flight; the pending send settles on
   // its own once the backend records the cancellation.
   const stopTurn = () => {
     if (!pending.current) return
-    void Agent.cancel(businessId).catch(() => {
+    void Agent.cancel(businessId, conversationId).catch(() => {
       if (mounted.current) toast.error("Couldn't stop the agent. Try again.")
     })
   }
@@ -190,6 +200,7 @@ export function useAgentSession(businessId: string, enabled = true) {
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
+  if (session.businessId === null) return null
   const done = session.refreshProposals
   return proposal.kind === "REQUEST_CHECK"
     ? <CheckProposal businessId={session.businessId} businessName={businessName} proposal={proposal} onDone={done} />
@@ -227,7 +238,7 @@ function Thread({ session, compact, placeholder, onCommand, work }: {
                         <p className="text-base leading-relaxed whitespace-pre-wrap text-foreground/80">{m.text}</p>
                       )}
                       {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
-                        const path = agentEvidencePath(session.businessId, c)
+                        const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
                         return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link> : <span>Evidence unavailable</span>}</li>
                       })}</ul> : null}
                       {m.tools && m.tools.length > 0 ? (
@@ -309,7 +320,7 @@ function WorkPane({ session, businessName, reads = true }: { session: AgentSessi
                 {r.citations.length ? (
                   <ul className="mt-2 flex flex-wrap gap-1.5 border-t pt-2" aria-label="Evidence used">
                     {r.citations.map(c => {
-                      const path = agentEvidencePath(session.businessId, c)
+                      const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
                       return (
                         <li key={`${c.kind}:${c.id}`}>
                           {path ? (
@@ -421,11 +432,12 @@ function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon,
 // ---- overview: the agent is the page ----
 
 // Replies, work and evidence remain in one conversation column.
-export function AgentChat(props: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
-  return <OverviewAgent key={props.businessId} {...props} />
+export function AgentChat(props: { businessId: string | null; businessName: string; onConversationChange?: (active: boolean) => void }) {
+  const [searchParams] = useSearchParams()
+  return <OverviewAgent key={`${props.businessId}:${searchParams.get("chat") ?? "current"}`} {...props} />
 }
 
-function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
+function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string | null; businessName: string; onConversationChange?: (active: boolean) => void }) {
   const session = useAgentSession(businessId)
   const runCommand = (command: AgentCommand) => session.send(`/${command}`)
   const { setMinimal, setWorkspace } = useChrome()

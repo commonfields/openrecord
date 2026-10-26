@@ -4,7 +4,7 @@ import { AgentModelError, type AgentModel, type ModelResponse } from "./agent-mo
 import { invokeHarness, resolveHarness, HarnessRefused } from "./harness-store.js"
 
 export const harnessModel = (
-  scope: { accountId: string; userId: string; businessId: string },
+  scope: { accountId: string; userId: string; businessId: string | null },
   selection: HarnessSelection
 ) =>
   Effect.gen(function* () {

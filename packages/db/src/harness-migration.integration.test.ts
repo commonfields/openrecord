@@ -26,7 +26,7 @@ suite("harness migration rehearsal (new disposable databases only)", () => {
         for (const { tablename } of tables.rows) {
           const identifier = tablename.replaceAll('"', '""')
           const digest = await client.query<{ digest: string }>(
-            `SELECT md5(coalesce(string_agg((to_jsonb(item)-'last_request_digest')::text,'|' ORDER BY (to_jsonb(item)-'last_request_digest')::text),'')) AS digest FROM "${identifier}" item`
+            `SELECT md5(coalesce(string_agg((to_jsonb(item)-'last_request_digest'-'archived_at')::text,'|' ORDER BY (to_jsonb(item)-'last_request_digest'-'archived_at')::text),'')) AS digest FROM "${identifier}" item`
           )
           result[tablename] = digest.rows[0]?.digest ?? ""
         }

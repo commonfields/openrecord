@@ -1,5 +1,5 @@
 import { HttpIncomingMessage, HttpRouter, HttpServerRequest } from "@effect/platform"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { BusinessRepository } from "@openrecord/db"
 import {
   HarnessActivation,
@@ -7,9 +7,12 @@ import {
   HarnessPoll,
   HarnessRegister,
   HarnessJobResult,
+  AgentMessageRequest,
   decodeRouteId
 } from "@openrecord/contracts"
 import { configuredAgentModel } from "./agent-model.js"
+import { AgentConversationRefused, createConversation, deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
+import { AgentModelError } from "./agent-model.js"
 import { decode, json, operatorSessionFor, readJson as readRequestJson, type WithSession } from "./record-routes.js"
 import {
   HarnessRefused,
@@ -29,6 +32,9 @@ import {
 const readJson = readRequestJson.pipe(HttpIncomingMessage.withMaxBodySize(Option.some(200000)))
 
 const failure = (e: unknown) => {
+  if (e instanceof AgentModelError) return json(503, { _tag: "AgentUnavailable", reason: e.reason })
+  if (e instanceof AgentConversationRefused)
+    return json(e.reason === "NOT_FOUND" ? 404 : 409, { _tag: "ConversationUnavailable", reason: e.reason })
   if (e instanceof HarnessRefused)
     return json(
       e.reason === "UNAUTHENTICATED" ? 401 : e.reason === "NOT_FOUND" ? 404 : 409,
@@ -61,6 +67,42 @@ export const harnessApi = (withSession: WithSession) => {
       return yield* act(yield* authenticateBridge(token))
     }).pipe(Effect.catchAll(failure))
   return HttpRouter.empty.pipe(
+    HttpRouter.get("/api/agent/conversation", operator(session => Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const id = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (id !== undefined && decodeRouteId(id)._tag !== "Right") return yield* invalid()
+      return yield* json(200, { conversation: yield* loadConversation({ ...session, businessId: null }, id) }, { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
+    HttpRouter.post("/api/agent/conversation", operator(session => Effect.gen(function*() {
+      const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
+      if (!body) return yield* invalid()
+      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: null }, body.conversationId) }, { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
+    HttpRouter.del("/api/agent/conversation", operator(session => Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const id = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (id !== undefined && decodeRouteId(id)._tag !== "Right") return yield* invalid()
+      yield* deleteConversation({ ...session, businessId: null }, id)
+      return yield* json(200, { deleted: true })
+    })).pipe(Effect.catchAll(failure))),
+    HttpRouter.post("/api/agent/messages", operator(session => Effect.gen(function*() {
+      const body = decode(AgentMessageRequest, yield* readJson)
+      if (!body) return yield* invalid()
+      return yield* json(200, yield* sendConversation({ ...session, businessId: null }, body), { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
+    HttpRouter.post("/api/agent/cancel", operator(session => Effect.gen(function*() {
+      const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
+      if (!body) return yield* invalid()
+      yield* cancelHarnessConversation({ ...session, businessId: null, conversationId: body.conversationId })
+      return yield* json(200, { cancelled: true })
+    })).pipe(Effect.catchAll(failure))),
+    HttpRouter.post("/api/businesses/:id/agent/conversation", operator(session => Effect.gen(function*() {
+      const id = yield* routeId
+      const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
+      if (!id || !body) return yield* invalid()
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, id))) return yield* json(404, { _tag: "BusinessNotFound" })
+      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: id }, body.conversationId) }, { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
     HttpRouter.get(
       "/api/agent/providers",
       operator((session) =>
@@ -129,7 +171,9 @@ export const harnessApi = (withSession: WithSession) => {
           if (!id) return yield* invalid()
           if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, id)))
             return yield* json(404, { _tag: "BusinessNotFound" })
-          yield* cancelHarnessConversation({ ...session, businessId: id })
+          const body = decode(Schema.Struct({ conversationId: Schema.optional(Schema.UUID) }), yield* readJson)
+          if (!body) return yield* invalid()
+          yield* cancelHarnessConversation({ ...session, businessId: id, ...(body.conversationId ? { conversationId: body.conversationId } : {}) })
           return yield* json(200, { cancelled: true })
         })
       ).pipe(Effect.catchAll(failure))

@@ -39,7 +39,7 @@ describe("agent workspace presentation", () => {
     expect(read("../app/globals.css")).toContain("thinking-sweep 4.5s linear infinite")
   })
   it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
-    expect(agentChat()).toContain("activity.start(businessId, requestId, text)")
+    expect(agentChat()).toContain("activity.start(businessId, requestId, text, conversationId)")
     expect(agentChat()).toContain("activity.finish(businessId, requestId, true)")
     expect(read("../app/components/app-shell.tsx")).toContain('c.working ? <span role="status" className="thinking text-xs">Working…')
     const picker = read("../app/components/agent-model-picker.tsx")
@@ -57,9 +57,10 @@ describe("agent workspace presentation", () => {
     const sidebar = shell.slice(shell.indexOf("function SidebarBody()"), shell.indexOf("const CHATS_SHOWN"))
     expect(sidebar.includes("{agent ? <ChatHistory /> : <>")).toBe(true)
     expect(sidebar.includes('label="Agent"')).toBe(false)
-    for (const label of ["Channels", "Work", "Results", "Clients", "All businesses"]) {
+    for (const label of ["Channels", "Work", "Results"]) {
       expect(sidebar.includes(`label="${label}"`)).toBe(true)
     }
+    for (const label of ["Clients", "All businesses"]) expect(sidebar.includes(`label="${label}"`)).toBe(false)
     const tabs = shell.slice(shell.indexOf("function ViewTabs("), shell.indexOf("function SidebarLink("))
     expect(tabs.includes("h-full min-h-0 self-stretch rounded-[3px]")).toBe(true)
     expect(tabs.includes("grid-cols-2 items-stretch rounded-md border border-sidebar-border")).toBe(true)
@@ -74,16 +75,16 @@ describe("agent workspace presentation", () => {
     expect(tabs.includes("rounded-full")).toBe(false)
   })
 
-  it("uses plain sidebar search and new-chat icons with confirmation before clearing", () => {
+  it("starts a separate sidebar chat without deleting the current conversation", () => {
     const shell = read("../app/components/app-shell.tsx")
     expect(shell.includes("<SearchButton onOpen={open} />")).toBe(true)
-    expect(shell.includes("<NewChatButton base={base}")).toBe(true)
+    expect(shell.includes("<NewChatDialog />")).toBe(true)
     expect(shell.includes("Find…")).toBe(false)
-    const newChat = shell.slice(shell.indexOf("function NewChatButton("), shell.indexOf("function ViewTabs("))
-    expect(newChat.includes("<AlertDialogTrigger asChild>")).toBe(true)
-    expect(newChat.includes("deletes the current conversation")).toBe(true)
-    expect(newChat.includes("await Agent.clear(businessId)")).toBe(true)
-    expect(newChat.includes("Couldn't start a new chat")).toBe(true)
+    const newChat = read("../app/components/new-chat-dialog.tsx")
+    expect(newChat.includes("Agent.clear")).toBe(false)
+    expect(newChat.includes("deletes the current conversation")).toBe(false)
+    expect(newChat.includes("await Agent.create(businessId, id)")).toBe(true)
+    expect(newChat.includes("Couldn't start the chat")).toBe(true)
     expect(newChat.includes("<SquarePenIcon")).toBe(true)
   })
 
@@ -390,7 +391,7 @@ describe("api client carries the selection contract", () => {
   })
 
   it("wires the real cancel route for stopping a turn", () => {
-    expect(webApi()).toContain("/agent/cancel")
+    expect(webApi()).toContain("${agentBase(businessId)}/cancel")
   })
 })
 

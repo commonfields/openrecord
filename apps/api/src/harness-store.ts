@@ -203,7 +203,7 @@ export const completeHarnessJob = (bridge: BridgeIdentity, id: string, result: H
   })
 
 export const invokeHarness = (
-  scope: Session & { businessId: string },
+  scope: Session & { businessId: string | null },
   selection: HarnessSelection,
   input: HarnessModelInput
 ) =>
@@ -236,14 +236,17 @@ export const invokeHarness = (
     )
   })
 
-export const cancelHarnessConversation = (scope: Session & { businessId: string }) =>
+export const cancelHarnessConversation = (scope: Session & { businessId: string | null; conversationId?: string }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        yield* sql`UPDATE agent_conversations SET lease_id=NULL,lease_until=NULL WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id=${scope.businessId}`
-        yield* sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()
-      WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id=${scope.businessId} AND status IN ('QUEUED','RUNNING')`
+        yield* sql`UPDATE agent_conversations SET lease_id=NULL,lease_until=NULL WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid
+          AND (${scope.conversationId ?? null}::uuid IS NULL OR id=${scope.conversationId ?? null}::uuid)`
+        // A targeted turn's cancellation watcher cancels its own provider job.
+        // Do not cancel another saved conversation's job in the same business.
+        if (!scope.conversationId) yield* sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()
+      WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND status IN ('QUEUED','RUNNING')`
       })
     )
   })

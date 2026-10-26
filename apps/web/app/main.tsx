@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { AppShell } from "@/components/app-shell"
+import { AgentChat } from "@/components/agent-chat"
 import { SettingsProvider } from "@/components/settings-dialog"
 import { PreferencesProvider } from "@/lib/preferences"
 import { RequireAuth } from "@/lib/session"
@@ -62,6 +63,7 @@ function App() {
           >
             <Route path="/" element={<RootRedirect />} />
             <Route path="/start" element={<StartPage />} />
+            <Route path="/agent" element={<AgentChat businessId={null} businessName="General chat" />} />
             <Route path="/products/new" element={<NewProductPage />} />
             <Route path="/clients/:id/growth" element={<ClientGrowthPage />} />
             <Route path="/clients/:id/growth-measurement" element={<ClientGrowthMeasurementPage />} />

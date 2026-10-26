@@ -4,7 +4,7 @@ import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import pg from "pg"
-import { deleteConversation, listConversations, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
+import { createConversation, deleteConversation, listConversations, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { activateHarness, authenticateBridge, cancelHarnessConversation, completeHarnessJob, createPair, harnessCatalog, pollHarnessJobs, registerBridge } from "./harness-store.js"
@@ -19,13 +19,79 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
   const respond = () => Effect.succeed({ reply: "Stored evidence only", citations: [], toolCalls: [], usage: [], provider: "gemini" as const, requestedModel: "fixture" })
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
   afterAll(async () => { await pool.end() })
-  const fixture = async (): Promise<ConversationScope> => {
+  const fixture = async (): Promise<ConversationScope & { businessId: string }> => {
     const accountId = (await pool.query("INSERT INTO accounts(name) VALUES ('TEST conversation') RETURNING id")).rows[0].id as string
     const userId = (await pool.query("INSERT INTO users(email,password_hash) VALUES ($1,'TEST-only') RETURNING id", [`conversation-${randomUUID()}@example.test`])).rows[0].id as string
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES ($1,$2)", [accountId, userId])
     const businessId = (await pool.query("INSERT INTO businesses(account_id,name) VALUES ($1,'TEST Client') RETURNING id", [accountId])).rows[0].id as string
     return { accountId, userId, businessId }
   }
+  it("starts a separate chat without deleting history and can reopen and continue either thread", async () => {
+    const f = await fixture()
+    await run(sendConversation(f, { message: "Original question", requestId: randomUUID(), revision: 0 }, respond))
+    const original = await run(loadConversation(f))
+    if (original._tag !== "Right" || !original.right) throw new Error("TEST original missing")
+    const firstId = original.right.id
+    const nextId = randomUUID()
+    expect(await run(createConversation(f, nextId))).toMatchObject({ _tag: "Right", right: { id: nextId, revision: 0, messages: [] } })
+    expect(await run(createConversation(f, nextId))).toMatchObject({ _tag: "Right", right: { id: nextId } })
+    expect(await run(loadConversation(f))).toMatchObject({ _tag: "Right", right: { id: nextId } })
+    expect(await run(loadConversation(f, firstId))).toMatchObject({ _tag: "Right", right: { id: firstId, revision: 1 } })
+    expect(await run(sendConversation(f, { message: "New question", conversationId: nextId, requestId: randomUUID(), revision: 0 }, respond))).toMatchObject({ _tag: "Right" })
+    expect(await run(sendConversation(f, { message: "Old follow-up", conversationId: firstId, requestId: randomUUID(), revision: 1 }, respond))).toMatchObject({ _tag: "Right", right: { revision: 2 } })
+    const history = await run(listConversations(f))
+    expect(history).toMatchObject({ _tag: "Right", right: expect.arrayContaining([expect.objectContaining({ id: firstId, title: "Original question" })]) })
+    if (history._tag === "Right") expect(history.right.map(c => c.id).sort()).toEqual([firstId, nextId].sort())
+    const foreign = await fixture()
+    expect(await run(loadConversation(foreign, firstId))).toMatchObject({ _tag: "Right", right: null })
+    expect(await run(createConversation(foreign, firstId))).toMatchObject({ _tag: "Left", left: { reason: "NOT_FOUND" } })
+    await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [f.accountId, foreign.userId])
+    const sibling = { ...f, userId: foreign.userId }
+    expect(await run(loadConversation(sibling, firstId))).toMatchObject({ _tag: "Right", right: null })
+    expect(await run(sendConversation(sibling, { message: "Foreign thread", requestId: randomUUID(), conversationId: firstId, revision: 2 }, respond))).toMatchObject({ _tag: "Left", left: { reason: "NOT_FOUND" } })
+    await run(deleteConversation(f, nextId))
+    expect(await run(loadConversation(f, firstId))).toMatchObject({ _tag: "Right", right: { id: firstId } })
+  })
+  it("keeps general chat history separate from business context and other users", async () => {
+    const f = await fixture(), general = { ...f, businessId: null }, id = randomUUID()
+    expect(await run(createConversation(general, id))).toMatchObject({ _tag: "Right", right: { id } })
+    expect(await run(sendConversation(general, { message: "General question", requestId: randomUUID(), revision: 0, conversationId: id }, respond))).toMatchObject({ _tag: "Right" })
+    expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [expect.objectContaining({ id, businessId: null, businessName: "General chat" })] })
+    expect(await run(loadConversation(f, id))).toMatchObject({ _tag: "Right", right: null })
+    expect(await run(loadConversation({ ...general, ...(await fixture()), businessId: null }, id))).toMatchObject({ _tag: "Right", right: null })
+  })
+  it("stops only the selected conversation, leaving another thread's lease intact", async () => {
+    const f = await fixture(), firstId = randomUUID(), secondId = randomUUID()
+    await run(createConversation(f, firstId))
+    await run(createConversation(f, secondId))
+    await pool.query("UPDATE agent_conversations SET lease_id=$1,lease_until=now()+interval '1 minute' WHERE id=ANY($2::uuid[])", [randomUUID(), [firstId, secondId]])
+    await run(cancelHarnessConversation({ ...f, conversationId: firstId }))
+    const rows = await pool.query("SELECT id,lease_id IS NOT NULL AS busy FROM agent_conversations WHERE id=ANY($1::uuid[])", [[firstId, secondId]])
+    expect(rows.rows).toEqual(expect.arrayContaining([{ id: firstId, busy: false }, { id: secondId, busy: true }]))
+  })
+  it("runs general chat through the selected harness without exposing business tools", async () => {
+    const f = await fixture()
+    const execute = <A,E>(fx:Effect.Effect<A,E,AgentToolDeps>) => Effect.runPromise(fx.pipe(Effect.provide(repos)))
+    const pair = await execute(createPair(f, "TEST general bridge"))
+    const bridge = await execute(authenticateBridge((await execute(registerBridge(pair.code))).token))
+    const report = { localId: randomUUID(), driver: "opencode" as const, name: "TEST", installed: true, version: "TEST", auth: "unknown" as const, state: "ready" as const, models: [{ id: "fixture/general", name: "TEST general" }] }
+    await execute(pollHarnessJobs(bridge, [report]))
+    const instance = (await execute(harnessCatalog(f))).instances[0]!
+    await execute(activateHarness(f, instance.id, true))
+    const pending = run(sendConversation({ ...f, businessId: null }, { message: "General question", requestId: randomUUID(), revision: 0, selection: { instanceId: instance.id, model: "fixture/general" } }))
+    let job: import("@openrecord/contracts").HarnessJob | null = null
+    for (let i = 0; i < 50; i++) {
+      job = (await execute(pollHarnessJobs(bridge, [report]))).job
+      if (job) break
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    if (!job) throw new Error("TEST general job not received")
+    expect(job.input.tools).toEqual([])
+    expect(job.input.system).toContain("No business or client is selected")
+    expect((await pool.query("SELECT business_id FROM agent_harness_jobs WHERE id=$1", [job.id])).rows).toEqual([{ business_id: null }])
+    await execute(completeHarnessJob(bridge, job.id, { lease: job.lease, kind: "completed", answer: { kind: "text", text: "General answer" } }))
+    expect(await pending).toMatchObject({ _tag: "Right", right: { reply: "General answer", toolCalls: [] } })
+  })
   it("persists messages, replays the same request, rejects stale revisions, and deletes", async () => {
     const f = await fixture()
     const body = { message: "Why?", requestId: randomUUID(), revision: 0 }
@@ -72,8 +138,13 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     })))
     await ready
     expect(await run(sendConversation(f, { message: "Second", requestId: randomUUID(), revision: 0 }, respond))).toMatchObject({ _tag: "Left", left: { reason: "BUSY" } })
+    const old = await run(loadConversation(f))
+    const nextId = randomUUID()
+    expect(await run(createConversation(f, nextId))).toMatchObject({ _tag: "Right", right: { id: nextId } })
     release()
     expect((await first)._tag).toBe("Right")
+    expect(await run(loadConversation(f))).toMatchObject({ _tag: "Right", right: { id: nextId, revision: 0, messages: [] } })
+    if (old._tag === "Right" && old.right) expect(await run(loadConversation(f, old.right.id))).toMatchObject({ _tag: "Right", right: { revision: 1 } })
   })
   it("releases leases after provider failure and rejects expired histories", async () => {
     const f = await fixture(), body = { message: "Read", requestId: randomUUID(), revision: 0 }
