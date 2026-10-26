@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { join, relative } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url))
 
@@ -30,16 +30,32 @@ const READ_ALLOWED = new Set([
 ])
 
 const CONTAINMENT_SRC = "packages/fs-containment/src/"
+const LOCAL_BRIDGE_SRC = "packages/bridge/src/"
+// The user-run bridge owns its local configuration and temporary workspaces.
+// It is not a hosted mutation adapter and must never enter the hosted graph.
+const LOCAL_BRIDGE_FS = new Map([
+  ["packages/bridge/src/adapters.ts", new Set(["access", "mkdtemp", "mkdir", "readFile", "writeFile", "rm", "constants"])],
+  ["packages/bridge/src/main.ts", new Set(["chmod", "lstat", "mkdir", "open", "readFile", "rename", "unlink", "writeFile", "realpathSync"])],
+])
 const NO_FS_AT_ALL = ["packages/site-operator/src/", "apps/api/src/", "apps/worker/src/"]
 
 // Runtime sources only: packages/*/src, apps/*/src, apps/web/app. Developer
 // fixture generators (packages/protocol/scripts) write repository files at
 // build time and are not reachable from any request or job.
 const RUNTIME = /^(packages\/[^/]+\/src|apps\/[^/]+\/src|apps\/web\/app)\//
-const hosted = () =>
+const runtime = () =>
   [...sources(join(repo, "apps")), ...sources(join(repo, "packages"))]
     .map((abs) => ({ abs, rel: relative(repo, abs).split("\\").join("/"), text: readFileSync(abs, "utf8") }))
     .filter((f) => RUNTIME.test(f.rel))
+const hosted = () => runtime().filter(f => !f.rel.startsWith(LOCAL_BRIDGE_SRC))
+const importsLocalBridge = (file: string, text: string) =>
+  [...text.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']([^"']+)["']/g)].some(match => {
+    const specifier = match[1]!
+    const target = resolve(dirname(file), specifier).split("\\").join("/")
+    const bridgeRoot = join(repo, "packages/bridge").split("\\").join("/")
+    return specifier === "@openrecord/bridge" || specifier.startsWith("@openrecord/bridge/") ||
+      (specifier.startsWith(".") && (target === bridgeRoot || target.startsWith(bridgeRoot + "/")))
+  })
 
 describe("filesystem mutation architecture", () => {
   it("only fs-containment references fs outside an explicit read-only allowlist", () => {
@@ -73,8 +89,30 @@ describe("filesystem mutation architecture", () => {
   const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n")
 
   it("runtime sources never load modules in ways the scan cannot see", () => {
-    for (const f of hosted()) {
+    for (const f of runtime()) {
       for (const re of LOADER_ESCAPES) expect(code(f.text), `${f.rel} matches ${re}`).not.toMatch(re)
+    }
+  })
+
+  it("hosted runtime sources cannot import the user-run local bridge", () => {
+    for (const f of hosted()) expect(importsLocalBridge(f.abs, code(f.text)), f.rel).toBe(false)
+    const api = join(repo, "apps/api/src/router.ts")
+    for (const text of [
+      'import { main } from "@openrecord/bridge"',
+      'export { execute } from "../../../packages/bridge/src/adapters.js"',
+      'const bridge = await import("../../../packages/bridge/src/main.js")',
+      'import "@openrecord/bridge/runtime"',
+    ]) expect(importsLocalBridge(api, text), text).toBe(true)
+  })
+
+  it("local bridge filesystem access is limited to its declared configuration and workspace modules", () => {
+    for (const f of runtime().filter(f => f.rel.startsWith(LOCAL_BRIDGE_SRC) && ANY_FS_REFERENCE.test(f.text))) {
+      const allowed = LOCAL_BRIDGE_FS.get(f.rel)
+      expect(allowed, f.rel).toBeDefined()
+      const named = [...f.text.matchAll(NAMED_IMPORT)]
+      expect(named.length, f.rel).toBe(f.text.match(new RegExp(FS_MODULE, "g"))?.length)
+      for (const match of named) for (const name of match[2]!.split(",").map(s => s.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean))
+        expect(allowed?.has(name), `${f.rel}: unexpected fs.${name}`).toBe(true)
     }
   })
 

@@ -1,4 +1,4 @@
-import { siAnthropic, siDeepseek, siGoogle, siGooglegemini, siKimi, siMetaai, siMistralai, siOllama, siOpenrouter, siPerplexity, siQwen, siX, type SimpleIcon } from "simple-icons"
+import { siAnthropic, siClaude, siClaudecode, siCursor, siDeepseek, siGoogle, siGooglegemini, siKimi, siMetaai, siMistralai, siNvidia, siOllama, siOpencode, siOpenrouter, siPerplexity, siQwen, siX, type SimpleIcon } from "simple-icons"
 import { cn } from "@/lib/utils"
 
 // Brand marks come from the simple-icons package. Providers with no icon
@@ -14,7 +14,12 @@ const OPENAI_PATH =
 
 const BRANDS: Record<string, Brand> = {
   anthropic: { icon: siAnthropic, label: "Claude" },
-  claude: { icon: siAnthropic, label: "Claude" },
+  claude: { icon: siClaude, label: "Claude" },
+  "claude-code": { icon: siClaudecode, label: "Claude Code" },
+  opencode: { icon: siOpencode, label: "OpenCode" },
+  nvidia: { icon: siNvidia, label: "NVIDIA" },
+  cursor: { icon: siCursor, label: "Cursor" },
+  codex: { icon: null, label: "Codex", tile: "bg-neutral-900 text-white ring-neutral-900 dark:bg-white dark:text-neutral-900 dark:ring-white", svgPath: OPENAI_PATH },
   perplexity: { icon: siPerplexity, label: "Perplexity" },
   deepseek: { icon: siDeepseek, label: "DeepSeek" },
   qwen: { icon: siQwen, label: "Qwen" },
@@ -47,10 +52,47 @@ export function providerBrand(provider: string): Brand {
   return { icon: null, label: provider }
 }
 
+// Model identity is distinct from the harness carrying it.
+export function modelBrand(model: string, fallback: string): string {
+  const name = model.toLowerCase()
+  if (name.startsWith("nvidia/")) return "nvidia"
+  if (/claude|sonnet|haiku|opus/.test(name)) return "claude"
+  if (name.includes("gemini")) return "gemini"
+  if (/gpt|codex|(?:^|\/)o[134](?:-|$)/.test(name)) return "openai"
+  for (const brand of ["deepseek", "qwen", "kimi", "llama", "grok", "mistral"]) {
+    if (name.includes(brand)) return brand
+  }
+  return fallback
+}
+
 // Small tile so brand marks stay legible in both themes. Letter glyphs are
 // SVG text so they scale with the tile instead of overflowing small sizes.
-export function ProviderLogo({ provider, className }: { provider: string; className?: string }) {
+// A near-black or near-white mark has no colour of its own: drawn bare it
+// takes the text colour so it stays visible in both themes.
+const monochrome = (hex: string) => {
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16))
+  const lightness = (Math.max(r!, g!, b!) + Math.min(r!, g!, b!)) / 510
+  return lightness < 0.15 || lightness > 0.9
+}
+
+// `bare` draws only the mark, with no tile or ring (harness logos).
+export function ProviderLogo({ provider, className, bare }: { provider: string; className?: string; bare?: boolean }) {
   const brand = providerBrand(provider)
+  if (bare) {
+    return (
+      <span aria-hidden title={brand.label} className={cn("flex size-4 shrink-0 items-center justify-center", className)}>
+        <svg viewBox="0 0 24 24" className="size-full" fill={brand.icon && !monochrome(brand.icon.hex) ? `#${brand.icon.hex}` : "currentColor"} role="img">
+          {brand.icon || brand.svgPath ? (
+            <path d={brand.icon?.path ?? brand.svgPath} />
+          ) : (
+            <text x="12" y="17" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="Inter Variable, ui-sans-serif, system-ui, sans-serif">
+              {brand.glyph ?? brand.label.charAt(0).toUpperCase()}
+            </text>
+          )}
+        </svg>
+      </span>
+    )
+  }
   return (
     <span
       aria-hidden

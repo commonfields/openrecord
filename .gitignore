@@ -9,3 +9,4 @@ dist
 tauri-app/src-tauri/target
 tauri-app/src-tauri/gen
 backups/
+/apps/web/public/openrecord-bridge.mjs
