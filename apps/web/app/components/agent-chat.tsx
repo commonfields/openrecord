@@ -441,7 +441,7 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
 // Starts as one centered conversation with the sidebar collapsed. As soon as
 // the agent does work, the chat slides left into its own card and the work it
 // read and prepared fills the content panel on the right.
-export function AgentChat(props: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+export function AgentChat(props: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   return <OverviewAgent key={props.businessId} {...props} />
 }
 
@@ -462,7 +462,7 @@ function CommandFeed({ items, businessId, setup, setupPinned, onSetup }: { items
   )
 }
 
-function OverviewAgent({ businessId, businessName, onConversationChange }: { businessId: string; businessName: string; onConversationChange: (active: boolean) => void }) {
+function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string; businessName: string; onConversationChange?: (active: boolean) => void }) {
   const session = useAgentSession(businessId)
   const { setup, set: setSetup } = useSetup(businessId)
   const [feed, setFeed] = useState<FeedItem[]>([])
@@ -503,9 +503,9 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
   if (!active) {
     const crowded = setupPinned || feed.length > 0
     return (
-      <div className={cn("flex flex-1 flex-col items-center", crowded ? "justify-start pt-[6vh] pb-10" : "justify-center pb-[12vh]")}>
+      <div className={cn("flex flex-1 flex-col items-center px-4 sm:px-6", crowded ? "justify-start pt-[6vh] pb-10" : "justify-end pb-6 lg:pb-8")}>
         {chatPane}
-        <div className="w-full max-w-3xl space-y-6">
+        <div className="w-full max-w-3xl space-y-4">
           <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
             {setupPinned ? <>Let's set up <span className="name-shimmer">{setup?.brief?.businessName ?? businessName}</span></> : <>What should we look into for <span className="name-shimmer">{businessName}</span>?</>}
           </h1>
@@ -513,6 +513,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange }: { bus
           {commandFeed}
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
           <Composer
+            compact
             onSend={session.send}
             onCommand={runCommand}
             disabled={!session.ready || session.busy}

@@ -87,7 +87,7 @@ it("runs the CLI through outbound polling, a fixture provider, result delivery, 
   let child: ReturnType<typeof spawn> | undefined
   try {
     await mkdir(root, { mode: 0o700 })
-    await copyFile(fileURLToPath(new URL("./fixtures/harness.mjs", import.meta.url)), binary)
+    await copyFile(fileURLToPath(new URL("../test/fixtures/harness.mjs", import.meta.url)), binary)
     await chmod(binary, 0o700)
     await writeFile(
       join(root, "bridge.json"),

@@ -14,7 +14,7 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "openrecord-bridge-test-"))
     binary = join(directory, "fixture")
-    await copyFile(fileURLToPath(new URL("./fixtures/harness.mjs", import.meta.url)), binary)
+    await copyFile(fileURLToPath(new URL("../test/fixtures/harness.mjs", import.meta.url)), binary)
     await chmod(binary, 0o700)
   })
   afterAll(async () => {
