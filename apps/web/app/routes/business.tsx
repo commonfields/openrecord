@@ -3,7 +3,6 @@ import { Link, Navigate, Outlet, useParams, useSearchParams } from "react-router
 import { Building2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentChat } from "@/components/agent-chat"
-import { useChrome } from "@/components/app-shell"
 import { EmptyState } from "@/components/page"
 import { usePreferences } from "@/lib/preferences"
 import { useWorkspace } from "@/lib/workspace"
@@ -49,11 +48,5 @@ export function AgentPage() {
 }
 
 export function ResultsPage() {
-  // Results is a wide dashboard, so the sidebar steps aside while it is open.
-  const { setFocus } = useChrome()
-  useEffect(() => {
-    setFocus(true)
-    return () => setFocus(false)
-  }, [setFocus])
   return <Today />
 }

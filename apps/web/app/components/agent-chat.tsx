@@ -506,9 +506,9 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
       <div className={cn("flex flex-1 flex-col items-center px-4 sm:px-6", crowded ? "justify-start pt-[6vh] pb-10" : "justify-end pb-6 lg:pb-8")}>
         {chatPane}
         <div className="w-full max-w-3xl space-y-4">
-          <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
-            {setupPinned ? <>Let's set up <span className="name-shimmer">{setup?.brief?.businessName ?? businessName}</span></> : <>What should we look into for <span className="name-shimmer">{businessName}</span>?</>}
-          </h1>
+          {setupPinned ? <h1 className="text-center text-2xl font-medium tracking-tight text-balance text-foreground">
+            Let's set up <span className="name-shimmer">{setup?.brief?.businessName ?? businessName}</span>
+          </h1> : null}
           {setupPinned && setup ? <SetupFlow setup={setup} onChange={setSetup} /> : null}
           {commandFeed}
           {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
@@ -670,7 +670,7 @@ function ModelSelector({ session, locked }: { session: AgentSession; locked: boo
         return choose({ target: "hosted" })
       }}
     >
-      <SelectTrigger aria-label="Agent model" className="w-auto max-w-40 self-start px-2.5">
+      <SelectTrigger aria-label="Agent model" className="h-auto w-auto max-w-40 self-start gap-1 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:text-foreground">
         <SelectValue placeholder={unavailable ? "Model unavailable" : "Model"}>{value ? undefined : selectionLabel(selection)}</SelectValue>
       </SelectTrigger>
       <SelectContent align="start" className="max-h-80 w-64">

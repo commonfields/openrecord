@@ -23,6 +23,25 @@ const harnessLib = () => read("../app/lib/harness.ts")
 const settingsDialog = () => read("../app/components/settings-dialog.tsx")
 const harnessSettings = () => read("../app/components/harness-settings.tsx")
 
+describe("agent workspace presentation", () => {
+  it("does not override sidebar focus when opening the Work destination", () => {
+    const business = read("../app/routes/business.tsx")
+    const results = business.slice(business.indexOf("export function ResultsPage"))
+    expect(results).toContain("<Today />")
+    expect(results.includes("setFocus"), "Work must respect the saved sidebar state").toBe(false)
+  })
+
+  it("omits the empty-chat greeting and keeps the model menu trigger text-only", () => {
+    const chat = agentChat()
+    expect(chat.includes("What should we look into for"), "empty chat greeting removed").toBe(false)
+    const trigger = chat.match(/<SelectTrigger aria-label="Agent model" className="([^"]+)"/)
+    expect(trigger?.[1]).toContain("border-0")
+    expect(trigger?.[1]).toContain("bg-transparent")
+    expect(trigger?.[1]).toContain("shadow-none")
+    expect(chat).toContain("<SelectContent")
+  })
+})
+
 const HOSTED = { provider: "openrecord", model: "claude-sonnet" }
 
 let serial = 0
