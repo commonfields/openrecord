@@ -4,7 +4,7 @@ import { HttpApp } from "@effect/platform"
 import { Effect, Layer, Redacted, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AuthRepositoryLive, BusinessRepositoryLive } from "@openrecord/db"
+import { AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import { HarnessCatalog, type HarnessReport } from "@openrecord/contracts"
 import { harnessApi } from "./harness-routes.js"
 import { requireSession } from "./router.js"
@@ -26,7 +26,7 @@ import {
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
 suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", () => {
-  const repos = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive).pipe(
+  const repos = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive).pipe(
     Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))
   )
   const run = async <A, E>(
@@ -111,6 +111,36 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
     )
+  it("protects non-destructive new-chat creation with sessions, origin checks, ownership and retry identity", async () => {
+    const a = await fixture(), foreign = await fixture()
+    const path = `/api/businesses/${a.businessId}/agent/conversation`
+    const body = { conversationId: randomUUID() }
+    expect((await call("POST", path, undefined, body)).status).toBe(401)
+    expect((await call("POST", path, foreign.cookie, body)).status).toBe(404)
+    expect((await call("POST", path, a.cookie, body, { origin: "https://evil.test" })).status).toBe(403)
+    const headers = { origin: "http://localhost:3000" }
+    expect((await call("POST", path, a.cookie, { conversationId: "invalid" }, headers)).status).toBe(422)
+    const first = await call("POST", path, a.cookie, body, headers)
+    expect(first.status).toBe(200)
+    expect(await first.json()).toMatchObject({ conversation: { id: body.conversationId, messages: [], revision: 0 } })
+    expect((await call("POST", path, a.cookie, body, headers)).status).toBe(200)
+  })
+  it("creates genuinely unscoped general chats and protects their read and cancel routes", async () => {
+    const a = await fixture(), other = await fixture(), conversationId = randomUUID()
+    const headers = { origin: "http://localhost:3000" }
+    expect((await call("POST", "/api/agent/conversation", undefined, { conversationId }, headers)).status).toBe(401)
+    expect((await call("POST", "/api/agent/conversation", a.cookie, { conversationId }, { origin: "https://evil.test" })).status).toBe(403)
+    expect((await call("POST", "/api/agent/conversation", a.cookie, { conversationId, businessId: a.businessId }, headers)).status).toBe(422)
+    expect((await call("POST", "/api/agent/conversation", a.cookie, { conversationId }, headers)).status).toBe(200)
+    const rows = await pool.query("SELECT business_id FROM agent_conversations WHERE id=$1", [conversationId])
+    expect(rows.rows).toEqual([{ business_id: null }])
+    const foreign = await call("GET", `/api/agent/conversation?conversationId=${conversationId}`, other.cookie)
+    expect(await foreign.json()).toEqual({ conversation: null })
+    const own = await call("GET", `/api/agent/conversation?conversationId=${conversationId}`, a.cookie)
+    expect(await own.json()).toMatchObject({ conversation: { id: conversationId } })
+    expect((await call("POST", "/api/agent/cancel", a.cookie, {}, headers)).status).toBe(422)
+    expect((await call("POST", "/api/agent/cancel", a.cookie, { conversationId }, headers)).status).toBe(200)
+  })
   it("pairs once, stores only capability hashes, and refuses expired or revoked credentials", async () => {
     const scope = await fixture(),
       c = await connect(scope)

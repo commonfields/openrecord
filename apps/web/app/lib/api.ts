@@ -244,20 +244,22 @@ export type AgentMessage = {
 }
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
 export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
-export type AgentChatSummary = { businessId: string; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string }
+export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string }
+const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
 export const Agent = {
   conversations: () => api<{ conversations: AgentChatSummary[] }>("/api/agent/conversations"),
-  load: (businessId: string) => api<{ conversation: AgentConversation | null }>(`/api/businesses/${businessId}/agent/conversation`),
-  clear: (businessId: string) => api(`/api/businesses/${businessId}/agent/conversation`, { method: "DELETE" }),
+  load: (businessId: string | null, conversationId?: string) => api<{ conversation: AgentConversation | null }>(`${agentBase(businessId)}/conversation${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`),
+  create: (businessId: string | null, conversationId: string) => api<{ conversation: AgentConversation }>(`${agentBase(businessId)}/conversation`, { method: "POST", body: JSON.stringify({ conversationId }) }),
+  clear: (businessId: string | null, conversationId?: string) => api(`${agentBase(businessId)}/conversation${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`, { method: "DELETE" }),
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
-  send: (businessId: string, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null }>(Routes.sendAgentMessage(businessId).path, {
+  send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
+    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null }>(`${agentBase(businessId)}/messages`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
     }),
   // Stops the turn in flight. The pending send settles on its own after this.
-  cancel: (businessId: string) =>
-    api<{ cancelled: boolean }>(`/api/businesses/${businessId}/agent/cancel`, { method: "POST", body: "{}" }),
+  cancel: (businessId: string | null, conversationId?: string) =>
+    api<{ cancelled: boolean }>(`${agentBase(businessId)}/cancel`, { method: "POST", body: JSON.stringify({ conversationId }) }),
   proposals: (businessId: string) => api<{ proposals: AgentProposal[] }>(Routes.listAgentProposals(businessId).path),
   reject: (businessId: string, proposalId: string) => api(Routes.rejectAgentProposal(businessId, proposalId).path, { method: "POST", body: "{}" }),
   approveAcquisition: (businessId: string, proposalId: string, maxCostUsd: number) => api(Routes.approveAgentProposal(businessId, proposalId).path, { method: "POST", body: JSON.stringify({ approveAcquisition: true, maxCostUsd }) }),

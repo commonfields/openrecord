@@ -7,7 +7,6 @@ import {
   ChevronDownIcon,
   RadioTowerIcon,
   Building2Icon,
-  FileCheck2Icon,
   FlaskConicalIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -17,7 +16,6 @@ import {
   KeyboardIcon,
   LogOutIcon,
   MessagesSquareIcon,
-  SquarePenIcon,
   PanelLeftIcon,
   PlusIcon,
   RadarIcon,
@@ -26,8 +24,7 @@ import {
   UserRoundIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
-import { toast } from "sonner"
+import { NewChatDialog } from "@/components/new-chat-dialog"
 import { CommandPaletteProvider, useCommandPalette } from "@/components/command-palette"
 import { HeaderSlotContext } from "@/components/page"
 import { sectionTitles } from "@/lib/nav"
@@ -45,9 +42,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
-import { Agent, Auth } from "@/lib/api"
+import { Auth } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
-import { ChatActivityProvider, chatPath, useAgentChats, useChatActivity } from "@/lib/agent-chats"
+import { ChatActivityProvider, chatPath, useAgentChats } from "@/lib/agent-chats"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -216,7 +213,7 @@ function useAgentView() {
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const onOverview = base !== null && location.pathname === `${base}/overview`
   const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
-  return (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
+  return location.pathname === "/agent" || (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
 }
 
 function SidebarBody() {
@@ -227,14 +224,15 @@ function SidebarBody() {
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
   const agent = useAgentView()
+  const general = useLocation().pathname === "/agent"
 
   return (
     <>
       <div className={cn("flex shrink-0 flex-col gap-2 pt-2", collapsed ? "items-center px-1.5" : "px-2")}>
-        <BusinessSwitcher />
+        {general ? <div className="px-2 py-2 text-sm text-muted-foreground">{collapsed ? <MessagesSquareIcon className="size-4" /> : "General chat"}</div> : <BusinessSwitcher />}
         <div className={cn("flex w-full items-center justify-between", collapsed && "flex-col gap-1")}>
           <SearchButton onOpen={open} />
-          {base && activeBusiness ? <NewChatButton base={base} businessId={activeBusiness.id} /> : null}
+          <NewChatDialog />
         </div>
       </div>
 
@@ -250,10 +248,6 @@ function SidebarBody() {
               <EvidenceTools base={base} />
             </>
           ) : null}
-          <SidebarGroup label="Agency">
-            <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
-            <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
-          </SidebarGroup>
         </>}
       </nav>
 
@@ -274,8 +268,8 @@ function ChatHistory() {
   const location = useLocation()
   const [all, setAll] = useState(false)
   const here = (path: string) => {
-    const [pathname] = path.split("?")
-    return location.pathname === pathname
+    const [pathname, search] = path.split("?")
+    return location.pathname === pathname && new URLSearchParams(location.search).get("chat") === new URLSearchParams(search).get("chat")
   }
 
   if (collapsed) {
@@ -295,7 +289,7 @@ function ChatHistory() {
         <DropdownMenuContent side="right" align="start" className="w-72 rounded-xl p-1.5 shadow-(--float-shadow-strong)">
           <DropdownMenuLabel className="text-[0.625rem] font-medium text-muted-foreground">Chats</DropdownMenuLabel>
           {chats?.length ? chats.map((c) => (
-            <DropdownMenuItem key={c.businessId} asChild className="rounded-md">
+            <DropdownMenuItem key={c.id} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
                 <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
                 {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
@@ -322,7 +316,7 @@ function ChatHistory() {
             const active = here(to)
             return (
               <Link
-                key={c.businessId}
+                key={c.id}
                 to={to}
                 aria-current={active ? "page" : undefined}
                 title={`${c.title} · ${c.businessName}`}
@@ -404,52 +398,14 @@ function SearchButton({ onOpen }: { onOpen: () => void }) {
   )
 }
 
-function NewChatButton({ base, businessId }: { base: string; businessId: string }) {
-  const [busy, setBusy] = useState(false)
-  const { forget } = useChatActivity()
-  const start = async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      await Agent.clear(businessId)
-      forget(businessId)
-      window.location.assign(`${base}/agent`)
-    } catch {
-      toast.error("Couldn't start a new chat. Try again.")
-      setBusy(false)
-    }
-  }
-  return (
-    <AlertDialog>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <AlertDialogTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" disabled={busy}><SquarePenIcon className="size-4" /></Button>
-          </AlertDialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">New chat</TooltipContent>
-      </Tooltip>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Start a new chat?</AlertDialogTitle>
-          <AlertDialogDescription>OpenRecord keeps one chat per business. Starting a new chat deletes the current conversation for this business.</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          <Button type="button" disabled={busy} onClick={() => void start()}>{busy ? "Starting…" : "Start new chat"}</Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
 // Header tabs share the route-derived view with the sidebar content.
 function ViewTabs() {
   const { activeBusiness } = useWorkspace()
+  const general = useLocation().pathname === "/agent"
   const nav = useNavigate()
   const agent = useAgentView()
   const view = agent ? "agent" : "today"
-  if (!activeBusiness) return null
+  if (!activeBusiness || general) return null
   const base = `/businesses/${activeBusiness.id}`
   const trigger = "h-full min-h-0 self-stretch rounded-[3px] px-1 text-[0.6875rem] text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
   return (
@@ -688,6 +644,8 @@ function Breadcrumbs() {
     crumbs.push({ label: "Clients", ...(parts[1] ? { to: "/clients" } : {}) })
     if (parts[1] && activeBusiness?.id === parts[1]) crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
     if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
+  } else if (parts[0] === "agent") {
+    crumbs.push({ label: "General chat" })
   } else if (parts[0] === "start") {
     crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {

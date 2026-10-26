@@ -1347,7 +1347,10 @@ export const makeRouter = () => {
       const businessId = params["id"] ?? ""
       if (!isRouteId(businessId)) return yield* json(422, malformed)
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
-      return yield* json(200, { conversation: yield* loadConversation({ accountId: session.accountId, userId: session.userId, businessId }) })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const conversationId = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (conversationId !== undefined && !isRouteId(conversationId)) return yield* json(422, malformed)
+      return yield* json(200, { conversation: yield* loadConversation({ accountId: session.accountId, userId: session.userId, businessId }, conversationId) }, { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
     HttpRouter.del("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext
@@ -1355,7 +1358,10 @@ export const makeRouter = () => {
       if (!isRouteId(businessId)) return yield* json(422, malformed)
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
       if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
-      yield* deleteConversation({ accountId: session.accountId, userId: session.userId, businessId })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const conversationId = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (conversationId !== undefined && !isRouteId(conversationId)) return yield* json(422, malformed)
+      yield* deleteConversation({ accountId: session.accountId, userId: session.userId, businessId }, conversationId)
       return yield* json(200, { deleted: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
   )
