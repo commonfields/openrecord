@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
+import { NewChatDialog } from "@/components/new-chat-dialog"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null }
 
@@ -125,6 +126,22 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     if (businessId !== null) void Agent.proposals(businessId).then(r => { if (live) setProposals(r.proposals) }).catch(() => {})
     return () => { live = false; mounted.current = false }
   }, [businessId, enabled, requestedConversationId])
+
+  // A turn can settle while its chat is not on screen — it was left mid-turn
+  // and the reply is written by the mount that sent it. A mount that opened
+  // during the turn holds the pre-send snapshot; when the pending activity for
+  // this conversation goes quiet, pull the settled thread once.
+  const pendingWorking = conversationId === undefined ? undefined : activity.activity.get(conversationId)?.working
+  useEffect(() => {
+    if (conversationId === undefined || businessId === "" || pendingWorking !== false) return
+    let live = true
+    void Agent.load(businessId, conversationId).then(r => {
+      if (!live || !r.conversation) return
+      setRevision(r.conversation.revision)
+      setMessages(toDisplayMessages(r.conversation.messages))
+    }).catch(() => {})
+    return () => { live = false }
+  }, [businessId, conversationId, pendingWorking])
 
   const send = (text: string) => {
     if (pending.current || !ready || !conversationId) return
@@ -854,7 +871,15 @@ function Composer({
       </div>
       <div role="toolbar" aria-label="Chat options" className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-0.5 px-3 py-0 text-sm">
         {listening ? <span role="status" className="text-wrong">Listening</span> : null}
-        {context ? <AgentContextChip context={context} /> : null}
+        {context ? (
+          <NewChatDialog
+            trigger={
+              <button type="button" title={`Change the business or client — now chatting about ${context.name}`} aria-label={`Change the business or client — now chatting about ${context.name}`} className="max-w-56 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" disabled={inFlight}>
+                <AgentContextChip context={context} />
+              </button>
+            }
+          />
+        ) : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">

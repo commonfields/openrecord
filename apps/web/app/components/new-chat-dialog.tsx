@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { Building2Icon, FileCheck2Icon, MessagesSquareIcon, SearchIcon, SquarePenIcon } from "lucide-react"
 import { Agent, type Business } from "@/lib/api"
@@ -8,7 +8,6 @@ import { useWorkspace } from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 export function chatTargets(businesses: readonly Business[], clients: readonly Pick<ClientSummary, "businessId" | "name">[], search: string) {
@@ -20,7 +19,7 @@ export function chatTargets(businesses: readonly Business[], clients: readonly P
   ].filter(item => item.name.toLocaleLowerCase().includes(query))
 }
 
-export function NewChatDialog() {
+export function NewChatDialog({ trigger }: { trigger?: ReactNode } = {}) {
   const { businesses, businessesLoading, businessesError, reloadBusinesses, setActiveBusinessId } = useWorkspace()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -71,12 +70,9 @@ export function NewChatDialog() {
     setOpen(next)
     if (next) { setQuery(""); setMode("chat"); setError(null) }
   }}>
-    <Tooltip>
-      <TooltipTrigger asChild><DialogTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat"><SquarePenIcon className="size-4" /></Button>
-      </DialogTrigger></TooltipTrigger>
-      <TooltipContent side="right">New chat</TooltipContent>
-    </Tooltip>
+    <DialogTrigger asChild>
+      {trigger ?? <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" title="New chat"><SquarePenIcon className="size-4" /></Button>}
+    </DialogTrigger>
     <DialogContent className="gap-0 overflow-hidden rounded-lg p-0 sm:max-w-lg">
       <DialogHeader className="px-6 pb-4 pt-5">
         <DialogTitle>{mode === "chat" ? "Start a new chat" : "Choose a workspace"}</DialogTitle>
