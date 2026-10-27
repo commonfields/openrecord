@@ -743,7 +743,7 @@ function Composer({
         ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-foreground" aria-label="Chat actions" disabled={inFlight}>
+            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-muted-foreground hover:text-foreground" aria-label="Chat actions" disabled={inFlight}>
               <PlusIcon className="size-5" />
             </Button>
           </DropdownMenuTrigger>
@@ -808,7 +808,7 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" variant="ghost" size="icon-sm"
-                  className={cn("size-8 rounded-md text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
+                  className={cn("size-8 rounded-md text-muted-foreground hover:text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
                   onClick={toggleMic} aria-label={listening ? "Stop voice input" : "Start voice input"} aria-pressed={listening}>
                   {listening ? <SquareIcon className="size-4 fill-current" /> : <MicIcon className="size-5" />}
                 </Button>
