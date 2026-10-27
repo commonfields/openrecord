@@ -1,7 +1,7 @@
 import { Config, Data, Effect, Option, Redacted, Schema } from "effect"
 
 export class AgentModelError extends Data.TaggedError("AgentModelError")<{
-  readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT"
+  readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED"
 }> {}
 
 const bounded = (name: string, fallback: number, max: number) => Config.integer(name).pipe(
@@ -53,7 +53,7 @@ export const configuredAgentModel = Effect.gen(function*() {
         method: "POST", signal, redirect: "error",
         headers: { "content-type": "application/json", "x-goog-api-key": Redacted.value(cfg.apiKey) },
         body: JSON.stringify({ contents: input.contents, systemInstruction: { parts: [{ text: input.system }] },
-          tools: [{ functionDeclarations: input.tools }], generationConfig: { maxOutputTokens: cfg.maxOutputTokens } }),
+          ...(input.tools.length ? { tools: [{ functionDeclarations: input.tools }] } : {}), generationConfig: { maxOutputTokens: cfg.maxOutputTokens } }),
       })
       if (!response.ok) {
         await response.body?.cancel()

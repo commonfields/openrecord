@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
-import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentMessage, type AgentProposal } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentMessage, type AgentProposal, type AgentRunEvent, type AgentRunRef } from "@/lib/api"
 import { agentEvidencePath } from "@/lib/agent-evidence"
 import { chatPath, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
@@ -19,7 +19,9 @@ import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/com
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
 
-type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null }
+type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
+  // Steps the run finished so far (pending messages) and how a finished run ended.
+  steps?: string[]; run?: AgentRunRef }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -30,7 +32,20 @@ const notSentText = (e: unknown) => e instanceof ApiError && e.status === 409
   : e instanceof ApiError && e.body["reason"] === "RATE_LIMITED" ? "No reply. This provider reached a usage limit. Choose another model or try again later"
   : e instanceof ApiError && e.body["reason"] === "CONTEXT_LIMIT" ? "No reply. This conversation is too large for the provider. Start a new conversation or shorten the message"
   : e instanceof ApiError && e.body["reason"] === "UNCONFIGURED" ? "Not sent. The agent isn't set up yet"
+  : e instanceof ApiError && e.body["reason"] === "CANCELLED" ? "Stopped"
   : "No reply"
+
+// Run journal events as progress lines: what is running now, what finished.
+const progressOf = (events: AgentRunEvent[], current: { label: string; steps: string[] }) => {
+  let { label, steps } = current
+  for (const e of events) {
+    const summary = typeof e.payload["summary"] === "string" ? e.payload["summary"] : null
+    if (e.type === "TOOL_STARTED" && typeof e.payload["label"] === "string") label = `${e.payload["label"]}…`
+    else if ((e.type === "TOOL_COMPLETED" || e.type === "TOOL_FAILED") && summary) { steps = [...steps, summary]; label = "Working…" }
+    else if (e.type === "VERIFICATION" && e.payload["action"] === "REMINDED") label = "Checking the answer is complete…"
+  }
+  return { label, steps }
+}
 
 let nextId = 0
 const uid = () => `m${Date.now()}-${nextId++}`
@@ -130,12 +145,27 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     activity.start(businessId, requestId, text, conversationId)
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Working…", pending: true }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
+    // Follow the run's journal while the reply is pending. Polling resumes from
+    // the last sequence seen, so a missed poll loses nothing.
+    let after = -1, progress = { label: "Working…", steps: [] as string[] }, polling = true
+    const poll = () => {
+      if (!polling) return
+      void Agent.progress(requestId, after).then(p => {
+        if (!polling || !mounted.current || !p.events.length) return
+        after = p.events[p.events.length - 1]!.seq
+        progress = progressOf(p.events, progress)
+        setMessages(m => m.length && m[m.length - 1]!.pending ? [...m.slice(0, -1), { ...m[m.length - 1]!, text: progress.label, steps: progress.steps }] : m)
+      }).catch(() => {}).finally(() => { if (polling) timer = setTimeout(poll, 800) })
+    }
+    let timer = setTimeout(poll, 400)
+    const stopPolling = () => { polling = false; clearTimeout(timer) }
     void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
       activity.finish(businessId, requestId, true)
       notifyAgentChats()
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
-      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}) }])
+      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
+        ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}) }])
       refreshProposals()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
@@ -149,7 +179,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
           setMessages(toDisplayMessages(r.conversation.messages))
         }
       }).catch(() => {})
-    }).finally(() => { pending.current = false; if (mounted.current) setBusy(false) })
+    }).finally(() => { stopPolling(); pending.current = false; if (mounted.current) setBusy(false) })
   }
   const clear = () => {
     if (pending.current) return
@@ -233,10 +263,18 @@ function Thread({ session, compact, placeholder, onCommand, work }: {
                   ) : (
                     <div className="max-w-[95%] space-y-1.5">
                       {m.pending ? (
-                        <p className="thinking text-base leading-relaxed" role="status">{m.text}</p>
+                        <>
+                          {m.steps?.length ? <ul className="space-y-0.5 text-[0.6875rem] text-muted-foreground" aria-label="Completed steps">
+                            {m.steps.map((step, i) => <li key={i} className="flex items-center gap-1.5"><CheckIcon className="size-3 shrink-0" />{step}</li>)}
+                          </ul> : null}
+                          <p className="thinking text-base leading-relaxed" role="status">{m.text}</p>
+                        </>
                       ) : (
-                        <p className="text-base leading-relaxed whitespace-pre-wrap text-foreground/80">{m.text}</p>
+                        <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/80")}>{m.text}</p>
                       )}
+                      {m.run?.gaps?.length ? (
+                        <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
+                      ) : null}
                       {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
                         const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
                         return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link> : <span>Evidence unavailable</span>}</li>

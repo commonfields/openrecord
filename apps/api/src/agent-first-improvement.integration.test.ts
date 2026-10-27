@@ -125,7 +125,7 @@ suite("first-improvement workflow end to end (disposable PostgreSQL, fixture mod
     expect(reply).toMatchObject({ provider: "gemini", requestedModel: "gemini-fixture", workflow: { id: "first-improvement", version: 1 } })
     expect(reply.toolCalls).toEqual([
       { tool: "diagnose_marketing_problems", summary: "2 supported problems found; one selected" },
-      { tool: "propose_check_run", summary: "Evidence unavailable or request refused" },
+      { tool: "propose_check_run", summary: "Tool not available for this request" },
       { tool: "propose_first_improvement", summary: "Improvement saved as a proposal; human approval required" },
     ])
     expect(reply.citations.map(c => c.kind)).toEqual(expect.arrayContaining(["website_read", "growth_opportunity"]))
@@ -260,7 +260,7 @@ suite("first-improvement workflow end to end (disposable PostgreSQL, fixture mod
     }
     // Malformed input (excess property, short change) fails closed without a write.
     const bad = await turn([call("propose_first_improvement", { candidateKey: "homepage.noindex", proposedChange: "short", approve: true }), say("The proposal could not be saved.")])
-    expect(bad.toolCalls).toEqual([{ tool: "propose_first_improvement", summary: "Evidence unavailable or request refused" }])
+    expect(bad.toolCalls).toEqual([{ tool: "propose_first_improvement", summary: "Request refused: invalid tool input" }])
     expect(await opportunities(businessId)).toHaveLength(0)
     // A stale or invented candidate is refused with a recovery instruction.
     const stale = await turn([call("propose_first_improvement", { candidateKey: "homepage.snippet", proposedChange: CHANGE }), say("Not saved.")])

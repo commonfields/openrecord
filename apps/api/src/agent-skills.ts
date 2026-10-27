@@ -32,6 +32,12 @@ export interface AgentSkill {
   /** Evidence the skill relies on; missing evidence is reported, never invented. */
   readonly evidence: ReadonlyArray<SkillEvidence>
   readonly instructions: string
+  /** What the harness verifies before accepting a final answer. A required
+   * tool that never succeeded earns one reminder; if it still does not run,
+   * the answer is kept but marked as answered with gaps. */
+  readonly completion?: { readonly requiredTools: ReadonlyArray<string> } | undefined
+  /** Model steps and tool calls for one run of this workflow. */
+  readonly budget?: { readonly modelSteps: number; readonly toolCalls: number } | undefined
   /** Upstream paths whose guidance was adapted (rewritten), relative to ECC_PIN. */
   readonly adaptedFrom: ReadonlyArray<string>
 }
@@ -42,6 +48,7 @@ export const SKILLS: Readonly<Record<SkillId, AgentSkill>> = {
   "first-improvement": {
     id: "first-improvement", version: 1, kind: "workflow", title: "First marketing improvement",
     tools: FIRST_IMPROVEMENT_TOOLS, effect: "propose",
+    completion: { requiredTools: ["diagnose_marketing_problems"] }, budget: { modelSteps: 6, toolCalls: 6 },
     evidence: ["WEBSITE_READ", "CONFIRMED_BRIEF", "GROWTH_GOAL", "APPROVED_FACTS", "REVIEWED_AI_ANSWER"],
     adaptedFrom: ["agents/marketing-agent.md", "skills/marketing-campaign/SKILL.md", "skills/market-research/SKILL.md", "skills/brand-voice/SKILL.md"],
     instructions: `Active workflow: first marketing improvement (v1). It replaces the /setup guidance above for this turn.

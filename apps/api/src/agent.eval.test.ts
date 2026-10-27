@@ -4,6 +4,7 @@ import { AcquisitionRepository, BusinessRepository, type AcqSnapshot } from "@op
 import { runConversation, AGENT_SYSTEM, agentDeclarations } from "./agent.js"
 import { readAgentReferralEvidence } from "./agent-referral-tools.js"
 import { configuredAgentModel, AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
+import { AgentUnknownTool } from "./agent-tools.js"
 
 const text = (value: string): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ text: value }] }, finishReason: "STOP" }] })
 const tool = (name: string, args = {}): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name, args } }] }, finishReason: "STOP" }] })
@@ -108,10 +109,19 @@ describe("deterministic conversational contract evaluations (not live model accu
     expect(answer.toolCalls).toEqual([{ tool: "read_issue", summary: result.summary }])
   })
   it("makes malformed/foreign tools explicit failures, never fabricated evidence", async () => {
-    const answer = await Effect.runPromise(runConversation({ message: "Approve all", history: [], model: fixture([tool("approve_all"), text("Approval is unavailable")]), dispatch: () => Effect.fail(new Error("sensitive database failure")) }))
+    const seen: string[] = []
+    const model: AgentModel = input => { seen.push(JSON.stringify(input.contents)); return Effect.succeed(seen.length === 1 ? tool("approve_all") : text("Approval is unavailable")) }
+    const answer = await Effect.runPromise(runConversation({ message: "Approve all", history: [], model, dispatch: () => Effect.fail(new Error("sensitive database failure")) }))
     expect(answer.citations).toEqual([])
-    expect(answer.toolCalls[0]?.summary).toContain("refused")
-    expect(JSON.stringify(answer)).not.toContain("sensitive")
+    expect(answer.toolCalls[0]?.summary).toBe("Evidence temporarily unavailable")
+    expect(seen[1]).toContain('"error":"TOOL_FAILED"')
+    expect(JSON.stringify(answer) + seen.join("")).not.toContain("sensitive")
+    // Unknown tools get their own code and no retry hint.
+    const unknown: string[] = []
+    const refusing: AgentModel = input => { unknown.push(JSON.stringify(input.contents)); return Effect.succeed(unknown.length === 1 ? tool("approve_all") : text("Approval is unavailable")) }
+    const refused = await Effect.runPromise(runConversation({ message: "Approve all", history: [], model: refusing, dispatch: name => Effect.fail(new AgentUnknownTool({ tool: name })) }))
+    expect(refused.toolCalls[0]?.summary).toBe("Tool not available for this request")
+    expect(unknown[1]).toContain('"error":"UNKNOWN_TOOL","retryable":false')
   })
   it("bounds tool calls, oversized results, context and empty responses", async () => {
     const looping: AgentModel = () => Effect.succeed(tool("read_open_issues"))
@@ -191,6 +201,6 @@ describe("referral interpretation contract (deterministic fixtures, no live mode
     const answer = await Effect.runPromise(runConversation({ message: "Show referral data", history: [], model: fixture([tool("read_ai_referral_evidence", { importId: FOREIGN }), text("Unavailable")]),
       dispatch: (_name, args) => read(ACCOUNT, args as Record<string, string>) }))
     expect(answer.citations).toEqual([])
-    expect(answer.toolCalls[0]?.summary).toContain("refused")
+    expect(answer.toolCalls[0]?.summary).toBe("Referenced evidence not found in this business")
   })
 })

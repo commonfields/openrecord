@@ -13,6 +13,7 @@ import {
 import { configuredAgentModel } from "./agent-model.js"
 import { AgentConversationRefused, createConversation, deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
+import { readRunProgress } from "./agent-run.js"
 import { decode, json, operatorSessionFor, readJson as readRequestJson, type WithSession } from "./record-routes.js"
 import {
   HarnessRefused,
@@ -89,6 +90,16 @@ export const harnessApi = (withSession: WithSession) => {
       const body = decode(AgentMessageRequest, yield* readJson)
       if (!body) return yield* invalid()
       return yield* json(200, yield* sendConversation({ ...session, businessId: null }, body), { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
+    // Live run progress for a request the signed-in user sent: the run's state
+    // and its journal after a sequence number. Reconnecting clients resume
+    // from the last sequence they saw; unknown or foreign requests read as null.
+    HttpRouter.get("/api/agent/runs/progress", operator(session => Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const params = new URL(req.url, "http://localhost").searchParams
+      const requestId = params.get("requestId") ?? "", after = Number(params.get("after") ?? "-1")
+      if (decodeRouteId(requestId)._tag !== "Right" || !Number.isInteger(after) || after < -1) return yield* invalid()
+      return yield* json(200, yield* readRunProgress(session, requestId, after), { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.post("/api/agent/cancel", operator(session => Effect.gen(function*() {
       const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
