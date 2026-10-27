@@ -151,7 +151,9 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
     // The working indicator in the chat history shows which provider is on it.
-    const providerTag = selection.status === "hosted" ? selection.provider : selection.status === "instance" ? selection.instance.driver : undefined
+    // A still-loading catalog sends nothing explicit, so the server's hosted
+    // default answers and the fallback logo says so.
+    const providerTag = selection.status === "hosted" ? selection.provider : selection.status === "instance" ? selection.instance.driver : "gemini"
     activity.start(businessId, requestId, text, conversationId, providerTag)
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Working…", pending: true }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
