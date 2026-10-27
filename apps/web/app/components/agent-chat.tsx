@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, Building2Icon, CheckIcon, CopyIcon, FileCheck2Icon, FileTextIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -20,6 +20,12 @@ import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHar
 import { AgentModelPicker } from "@/components/agent-model-picker"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null }
+
+// The business or client a conversation was started with, shown in the
+// composer tray to the left of the model. A general chat has none.
+export type AgentChatContext = { kind: "client" | "business"; name: string }
+export const chatContext = (businessId: string | null, name: string): AgentChatContext | null =>
+  businessId === null ? null : { kind: "business", name }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -210,8 +216,8 @@ function ProposalCard({ session, businessName, proposal }: { session: AgentSessi
 
 // ---- the conversation ----
 
-function Thread({ session, compact, placeholder, onCommand, work }: {
-  session: AgentSession; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode
+function Thread({ session, compact, placeholder, onCommand, work, context }: {
+  session: AgentSession; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -274,6 +280,7 @@ function Thread({ session, compact, placeholder, onCommand, work }: {
           placeholder={composerPlaceholder(session, placeholder)}
           autoFocus
           session={session}
+          context={context ?? null}
         />
       </div>
     </div>
@@ -388,10 +395,11 @@ function useSlidePresence(open: boolean) {
 // The chat as its own card on the canvas, left of the content panel, the way
 // the sidebar sits. It grows in to half the width; on narrow screens it takes
 // the whole width and the content panel steps aside.
-function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon, onCommand }: {
+function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon, onCommand, context }: {
   open: boolean; session: AgentSession; placeholder: string
   onClose: () => void; closeLabel?: string; closeIcon?: ReactNode
   onCommand: (c: AgentCommand) => void
+  context?: AgentChatContext | null
 }) {
   const pane = useSlidePresence(open)
   const { slot, setPane } = usePaneSlot()
@@ -419,7 +427,7 @@ function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon,
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
-              <Thread session={session} compact placeholder={placeholder} onCommand={onCommand} />
+              <Thread session={session} compact placeholder={placeholder} onCommand={onCommand} context={context ?? null} />
             </>
           ) : null}
         </div>
@@ -470,6 +478,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
             placeholder={composerPlaceholder(session, session.unavailable ? `${session.unavailable}. Type / for commands` : "Describe a task or ask a question")}
             autoFocus
             session={session}
+            context={chatContext(businessId, businessName)}
           />
         </div>
       </div>
@@ -479,6 +488,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
   return (
     <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
       <Thread session={session} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+        context={chatContext(businessId, businessName)}
         work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
     </section>
   )
@@ -508,7 +518,8 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
   const decisions = session.openProposals.length + session.keptDrafts.length
   return (
     <>
-      <AgentPane open={open} session={session} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand} />
+      <AgentPane open={open} session={session} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand}
+        context={{ kind: "client", name: businessName }} />
       <div className="h-full min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
           {open && decisions ? (
@@ -559,6 +570,23 @@ function composerPlaceholder(session: AgentSession, fallback: string): string {
   return session.unavailable ?? fallback
 }
 
+// The business or client chosen when the chat started, shown in the composer
+// tray's left side while the model sits on the right.
+export function AgentContextChip({ context }: { context: AgentChatContext }) {
+  const icon = context.kind === "client" ? <FileCheck2Icon className="size-3.5 shrink-0" /> : <Building2Icon className="size-3.5 shrink-0" />
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span aria-label={`Chatting about ${context.name}`} className="inline-flex max-w-56 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          {icon}
+          <span className="truncate">{context.name}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Chatting about {context.name}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 // The model picker shown in every agent layout's composer tray. It lists the
 // hosted default when configured, then enabled ready models per provider, and
 // a path to Settings → Agent to manage providers. Locked while a turn is in
@@ -590,6 +618,7 @@ function Composer({
   disabled,
   session,
   modelBlocked,
+  context,
 }: {
   onSend: (text: string) => void
   /** Slash commands run as conversational turns through the selected agent. */
@@ -601,6 +630,8 @@ function Composer({
   session?: AgentSession
   /** No usable selection: ordinary messages are gated, commands still run. */
   modelBlocked?: boolean
+  /** The business or client this conversation was started with, if any. */
+  context?: AgentChatContext | null
 }) {
   // While a turn is in flight the composer shows Stop instead of Send and the
   // model selection is locked until the server settles the turn.
@@ -823,6 +854,7 @@ function Composer({
       </div>
       <div role="toolbar" aria-label="Chat options" className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-0.5 px-3 py-0 text-sm">
         {listening ? <span role="status" className="text-wrong">Listening</span> : null}
+        {context ? <AgentContextChip context={context} /> : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
