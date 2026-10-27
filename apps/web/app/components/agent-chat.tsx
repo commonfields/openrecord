@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, Building2Icon, CheckIcon, CopyIcon, FileCheck2Icon, FileTextIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, FolderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -573,7 +573,7 @@ function composerPlaceholder(session: AgentSession, fallback: string): string {
 // The business or client chosen when the chat started, shown in the composer
 // tray's left side while the model sits on the right.
 export function AgentContextChip({ context }: { context: AgentChatContext }) {
-  const icon = context.kind === "client" ? <FileCheck2Icon className="size-3.5 shrink-0" /> : <Building2Icon className="size-3.5 shrink-0" />
+  const icon = <FolderIcon className="size-3.5 shrink-0" aria-hidden />
   return (
     <Tooltip>
       <TooltipTrigger asChild>

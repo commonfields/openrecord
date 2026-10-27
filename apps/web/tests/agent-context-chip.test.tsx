@@ -6,13 +6,13 @@ import { AgentContextChip, chatContext, type AgentChatContext } from "../app/com
 const context = (overrides: Partial<AgentChatContext> = {}): AgentChatContext => ({ kind: "business", name: "Northstar", ...overrides })
 
 describe("composer context chip", () => {
-  it("shows the chosen business or client name with its kind icon", () => {
+  it("shows the chosen business or client name with the shared folder icon", () => {
     const markup = renderToStaticMarkup(<TooltipProvider><AgentContextChip context={context()} /></TooltipProvider>)
     expect(markup).toContain("Northstar")
-    expect(markup).toContain("lucide-building-2")
+    expect(markup).toContain("lucide-folder")
     const client = renderToStaticMarkup(<TooltipProvider><AgentContextChip context={context({ kind: "client", name: "Acme" })} /></TooltipProvider>)
     expect(client).toContain("Acme")
-    expect(client).toContain("lucide-file-check-2")
+    expect(client).toContain("lucide-folder")
   })
 
   it("derives a business context from the conversation's business and none for general chats", () => {
