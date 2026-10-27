@@ -2,10 +2,10 @@ import { createContext, createElement, useCallback, useContext, useEffect, useMe
 import { Agent, type AgentChatSummary } from "@/lib/api"
 import { useWorkspace } from "@/lib/workspace"
 
-export type ChatActivity = { businessId: string | null; conversationId: string; requestId: string; title: string; updatedAt: string; working: boolean; saved: boolean }
+export type ChatActivity = { businessId: string | null; conversationId: string; requestId: string; title: string; updatedAt: string; working: boolean; saved: boolean; providerTag?: string }
 type ActivityStore = {
   activity: ReadonlyMap<string, ChatActivity>
-  start: (businessId: string | null, requestId: string, title: string, conversationId: string) => void
+  start: (businessId: string | null, requestId: string, title: string, conversationId: string, providerTag?: string) => void
   finish: (businessId: string | null, requestId: string, saved: boolean) => void
   forget: (businessId: string | null, conversationId?: string) => void
 }
@@ -14,9 +14,10 @@ const ActivityContext = createContext<ActivityStore | null>(null)
 // Scoped to the signed-in app shell, never stored globally or in localStorage.
 export function ChatActivityProvider({ children }: { children: ReactNode }) {
   const [activity, setActivity] = useState<ReadonlyMap<string, ChatActivity>>(() => new Map())
-  const start = useCallback((businessId: string | null, requestId: string, title: string, conversationId: string) => {
+  const start = useCallback((businessId: string | null, requestId: string, title: string, conversationId: string, providerTag?: string) => {
     setActivity(current => current.get(conversationId)?.working ? current : new Map(current).set(conversationId, {
       businessId, conversationId, requestId, title: title.trim().replace(/\s+/g, " ").slice(0, 100), updatedAt: new Date().toISOString(), working: true, saved: false,
+      ...(providerTag ? { providerTag } : {}),
     }))
   }, [])
   const finish = useCallback((businessId: string | null, requestId: string, saved: boolean) => {
@@ -36,13 +37,20 @@ export function useChatActivity() {
   return value
 }
 
-export function mergeAgentChats(chats: readonly AgentChatSummary[], activity: ReadonlyMap<string, ChatActivity>, businesses: readonly { id: string; name: string }[]) {
-  const merged = new Map(chats.map(chat => [chat.id, { ...chat, working: false, draft: false }]))
+export type MergedChat = AgentChatSummary & { working: boolean; draft: boolean; providerTag?: string }
+
+export function mergeAgentChats(chats: readonly AgentChatSummary[], activity: ReadonlyMap<string, ChatActivity>, businesses: readonly { id: string; name: string }[]): MergedChat[] {
+  const merged = new Map(chats.map((chat): [string, MergedChat] => [chat.id, { ...chat, working: false, draft: false }]))
   for (const [, item] of activity) {
     const { businessId, conversationId } = item
     const saved = merged.get(conversationId)
-    merged.set(conversationId, saved ? { ...saved, working: item.working, updatedAt: item.working ? item.updatedAt : saved.updatedAt } : {
+    if (saved) {
+      merged.set(conversationId, { ...saved, ...(item.providerTag ? { providerTag: item.providerTag } : {}), working: item.working, updatedAt: item.working ? item.updatedAt : saved.updatedAt })
+      continue
+    }
+    merged.set(conversationId, {
       id: conversationId, businessId, businessName: businessId === null ? "General chat" : businesses.find(b => b.id === businessId)?.name ?? "Business", isClient: false,
+      ...(item.providerTag ? { providerTag: item.providerTag } : {}),
       title: item.title, messages: 1, updatedAt: item.updatedAt, working: item.working, draft: !item.saved,
     })
   }

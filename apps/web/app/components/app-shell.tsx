@@ -44,7 +44,8 @@ import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
-import { ChatActivityProvider, chatPath, useAgentChats } from "@/lib/agent-chats"
+import { ChatActivityProvider, chatPath, useAgentChats, type MergedChat } from "@/lib/agent-chats"
+import { ProviderLogo } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -262,6 +263,33 @@ function SidebarBody() {
 // client's record with the agent beside it, or the business's agent view.
 const CHATS_SHOWN = 6
 
+// One history row, in both sidebar sizes: context line first (the client or
+// business, plus the working provider's logo on the right), then the chat's
+// title, then its status: working, unsent, or when it last moved.
+function ChatItem({ c, active }: { c: MergedChat; active: boolean }) {
+  return (
+    <>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName}</span>
+        {c.working && c.providerTag ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="ml-auto shrink-0">
+                <ProviderLogo bare provider={c.providerTag} className="size-3.5" aria-label="Working provider" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="left">This provider is answering</TooltipContent>
+          </Tooltip>
+        ) : null}
+      </span>
+      <span className={cn("w-full truncate text-sm", active && "font-medium")}>{c.title || "Untitled chat"}</span>
+      {c.working ? <span role="status" className="thinking text-xs">Working…</span>
+        : c.draft ? <span className="w-full truncate text-xs text-muted-foreground">Not saved</span>
+        : <span className="w-full truncate text-xs text-muted-foreground">{relativeTime(c.updatedAt)}</span>}
+    </>
+  )
+}
+
 function ChatHistory() {
   const { collapsed } = useContext(SidebarStateContext)
   const chats = useAgentChats()
@@ -291,9 +319,7 @@ function ChatHistory() {
           {chats?.length ? chats.map((c) => (
             <DropdownMenuItem key={c.id} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
-                <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
-                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
-                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <ChatItem c={c} active={here(chatPath(c))} />
               </Link>
             </DropdownMenuItem>
           )) : (
@@ -319,15 +345,13 @@ function ChatHistory() {
                 key={c.id}
                 to={to}
                 aria-current={active ? "page" : undefined}
-                title={`${c.title} · ${c.businessName}`}
+                title={`${c.title || "Untitled chat"} · ${c.businessName}`}
                 className={cn(
                   "flex flex-col rounded-md px-2 py-1 outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
                   active && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
               >
-                <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
-                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
-                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <ChatItem c={c} active={active} />
               </Link>
             )
           })}

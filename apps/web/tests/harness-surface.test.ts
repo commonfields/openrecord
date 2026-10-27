@@ -39,7 +39,7 @@ describe("agent workspace presentation", () => {
     expect(read("../app/globals.css")).toContain("thinking-sweep 4.5s linear infinite")
   })
   it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
-    expect(agentChat()).toContain("activity.start(businessId, requestId, text, conversationId)")
+    expect(agentChat()).toContain("activity.start(businessId, requestId, text, conversationId, providerTag)")
     expect(agentChat()).toContain("activity.finish(businessId, requestId, true)")
     expect(read("../app/components/app-shell.tsx")).toContain('c.working ? <span role="status" className="thinking text-xs">Working…')
     const picker = read("../app/components/agent-model-picker.tsx")

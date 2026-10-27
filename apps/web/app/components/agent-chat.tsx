@@ -150,7 +150,9 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
-    activity.start(businessId, requestId, text, conversationId)
+    // The working indicator in the chat history shows which provider is on it.
+    const providerTag = selection.status === "hosted" ? selection.provider : selection.status === "instance" ? selection.instance.driver : undefined
+    activity.start(businessId, requestId, text, conversationId, providerTag)
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "Working…", pending: true }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
     void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
