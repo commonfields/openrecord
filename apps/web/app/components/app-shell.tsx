@@ -492,11 +492,11 @@ function BusinessSwitcher() {
           <button
             className={cn(
               "flex items-center gap-2 rounded-md text-left outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
-              collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
+              collapsed ? "size-9 justify-center" : "min-h-12 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
           >
-            <BusinessMark name={activeBusiness?.name ?? null} />
+            <BusinessMark name={activeBusiness?.name ?? null} className="size-9 text-sm" />
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
