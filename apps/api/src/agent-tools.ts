@@ -29,6 +29,7 @@ import {
   ProductReadRepository,
   QuestionRepository,
   RecordRepository,
+  SetupRepository,
 } from "@openrecord/db"
 import type { AgentCitation } from "./agent.js"
 import { citationEvidenceForObservation, issueStateOf, loadIssueDetail, loadRepresentations } from "./reads.js"
@@ -66,6 +67,7 @@ export type AgentToolDeps =
   | ProductReadRepository
   | QuestionRepository
   | RecordRepository
+  | SetupRepository
   | SqlClient.SqlClient
 
 export interface AgentToolDef {

@@ -14,6 +14,7 @@ import {
   ProductReadRepositoryLive,
   QuestionRepositoryLive,
   RecordRepositoryLive,
+  SetupRepositoryLive,
 } from "@openrecord/db"
 import pg from "pg"
 import { runAgentTool, type AgentToolDeps } from "./agent-tools.js"
@@ -30,6 +31,7 @@ suite("agent tool tenancy (TEST fixtures)", () => {
     DiscoveryScopeRepositoryLive,
     FactRepositoryLive,
     ProductReadRepositoryLive,
+    SetupRepositoryLive,
     QuestionRepositoryLive,
     RecordRepositoryLive,
   ).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
