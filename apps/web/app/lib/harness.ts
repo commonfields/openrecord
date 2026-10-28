@@ -20,7 +20,7 @@ import { api } from "./api"
 export type { HarnessBridge, HarnessCatalog, HarnessDriver, HarnessInstance, HarnessModel, HarnessSelection }
 export { HARNESS_NAMES }
 
-export const HARNESS_DRIVERS = ["codex", "claude", "opencode", "cursor"] as const satisfies readonly HarnessDriver[]
+export const HARNESS_DRIVERS = ["codex", "claude", "opencode", "cursor", "cliproxy"] as const satisfies readonly HarnessDriver[]
 
 export const Harness = {
   catalog: () => api<HarnessCatalog>("/api/agent/providers"),
@@ -50,6 +50,8 @@ export function pairCommand(code: string): string {
 // Signs a driver's CLI tool in on the machine that runs the bridge. Existing
 // credentials stay local; the app never sees them.
 export function loginCommand(driver: HarnessDriver, localId?: string): string {
+  // CLIProxyAPI signs in to providers itself; the bridge only needs its client key.
+  if (driver === "cliproxy") return "./CLIProxyAPI --claude-login   # or --codex-login, --antigravity-login; then set CLIPROXY_API_KEY and restart the bridge"
   return localId
     ? `node openrecord-bridge.mjs login --instance ${localId}`
     : `node openrecord-bridge.mjs login --driver ${driver}`
@@ -60,7 +62,7 @@ export function loginCommand(driver: HarnessDriver, localId?: string): string {
 export function harnessStatusLabel(instance: HarnessInstance, checking: boolean): string | null {
   if (!instance.enabled) return null
   if (instance.state === "offline") return "Bridge offline"
-  if (!instance.installed) return "Not installed"
+  if (!instance.installed) return instance.driver === "cliproxy" ? "Not running" : "Not installed"
   if (checking) return "Checking authentication…"
   if (instance.auth === "unauthenticated") return "Authentication failed"
   if (instance.state === "error" || instance.state === "unavailable") return "Connection failed"

@@ -130,3 +130,33 @@ Search Console uses the GA4 Google connection. Consent now asks for `webmasters.
 `search_console_bindings` binds one Search Console site to one business. A site can be bound only if the connection lists it today; unverified sites are never listed. A domain property is marked when it covers the business's website. Rebinding ends the previous binding in the same transaction. Bindings are history: they end, and are never deleted while the business exists.
 
 Performance is read live and not stored: totals for the last 7, 28 or 90 complete days (ending three days ago, when Google's data is complete) and the same-length period before, plus the top ten queries and pages by clicks. It is shown on **Results** and available to the agent through `read_search_performance`. The tool answers `NOT_CONNECTED`, `RECONNECT_REQUIRED` or `SITE_NOT_ACCESSIBLE` in words rather than zeros. Its result says these numbers cover Google Search only, and that a change between periods does not show its cause. `search-console.integration.test.ts` exercises consent, scopes, binding, tenancy, windows and the tool against the local Google stand-in, which is `MOCK_ADAPTER_PASS`, never a live Google result.
+
+## Sessions that work together
+
+A business session can start helper sessions and talk to other sessions, modelled on T3 Code's orchestrator (`delegate_task`, `task_status`, `task_cancel`, `t3_thread_send`, `t3_thread_read`, `t3_thread_list`, `orchestrator_capabilities`). The tools are declared in `apps/api/src/agent-session-tools.ts`; the runtime is `apps/api/src/agent-sessions.ts`; migration `0042_agent_sessions_v1.sql` adds the storage.
+
+- `delegate_task` starts a helper session for one self-contained task, with an optional role (research, search, AI answers, content, measurement) and an optional model from `list_models`. The helper receives only the task, never the caller's history. Several calls in one model step run in parallel, at most three at a time.
+- `message_session` runs a follow-up turn in another session of the same business, keeping that session's own history. A session cannot message itself or a session that started it, and a session that is working refuses the message.
+- `read_task` and `cancel_task` act on tasks the calling session started. Cancelling stops the helper and every helper below it.
+- `list_sessions` and `read_session` read the operator's other sessions for the same business. Their text is untrusted data, like any tool result.
+
+**Wait and async.** In `wait` mode (the default) the caller's tool call returns the helper's result, bounded by the caller's own time limit. A helper still running when the wait ends keeps running. In `async` mode the call returns at once. Finished results are posted into the caller's session as messages. Once every task its turn started has finished, an idle caller continues with one automatic turn that combines the results. That turn cannot start new helpers, and cancelled tasks never start it.
+
+**Boundaries.** A helper is an ordinary durable conversation with a parent, created archived so it never becomes the business's default chat. It belongs to the same account, business and user, and runs the same server-owned tools as its caller and nothing broader. A database trigger refuses a task whose sessions are outside that scope. A helper's proposals are ordinary pending proposals and appear as approval cards on the caller's reply. The server bounds the work:
+
+- Depth: helpers of helpers are allowed, but a helper at depth 2 only reads.
+- At most six tasks per turn.
+- At most eight running tasks per account.
+- A repeated `clientRequestId` returns the recorded task instead of starting a second helper.
+
+A task whose helper lost its turn (restart or crash) is recorded as interrupted when it is next read. Messages that other sessions add do not count as operator turns (`user_revision`), so an operator whose screen predates them can still send.
+
+**Verification.** `agent-sessions.integration.test.ts` runs the real loop, business tools and session tools against disposable PostgreSQL with a scripted model. It covers:
+
+- parallel helpers, with their approvals reaching the caller;
+- async results and the automatic continuation;
+- Stop cascading to helpers;
+- business scoping;
+- deduplicated retries and the depth limit.
+
+No live model has been run through these tools.

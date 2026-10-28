@@ -1,6 +1,6 @@
 # Connect your local AI subscriptions
 
-Use Settings → Agent to connect Codex, Claude Code, OpenCode, or Cursor installed on your computer. Keep that computer and the bridge running while you chat.
+Use Settings → Agent to connect Codex, Claude Code, OpenCode, or Cursor installed on your computer, or a CLIProxyAPI server running there. Keep that computer and the bridge running while you chat.
 
 ## Connect a computer
 
@@ -42,9 +42,25 @@ The bridge does not copy credentials. Run `node openrecord-bridge.mjs run`, then
 
 Use `--binary /absolute/path/to/cli` when adding an instance that needs a particular installed executable.
 
+## Use CLIProxyAPI
+
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) serves your Claude, Codex, Gemini and other subscriptions as one OpenAI-compatible API on your computer. The bridge calls it with native tool calling instead of starting a CLI for every model step, so turns and helper sessions run faster.
+
+1. Install and start CLIProxyAPI, and sign in to the providers you want with its own login flags, for example `./CLIProxyAPI --claude-login` or `./CLIProxyAPI --codex-login`.
+2. Put a client key in its `access.api-keys` list, and export the same key as `CLIPROXY_API_KEY` in the terminal that runs the bridge.
+3. Bridges paired after this version discover it at `http://127.0.0.1:8317` automatically. For an older bridge, or another address, stop the bridge and add it:
+
+```sh
+node openrecord-bridge.mjs add --driver cliproxy --url http://127.0.0.1:8317 --api-key-env CLIPROXY_API_KEY
+```
+
+4. Restart the bridge, enable **CLIProxyAPI** in Settings → Agent and pick one of its models in the composer.
+
+Plain HTTP is accepted only on `127.0.0.1` or `localhost`; any other address must use HTTPS. The key stays on your computer. If the card says **Not running**, CLIProxyAPI is not reachable from the bridge; if it says **Authentication failed**, the key does not match one of its `access.api-keys`.
+
 ## Stop or disconnect
 
-Use **Stop** in chat to cancel the active conversation turn. An interrupted provider request may still count against the provider's usage limit.
+Use **Stop** in chat to cancel the active conversation turn and every helper session it started. An interrupted provider request may still count against the provider's usage limit.
 
 Disable a provider to block new turns and cancel its active jobs. Revoke a bridge in Settings to disconnect that computer. Revocation does not sign you out of the provider's CLI.
 

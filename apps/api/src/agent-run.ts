@@ -106,9 +106,10 @@ export const interruptionNote = (status: RunStatus, reason: string | null, event
     citations: [...citations.values()],
     toolCalls: events.filter(e => e.type === "TOOL_COMPLETED" || e.type === "TOOL_FAILED").map(e => ({ tool: str(e.payload["tool"]), summary: str(e.payload["summary"]) })),
     worked: events.some(e => e.type === "TOOL_STARTED"),
-    decisions: mergeDecisions(completed.filter(e => e.payload["effect"] === "propose").flatMap(e => {
+    decisions: mergeDecisions(completed.flatMap(e => {
       const receipt = e.payload["receipt"]
-      return receipt !== null && typeof receipt === "object" ? decisionRefs(receipt as Record<string, unknown>) : []
+      if (e.payload["effect"] === "delegate") return (e.payload["decisions"] as ReadonlyArray<{ type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; id: string }> | undefined) ?? []
+      return e.payload["effect"] === "propose" && receipt !== null && typeof receipt === "object" ? decisionRefs(receipt as Record<string, unknown>) : []
     })),
   }
 }

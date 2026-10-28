@@ -295,7 +295,7 @@ function ChatHistory() {
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
                 <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
                 {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
-                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.parentSessionId ? "Helper · " : ""}{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             </DropdownMenuItem>
           )) : (
@@ -329,7 +329,7 @@ function ChatHistory() {
               >
                 <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
                 {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
-                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className="truncate text-xs text-muted-foreground">{c.parentSessionId ? "Helper · " : ""}{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             )
           })}

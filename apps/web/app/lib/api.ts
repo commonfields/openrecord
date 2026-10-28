@@ -241,18 +241,30 @@ export type AgentMessage = {
   toolCalls?: AgentToolCall[]
   // Proposals this reply saved; each renders as an approval card under it.
   decisions?: AgentDecisionRef[]
+  // Helper sessions this reply started or reports on.
+  tasks?: AgentTaskRef[]
+  // Set when another session sent this message: a task or follow-up, a
+  // result it posted here, or the turn that continued once results arrived.
+  origin?: AgentMessageOrigin
   // Which provider answered, recorded by the server at turn time. Absent on
   // messages sent before selection existed.
   inference?: { provider: string; requestedModel: string | null; instanceId?: string } | null
 }
-export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
+export type AgentConversation = { id: string; revision: number; messages: AgentMessage[]; session?: AgentSessionInfo }
+// A helper session's link to the session that started it. Root chats have no parent.
+export type AgentSessionInfo = { parentSessionId: string | null; title: string | null; role: string | null; depth: number }
 export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; id: string }
+export type AgentTaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
+export type AgentTaskRef = { id: string; sessionId: string; title: string; role: string; status: AgentTaskStatus }
+export type AgentMessageOrigin = { kind: "task" | "message" | "result" | "wake"; fromSessionId?: string; taskId?: string; title?: string }
 // The run behind an agent message: how it ended and which checks did not run.
 export type AgentRunRef = { id: string; status: "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"; outcome?: "ANSWERED" | "ANSWERED_WITH_GAPS"; gaps?: string[] }
 export type AgentRunEvent = { seq: number; type: string; at: string; payload: Record<string, unknown> }
 export type AgentRunProgress = { run: { id: string; status: string; modelSteps: number; toolCalls: number } | null; events: AgentRunEvent[] }
 export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
-export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string }
+export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string
+  // Helper sessions: the session that started them, their role and whether a turn runs now.
+  parentSessionId?: string | null; role?: string | null; working?: boolean }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
 export const Agent = {
   conversations: () => api<{ conversations: AgentChatSummary[] }>("/api/agent/conversations"),
@@ -262,7 +274,7 @@ export const Agent = {
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
   send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[] }>(`${agentBase(businessId)}/messages`, {
+    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[] }>(`${agentBase(businessId)}/messages`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
     }),
   // Live journal of the run answering a request, after the last seen sequence.

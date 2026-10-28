@@ -16,15 +16,24 @@ const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promp
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })
 const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY"), id: Schema.UUID })
+const TaskStatus = Schema.Literal("RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED")
+const TaskRef = Schema.Struct({ id: Schema.UUID, sessionId: Schema.UUID, title: Schema.String, role: Schema.String, status: TaskStatus })
+// A message another session sent: a task it asked for, a follow-up,
+// a result it posted here, or the turn that continues once results arrive.
+export const MessageOrigin = Schema.Struct({ kind: Schema.Literal("task", "message", "result", "wake"),
+  fromSessionId: Schema.optional(Schema.UUID), taskId: Schema.optional(Schema.UUID), title: Schema.optional(Schema.String) })
+export type MessageOrigin = typeof MessageOrigin.Type
 const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
-  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
-const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number })
+  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
+const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
+const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session) })
 const parse = Schema.decodeUnknown(Conversation)
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string | null }
 export const loadConversation = (scope: ConversationScope, conversationId?: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* settleConversation(scope, conversationId)
-  const rows = yield* sql`SELECT id, messages, revision FROM agent_conversations WHERE account_id = ${scope.accountId}
+  const rows = yield* sql`SELECT id, messages, revision, json_build_object('parentSessionId', parent_conversation_id, 'title', task_title, 'role', task_role, 'depth', depth) AS session
+    FROM agent_conversations WHERE account_id = ${scope.accountId}
     AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId} AND expires_at > now()
     AND (${conversationId ?? null}::uuid IS NOT NULL AND id=${conversationId ?? null}::uuid
       OR ${conversationId ?? null}::uuid IS NULL AND archived_at IS NULL)`
@@ -43,6 +52,43 @@ const settleConversation = (scope: ConversationScope, conversationId?: string) =
     yield* sql`SELECT id FROM agent_conversations WHERE id = ${String(row["conversation_id"])} FOR UPDATE`
     yield* settleRuns(String(row["conversation_id"]))
   }))
+  // Finished helper tasks are posted into an idle parent before it is read.
+  const results = yield* sql`SELECT DISTINCT t.parent_conversation_id FROM agent_tasks t JOIN agent_conversations c ON c.id = t.parent_conversation_id
+    WHERE t.delivered_at IS NULL AND t.status <> 'RUNNING' AND c.account_id = ${scope.accountId} AND c.user_id = ${scope.userId}
+      AND c.business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND (c.lease_until IS NULL OR c.lease_until <= now())
+      AND (${conversationId ?? null}::uuid IS NOT NULL AND c.id = ${conversationId ?? null}::uuid OR ${conversationId ?? null}::uuid IS NULL AND c.archived_at IS NULL)`
+  for (const row of results) yield* sql.withTransaction(Effect.gen(function*() {
+    const locked = yield* sql`SELECT id FROM agent_conversations WHERE id = ${String(row["parent_conversation_id"])} AND (lease_until IS NULL OR lease_until <= now()) FOR UPDATE`
+    if (locked.length) yield* deliverTaskResults(String(row["parent_conversation_id"]))
+  }))
+})
+const RESULT_CHARS = 6000
+/** Posts the results of finished, undelivered helper tasks into their parent
+ * session. Call inside a transaction holding the parent row FOR UPDATE while
+ * no turn runs there. Other sessions' messages never move user_revision. */
+export const deliverTaskResults = (conversationId: string) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const tasks = yield* sql`SELECT id, child_conversation_id, title, role, status, result_summary, result, failure_reason FROM agent_tasks
+    WHERE parent_conversation_id = ${conversationId} AND delivered_at IS NULL AND status <> 'RUNNING' ORDER BY finished_at, created_at FOR UPDATE`
+  if (!tasks.length) return 0
+  const appended = tasks.map(t => {
+    const result = (t["result"] ?? {}) as { decisions?: unknown[]; citations?: unknown[]; tasks?: unknown[] }
+    const status = String(t["status"]), title = String(t["title"])
+    const body = status === "COMPLETED" ? String(t["result_summary"] ?? "").slice(0, RESULT_CHARS)
+      : `The helper stopped before finishing (${String(t["failure_reason"] ?? status).toLowerCase().replace(/_/g, " ")}).`
+    return { role: "agent", text: `Result from “${title}”:\n\n${body}`, origin: { kind: "result", fromSessionId: String(t["child_conversation_id"]), taskId: String(t["id"]), title },
+      tasks: [{ id: String(t["id"]), sessionId: String(t["child_conversation_id"]), title, role: String(t["role"]), status }],
+      ...(Array.isArray(result.citations) && result.citations.length ? { citations: result.citations.slice(0, 20) } : {}),
+      ...(Array.isArray(result.decisions) && result.decisions.length ? { decisions: result.decisions.slice(0, 10) } : {}) }
+  })
+  yield* sql`UPDATE agent_tasks SET delivered_at = now() WHERE id IN ${sql.in(tasks.map(t => String(t["id"])))}`
+  yield* sql`UPDATE agent_conversations SET
+      messages = (SELECT COALESCE(jsonb_agg(m ORDER BY i), '[]'::jsonb) FROM (
+        SELECT m, i FROM jsonb_array_elements(messages || ${JSON.stringify(appended)}::jsonb) WITH ORDINALITY AS e(m, i)
+        ORDER BY i DESC LIMIT 200) kept),
+      revision = revision + 1, updated_at = now(), expires_at = now() + interval '30 days'
+    WHERE id = ${conversationId}`
+  return appended.length
 })
 // The signed-in user's saved conversations in this account, newest first, for
 // the chat history. Titled by the first question asked; empty ones are skipped.
@@ -50,10 +96,13 @@ export type ConversationSummary = {
   readonly id: string
   readonly businessId: string | null; readonly businessName: string; readonly isClient: boolean
   readonly title: string; readonly messages: number; readonly updatedAt: string
+  /** Set for a helper session: the session that started it, its task title and role. */
+  readonly parentSessionId: string | null; readonly role: string | null; readonly working: boolean
 }
 export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at,
+      c.parent_conversation_id, c.task_title, c.task_role, (c.lease_until > now()) AS working,
       jsonb_array_length(c.messages) AS message_count,
       (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message
     FROM agent_conversations c
@@ -66,8 +115,10 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
   return rows.map((r): ConversationSummary => ({
     id: String(r["id"]),
     businessId: r["business_id"] === null ? null : String(r["business_id"]), businessName: r["business_id"] === null ? "General chat" : String(r["name"]), isClient: r["is_client"] === true,
-    title: String(r["first_message"] ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+    title: String(r["task_title"] ?? r["first_message"] ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
     messages: Number(r["message_count"]), updatedAt: new Date(r["updated_at"] as string | Date).toISOString(),
+    parentSessionId: r["parent_conversation_id"] === null ? null : String(r["parent_conversation_id"]),
+    role: r["task_role"] === null ? null : String(r["task_role"]), working: r["working"] === true,
   }))
 })
 export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {
@@ -102,15 +153,30 @@ export const deleteConversation = (scope: ConversationScope, conversationId?: st
 })
 /** A turn responder: the production agent, or a fixture in tests. Outcome and
  * gaps come from the run loop; the journal records the run as it happens. */
-type Responder = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory, selection: HarnessSelection | undefined,
-  assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal) => Effect.Effect<{
+/** Where a turn runs: its session, its run and which session started it. Session tools use it. */
+export interface TurnContext {
+  readonly conversationId: string; readonly runId: string; readonly depth: number
+  readonly origin: MessageOrigin | undefined; readonly selection: HarnessSelection | undefined
+  /** When the turn's own time limit runs out (epoch ms). */
+  readonly deadline: number
+}
+export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>> = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory, selection: HarnessSelection | undefined,
+  assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
     readonly reply: string; readonly citations: ReadonlyArray<unknown>; readonly toolCalls: ReadonlyArray<unknown>; readonly usage: ReadonlyArray<unknown>
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
     readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }> | undefined
-  }, unknown, Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>>
-export const sendConversation = (scope: ConversationScope, body: {
+    readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
+  }, unknown, R>
+/** The agent without session tools; the turn context is not passed on. */
+const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal) =>
+  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal)
+/** A turn's own time limit; handleAgentMessage enforces the same bound. */
+export const TURN_LIMIT_MS = 540000
+export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>>(scope: ConversationScope, body: {
   readonly message: string; readonly requestId: string; readonly conversationId?: string | undefined; readonly revision: number; readonly selection?: HarnessSelection | undefined
-}, respond: Responder = handleAgentMessage) => Effect.gen(function*() {
+  /** Set when another session, not the operator, started this turn. */
+  readonly origin?: MessageOrigin | undefined
+}, respond: Responder<R> = plainResponder as unknown as Responder<R>) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const lease = randomUUID()
   const digest = createHash("sha256").update(JSON.stringify({ message:body.message, selection:body.selection ?? null })).digest("hex")
@@ -122,7 +188,7 @@ export const sendConversation = (scope: ConversationScope, body: {
       WHERE au.account_id=${scope.accountId} AND au.user_id=${scope.userId} AND ${body.conversationId === undefined}
       AND (${scope.businessId}::uuid IS NULL OR EXISTS(SELECT 1 FROM businesses WHERE id=${scope.businessId} AND account_id=${scope.accountId}))
       ON CONFLICT(account_id,business_id,user_id) WHERE archived_at IS NULL DO NOTHING`
-    const select = sql`SELECT id, messages, revision, last_request_id, last_reply,last_request_digest,
+    const select = sql`SELECT id, messages, revision, last_request_id, last_reply,last_request_digest, user_revision, depth,
       (lease_until > now()) AS busy FROM agent_conversations
       WHERE account_id = ${scope.accountId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId}
       AND (${body.conversationId ?? null}::uuid IS NOT NULL AND id=${body.conversationId ?? null}::uuid
@@ -132,7 +198,7 @@ export const sendConversation = (scope: ConversationScope, body: {
     const seenRevision = Number(locked["revision"])
     // A run that stopped earlier becomes its interruption note first. The
     // client's revision predates that note, so it still counts as current.
-    const settled = locked["busy"] === true ? 0 : yield* settleRuns(String(locked["id"]))
+    const settled = locked["busy"] === true ? 0 : (yield* settleRuns(String(locked["id"]))) + (yield* deliverTaskResults(String(locked["id"])))
     const row = settled ? (yield* select)[0]! : locked
     const current = yield* parse(row)
     if (body.conversationId && current.id !== body.conversationId) return yield* Effect.fail(new AgentConversationRefused({ reason: "NOT_FOUND" }))
@@ -141,9 +207,12 @@ export const sendConversation = (scope: ConversationScope, body: {
       return { kind: "replay" as const, reply: row["last_reply"] }
     }
     if (row["busy"] === true) return yield* Effect.fail(new AgentConversationRefused({ reason: "BUSY" }))
-    if (body.revision !== current.revision && body.revision !== seenRevision) return yield* Effect.fail(new AgentConversationRefused({ reason: "STALE" }))
+    // Turns and results other sessions added since do not make the operator's view stale.
+    const userRevision = Number(row["user_revision"] ?? 0)
+    const sinceOwnTurn = body.revision >= userRevision && body.revision <= current.revision
+    if (body.revision !== current.revision && body.revision !== seenRevision && !sinceOwnTurn) return yield* Effect.fail(new AgentConversationRefused({ reason: "STALE" }))
     yield* sql`UPDATE agent_conversations SET lease_id = ${lease}, lease_until = now() + interval '600 seconds' WHERE id = ${current.id}`
-    return { kind: "reserved" as const, current }
+    return { kind: "reserved" as const, current, depth: Number(row["depth"] ?? 0) }
   }))
   if (conversation.kind === "replay") return conversation.reply
   const { current } = conversation
@@ -163,12 +232,14 @@ export const sendConversation = (scope: ConversationScope, body: {
       const active = yield* sql`SELECT id FROM agent_conversations WHERE id=${current.id} AND lease_id=${lease} AND lease_until>now()`
       if (!active.length) return yield* Effect.fail(new AgentModelError({ reason:"CANCELLED" }))
     }).pipe(Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason:"UNAVAILABLE" })))
-    const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal)
+    const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal,
+      { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const messages = [...current.messages, { role: "user", text: body.message, ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
+      user_revision = CASE WHEN ${body.origin === undefined} THEN revision + 1 ELSE user_revision END,
       last_request_id = ${body.requestId}, last_request_digest=${digest}, last_reply = ${JSON.stringify(response)}::jsonb, lease_id = NULL, lease_until = NULL,
       updated_at = now(), expires_at = now() + interval '30 days'
       WHERE id = ${current.id} AND lease_id = ${lease} AND lease_until > now()

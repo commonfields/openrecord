@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
-import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentProposal, type AgentRunEvent, type AgentRunRef } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunEvent, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { Growth } from "@/lib/growth"
@@ -24,7 +24,9 @@ import { AgentModelPicker } from "@/components/agent-model-picker"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
-  steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[] }
+  steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[]
+  // Helper sessions this reply started, and which session sent this message.
+  tasks?: AgentTaskRef[]; origin?: AgentMessageOrigin }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -104,6 +106,8 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const pending = useRef(false)
   const mounted = useRef(true)
   const [proposals, setProposals] = useState<AgentProposal[]>([])
+  // Set when this conversation is a helper session another session started.
+  const [sessionInfo, setSessionInfo] = useState<AgentSessionInfo | null>(null)
   // Why the conversation could not load, and the last message that got no reply.
   const [unavailable, setUnavailable] = useState<string | null>(null)
   const [failed, setFailed] = useState<{ text: string; note: string; retry: boolean } | null>(null)
@@ -123,7 +127,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     mounted.current = true
     if (!enabled || businessId === "") return () => { mounted.current = false }
     let live = true
-    setMessages([]); setConversationId(undefined); setRevision(0); setReady(false); setFailed(null); setUnavailable(null); setProposals([])
+    setMessages([]); setConversationId(undefined); setRevision(0); setReady(false); setFailed(null); setUnavailable(null); setProposals([]); setSessionInfo(null)
     void Agent.load(businessId, requestedConversationId).then(async r => {
       if (!r.conversation && !requestedConversationId && live) r = await Agent.create(businessId, crypto.randomUUID())
       if (!live) return
@@ -131,6 +135,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
       if (r.conversation) {
         setConversationId(r.conversation.id); setRevision(r.conversation.revision)
         setMessages(toDisplayMessages(r.conversation.messages))
+        setSessionInfo(r.conversation.session ?? null)
       }
       setReady(true)
     }).catch(e => { if (live) setUnavailable(unavailableText(e)) })
@@ -169,7 +174,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
       setConversationId(r.conversationId); setRevision(r.revision)
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
-        ...(r.decisions?.length ? { decisions: r.decisions } : {}) }])
+        ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}) }])
       refreshProposals()
       if (r.decisions?.length) notifyDecisionsChanged()
     }).catch((e: unknown) => {
@@ -186,6 +191,25 @@ export function useAgentSession(businessId: string | null, enabled = true) {
       }).catch(() => {})
     }).finally(() => { stopPolling(); pending.current = false; if (mounted.current) setBusy(false) })
   }
+  // While helpers this session started are still working, their results and
+  // the turn that follows arrive on the server; pick them up without a reload.
+  const helpersWorking = ready && !busy && [...taskStatuses(messages).values()].some(t => t === "RUNNING")
+  const seen = useRef({ revision, refreshProposals })
+  seen.current = { revision, refreshProposals }
+  useEffect(() => {
+    if (!helpersWorking || !conversationId) return
+    const timer = setInterval(() => {
+      if (pending.current) return
+      void Agent.load(businessId, conversationId).then(r => {
+        if (!mounted.current || pending.current || !r.conversation || r.conversation.revision <= seen.current.revision) return
+        setRevision(r.conversation.revision)
+        setMessages(toDisplayMessages(r.conversation.messages))
+        if (r.conversation.messages.some(m => m.decisions?.length)) { seen.current.refreshProposals(); notifyDecisionsChanged() }
+      }).catch(() => {})
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [helpersWorking, conversationId, businessId])
+
   const clear = () => {
     if (pending.current) return
     pending.current = true; setBusy(true)
@@ -231,7 +255,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     : [])
   const hasWork = openProposals.length > 0 || keptDrafts.length > 0 || reads.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning }
+  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -279,6 +303,66 @@ function MessageDecisions({ session, businessName, refs }: { session: AgentSessi
   return cards.length ? <div className="w-full space-y-2 pt-1" aria-label="Waiting for your decision">{cards}</div> : null
 }
 
+// ---- sessions working together ----
+
+const ROLE_LABEL: Readonly<Record<string, string>> = { general: "Helper", researcher: "Research", seo: "Search", aeo: "AI answers", content: "Content", analyst: "Measurement" }
+const roleLabel = (role: string | null | undefined) => ROLE_LABEL[role ?? "general"] ?? "Helper"
+const TASK_STATUS: Readonly<Record<AgentTaskStatus, string>> = { RUNNING: "Working", COMPLETED: "Done", FAILED: "Stopped", CANCELLED: "Cancelled", INTERRUPTED: "Interrupted" }
+/** Each task's latest known status: a later message (its posted result) supersedes the card that started it. */
+function taskStatuses(messages: ReadonlyArray<{ tasks?: AgentTaskRef[] | undefined }>) {
+  const statuses = new Map<string, AgentTaskStatus>()
+  for (const m of messages) for (const t of m.tasks ?? []) statuses.set(t.id, t.status)
+  return statuses
+}
+
+/** The helper sessions one reply started, each linking to its own conversation. */
+function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tasks: AgentTaskRef[]; statuses: Map<string, AgentTaskStatus> }) {
+  return (
+    <ul className="w-full space-y-1.5 pt-1" aria-label="Helper sessions">
+      {tasks.map(t => {
+        const status = statuses.get(t.id) ?? t.status
+        return (
+          <li key={t.id} className="flex items-center gap-3 rounded-xl border bg-card px-3.5 py-2.5">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              {status === "RUNNING" ? <LoaderIcon className="size-3.5 animate-spin" /> : status === "COMPLETED" ? <CheckIcon className="size-3.5" /> : <XIcon className="size-3.5" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{t.title}</span>
+              <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)} · {TASK_STATUS[status]}</span>
+            </span>
+            {session.businessId !== null ? <Link className="shrink-0 text-xs font-medium underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: t.sessionId })}>Open</Link> : null}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** Which session sent a message that did not come from the operator. */
+function OriginLabel({ session, origin }: { session: AgentSession; origin: AgentMessageOrigin }) {
+  const from = origin.fromSessionId && session.businessId !== null ? chatPath({ businessId: session.businessId, id: origin.fromSessionId }) : null
+  const text = origin.kind === "result" ? `Result from “${origin.title ?? "a helper"}”` : origin.kind === "message" ? "Follow-up from another session" : "Task from the session that started this one"
+  return (
+    <p className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground">
+      <CornerDownRightIcon className="size-3" />
+      {from ? <Link className="underline-offset-2 hover:underline" to={from}>{text}</Link> : text}
+    </p>
+  )
+}
+
+/** Shown at the top of a helper session: what it is for and where it came from. */
+function HelperBanner({ session }: { session: AgentSession }) {
+  const info = session.sessionInfo
+  if (!info?.parentSessionId) return null
+  return (
+    <div className="mb-4 flex items-center gap-2 rounded-xl border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+      <UsersIcon className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{roleLabel(info.role)} helper{info.title ? ` · ${info.title}` : ""}</span>
+      {session.businessId !== null ? <Link className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: info.parentSessionId })}>Open the session that started it</Link> : null}
+    </div>
+  )
+}
+
 // ---- the conversation ----
 
 function Thread({ session, businessName = "", compact, placeholder, onCommand, work }: {
@@ -291,14 +375,21 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
     const el = scrollRef.current
     el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }, [session.messages])
+  const statuses = taskStatuses(session.messages)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn("mx-auto w-full max-w-3xl", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
+          <HelperBanner session={session} />
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
-              {session.messages.map((m) => (
+              {session.messages.map((m) => m.origin?.kind === "wake" ? (
+                <li key={m.id} className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground" role="note">
+                  <span className="h-px flex-1 bg-border" />Helper results arrived. Continuing<span className="h-px flex-1 bg-border" />
+                </li>
+              ) : (
                 <li key={m.id} className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
+                  {m.origin ? <OriginLabel session={session} origin={m.origin} /> : null}
                   {m.role === "user" ? (
                     m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null
                   ) : (
@@ -323,6 +414,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       {m.tools && m.tools.length > 0 ? (
                         <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
                       ) : null}
+                      {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
                       {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
                   )}

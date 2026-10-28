@@ -80,6 +80,24 @@ function CopyCommand({ value }: { value: string }) {
 // The downloadable bridge is bundled into the web app's public assets.
 const BRIDGE_SCRIPT = "/openrecord-bridge.mjs"
 
+// CLIProxyAPI is a local server the bridge calls, not a CLI it signs in to.
+const CLIPROXY_ADD = "node openrecord-bridge.mjs add --driver cliproxy --url http://127.0.0.1:8317"
+function CliProxyHint({ instance }: { instance: HarnessInstance }) {
+  if (instance.state === "offline") return null
+  const text = !instance.installed
+    ? "CLIProxyAPI is not reachable from the bridge. Start it on that machine (default http://127.0.0.1:8317), or point the bridge at it:"
+    : instance.auth === "unauthenticated"
+      ? "CLIProxyAPI refused the client key. Set CLIPROXY_API_KEY to one of its access api-keys on the bridge machine, restart the bridge, then refresh here. Sign in to providers in CLIProxyAPI itself:"
+      : null
+  if (!text) return null
+  return (
+    <div className="mt-2 space-y-1">
+      <p className="text-[0.6875rem] text-muted-foreground">{text}</p>
+      <CopyCommand value={!instance.installed ? CLIPROXY_ADD : loginCommand("cliproxy")} />
+    </div>
+  )
+}
+
 function LoginHint({ instance }: { instance: HarnessInstance }) {
   return (
     <div className="mt-2 space-y-1">
@@ -146,7 +164,8 @@ function InstanceRow({ instance, reload }: { instance: HarnessInstance; reload: 
                 <span>{instance.version ? `${HARNESS_NAMES[instance.driver]} ${instance.version}` : "Version unknown"}</span>
                 <span>{instance.models.length} model{instance.models.length === 1 ? "" : "s"}</span>
               </div>
-              {instance.installed && instance.state !== "offline" && instance.auth !== "authenticated" ? <LoginHint instance={instance} /> : null}
+              {instance.driver === "cliproxy" ? <CliProxyHint instance={instance} />
+                : instance.installed && instance.state !== "offline" && instance.auth !== "authenticated" ? <LoginHint instance={instance} /> : null}
               {instance.state === "offline" ? <div className="mt-2 space-y-1"><p className="text-xs text-muted-foreground">Restart the paired bridge on its machine and keep that terminal running:</p><CopyCommand value="node openrecord-bridge.mjs run" /></div> : null}
             </> : null}
           </> : null}
@@ -352,7 +371,9 @@ export function AgentConnectionSection() {
                     key={driver}
                     label={HARNESS_NAMES[driver]}
                     icon={<ProviderLogo bare provider={driver === "claude" ? "claude-code" : driver} />}
-                    description="Not reported by any paired bridge yet."
+                    description={driver === "cliproxy"
+                      ? "Use your Claude, Codex or Gemini subscriptions through a local CLIProxyAPI. Bridges paired before it was supported add it with: " + CLIPROXY_ADD
+                      : "Not reported by any paired bridge yet."}
                   >
                     <Button variant="outline" size="sm" onClick={connect}>Connect</Button>
                   </SettingRow>

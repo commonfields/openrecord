@@ -13,16 +13,21 @@ import {
   type HarnessReport
 } from "@openrecord/contracts"
 import { BridgeFailure, RpcProcess, capture, driverEnvironment, failureReason } from "./process.js"
+import { executeCliProxy, probeCliProxy } from "./cliproxy.js"
 
 export const LocalInstance = Schema.Struct({
   id: Schema.UUID,
-  driver: Schema.Literal("codex", "claude", "opencode", "cursor"),
+  driver: Schema.Literal("codex", "claude", "opencode", "cursor", "cliproxy"),
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(100)),
   home: Schema.optional(Schema.String),
-  binary: Schema.optional(Schema.String)
+  binary: Schema.optional(Schema.String),
+  // CLIProxyAPI only: its origin, and where its client key comes from.
+  baseUrl: Schema.optional(Schema.String.pipe(Schema.maxLength(500))),
+  apiKeyEnv: Schema.optional(Schema.String.pipe(Schema.pattern(/^[A-Z_][A-Z0-9_]{0,99}$/))),
+  apiKey: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(500)))
 })
 export type LocalInstance = typeof LocalInstance.Type
-const BINARY: Record<HarnessDriver, string> = {
+const BINARY: Record<Exclude<HarnessDriver, "cliproxy">, string> = {
   codex: "codex",
   claude: "claude",
   opencode: "opencode",
@@ -64,6 +69,7 @@ const acpArgs = (instance: LocalInstance) => (instance.driver === "opencode" ? [
 const codexArgs = ["app-server"]
 
 async function resolveBinary(instance: LocalInstance, cwd: string, env: NodeJS.ProcessEnv) {
+  if (instance.driver === "cliproxy") throw new BridgeFailure("UNAVAILABLE")
   const names = instance.driver === "cursor" ? ["cursor-agent", "agent"] : [BINARY[instance.driver]]
   const directories = [
     ...(instance.driver === "opencode" ? [join(homedir(), ".opencode", "bin")] : []),
@@ -165,6 +171,7 @@ export async function executableFor(instance: LocalInstance) {
 }
 
 export async function probe(instance: LocalInstance): Promise<HarnessReport> {
+  if (instance.driver === "cliproxy") return probeCliProxy(instance)
   const base: HarnessReport = {
     localId: instance.id,
     driver: instance.driver,
@@ -304,9 +311,11 @@ export function parseAnswer(raw: string): HarnessAnswer {
 
 export async function execute(instance: LocalInstance, job: HarnessJob, signal: AbortSignal): Promise<HarnessAnswer> {
   if (instance.id !== job.localId || instance.driver !== job.driver) throw new BridgeFailure("UNAVAILABLE")
+  if (instance.driver === "cliproxy") return executeCliProxy(instance, job, signal)
   if (job.input.reasoningEffort && instance.driver !== "codex" && instance.driver !== "opencode") throw new BridgeFailure("UNAVAILABLE")
+  const driver = instance.driver
   return withWorkspace(async (cwd) => {
-    const binary = resolvedBinaries.get(instance.id) ?? instance.binary ?? BINARY[instance.driver],
+    const binary = resolvedBinaries.get(instance.id) ?? instance.binary ?? BINARY[driver],
       env = environment(instance)
     if (instance.driver === "claude") {
       const raw = await capture(

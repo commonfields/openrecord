@@ -241,8 +241,14 @@ export const cancelHarnessConversation = (scope: Session & { businessId: string 
     const sql = yield* SqlClient.SqlClient
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        yield* sql`UPDATE agent_conversations SET lease_id=NULL,lease_until=NULL WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid
-          AND (${scope.conversationId ?? null}::uuid IS NULL OR id=${scope.conversationId ?? null}::uuid)`
+        const stopped = yield* sql`UPDATE agent_conversations SET lease_id=NULL,lease_until=NULL WHERE account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid
+          AND (${scope.conversationId ?? null}::uuid IS NULL OR id=${scope.conversationId ?? null}::uuid) RETURNING id`
+        // Stopping a session stops the helper sessions it started, and theirs.
+        if (stopped.length) yield* sql`WITH RECURSIVE tree AS (
+            SELECT id, child_conversation_id FROM agent_tasks WHERE parent_conversation_id IN ${sql.in(stopped.map(r => String(r["id"])))} AND status = 'RUNNING'
+            UNION SELECT t.id, t.child_conversation_id FROM agent_tasks t JOIN tree ON t.parent_conversation_id = tree.child_conversation_id WHERE t.status = 'RUNNING'
+          ), released AS (UPDATE agent_conversations SET lease_id = NULL, lease_until = NULL WHERE id IN (SELECT child_conversation_id FROM tree) RETURNING id)
+          UPDATE agent_tasks SET status = 'CANCELLED', failure_reason = 'CANCELLED', finished_at = now() WHERE id IN (SELECT id FROM tree) AND status = 'RUNNING'`
         // A targeted turn's cancellation watcher cancels its own provider job.
         // Do not cancel another saved conversation's job in the same business.
         if (!scope.conversationId) yield* sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()
