@@ -75,7 +75,7 @@ export const dispatchToolSpec = (ctx: ToolContext, name: string, args: unknown) 
 
 /** Short present-tense label for run progress, from the tool name alone. */
 const VERBS: Readonly<Record<string, string>> = { read: "Reading", discover: "Listing", propose: "Proposing", draft: "Drafting", prepare: "Preparing", compare: "Comparing", diagnose: "Diagnosing",
-  delegate: "Delegating", message: "Messaging", cancel: "Cancelling", list: "Listing" }
+  delegate: "Delegating", message: "Messaging", cancel: "Cancelling", list: "Listing", search: "Searching", audit: "Auditing" }
 export const toolLabel = (name: string) => {
   const [verb = "", ...rest] = name.split("_")
   return `${VERBS[verb] ?? "Running"} ${rest.join(" ")}`.trim()

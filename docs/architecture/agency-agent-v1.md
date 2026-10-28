@@ -19,7 +19,7 @@ Only user messages and selected scoped tool evidence enter the assistant provide
 
 ## Runtime and permissions
 
-`agent-tools.ts` owns the eight read tools and their Effect input schemas. The same schemas generate the function declarations. The dispatcher rejects unknown tool names, excess properties and invalid IDs. Every read checks the active business against the session account. The tool audit logs names, scope and invocation timestamps, without evidence text or secrets.
+`agent-tools.ts` owns the read tools (web access: see [Web access and site audits](#web-access-and-site-audits)) and their Effect input schemas. The same schemas generate the function declarations. The dispatcher rejects unknown tool names, excess properties and invalid IDs. Every read checks the active business against the session account. The tool audit logs names, scope and invocation timestamps, without evidence text or secrets.
 
 `dispatchAgentTool` adds `propose_check_run`, which writes only a scoped pending proposal for a stored question. No model tool can approve, reject, publish, record a human judgment or execute a check. The existing proposal repository serializes human decisions and replays an executed check once. Pending proposals expire for approval after 24 hours. Live approval requires an enabled exact model from the server catalog.
 
@@ -163,6 +163,35 @@ No live model has been run through these tools.
 
 ## What the chat shows while the agent works
 
-A pending reply starts as **Thinking**. When the model runs a tool it switches to **Working**, showing the tool as a present-tense label, and returns to **Thinking** before the next step. A seconds counter runs throughout. When the provider returns its reasoning, the latest lines appear under the status as they stream, and each finished step stays listed with a check. The live trace is folded from the run journal (`apps/web/app/components/agent-trace.tsx`).
+A pending reply starts as **Thinking…**. When the model runs a tool, the status switches to the tool's present-tense label, then returns to **Thinking…** before the next step. When the provider returns its reasoning, the latest lines appear in the chat's existing completed-steps list. Each finished step stays listed with a check. The live trace is folded from the run journal (`apps/web/app/components/agent-trace.tsx`) and uses the chat's existing styles. It adds no new layout.
 
-When the reply arrives, the trace folds into one line above the answer, for example "Thought for 12s · 3 steps". Opening it shows the model's reasoning for each step and every tool result. The trace is stored on the agent message as `activity` (at most 24 entries) and `durationMs`. It is never part of the history the model sees.
+When the reply arrives, the tools line stays under the answer as before, and the reasoning folds into one small line under it, for example "Thought for 12s". Opening that line shows the model's reasoning for each step. The trace is stored on the agent message as `activity` (at most 24 entries) and `durationMs`. It is never part of the history the model sees. Helper sessions open from the chat that started them and are not listed in the sidebar history.
+
+## Web access and site audits
+
+Three read tools give the agent the live web (`agent-web-tools.ts`, `web-access.ts`, `site-audit.ts`).
+
+- **`read_web_page`** reads one public page. It returns the title, description, canonical, language, headings, main text (at most 10,000 characters), structured data types and link counts.
+- **`audit_website`** audits up to 25 pages. By default it audits the business's own website, from setup, its client record or its first discovery scope; it can also audit a competitor's public site. Pages come from the sitemap and the home page's links. Each issue lists example pages, the fix and how to verify the fix worked. The checks cover:
+  - crawling and indexing: status, noindex, canonical, redirects, sitemap and HTTPS;
+  - search appearance: titles, descriptions, duplicates, Open Graph and structured data that does not parse;
+  - AI answers: robots.txt rules per search and AI crawler, text visible without JavaScript, and Organization data on the home page;
+  - content: h1 and thin pages;
+  - accessibility: alt text and language;
+  - speed: HTML download time and size, measured from OpenRecord's server, not a browser.
+- **`search_web`** searches the web through context.dev, only when `CONTEXT_DEV_API_KEY` is set. Without a key it answers `NOT_CONFIGURED`. With a key, `read_web_page` also renders pages that build their text with JavaScript.
+
+The rules these tools follow:
+
+- **The fetcher.** Every request goes through the shared SSRF-safe fetcher (`safeFetch`): DNS preflight, IP pinning, redirect re-validation, byte ceilings and timeouts. Private and internal addresses are refused before any request.
+- **robots.txt.** It is read before any page, for the token `OpenRecord-Agent`, with the discovery crawler's rules: 404 allows everything, 401 and 403 deny everything, and other failures fail closed.
+- **Untrusted content.** Page text and search results are third-party content, returned as quoted data. The prompt says so, and the closed dispatcher means an injected instruction still cannot approve or execute anything.
+- **Citations.** Fetched pages are cited as kind `web`. The chat opens them in a new tab and never routes to them inside the app.
+- **Search crawlers versus training crawlers.** The audit separates crawlers that decide whether a site can appear in answers or search results from crawlers that only collect training data:
+  - search: Googlebot, Bingbot, OAI-SearchBot, Claude-SearchBot and PerplexityBot;
+  - training: GPTBot, ClaudeBot, Google-Extended, Applebot-Extended and CCBot.
+
+  Only a blocked search crawler is an issue. llms.txt is reported, never scored.
+- **No invented effects.** The audit uses no LLM and gives no scores. The agent never claims a fix will raise rankings or AI mentions. The one to three fixes worth acting on can be saved as growth opportunities for approval.
+
+The checks, crawler roles, priorities and "how to verify" per fix are adapted from claude-seo (`AgriciDaniel/claude-seo`, MIT, pinned as `CLAUDE_SEO_PIN` in `agent-skills.ts`). The text is rewritten for OpenRecord, and no claude-seo script, browser or Python runtime is used.

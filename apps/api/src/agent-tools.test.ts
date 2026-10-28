@@ -14,6 +14,7 @@ const decode = (tool: string, input: unknown) =>
 describe("agent tool harness", () => {
   it("registers exactly the read-only toolset", () => {
     expect(AGENT_TOOLS.map((t) => t.name).sort()).toEqual([
+      "audit_website",
       "compare_acquisition_batches",
       "discover_buyer_questions",
       "read_acquisition_citations",
@@ -31,6 +32,8 @@ describe("agent tool harness", () => {
       "read_record_outcomes",
       "read_representations",
       "read_search_performance",
+      "read_web_page",
+      "search_web",
     ])
     for (const tool of AGENT_TOOLS) {
       expect(tool.name).toMatch(/^[a-z_]+$/)
