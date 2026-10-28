@@ -214,7 +214,7 @@ export function RepresentationsPage() {
             ) : (
               <div className="space-y-3 p-3 pt-1">
                 {byPage.map(([url, list]) => (
-                  <div key={url} className="overflow-hidden rounded-lg border">
+                  <div key={url} className="overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
                     <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-3 py-2">
                       <GlobeIcon className="size-3.5 text-muted-foreground" />
                       <a href={url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-xs font-medium hover:underline">

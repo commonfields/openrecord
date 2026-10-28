@@ -362,7 +362,7 @@ function Review({ clientId, check, approvedValue, reload, onJudged }: {
   }
   return (
     <div className="space-y-3">
-      <article className="rounded-lg border bg-muted/25">
+      <article className="rounded-[10px] bg-card shadow-(--card-shadow)">
         <header className="flex items-center justify-between gap-3 border-b px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span className="truncate">
             {o.modelVersion ?? o.observedModel ?? o.requestedModel ?? "model unknown"} · {formatDateTime(o.collectedAt)} ·{" "}
@@ -628,7 +628,7 @@ function Steps({ steps, onSelect }: { steps: Step[]; onSelect: (key: StepKey) =>
 
 function NextStep({ title, detail, done, children }: { title: string; detail?: ReactNode; done?: boolean; children?: ReactNode }) {
   return (
-    <div id="record-next" className={cn("flex scroll-mt-4 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-2.5", done ? "bg-muted/30" : "border-review/25 bg-review-soft/40")}>
+    <div id="record-next" className={cn("flex scroll-mt-4 flex-wrap items-center gap-x-3 gap-y-2 rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-2.5", done ? "bg-muted/30" : "border-review/25 bg-review-soft/40")}>
       {done ? <CheckIcon className="size-4 shrink-0 text-primary-ink" /> : <ArrowRightIcon className="size-4 shrink-0 text-review" />}
       <div className="min-w-0 flex-1">
         <p className="font-medium">
@@ -728,7 +728,7 @@ function EvidenceHistory({ record, slot, latest, initial }: {
   const followUp = checksFor(record, latest?.id, slot)
   const followUpShown = latest?.kind === "FOLLOW_UP" ? followUp : []
   return (
-    <details className="group rounded-lg border px-3 py-2 text-xs">
+    <details className="group rounded-[10px] bg-card shadow-(--card-shadow) px-3 py-2 text-xs">
       <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
         Evidence history: record → observations → claims → judgments → actions → outcome
       </summary>
@@ -936,7 +936,7 @@ function FactCard({ id, record, slot, latest, initial, reload, open, onToggle, o
           ) : null}
 
           {latest?.kind === "FOLLOW_UP" && baseline.length && (latest.id !== initial?.id) ? (
-            <details className="group rounded-lg border px-3 py-2">
+            <details className="group rounded-[10px] bg-card shadow-(--card-shadow) px-3 py-2">
               <summary className="cursor-pointer font-medium text-muted-foreground group-open:text-foreground">
                 First check answers (before){baseline.length > 1 ? ` · ${baseline.length} samples` : ""}
               </summary>
@@ -1100,7 +1100,7 @@ function RunCheckDialog({ request, onOpenChange, facts, surface, samples, onConf
       footnote="You can stop it while questions are waiting."
       onConfirm={() => (request ? onConfirm(request) : Promise.resolve(false))}
     >
-      <section aria-label="Questions" className="overflow-hidden rounded-xl border bg-card shadow-(--card-shadow)">
+      <section aria-label="Questions" className="overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
         <div className="flex items-baseline justify-between border-b px-3.5 py-2">
           <span className="font-medium">Questions</span>
           <span className="text-[0.6875rem] text-muted-foreground tabular-nums">{asked.length} of 3 facts{perFact > 1 ? ` · ${perFact} times each` : ""}</span>
@@ -1130,7 +1130,7 @@ function RunCheckDialog({ request, onOpenChange, facts, surface, samples, onConf
           ))}
         </ol>
       </section>
-      <dl className="grid grid-cols-3 divide-x overflow-hidden rounded-xl border bg-muted/30">
+      <dl className="grid grid-cols-3 divide-x overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
         <div className="min-w-0 px-3.5 py-2.5">
           <dt className="text-[0.6875rem] text-muted-foreground">AI surface</dt>
           <dd className={cn("truncate font-medium", fixture && "text-partial")} title={`${surfaceName} · ${surface.model}`}>{surfaceName}</dd>

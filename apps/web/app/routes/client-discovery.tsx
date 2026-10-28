@@ -296,7 +296,7 @@ function SampleReview({ clientId, check, brand, reload }: { clientId: string; ch
   const changed = !current || current.mention !== mention || current.recommendation !== recommendation
   return (
     <div className="space-y-3">
-      <article className="rounded-lg border bg-muted/25">
+      <article className="rounded-[10px] bg-card shadow-(--card-shadow)">
         <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 text-[0.6875rem] text-muted-foreground">
           <span>{o.observedModel ?? o.requestedModel ?? o.provider}</span>
           <span>· {formatDateTime(o.collectedAt)}</span>
@@ -333,7 +333,7 @@ function SampleReview({ clientId, check, brand, reload }: { clientId: string; ch
         </ul>
       ) : <p className="text-[0.6875rem] text-muted-foreground">No exact-name candidate for {brand}. Read the answer before deciding: the brand may appear in another form.</p>}
       {!o.synthetic ? (
-        <div className="space-y-2 rounded-lg border p-3">
+        <div className="space-y-2 rounded-[10px] bg-card shadow-(--card-shadow) p-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-medium">Does this answer mention <span className="text-review">{brand}</span>?</span>
             <span className="text-[0.6875rem] text-muted-foreground">{current ? `Reviewed ${relativeTime(current.reviewedAt)}${check.judgments.length > 1 ? ` · corrected ${check.judgments.length - 1}×` : ""}` : "Not reviewed yet"}</span>

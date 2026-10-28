@@ -376,7 +376,7 @@ function ClaimReview({
     <div
       ref={ref}
       className={cn(
-        "overflow-hidden rounded-lg border bg-card transition-shadow",
+        "overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) transition-shadow",
         focused && open && "border-review/40 shadow-[0_0_0_3px_var(--review-soft)]",
       )}
     >
@@ -464,7 +464,7 @@ function ClaimReview({
                   </span>
                 </div>
               ) : (
-                <div className="max-h-48 divide-y overflow-y-auto rounded-lg border">
+                <div className="max-h-48 divide-y overflow-y-auto rounded-[10px] bg-card shadow-(--card-shadow)">
                   {facts.map((f) => (
                     <Label key={f.id} htmlFor={`${claimId}-${f.id}`} className="flex cursor-pointer items-center gap-3 px-3 py-2 text-xs font-normal hover:bg-muted/50">
                       <Checkbox

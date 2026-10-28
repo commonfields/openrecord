@@ -62,7 +62,7 @@ export function SiteRunPage() {
               <CardDescription>Raw per-URL evidence: status, indexability, and digests.</CardDescription>
             </CardHeader>
             <CardContent>
-              <ul className="divide-y rounded-lg border">
+              <ul className="divide-y rounded-[10px] bg-card shadow-(--card-shadow)">
                 {observations.map((o) => (
                   <li key={String(o["id"])} className="px-4 py-3 text-xs">
                     <p className="break-all font-medium">{String(o["finalUrl"] ?? o["url"])}</p>

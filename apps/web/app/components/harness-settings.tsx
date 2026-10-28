@@ -3,12 +3,13 @@
 // every state shown comes from the server catalog — nothing here fakes a
 // connection. The pairing code lives in component state only; the page never
 // writes secrets to persistent browser storage.
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 import { CheckIcon, CopyIcon, LaptopIcon, MonitorIcon, RefreshCwIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { SettingGroup, SettingRow } from "@/components/ui/setting"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Spinner } from "@/components/spinner"
 import { modelBrand, ProviderLogo } from "@/components/provider-logo"
@@ -29,30 +30,6 @@ import {
   type HarnessInstance,
 } from "@/lib/harness"
 import { cn } from "@/lib/utils"
-
-function SettingGroup({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div className="space-y-0.5">
-        <h3 className="text-xs font-medium">{title}</h3>
-        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      <div className="divide-y rounded-xl border">{children}</div>
-    </section>
-  )
-}
-
-function SettingRow({ label, description, children, icon }: { label: string; description?: ReactNode; children?: ReactNode; icon?: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-      <div className="min-w-0 space-y-0.5">
-        <span className="flex items-center gap-2 text-xs font-medium">{icon}{label}</span>
-        {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
-      </div>
-      {children ? <div className="flex shrink-0 items-center gap-2">{children}</div> : null}
-    </div>
-  )
-}
 
 function CopyCommand({ value, label = "Setup command" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false)
@@ -137,18 +114,18 @@ function InstanceRow({ instance, managed, reload }: { instance: HarnessInstance;
     })()
 
   return (
-    <div className="py-3 pr-4 pl-10">
+    <div className="flex min-h-20 flex-col justify-center py-3.5 pr-3.5 pl-10">
       {instance.enabled && instance.modelsTruncated ? <p role="status" className="mb-2 text-xs text-muted-foreground">This provider's catalog was too large. Only the first {instance.models.length} models are available here.</p> : null}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <div className="min-w-0 space-y-1">
-          <span className="flex items-center gap-2 text-xs font-medium"><ProviderLogo bare provider={instance.driver === "claude" ? "claude-code" : instance.driver} />{instance.name}</span>
+          <span className="flex items-center gap-2 text-sm font-medium"><ProviderLogo bare provider={instance.driver === "claude" ? "claude-code" : instance.driver} className="size-5" />{instance.name}</span>
           {instance.enabled ? <>
-            <p role="status" className={cn("text-xs text-muted-foreground", status === "Authentication failed" && "text-destructive")}>
+            <p role="status" className={cn("text-[0.8125rem] text-muted-foreground", status === "Authentication failed" && "text-destructive")}>
               {status}
               {status !== "Checking authentication…" ? <span> · {instance.version ? `${HARNESS_NAMES[instance.driver]} ${instance.version}` : "version unknown"} · {instance.models.length} model{instance.models.length === 1 ? "" : "s"}</span> : null}
             </p>
             {status !== "Checking authentication…" && instance.installed && instance.auth !== "authenticated" && instance.driver !== "cliproxy" ? <LoginHint instance={instance} managed={managed} /> : null}
-          </> : <p className="text-xs text-muted-foreground">Off · {instance.models.length} model{instance.models.length === 1 ? "" : "s"} available</p>}
+          </> : <p className="text-[0.8125rem] text-muted-foreground">Off · {instance.models.length} model{instance.models.length === 1 ? "" : "s"} available</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {instance.enabled ? <Tooltip>
@@ -204,20 +181,20 @@ function MachineGroup({ bridge, instances, reload }: { bridge: HarnessBridge; in
   const Icon = managed ? LaptopIcon : MonitorIcon
   return (
     <div>
-      <div className="flex items-center justify-between gap-4 px-4 py-3">
+      <div className="flex min-h-20 items-center justify-between gap-5 p-3.5">
         <div className="min-w-0 space-y-0.5">
-          <span className="flex items-center gap-2 text-xs font-medium">
-            <Icon className="size-4 text-muted-foreground" />
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <Icon className="size-5 text-muted-foreground" />
             {managed ? "This computer" : bridge.name}
             <span className={cn("size-1.5 rounded-full", bridge.online ? "bg-supported" : "bg-muted-foreground/40")} aria-hidden />
             <span className="font-normal text-muted-foreground">{bridge.online ? "Online" : "Offline"}</span>
           </span>
           {!bridge.online ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[0.8125rem] text-muted-foreground">
               {managed ? "OpenRecord starts it again by itself; this clears once it reconnects." : "Not connected. Start the bridge on that computer again, or remove it here."}
             </p>
           ) : missing.length ? (
-            <p className="text-xs text-muted-foreground">Not installed here: {missing.map(i => i.name).join(", ")}</p>
+            <p className="text-[0.8125rem] text-muted-foreground">Not installed here: {missing.map(i => i.name).join(", ")}</p>
           ) : null}
         </div>
         <Button variant="outline" size="sm" disabled={working} onClick={revoke}>{managed ? "Disconnect" : "Remove"}</Button>
@@ -244,7 +221,7 @@ function LocalBridgeRow({ reload }: { reload: () => Promise<void> }) {
       }
     })()
   return (
-    <SettingRow label="This computer" icon={<LaptopIcon className="size-4 text-muted-foreground" />} description="Use the Codex, Claude Code, OpenCode or Cursor already signed in here, and CLIProxyAPI if it is installed. No pairing code needed.">
+    <SettingRow label="This computer" icon={<LaptopIcon className="size-5 text-muted-foreground" />} description="Use the Codex, Claude Code, OpenCode or Cursor already signed in here, and CLIProxyAPI if it is installed. No pairing code needed.">
       <Button size="sm" disabled={working} onClick={connect}>Connect</Button>
     </SettingRow>
   )
@@ -378,7 +355,7 @@ export function AgentConnectionSection() {
           <div className={cn(error ? "border-b" : "")}>
             <SettingRow
               label="OpenRecord hosted"
-              icon={catalog.hosted ? <ProviderLogo provider={modelBrand(catalog.hosted.model, catalog.hosted.provider)} /> : undefined}
+              icon={catalog.hosted ? <ProviderLogo provider={modelBrand(catalog.hosted.model, catalog.hosted.provider)} className="size-5" /> : undefined}
               description={
                 catalog.hosted ? `${catalog.hosted.provider} · ${catalog.hosted.model}` : "No hosted provider is configured on this server."
               }

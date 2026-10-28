@@ -461,7 +461,7 @@ function HistoryDialog({ businessId, fact, onOpenChange }: { businessId: string;
         ) : (
           <ul className="space-y-3">
             {history.map((h) => (
-              <li key={h.id} className="space-y-2 rounded-lg border px-4 py-3">
+              <li key={h.id} className="space-y-2 rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-x-3">
                   <FactStatusBadge status={h.status} />
                   <span className="text-xs font-medium">{h.valueText}</span>
