@@ -10,15 +10,21 @@ cd "$(dirname "$0")/.."
 if ! docker info >/dev/null 2>&1; then
   colima list | grep -q default.*Running && colima restart || colima start
 fi
-docker compose up -d
+# Skip compose when Postgres already answers on 5432 (another container or a
+# tunnel may hold the port; starting a second one would fail).
+if ! pg_isready -h localhost -p 5432 -U openrecord >/dev/null 2>&1; then
+  docker compose up -d
+fi
 until pg_isready -h localhost -p 5432 -U openrecord >/dev/null 2>&1; do sleep 1; done
 
 # 2. API on :3001 (no watcher: restart it manually after server code changes).
+#    OPENRECORD_LOCAL_BRIDGE=1: the API starts a bridge for the signed-in user
+#    on this computer, so local CLI subscriptions work without pairing.
 if ! lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting API on :3001 (logs: /tmp/opencode-api.log)"
   mkdir -p /tmp
   DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord_dev" \
-  PORT=3001 APP_BASE_URL="http://localhost:3000" \
+  PORT=3001 APP_BASE_URL="http://localhost:3000" OPENRECORD_LOCAL_BRIDGE=1 \
     nohup pnpm --filter @openrecord/api dev > /tmp/opencode-api.log 2>&1 &
 fi
 

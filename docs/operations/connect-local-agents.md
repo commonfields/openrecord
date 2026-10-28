@@ -2,7 +2,32 @@
 
 Use Settings → Agent to connect Codex, Claude Code, OpenCode, or Cursor installed on your computer, or a CLIProxyAPI server running there. Keep that computer and the bridge running while you chat.
 
-## Connect a computer
+## On your own computer: nothing to set up
+
+When OpenRecord runs on the computer you use (the desktop app, or a local
+server started with `OPENRECORD_LOCAL_BRIDGE=1`, which `scripts/dev-up.sh`
+sets), it starts the bridge itself as soon as you sign in. There is no
+download and no pairing code. Settings → Agent shows it as **This computer**.
+
+- Every installed provider that is signed in and lists models turns on by
+  itself: Codex, Claude Code, OpenCode, Cursor and CLIProxyAPI.
+- A provider you turn off stays off; one you sign in to later turns on at the
+  next discovery, within 30 seconds.
+- CLIProxyAPI needs no environment variable: when `CLIPROXY_API_KEY` is not
+  set, the bridge reads the first `access.api-keys` entry from CLIProxyAPI's
+  `config.yaml` (`CLIPROXY_CONFIG`, `~/.cli-proxy-api/config.yaml`, Homebrew's
+  `cliproxyapi.conf`, or `~/CLIProxyAPI/config.yaml`), and only ever sends it to
+  this computer.
+- **Disconnect** stops it until you select **Connect** again.
+- The bridge keeps its own configuration in `~/.openrecord/app/<user>`, apart
+  from a bridge you paired by hand. It gets only system paths and the CLIs'
+  sign-in directories from the server, never the server's secrets or API keys,
+  so a hosted-model key cannot make a CLI bill it instead of your subscription.
+
+Never set `OPENRECORD_LOCAL_BRIDGE` on a shared or hosted server: the bridge
+runs the provider CLIs with that machine's sign-ins for whoever is signed in.
+
+## Connect another computer
 
 1. Install Node 24 and the provider's official CLI on your computer.
 2. Sign in through the provider's official CLI. OpenRecord does not collect subscription passwords or tokens.

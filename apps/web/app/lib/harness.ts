@@ -29,6 +29,12 @@ export const Harness = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  /** This computer's bridge, started by the server when it runs locally. connect: true turns it back on after a disconnect. */
+  local: (connect = false) =>
+    api<{ status: "DISABLED" | "UNAVAILABLE" | "OFF" | "STARTED" | "RUNNING" }>("/api/agent/bridges/local", {
+      method: "POST",
+      body: JSON.stringify({ connect }),
+    }),
   revokeBridge: (bridgeId: string) => api<{ revoked: boolean }>(`/api/agent/bridges/${bridgeId}`, { method: "DELETE" }),
   setEnabled: (instanceId: string, enabled: boolean) =>
     api<{ updated: boolean }>(`/api/agent/providers/${instanceId}`, {
@@ -224,6 +230,16 @@ export function selectionLabel(selection: AgentSelection): string {
 
 // ---- hooks ----
 
+// When the server runs on this computer it starts the bridge itself: asked
+// once per page load, then the catalog is re-read while providers are found.
+let localBridgeAsked = false
+export function startLocalBridge(connect: boolean, reload: () => Promise<void>) {
+  return Harness.local(connect).then(r => {
+    if (r.status === "STARTED") for (const ms of [2000, 6000, 12000, 25000]) window.setTimeout(() => void reload(), ms)
+    return r.status
+  })
+}
+
 export function useHarnessCatalog({
   pollMs,
   enabled = true,
@@ -244,6 +260,10 @@ export function useHarnessCatalog({
       if (generation.current !== gen) return
       setCatalog(next)
       setError(null)
+      if (next.local && !localBridgeAsked) {
+        localBridgeAsked = true
+        void startLocalBridge(false, load).catch(() => { localBridgeAsked = false })
+      }
     } catch (e) {
       if (generation.current !== gen) return
       setError(e instanceof Error && e.message ? e.message : "Couldn't load providers")

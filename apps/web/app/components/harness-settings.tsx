@@ -20,6 +20,7 @@ import {
   harnessStatusLabel,
   loginCommand,
   pairCommand,
+  startLocalBridge,
   useHarnessCatalog,
   type HarnessBridge,
   type HarnessInstance,
@@ -216,13 +217,38 @@ function BridgeRow({ bridge, reload }: { bridge: HarnessBridge; reload: () => Pr
     })()
   return (
     <SettingRow
-      label={bridge.name}
-      description={bridge.online ? "Connected to this server." : "Paired, but not reachable right now."}
+      label={bridge.managed ? "This computer" : bridge.name}
+      description={bridge.managed
+        ? bridge.online ? "OpenRecord runs the bridge here. Installed, signed-in providers turn on by themselves." : "Starting the bridge on this computer…"
+        : bridge.online ? "Connected to this server." : "Paired, but not reachable right now."}
     >
       <span className="text-xs text-muted-foreground">{bridge.online ? "Online" : "Offline"}</span>
       <Button variant="outline" size="sm" disabled={working} onClick={revoke}>
-        Revoke
+        {bridge.managed ? "Disconnect" : "Revoke"}
       </Button>
+    </SettingRow>
+  )
+}
+
+// Shown when the server runs on this computer but its own bridge is off.
+function LocalBridgeRow({ reload }: { reload: () => Promise<void> }) {
+  const [working, setWorking] = useState(false)
+  const connect = () =>
+    void (async () => {
+      setWorking(true)
+      try {
+        const status = await startLocalBridge(true, reload)
+        if (status === "UNAVAILABLE") toast.error("The bridge program isn't available on this computer.")
+        await reload()
+      } catch {
+        toast.error("Couldn't start the bridge on this computer. Try again.")
+      } finally {
+        setWorking(false)
+      }
+    })()
+  return (
+    <SettingRow label="This computer" description="Use the Codex, Claude Code, OpenCode, Cursor or CLIProxyAPI already signed in here. No pairing code needed.">
+      <Button size="sm" disabled={working} onClick={connect}>Connect</Button>
     </SettingRow>
   )
 }
@@ -355,6 +381,7 @@ export function AgentConnectionSection() {
             </button>
           </p>
         ) : null}
+        {catalog?.local && !catalog.bridges.some(b => b.managed) ? <LocalBridgeRow reload={reload} /> : null}
         {catalog ? (
           catalog.bridges.length ? (
             catalog.bridges.map(bridge => <BridgeRow key={bridge.id} bridge={bridge} reload={reload} />)
@@ -372,7 +399,9 @@ export function AgentConnectionSection() {
                     label={HARNESS_NAMES[driver]}
                     icon={<ProviderLogo bare provider={driver === "claude" ? "claude-code" : driver} />}
                     description={driver === "cliproxy"
-                      ? "Use your Claude, Codex or Gemini subscriptions through a local CLIProxyAPI. Bridges paired before it was supported add it with: " + CLIPROXY_ADD
+                      ? catalog.local
+                        ? "Use your Claude, Codex or Gemini subscriptions through CLIProxyAPI. Start it on this computer; its client key is read from its config.yaml."
+                        : "Use your Claude, Codex or Gemini subscriptions through a local CLIProxyAPI. Bridges paired before it was supported add it with: " + CLIPROXY_ADD
                       : "Not reported by any paired bridge yet."}
                   >
                     <Button variant="outline" size="sm" onClick={connect}>Connect</Button>

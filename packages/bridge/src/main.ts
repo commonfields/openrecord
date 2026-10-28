@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { spawn } from "node:child_process"
 import { realpathSync } from "node:fs"
 import { fileURLToPath } from "node:url"
@@ -19,7 +19,10 @@ const Config = Schema.Struct({
   instances: Schema.Array(LocalInstance).pipe(Schema.maxItems(32))
 })
 type Config = typeof Config.Type
-const root = join(homedir(), ".openrecord"),
+// OPENRECORD_BRIDGE_HOME lets the OpenRecord app run its own bridge beside a
+// manually paired one: separate configuration, separate lock.
+const home = process.env["OPENRECORD_BRIDGE_HOME"]
+const root = home && isAbsolute(home) ? home : join(homedir(), ".openrecord"),
   file = join(root, "bridge.json")
 const log = (event: string) => process.stdout.write(JSON.stringify({ event }) + "\n")
 class BridgeSetupError extends Error {}
@@ -31,7 +34,7 @@ async function acquireLock() {
   const lock = join(root, "bridge.lock")
   const handle = await open(lock, "wx", 0o600).catch(() => {
     throw new BridgeSetupError(
-      "A bridge lock exists. Stop the other bridge; after a crash remove only ~/.openrecord/bridge.lock and restart."
+      "A bridge lock exists. Stop the other bridge; after a crash remove only " + join(root, "bridge.lock") + " and restart."
     )
   })
   await handle.writeFile(String(process.pid))

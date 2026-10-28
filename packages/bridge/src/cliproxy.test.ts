@@ -3,7 +3,10 @@ import type { AddressInfo } from "node:net"
 import { randomUUID } from "node:crypto"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import type { HarnessJob } from "@openrecord/contracts"
-import { cliProxyOrigin, executeCliProxy, probeCliProxy } from "./cliproxy.js"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { cliProxyConfigKey, cliProxyConfigPaths, cliProxyOrigin, executeCliProxy, probeCliProxy } from "./cliproxy.js"
 import { codexReasoning, execute, probe, type LocalInstance } from "./adapters.js"
 
 // A loopback stand-in for CLIProxyAPI's OpenAI-compatible surface. No provider is called.
@@ -98,5 +101,28 @@ describe("CLIProxyAPI driver (loopback stand-in; no provider calls)", () => {
     ].join("\n")
     expect(codexReasoning(events)).toBe("First, list the issues.\n\nThen answer.")
     expect(codexReasoning("")).toBe("")
+  })
+
+  describe("CLIProxyAPI client key from its own config", () => {
+    it("reads the first access.api-keys entry, or a top-level list from older versions", () => {
+      expect(cliProxyConfigKey(`port: 8317\naccess:\n  # API keys for authentication\n  api-keys:\n    - "key-one"\n    - "key-two"\n`)).toBe("key-one")
+      expect(cliProxyConfigKey(`api-keys:\n  - plain-key # comment\n`)).toBe("plain-key")
+      // Upstream provider keys are not client keys.
+      expect(cliProxyConfigKey(`claude:\n  api-keys:\n    - "sk-upstream"\naccess:\n  api-keys: []\n`)).toBeNull()
+      expect(cliProxyConfigKey(`access:\n  api-keys:\nport: 8317\n`)).toBeNull()
+    })
+
+    it("uses the config key for the local proxy only, and an explicit key first", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "cliproxy-")), config = join(dir, "config.yaml")
+      writeFileSync(config, `access:\n  api-keys:\n    - "from-config"\n`)
+      const env = { CLIPROXY_CONFIG: config }
+      expect(cliProxyConfigPaths(env, "/home/x")[0]).toBe(config)
+      seen.length = 0
+      reply = { status: 200, body: {} }
+      await probeCliProxy({ id: randomUUID(), name: "CLIProxyAPI", baseUrl: url }, env)
+      expect(seen.at(-1)?.auth).toBe("Bearer from-config")
+      await probeCliProxy({ id: randomUUID(), name: "CLIProxyAPI", baseUrl: url }, { ...env, CLIPROXY_API_KEY: "from-env" })
+      expect(seen.at(-1)?.auth).toBe("Bearer from-env")
+    })
   })
 })
