@@ -17,6 +17,7 @@ import {
   KeyboardIcon,
   LogOutIcon,
   MessagesSquareIcon,
+  LoaderCircleIcon,
   PanelLeftIcon,
   PlusIcon,
   RadarIcon,
@@ -45,7 +46,8 @@ import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth, DECISIONS_CHANGED, Decisions } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
-import { ChatActivityProvider, chatPath, useAgentChats } from "@/lib/agent-chats"
+import { ChatActivityProvider, chatPath, useAgentChats, type MergedChat } from "@/lib/agent-chats"
+import { ProviderLogo } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -264,6 +266,35 @@ function SidebarBody() {
 // client's record with the agent beside it, or the business's agent view.
 const CHATS_SHOWN = 6
 
+// One history row, in both sidebar sizes: context line first (the client or
+// business, plus the latest provider's logo on the right), then the chat's
+// title, then its status: working, unsent, or when it last moved.
+export function ChatItem({ c, active }: { c: MergedChat; active: boolean }) {
+  return (
+    <>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName}</span>
+        {c.providerTag ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="ml-auto shrink-0" role="img" aria-label={`${c.working ? "Working provider" : "Last reply provider"}: ${c.providerTag}`}>
+                <ProviderLogo bare provider={c.providerTag} className="size-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="left">{c.working ? "This provider is answering" : "Provider used for the last reply"}</TooltipContent>
+          </Tooltip>
+        ) : null}
+      </span>
+      <span className="flex w-full min-w-0 items-center gap-1.5">
+        {c.working ? <LoaderCircleIcon role="status" aria-label="Agent is responding" className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}
+        <span className={cn("truncate text-sm", active && "font-medium")}>{c.title || "New chat"}</span>
+      </span>
+      {c.draft ? <span className="w-full truncate text-xs text-muted-foreground">Not saved</span>
+        : <span className="w-full truncate text-xs text-muted-foreground">{relativeTime(c.updatedAt)}</span>}
+    </>
+  )
+}
+
 function ChatHistory() {
   const { collapsed } = useContext(SidebarStateContext)
   // Helper sessions open from the chat that started them, so the history lists only the person's own chats.
@@ -294,9 +325,7 @@ function ChatHistory() {
           {chats?.length ? chats.map((c) => (
             <DropdownMenuItem key={c.id} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
-                <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
-                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
-                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <ChatItem c={c} active={here(chatPath(c))} />
               </Link>
             </DropdownMenuItem>
           )) : (
@@ -322,15 +351,13 @@ function ChatHistory() {
                 key={c.id}
                 to={to}
                 aria-current={active ? "page" : undefined}
-                title={`${c.title} · ${c.businessName}`}
+                title={`${c.title || "Untitled chat"} · ${c.businessName}`}
                 className={cn(
                   "flex flex-col rounded-md px-2 py-1 outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
                   active && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
               >
-                <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
-                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
-                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <ChatItem c={c} active={active} />
               </Link>
             )
           })}
@@ -513,12 +540,12 @@ function BusinessSwitcher() {
             )}
             aria-label="Switch business"
           >
-            <BusinessMark name={activeBusiness?.name ?? null} />
+            <BusinessMark name={activeBusiness?.name ?? null} className="size-7 text-xs" />
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-base font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
+                  <span className="block truncate text-sm font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
+                  <span className="block truncate text-[0.625rem] text-muted-foreground">
                     {activeBusiness ? "Business" : "Choose a business"}
                   </span>
                 </span>

@@ -6,6 +6,13 @@ const activity = (overrides: Partial<ChatActivity> = {}): ChatActivity => ({ bus
 const saved: AgentChatSummary = { id: "c1", businessId: "b1", businessName: "Business 1", isClient: false, title: "Original question", messages: 2, updatedAt: "2026-10-25T10:00:00Z" }
 
 describe("chat history while a reply is pending", () => {
+  it("keeps the last saved provider after completion and a fresh history load", () => {
+    const recorded = { ...saved, provider: "codex" }
+    expect(mergeAgentChats([recorded], new Map(), [])[0]).toMatchObject({ working: false, providerTag: "codex" })
+    expect(mergeAgentChats([recorded], new Map([["c1", activity({ working: false, saved: false, providerTag: "claude" })]]), [])[0]).toMatchObject({ providerTag: "codex" })
+    expect(mergeAgentChats([recorded], new Map([["c1", activity({ working: true, providerTag: "claude" })]]), [])[0]).toMatchObject({ providerTag: "claude" })
+    expect(mergeAgentChats([{ ...saved, provider: null }], new Map(), [])[0]?.providerTag).toBeUndefined()
+  })
   it("shows a new chat immediately while the server history is still empty", () => {
     expect(mergeAgentChats([], new Map([["b1", activity()]]), [{ id: "b1", name: "Business 1" }])).toEqual([
       { id: "c1", businessId: "b1", businessName: "Business 1", isClient: false, title: "New question", messages: 1, updatedAt: "2026-10-26T10:00:00Z", working: true, draft: true },

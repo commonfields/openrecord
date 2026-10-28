@@ -268,7 +268,7 @@ export type AgentRunRef = { id: string; status: "COMPLETED" | "FAILED" | "CANCEL
 export type AgentRunEvent = { seq: number; type: string; at: string; payload: Record<string, unknown> }
 export type AgentRunProgress = { run: { id: string; status: string; modelSteps: number; toolCalls: number } | null; events: AgentRunEvent[] }
 export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
-export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string
+export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string; provider?: string | null
   // Helper sessions: the session that started them, their role and whether a turn runs now.
   parentSessionId?: string | null; role?: string | null; working?: boolean }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
@@ -280,7 +280,7 @@ export const Agent = {
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
   send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number }>(`${agentBase(businessId)}/messages`, {
+    api<{ reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number }>(`${agentBase(businessId)}/messages`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
     }),
   // Live journal of the run answering a request, after the last seen sequence.

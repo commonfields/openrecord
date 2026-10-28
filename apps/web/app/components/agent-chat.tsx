@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
+import { NewChatDialog } from "@/components/new-chat-dialog"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
@@ -30,6 +31,12 @@ type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array
   tasks?: AgentTaskRef[]; origin?: AgentMessageOrigin
   // A pending reply's live trace, and a finished reply's folded one.
   progress?: Progress; activity?: AgentActivity[]; durationMs?: number }
+
+// The business or client a conversation was started with, shown in the
+// composer tray to the left of the model. A general chat has none.
+export type AgentChatContext = { kind: "client" | "business"; name: string }
+export const chatContext = (businessId: string | null, name: string): AgentChatContext | null =>
+  businessId === null ? null : { kind: "business", name }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -134,6 +141,22 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     return () => { live = false; mounted.current = false }
   }, [businessId, enabled, requestedConversationId])
 
+  // A turn can settle while its chat is not on screen — it was left mid-turn
+  // and the reply is written by the mount that sent it. A mount that opened
+  // during the turn holds the pre-send snapshot; when the pending activity for
+  // this conversation goes quiet, pull the settled thread once.
+  const pendingWorking = conversationId === undefined ? undefined : activity.activity.get(conversationId)?.working
+  useEffect(() => {
+    if (conversationId === undefined || businessId === "" || pendingWorking !== false) return
+    let live = true
+    void Agent.load(businessId, conversationId).then(r => {
+      if (!live || !r.conversation) return
+      setRevision(r.conversation.revision)
+      setMessages(toDisplayMessages(r.conversation.messages))
+    }).catch(() => {})
+    return () => { live = false }
+  }, [businessId, conversationId, pendingWorking])
+
   const send = (text: string) => {
     if (pending.current || !ready || !conversationId) return
     // A turn cannot start on a selection known to be missing; the server has
@@ -141,7 +164,11 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
-    activity.start(businessId, requestId, text, conversationId)
+    // The working indicator in the chat history shows which provider is on it.
+    // A still-loading catalog sends nothing explicit, so the server's hosted
+    // default answers and the fallback logo says so.
+    const providerTag = selection.status === "hosted" ? selection.provider : selection.status === "instance" ? selection.instance.driver : "gemini"
+    activity.start(businessId, requestId, "New chat", conversationId, providerTag)
     // A reply starts as "Thinking"; it turns to "Working" once the model runs a tool.
     let progress = initialProgress()
     setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "", pending: true, progress }])
@@ -161,7 +188,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     let timer = setTimeout(poll, 250)
     const stopPolling = () => { polling = false; clearTimeout(timer) }
     void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
-      activity.finish(businessId, requestId, true)
+      activity.finish(businessId, requestId, true, r.provider, r.title)
       notifyAgentChats()
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
@@ -359,8 +386,8 @@ function HelperBanner({ session }: { session: AgentSession }) {
 
 // ---- the conversation ----
 
-function Thread({ session, businessName = "", compact, placeholder, onCommand, work }: {
-  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode
+function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context }: {
+  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -438,6 +465,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           placeholder={composerPlaceholder(session, placeholder)}
           autoFocus
           session={session}
+          context={context ?? null}
         />
       </div>
     </div>
@@ -558,10 +586,11 @@ function useSlidePresence(open: boolean) {
 // The chat as its own card on the canvas, left of the content panel, the way
 // the sidebar sits. It grows in to half the width; on narrow screens it takes
 // the whole width and the content panel steps aside.
-function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand }: {
+function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand, context }: {
   open: boolean; session: AgentSession; businessName: string; placeholder: string
   onClose: () => void; closeLabel?: string; closeIcon?: ReactNode
   onCommand: (c: AgentCommand) => void
+  context?: AgentChatContext | null
 }) {
   const pane = useSlidePresence(open)
   const { slot, setPane } = usePaneSlot()
@@ -589,7 +618,7 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
-              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} />
+              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} context={context ?? null} />
             </>
           ) : null}
         </div>
@@ -640,6 +669,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
             placeholder={composerPlaceholder(session, session.unavailable ? `${session.unavailable}. Type / for commands` : "Describe a task or ask a question")}
             autoFocus
             session={session}
+            context={chatContext(businessId, businessName)}
           />
         </div>
       </div>
@@ -649,6 +679,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
   return (
     <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
       <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+        context={chatContext(businessId, businessName)}
         work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
     </section>
   )
@@ -678,7 +709,8 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
   const decisions = session.openProposals.length + session.keptDrafts.length
   return (
     <>
-      <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand} />
+      <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand}
+        context={{ kind: "client", name: businessName }} />
       <div className="h-full min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
           {open && decisions ? (
@@ -729,6 +761,23 @@ function composerPlaceholder(session: AgentSession, fallback: string): string {
   return session.unavailable ?? fallback
 }
 
+// The business or client chosen when the chat started, shown in the composer
+// tray's left side while the model sits on the right.
+export function AgentContextChip({ context }: { context: AgentChatContext }) {
+  const icon = <FolderIcon className="size-3.5 shrink-0" aria-hidden />
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span aria-label={`Chatting about ${context.name}`} className="inline-flex max-w-56 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          {icon}
+          <span className="truncate">{context.name}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Chatting about {context.name}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 // The model picker shown in every agent layout's composer tray. It lists the
 // hosted default when configured, then enabled ready models per provider, and
 // a path to Settings → Agent to manage providers. Locked while a turn is in
@@ -760,6 +809,7 @@ function Composer({
   disabled,
   session,
   modelBlocked,
+  context,
 }: {
   onSend: (text: string) => void
   /** Slash commands run as conversational turns through the selected agent. */
@@ -771,6 +821,8 @@ function Composer({
   session?: AgentSession
   /** No usable selection: ordinary messages are gated, commands still run. */
   modelBlocked?: boolean
+  /** The business or client this conversation was started with, if any. */
+  context?: AgentChatContext | null
 }) {
   // While a turn is in flight the composer shows Stop instead of Send and the
   // model selection is locked until the server settles the turn.
@@ -882,7 +934,7 @@ function Composer({
         ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-foreground" aria-label="Chat actions" disabled={inFlight}>
+            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-muted-foreground hover:text-foreground" aria-label="Chat actions" disabled={inFlight}>
               <PlusIcon className="size-5" />
             </Button>
           </DropdownMenuTrigger>
@@ -947,7 +999,7 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" variant="ghost" size="icon-sm"
-                  className={cn("size-8 rounded-md text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
+                  className={cn("size-8 rounded-md text-muted-foreground hover:text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
                   onClick={toggleMic} aria-label={listening ? "Stop voice input" : "Start voice input"} aria-pressed={listening}>
                   {listening ? <SquareIcon className="size-4 fill-current" /> : <MicIcon className="size-5" />}
                 </Button>
@@ -993,6 +1045,15 @@ function Composer({
       </div>
       <div role="toolbar" aria-label="Chat options" className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-0.5 px-3 py-0 text-sm">
         {listening ? <span role="status" className="text-wrong">Listening</span> : null}
+        {context ? (
+          <NewChatDialog
+            trigger={
+              <button type="button" title={`Change the business or client — now chatting about ${context.name}`} aria-label={`Change the business or client — now chatting about ${context.name}`} className="max-w-56 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" disabled={inFlight}>
+                <AgentContextChip context={context} />
+              </button>
+            }
+          />
+        ) : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">

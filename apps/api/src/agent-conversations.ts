@@ -30,13 +30,14 @@ const Activity = Schema.Union(
 const Message = Schema.Struct({ activity: Schema.optional(Schema.Array(Activity).pipe(Schema.maxItems(24))), durationMs: Schema.optional(Schema.Number), role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
   decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
-const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session) })
+const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session),
+  title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
 const parse = Schema.decodeUnknown(Conversation)
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string | null }
 export const loadConversation = (scope: ConversationScope, conversationId?: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* settleConversation(scope, conversationId)
-  const rows = yield* sql`SELECT id, messages, revision, json_build_object('parentSessionId', parent_conversation_id, 'title', task_title, 'role', task_role, 'depth', depth) AS session
+  const rows = yield* sql`SELECT id, messages, revision, last_reply->>'title' AS title, json_build_object('parentSessionId', parent_conversation_id, 'title', task_title, 'role', task_role, 'depth', depth) AS session
     FROM agent_conversations WHERE account_id = ${scope.accountId}
     AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId} AND expires_at > now()
     AND (${conversationId ?? null}::uuid IS NOT NULL AND id=${conversationId ?? null}::uuid
@@ -102,13 +103,18 @@ export type ConversationSummary = {
   readonly title: string; readonly messages: number; readonly updatedAt: string
   /** Set for a helper session: the session that started it, its task title and role. */
   readonly parentSessionId: string | null; readonly role: string | null; readonly working: boolean
+  // Brand key of the provider that wrote the last reply (hosted provider or
+  // harness driver), or null while nothing has answered yet.
+  readonly provider: string | null
 }
 export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at,
+  const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at, c.last_reply->>'title' AS generated_title, c.last_reply ? 'title' AS has_title_metadata,
       c.parent_conversation_id, c.task_title, c.task_role, (c.lease_until > now()) AS working,
       jsonb_array_length(c.messages) AS message_count,
-      (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message
+      (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message,
+      (SELECT m->'inference'->>'provider' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
+        WHERE m->>'role' = 'agent' ORDER BY i DESC LIMIT 1) AS last_provider
     FROM agent_conversations c
     LEFT JOIN businesses b ON b.id = c.business_id AND b.account_id = c.account_id
     JOIN account_users au ON au.account_id = c.account_id AND au.user_id = c.user_id
@@ -119,10 +125,12 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
   return rows.map((r): ConversationSummary => ({
     id: String(r["id"]),
     businessId: r["business_id"] === null ? null : String(r["business_id"]), businessName: r["business_id"] === null ? "General chat" : String(r["name"]), isClient: r["is_client"] === true,
-    title: String(r["task_title"] ?? r["first_message"] ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+    // A helper's task title, the model's topic title, or the first question asked.
+    title: String(r["task_title"] ?? r["generated_title"] ?? (r["has_title_metadata"] ? "New chat" : r["first_message"]) ?? "New chat").replace(/\s+/g, " ").trim().slice(0, 120),
     messages: Number(r["message_count"]), updatedAt: new Date(r["updated_at"] as string | Date).toISOString(),
     parentSessionId: r["parent_conversation_id"] === null ? null : String(r["parent_conversation_id"]),
     role: r["task_role"] === null ? null : String(r["task_role"]), working: r["working"] === true,
+    provider: r["last_provider"] === null || r["last_provider"] === undefined ? null : String(r["last_provider"]),
   }))
 })
 export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {
@@ -163,6 +171,8 @@ export interface TurnContext {
   readonly origin: MessageOrigin | undefined; readonly selection: HarnessSelection | undefined
   /** When the turn's own time limit runs out (epoch ms). */
   readonly deadline: number
+  /** Ask the model for a short topic title with this answer. */
+  readonly generateTitle?: boolean
 }
 export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>> = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory, selection: HarnessSelection | undefined,
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
@@ -170,11 +180,11 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
     readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
-    readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined
+    readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
   }, unknown, R>
 /** The agent without session tools; the turn context is not passed on. */
-const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal) =>
-  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal)
+const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
+  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal, undefined, turn.generateTitle === true)
 /** A turn's own time limit; handleAgentMessage enforces the same bound. */
 export const TURN_LIMIT_MS = 540000
 export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>>(scope: ConversationScope, body: {
@@ -193,7 +203,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
       WHERE au.account_id=${scope.accountId} AND au.user_id=${scope.userId} AND ${body.conversationId === undefined}
       AND (${scope.businessId}::uuid IS NULL OR EXISTS(SELECT 1 FROM businesses WHERE id=${scope.businessId} AND account_id=${scope.accountId}))
       ON CONFLICT(account_id,business_id,user_id) WHERE archived_at IS NULL DO NOTHING`
-    const select = sql`SELECT id, messages, revision, last_request_id, last_reply,last_request_digest, user_revision, depth,
+    const select = sql`SELECT id, messages, revision, last_reply->>'title' AS title, last_request_id, last_reply,last_request_digest, user_revision, depth,
       (lease_until > now()) AS busy FROM agent_conversations
       WHERE account_id = ${scope.accountId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId}
       AND (${body.conversationId ?? null}::uuid IS NOT NULL AND id=${body.conversationId ?? null}::uuid
@@ -238,10 +248,12 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
       if (!active.length) return yield* Effect.fail(new AgentModelError({ reason:"CANCELLED" }))
     }).pipe(Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason:"UNAVAILABLE" })))
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal,
-      { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS })
+      { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS,
+        // The operator's first turn in a top-level chat also asks for a topic title.
+        generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
     const messages = [...current.messages, { role: "user", text: body.message, ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
-    const response = { ...reply, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
+    const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
       user_revision = CASE WHEN ${body.origin === undefined} THEN revision + 1 ELSE user_revision END,
