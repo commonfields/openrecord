@@ -45,12 +45,14 @@ export const HarnessInstance = Schema.Struct({
   checkedAt: Schema.String
 })
 export type HarnessInstance = typeof HarnessInstance.Type
-export const HarnessBridge = Schema.Struct({ id: Schema.UUID, name: Text(100), online: Schema.Boolean })
+export const HarnessBridge = Schema.Struct({ id: Schema.UUID, name: Text(100), online: Schema.Boolean, managed: Schema.optional(Schema.Boolean) })
 export type HarnessBridge = typeof HarnessBridge.Type
 export const HarnessCatalog = Schema.Struct({
   bridges: Schema.Array(HarnessBridge),
   instances: Schema.Array(HarnessInstance),
-  hosted: Schema.NullOr(Schema.Struct({ provider: Schema.String, model: Schema.String }))
+  hosted: Schema.NullOr(Schema.Struct({ provider: Schema.String, model: Schema.String })),
+  /** True when this server runs on the person's own computer and can start its bridge itself. */
+  local: Schema.optional(Schema.Boolean)
 })
 export type HarnessCatalog = typeof HarnessCatalog.Type
 export const HarnessActivation = Schema.Struct({ enabled: Schema.Boolean })

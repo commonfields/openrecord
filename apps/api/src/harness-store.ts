@@ -76,7 +76,7 @@ export const authenticateBridge = (token: string) =>
 export const harnessCatalog = (session: Session) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const bridges = yield* sql`SELECT id,name,(last_seen_at > now()-interval '90 seconds') AS online
+    const bridges = yield* sql`SELECT id,name,(last_seen_at > now()-interval '90 seconds') AS online,managed
     FROM agent_bridges WHERE account_id=${session.accountId} AND user_id=${session.userId} AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at`
     const rows = yield* sql`SELECT i.id,i.bridge_id AS "bridgeId",i.local_id AS "localId",i.driver,i.name,i.enabled,
     i.report->'installed' AS installed,i.report->'version' AS version,i.report->'auth' AS auth,i.report->'accountLabel' AS "accountLabel",coalesce(i.report->'modelsTruncated','false'::jsonb) AS "modelsTruncated",
@@ -86,7 +86,7 @@ export const harnessCatalog = (session: Session) =>
     WHERE i.account_id=${session.accountId} AND i.user_id=${session.userId} ORDER BY i.name`
     return {
       bridges: yield* Schema.decodeUnknown(
-        Schema.Array(Schema.Struct({ id: Schema.UUID, name: Schema.String, online: Schema.Boolean }))
+        Schema.Array(Schema.Struct({ id: Schema.UUID, name: Schema.String, online: Schema.Boolean, managed: Schema.Boolean }))
       )(bridges),
       instances: yield* Schema.decodeUnknown(Schema.Array(HarnessInstance))(rows)
     }
@@ -97,7 +97,7 @@ export const activateHarness = (session: Session, id: string, enabled: boolean) 
     const sql = yield* SqlClient.SqlClient
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        const updated = yield* sql`UPDATE agent_harness_instances i SET enabled=${enabled} FROM agent_bridges b
+        const updated = yield* sql`UPDATE agent_harness_instances i SET enabled=${enabled},enabled_by_user=${enabled} FROM agent_bridges b
       WHERE i.id=${id} AND i.account_id=${session.accountId} AND i.user_id=${session.userId}
       AND b.id=i.bridge_id AND b.revoked_at IS NULL RETURNING i.id`
         if (!updated.length) return yield* fail("NOT_FOUND")
@@ -166,6 +166,12 @@ export const pollHarnessJobs = (bridge: BridgeIdentity, reports: ReadonlyArray<H
         ON CONFLICT(bridge_id,local_id) DO UPDATE SET name=excluded.name,report=excluded.report,checked_at=now()
         WHERE agent_harness_instances.driver=excluded.driver`
         }
+        // This computer's own bridge: a provider that is installed, signed in and
+        // has models turns on by itself, unless the person has chosen otherwise.
+        yield* sql`UPDATE agent_harness_instances i SET enabled=true FROM agent_bridges b
+      WHERE i.bridge_id=${bridge.id} AND b.id=i.bridge_id AND b.managed AND NOT i.enabled AND i.enabled_by_user IS NULL
+      AND i.report->>'installed'='true' AND i.report->>'state'='ready' AND i.report->>'auth'<>'unauthenticated'
+      AND jsonb_array_length(coalesce(i.report->'models','[]'::jsonb))>0`
         yield* sql`UPDATE agent_harness_jobs SET status='FAILED',result=jsonb_build_object('kind','failed','reason','TIMEOUT','lease',coalesce(lease,gen_random_uuid())),lease=NULL,input='{}',completed_at=now()
       WHERE bridge_id=${bridge.id} AND status IN ('QUEUED','RUNNING') AND deadline<=now()`
         yield* sql`DELETE FROM agent_harness_jobs WHERE bridge_id=${bridge.id} AND completed_at<now()-interval '1 day'`

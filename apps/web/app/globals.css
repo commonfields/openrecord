@@ -7,36 +7,36 @@
 /* Brand: deep navy primary (#020c44) and periwinkle secondary (#7096f9);
    status hues are reserved for verdicts and run states. */
 :root {
-  /* Warm neutrals (hue ~85): an off-white canvas with pure-white cards, so
-     surfaces separate by tone and a soft ring shadow instead of hard borders. */
+  /* Neutral gray steps, mirrored from dark: a light page, white cards, a
+     slightly deeper selected state, and black-5% hairlines. */
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  --background: #f7f7f7;
+  --foreground: #1a1a1a;
+  --card: #ffffff;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
   --primary: #020c44;
-  --primary-foreground: oklch(0.985 0.005 265);
+  --primary-foreground: #ffffff;
   /* Brand as text, icons and tints. Equals --primary in light; in dark it
-     lifts so navy marks stay legible while fills stay navy. */
+     lifts so navy marks stay legible. */
   --primary-ink: #020c44;
   --secondary: #7096f9;
   --secondary-foreground: #020c44;
-  --muted: oklch(0.965 0.004 84.6);
-  --muted-foreground: oklch(0.556 0.008 84.6);
-  --accent: oklch(0.95 0.005 84.6);
-  --accent-foreground: oklch(0.205 0 0);
+  --muted: #efefef;
+  --muted-foreground: #6b6b6b;
+  --accent: #ededed;
+  --accent-foreground: #1a1a1a;
   --destructive: oklch(0.577 0.215 27.3);
-  --border: oklch(0.912 0.006 84.6);
-  --input: oklch(0.9 0.006 84.6);
+  --border: rgb(0 0 0 / 0.07);
+  --input: rgb(0 0 0 / 0.1);
   --ring: oklch(0.199 0.105 265.2 / 0.45);
 
-  --sidebar: oklch(0.972 0.002 286);
-  --sidebar-foreground: oklch(0.32 0.01 285.9);
-  --sidebar-accent: oklch(0.928 0.004 286.3);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.9);
-  --sidebar-border: oklch(0.922 0.004 286.3);
+  --sidebar: #f7f7f7;
+  --sidebar-foreground: #4a4a4a;
+  --sidebar-accent: #ededed;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: rgb(0 0 0 / 0.06);
 
   --wrong: oklch(0.55 0.19 27);
   --wrong-soft: oklch(0.97 0.018 27);
@@ -77,48 +77,45 @@
   --series-11: #65a30d;
   --series-12: #7c3aed;
 
-  /* Card: a 1px white edge, a faint warm ring, and three short stacked drops. */
-  --card-shadow: 0 0 0 1px oklch(1 0 0), 0 0 0 2px oklch(0.35 0.045 84.6 / 0.065), 0 1px 1px oklch(0.35 0.045 84.6 / 0.03),
-    0 2px 2px -1px oklch(0.35 0.045 84.6 / 0.03), 0 4px 4px -2px oklch(0.35 0.045 84.6 / 0.03);
-  /* Raised cards (e.g. the Today grid): an even, tight all-around shadow. */
-  --card-shadow-raised: 0 0 0 1px oklch(0.35 0.045 84.6 / 0.07), 0 0 2px oklch(0.35 0.045 84.6 / 0.04), 0 0 12px oklch(0.35 0.045 84.6 / 0.07);
+  /* Card: a black-5% hairline and one short, faint drop. */
+  --card-shadow: 0 0 0 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.03);
+  --card-shadow-raised: 0 0 0 1px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.05);
   --float-shadow: var(--card-shadow);
-  --float-shadow-strong: 0 0 0 1px oklch(0.35 0.045 84.6 / 0.08), 0 4px 10px -2px oklch(0.35 0.045 84.6 / 0.08), 0 14px 32px -8px oklch(0.35 0.045 84.6 / 0.14);
-  /* The content inset: a hairline plus a long, very soft drop. */
-  --panel-shadow: 0 0 0 1px oklch(0.35 0.045 84.6 / 0.05), 0 13px 12px -6px oklch(0.35 0.045 84.6 / 0.02), 0 25px 24px -12px oklch(0.35 0.045 84.6 / 0.02);
-  --control-shadow: 0 1px 2px oklch(0.35 0.045 84.6 / 0.05);
-  --badge-shadow: 0 1px 2px oklch(0.35 0.045 84.6 / 0.07), inset 0 1px 0 rgb(255 255 255 / 0.5);
+  --float-shadow-strong: 0 0 0 1px rgb(0 0 0 / 0.07), 0 4px 10px -2px rgb(0 0 0 / 0.07), 0 14px 32px -8px rgb(0 0 0 / 0.12);
+  --panel-shadow: 0 0 0 1px rgb(0 0 0 / 0.04);
+  --control-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  --badge-shadow: 0 1px 2px rgb(0 0 0 / 0.06), inset 0 1px 0 rgb(255 255 255 / 0.5);
 }
 
-/* Dark: its own steps, not an inversion. The sidebar canvas is a soft dark
-   (not near-black) and the content panel sits a touch darker still, so the
-   inset reads recessed; popovers stay one step above the panel. */
+/* Dark: small steps in gray make it layered. #1A1A1A page, #212121 cards,
+   #292929 selected; names #EEEEEE, subtext #B5B5B5; white-5% borders; white
+   buttons with #202020 text. */
 .dark {
-  --background: oklch(0.177 0.004 286);
-  --foreground: oklch(0.96 0.002 84.6);
-  --card: oklch(0.215 0.004 84.6);
-  --card-foreground: oklch(0.96 0.002 84.6);
-  --popover: oklch(0.235 0.004 84.6);
-  --popover-foreground: oklch(0.96 0.002 84.6);
-  --primary: #020c44;
-  --primary-foreground: oklch(0.985 0.005 265);
+  --background: #1a1a1a;
+  --foreground: #eeeeee;
+  --card: #212121;
+  --card-foreground: #eeeeee;
+  --popover: #212121;
+  --popover-foreground: #eeeeee;
+  --primary: #ffffff;
+  --primary-foreground: #202020;
   --primary-ink: oklch(0.8 0.09 266);
   --secondary: #7096f9;
   --secondary-foreground: #020c44;
-  --muted: oklch(0.25 0.004 84.6);
-  --muted-foreground: oklch(0.7 0.008 84.6);
-  --accent: oklch(0.26 0.004 84.6);
-  --accent-foreground: oklch(0.96 0.002 84.6);
+  --muted: #212121;
+  --muted-foreground: #b5b5b5;
+  --accent: #292929;
+  --accent-foreground: #eeeeee;
   --destructive: oklch(0.62 0.2 25);
-  --border: oklch(1 0 0 / 0.085);
-  --input: oklch(1 0 0 / 0.13);
+  --border: rgb(255 255 255 / 0.05);
+  --input: rgb(255 255 255 / 0.1);
   --ring: oklch(0.8 0.09 266 / 0.45);
 
-  --sidebar: oklch(0.17 0.004 286);
-  --sidebar-foreground: oklch(0.8 0.006 286);
-  --sidebar-accent: oklch(0.235 0.005 286);
-  --sidebar-accent-foreground: oklch(0.955 0.002 286);
-  --sidebar-border: oklch(1 0 0 / 0.07);
+  --sidebar: #1a1a1a;
+  --sidebar-foreground: #b5b5b5;
+  --sidebar-accent: #292929;
+  --sidebar-accent-foreground: #eeeeee;
+  --sidebar-border: rgb(255 255 255 / 0.05);
 
   --wrong: oklch(0.74 0.15 25);
   --wrong-soft: oklch(0.3 0.06 25);
@@ -154,11 +151,11 @@
   --series-11: #a3e635;
   --series-12: #a78bfa;
 
-  --card-shadow: 0 0 0 1px oklch(1 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 8px -4px rgb(0 0 0 / 0.3);
-  --card-shadow-raised: 0 0 0 1px oklch(1 0 0 / 0.07), 0 0 10px rgb(0 0 0 / 0.35);
+  --card-shadow: 0 0 0 1px rgb(255 255 255 / 0.05);
+  --card-shadow-raised: 0 0 0 1px rgb(255 255 255 / 0.05), 0 2px 8px rgb(0 0 0 / 0.25);
   --float-shadow: var(--card-shadow);
-  --float-shadow-strong: 0 0 0 1px oklch(1 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.45);
-  --panel-shadow: 0 0 0 1px oklch(1 0 0 / 0.06), 0 0 16px rgb(0 0 0 / 0.3);
+  --float-shadow-strong: 0 0 0 1px rgb(255 255 255 / 0.07), 0 1px 3px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.45);
+  --panel-shadow: 0 0 0 1px rgb(255 255 255 / 0.05);
   --control-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
   --badge-shadow: 0 1px 2px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
@@ -224,7 +221,7 @@
     color-scheme: dark;
   }
   body {
-    @apply bg-background text-xs text-foreground antialiased;
+    @apply bg-background text-[0.8125rem] text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
   }
 }

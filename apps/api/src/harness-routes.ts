@@ -12,6 +12,7 @@ import {
   decodeRouteId
 } from "@openrecord/contracts"
 import { configuredAgentModel } from "./agent-model.js"
+import { ensureLocalBridge, localBridgeEnabled } from "./local-bridge.js"
 import { AgentConversationRefused, createConversation, deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
 import { readRunProgress } from "./agent-run.js"
@@ -126,7 +127,21 @@ export const harnessApi = (withSession: WithSession) => {
             Effect.map((m) => ({ provider: m.provider, model: m.requestedModel })),
             Effect.orElseSucceed(() => null)
           )
-          return yield* json(200, { ...catalog, hosted }, { "cache-control": "no-store" })
+          return yield* json(200, { ...catalog, hosted, local: localBridgeEnabled() }, { "cache-control": "no-store" })
+        })
+      ).pipe(Effect.catchAll(failure))
+    ),
+    // This computer's bridge: started and paired by the server itself when it
+    // runs on the person's own machine. connect: true turns it back on after
+    // the person disconnected it.
+    HttpRouter.post(
+      "/api/agent/bridges/local",
+      operator((session) =>
+        Effect.gen(function* () {
+          const body = decode(Schema.Struct({ connect: Schema.optional(Schema.Boolean) }), yield* readJson)
+          if (!body) return yield* invalid()
+          const port = Number(process.env["PORT"] ?? 3001)
+          return yield* json(200, { status: yield* ensureLocalBridge(session, port, body.connect === true) }, { "cache-control": "no-store" })
         })
       ).pipe(Effect.catchAll(failure))
     ),

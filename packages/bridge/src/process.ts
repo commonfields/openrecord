@@ -28,6 +28,9 @@ export function driverEnvironment(driver: HarnessDriver, source: NodeJS.ProcessE
   const common = [
     "PATH",
     "HOME",
+    // Claude Code finds its macOS Keychain sign-in by user name.
+    "USER",
+    "LOGNAME",
     "USERPROFILE",
     "SYSTEMROOT",
     "APPDATA",

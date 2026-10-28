@@ -6,6 +6,9 @@
 // The proxy's client key stays on this computer: it is read from an
 // environment variable or the private bridge configuration file. Plain HTTP
 // is accepted only for a loopback address.
+import { readFileSync, statSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Schema } from "effect"
 import { HARNESS_NAMES, chatCompletionAnswer, chatCompletionRequest, chatModelIds, chatStream, type HarnessAnswer, type HarnessJob, type HarnessReport } from "@openrecord/contracts"
 import { BridgeFailure } from "./process.js"
@@ -37,7 +40,50 @@ const endpoint = (instance: CliProxyInstance, path: string) => {
   const origin = cliProxyOrigin(instance.baseUrl)
   return new URL(`${origin.pathname.replace(/\/+$/, "")}${path}`, origin.origin)
 }
-const key = (instance: CliProxyInstance, env: NodeJS.ProcessEnv) => instance.apiKey ?? env[instance.apiKeyEnv ?? CLIPROXY_DEFAULT_KEY_ENV] ?? ""
+
+/** Where CLIProxyAPI's config.yaml usually lives: CLIPROXY_CONFIG, its auth directory, Homebrew, or a home checkout. */
+export const cliProxyConfigPaths = (env: NodeJS.ProcessEnv = process.env, home = homedir()) => [
+  ...(env["CLIPROXY_CONFIG"] ? [env["CLIPROXY_CONFIG"]] : []),
+  join(home, ".cli-proxy-api", "config.yaml"),
+  "/opt/homebrew/etc/cliproxyapi.conf",
+  "/usr/local/etc/cliproxyapi.conf",
+  join(home, "CLIProxyAPI", "config.yaml"),
+  join(home, "cliproxyapi", "config.yaml"),
+]
+
+/** The first client key in a CLIProxyAPI config: access.api-keys, or a top-level api-keys list from older versions. */
+export function cliProxyConfigKey(yaml: string): string | null {
+  const lines = yaml.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i]!.match(/^(\s*)api-keys:\s*$/)
+    if (!m) continue
+    const indent = m[1]!.length
+    // Only the client list: top level, or directly under a top-level "access:".
+    const parent = indent === 0 ? "" : lines.slice(0, i).reverse().find(l => /^\S/.test(l)) ?? ""
+    if (indent !== 0 && !/^access:\s*$/.test(parent)) continue
+    for (const line of lines.slice(i + 1)) {
+      if (!line.trim() || line.trim().startsWith("#")) continue
+      const item = line.match(/^(\s*)-\s*["']?([^"'#\s]+)["']?\s*(#.*)?$/)
+      if (!item || item[1]!.length < indent) break
+      return item[2]!
+    }
+  }
+  return null
+}
+
+const configuredKey = (env: NodeJS.ProcessEnv) => {
+  for (const path of cliProxyConfigPaths(env)) {
+    try {
+      if (statSync(path).size > 1_000_000) continue
+      const found = cliProxyConfigKey(readFileSync(path, "utf8"))
+      if (found) return found
+    } catch { /* not there */ }
+  }
+  return ""
+}
+// A key read from CLIProxyAPI's own config is only ever sent to this computer.
+const key = (instance: CliProxyInstance, env: NodeJS.ProcessEnv) =>
+  instance.apiKey ?? env[instance.apiKeyEnv ?? CLIPROXY_DEFAULT_KEY_ENV] ?? (LOOPBACK.has(cliProxyOrigin(instance.baseUrl).hostname) ? configuredKey(env) : "")
 
 async function readBounded(response: Response): Promise<unknown> {
   const reader = response.body?.getReader()
