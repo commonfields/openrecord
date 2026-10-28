@@ -290,6 +290,18 @@ function GeneralSection() {
           })}
         </div>
         <div className="divide-y rounded-xl border">
+          <Row label="Chat width" description="How wide messages and the composer can grow on large screens.">
+            <Select value={preferences.chatWidth} onValueChange={(v) => setPreference("chatWidth", v as Preferences["chatWidth"])}>
+              <SelectTrigger className="w-36" aria-label="Chat width">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="comfortable">Comfortable</SelectItem>
+                <SelectItem value="wide">Wide</SelectItem>
+                <SelectItem value="full">Full</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
           <Row label="Reduce motion" description="Turn off animations and transitions in this app." htmlFor="pref-motion">
             <PrefSwitch id="pref-motion" k="reduceMotion" />
           </Row>

@@ -14,6 +14,8 @@ export type Preferences = {
   voiceInput: boolean
   showIssueCount: boolean
   reduceMotion: boolean
+  /** How wide the chat's messages and composer can grow on large screens. */
+  chatWidth: "comfortable" | "wide" | "full"
 }
 
 export const defaultPreferences: Preferences = {
@@ -25,6 +27,7 @@ export const defaultPreferences: Preferences = {
   voiceInput: true,
   showIssueCount: true,
   reduceMotion: false,
+  chatWidth: "comfortable",
 }
 
 const KEY = "openrecord:preferences"
@@ -78,6 +81,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     }
     setDisplayLocale(preferences.dateLocale === "system" ? undefined : preferences.dateLocale)
     document.documentElement.toggleAttribute("data-reduce-motion", preferences.reduceMotion)
+    document.documentElement.dataset["chatWidth"] = preferences.chatWidth
   }, [preferences])
 
   const setPreference = useCallback(<K extends keyof Preferences>(key: K, value: Preferences[K]) => {
