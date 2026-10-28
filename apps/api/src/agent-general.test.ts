@@ -4,6 +4,16 @@ import { runConversation } from "./agent.js"
 import type { AgentModel } from "./agent-model.js"
 
 describe("general chat tool boundary", () => {
+  it("interprets a title in the same model response without copying the first message", async () => {
+    let calls = 0
+    const model: AgentModel = input => {
+      calls++
+      expect(input.system).toContain('"title"')
+      return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ reply: "Here are the priorities.", title: "Launch marketing priorities" }) }] }, finishReason: "STOP" }] })
+    }
+    expect(await Effect.runPromise(runConversation({ message: "Hello, could you please help me figure out what to do about launching?", history: [], model, generateTitle: true, dispatch: () => Effect.die("No tools") }))).toMatchObject({ reply: "Here are the priorities.", title: "Launch marketing priorities" })
+    expect(calls).toBe(1)
+  })
   it("sends no business tools to the model", async () => {
     const model: AgentModel = input => {
       expect(input.tools).toEqual([])

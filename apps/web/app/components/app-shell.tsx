@@ -16,6 +16,7 @@ import {
   KeyboardIcon,
   LogOutIcon,
   MessagesSquareIcon,
+  LoaderCircleIcon,
   PanelLeftIcon,
   PlusIcon,
   RadarIcon,
@@ -264,27 +265,29 @@ function SidebarBody() {
 const CHATS_SHOWN = 6
 
 // One history row, in both sidebar sizes: context line first (the client or
-// business, plus the working provider's logo on the right), then the chat's
+// business, plus the latest provider's logo on the right), then the chat's
 // title, then its status: working, unsent, or when it last moved.
-function ChatItem({ c, active }: { c: MergedChat; active: boolean }) {
+export function ChatItem({ c, active }: { c: MergedChat; active: boolean }) {
   return (
     <>
       <span className="flex min-w-0 items-center gap-1">
         <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName}</span>
-        {c.working && c.providerTag ? (
+        {c.providerTag ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="ml-auto shrink-0">
-                <ProviderLogo bare provider={c.providerTag} className="size-3.5" aria-label="Working provider" />
+              <span className="ml-auto shrink-0" role="img" aria-label={`${c.working ? "Working provider" : "Last reply provider"}: ${c.providerTag}`}>
+                <ProviderLogo bare provider={c.providerTag} className="size-3.5" />
               </span>
             </TooltipTrigger>
-            <TooltipContent side="left">This provider is answering</TooltipContent>
+            <TooltipContent side="left">{c.working ? "This provider is answering" : "Provider used for the last reply"}</TooltipContent>
           </Tooltip>
         ) : null}
       </span>
-      <span className={cn("w-full truncate text-sm", active && "font-medium")}>{c.title || "Untitled chat"}</span>
-      {c.working ? <span role="status" className="thinking text-xs">Working…</span>
-        : c.draft ? <span className="w-full truncate text-xs text-muted-foreground">Not saved</span>
+      <span className="flex w-full min-w-0 items-center gap-1.5">
+        {c.working ? <LoaderCircleIcon role="status" aria-label="Agent is responding" className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}
+        <span className={cn("truncate text-sm", active && "font-medium")}>{c.title || "New chat"}</span>
+      </span>
+      {c.draft ? <span className="w-full truncate text-xs text-muted-foreground">Not saved</span>
         : <span className="w-full truncate text-xs text-muted-foreground">{relativeTime(c.updatedAt)}</span>}
     </>
   )

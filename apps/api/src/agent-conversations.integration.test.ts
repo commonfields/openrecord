@@ -16,7 +16,7 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
   const repos = Layer.mergeAll(AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive)
     .pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const run = <A, E>(effect: Effect.Effect<A, E, AgentToolDeps>) => Effect.runPromise(Effect.either(effect.pipe(Effect.provide(repos))))
-  const respond = () => Effect.succeed({ reply: "Stored evidence only", citations: [], toolCalls: [], usage: [], provider: "gemini" as const, requestedModel: "fixture" })
+  const respond = () => Effect.succeed({ reply: "Stored evidence only", title: "Stored evidence review", citations: [], toolCalls: [], usage: [], provider: "gemini" as const, requestedModel: "fixture" })
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
   afterAll(async () => { await pool.end() })
   const fixture = async (): Promise<ConversationScope & { businessId: string }> => {
@@ -40,7 +40,7 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     expect(await run(sendConversation(f, { message: "New question", conversationId: nextId, requestId: randomUUID(), revision: 0 }, respond))).toMatchObject({ _tag: "Right" })
     expect(await run(sendConversation(f, { message: "Old follow-up", conversationId: firstId, requestId: randomUUID(), revision: 1 }, respond))).toMatchObject({ _tag: "Right", right: { revision: 2 } })
     const history = await run(listConversations(f))
-    expect(history).toMatchObject({ _tag: "Right", right: expect.arrayContaining([expect.objectContaining({ id: firstId, title: "Original question" })]) })
+    expect(history).toMatchObject({ _tag: "Right", right: expect.arrayContaining([expect.objectContaining({ id: firstId, title: "Stored evidence review" })]) })
     if (history._tag === "Right") expect(history.right.map(c => c.id).sort()).toEqual([firstId, nextId].sort())
     const foreign = await fixture()
     expect(await run(loadConversation(foreign, firstId))).toMatchObject({ _tag: "Right", right: null })
@@ -89,8 +89,9 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     expect(job.input.tools).toEqual([])
     expect(job.input.system).toContain("No business or client is selected")
     expect((await pool.query("SELECT business_id FROM agent_harness_jobs WHERE id=$1", [job.id])).rows).toEqual([{ business_id: null }])
-    await execute(completeHarnessJob(bridge, job.id, { lease: job.lease, kind: "completed", answer: { kind: "text", text: "General answer" } }))
-    expect(await pending).toMatchObject({ _tag: "Right", right: { reply: "General answer", toolCalls: [] } })
+    await execute(completeHarnessJob(bridge, job.id, { lease: job.lease, kind: "completed", answer: { kind: "text", text: JSON.stringify({ reply: "General answer", title: "Planning a general task" }) } }))
+    expect(await pending).toMatchObject({ _tag: "Right", right: { reply: "General answer", title: "Planning a general task", toolCalls: [] } })
+    expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [{ title: "Planning a general task" }] })
   })
   it("persists messages, replays the same request, rejects stale revisions, and deletes", async () => {
     const f = await fixture()
@@ -103,7 +104,7 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     expect((await run(deleteConversation(f)))._tag).toBe("Right")
     expect(await run(loadConversation(f))).toMatchObject({ _tag: "Right", right: null })
   })
-  it("lists only the user's own non-empty conversations, newest first, titled by the first question", async () => {
+  it("lists only the user's own non-empty conversations, newest first, with the saved interpreted title", async () => {
     const a = await fixture(), b = await fixture()
     const second = (await pool.query("INSERT INTO businesses(account_id,name) VALUES ($1,'TEST Second') RETURNING id", [a.accountId])).rows[0].id as string
     await run(sendConversation(a, { message: "  First   question  ", requestId: randomUUID(), revision: 0 }, respond))
@@ -112,12 +113,28 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     await run(sendConversation(b, { message: "Someone else", requestId: randomUUID(), revision: 0 }, respond))
     const listed = await run(listConversations(a))
     expect(listed).toMatchObject({ _tag: "Right", right: [
-      { businessId: second, businessName: "TEST Second", title: "Other business", messages: 2, isClient: false },
-      { businessId: a.businessId, title: "First question", messages: 4 },
+      { businessId: second, businessName: "TEST Second", title: "Stored evidence review", messages: 2, isClient: false },
+      { businessId: a.businessId, title: "Stored evidence review", messages: 4 },
     ] })
     expect(listed._tag === "Right" && listed.right.length).toBe(2)
     await run(deleteConversation(a))
     expect(await run(listConversations(a))).toMatchObject({ _tag: "Right", right: [{ businessId: second }] })
+  })
+  it("reports the provider from the last saved reply and leaves legacy replies unknown", async () => {
+    const f = await fixture()
+    await run(sendConversation(f, { message: "First", requestId: randomUUID(), revision: 0 }, respond))
+    await run(sendConversation(f, { message: "Second", requestId: randomUUID(), revision: 1 }, () => Effect.succeed({ reply: "Second reply", citations: [], toolCalls: [], usage: [], provider: "codex", requestedModel: "fixture" })))
+    expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [{ provider: "codex" }] })
+    await pool.query("UPDATE agent_conversations SET messages=jsonb_set(messages,'{3}',(messages->3)-'inference') WHERE business_id=$1", [f.businessId])
+    expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [{ provider: null }] })
+  })
+  it("keeps the interpreted title across follow-up replies and request replay", async () => {
+    const f = await fixture()
+    const first = { message: "Can you help me decide priorities?", requestId: randomUUID(), revision: 0 }
+    await run(sendConversation(f, first, respond))
+    expect(await run(sendConversation(f, first, () => Effect.die("No repeated inference")))).toMatchObject({ _tag: "Right", right: { title: "Stored evidence review" } })
+    await run(sendConversation(f, { message: "Tell me more", requestId: randomUUID(), revision: 1 }, () => Effect.succeed({ reply: "More detail", title: "A different title", citations: [], toolCalls: [], usage: [], provider: "gemini" as const, requestedModel: "fixture" })))
+    expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [{ title: "Stored evidence review" }] })
   })
   it("refuses foreign business, conversation and same-account user histories", async () => {
     const a = await fixture(), b = await fixture()

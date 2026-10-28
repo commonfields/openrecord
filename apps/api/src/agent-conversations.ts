@@ -12,12 +12,12 @@ export class AgentConversationRefused extends Data.TaggedError("AgentConversatio
 const Citation = Schema.Struct({ kind: Schema.String, id: Schema.String, text: Schema.String })
 const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promptTokens: Schema.NullOr(Schema.Number), outputTokens: Schema.NullOr(Schema.Number), thoughtTokens: Schema.NullOr(Schema.Number), totalTokens: Schema.NullOr(Schema.Number) })
 const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
-const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number })
+const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
 const parse = Schema.decodeUnknown(Conversation)
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string | null }
 export const loadConversation = (scope: ConversationScope, conversationId?: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT id, messages, revision FROM agent_conversations WHERE account_id = ${scope.accountId}
+  const rows = yield* sql`SELECT id, messages, revision, last_reply->>'title' AS title FROM agent_conversations WHERE account_id = ${scope.accountId}
     AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId} AND expires_at > now()
     AND (${conversationId ?? null}::uuid IS NOT NULL AND id=${conversationId ?? null}::uuid
       OR ${conversationId ?? null}::uuid IS NULL AND archived_at IS NULL)`
@@ -29,12 +29,17 @@ export type ConversationSummary = {
   readonly id: string
   readonly businessId: string | null; readonly businessName: string; readonly isClient: boolean
   readonly title: string; readonly messages: number; readonly updatedAt: string
+  // Brand key of the provider that wrote the last reply (hosted provider or
+  // harness driver), or null while nothing has answered yet.
+  readonly provider: string | null
 }
 export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at,
+  const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at, c.last_reply->>'title' AS generated_title, c.last_reply ? 'title' AS has_title_metadata,
       jsonb_array_length(c.messages) AS message_count,
-      (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message
+      (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message,
+      (SELECT m->'inference'->>'provider' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
+        WHERE m->>'role' = 'agent' ORDER BY i DESC LIMIT 1) AS last_provider
     FROM agent_conversations c
     LEFT JOIN businesses b ON b.id = c.business_id AND b.account_id = c.account_id
     JOIN account_users au ON au.account_id = c.account_id AND au.user_id = c.user_id
@@ -45,8 +50,9 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
   return rows.map((r): ConversationSummary => ({
     id: String(r["id"]),
     businessId: r["business_id"] === null ? null : String(r["business_id"]), businessName: r["business_id"] === null ? "General chat" : String(r["name"]), isClient: r["is_client"] === true,
-    title: String(r["first_message"] ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+    title: String(r["generated_title"] ?? (r["has_title_metadata"] ? "New chat" : r["first_message"]) ?? "New chat").replace(/\s+/g, " ").trim().slice(0, 120),
     messages: Number(r["message_count"]), updatedAt: new Date(r["updated_at"] as string | Date).toISOString(),
+    provider: r["last_provider"] === null || r["last_provider"] === undefined ? null : String(r["last_provider"]),
   }))
 })
 export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {
@@ -93,7 +99,7 @@ export const sendConversation = (scope: ConversationScope, body: {
       WHERE au.account_id=${scope.accountId} AND au.user_id=${scope.userId} AND ${body.conversationId === undefined}
       AND (${scope.businessId}::uuid IS NULL OR EXISTS(SELECT 1 FROM businesses WHERE id=${scope.businessId} AND account_id=${scope.accountId}))
       ON CONFLICT(account_id,business_id,user_id) WHERE archived_at IS NULL DO NOTHING`
-    const rows = yield* sql`SELECT id, messages, revision, last_request_id, last_reply,last_request_digest,
+    const rows = yield* sql`SELECT id, messages, revision, last_reply->>'title' AS title, last_request_id, last_reply,last_request_digest,
       (lease_until > now()) AS busy FROM agent_conversations
       WHERE account_id = ${scope.accountId} AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id = ${scope.userId}
       AND (${body.conversationId ?? null}::uuid IS NOT NULL AND id=${body.conversationId ?? null}::uuid
@@ -119,9 +125,9 @@ export const sendConversation = (scope: ConversationScope, body: {
       const active = yield* sql`SELECT id FROM agent_conversations WHERE id=${current.id} AND lease_id=${lease} AND lease_until>now()`
       if (!active.length) return yield* Effect.fail(new AgentModelError({ reason:"UNAVAILABLE" }))
     }).pipe(Effect.mapError(() => new AgentModelError({ reason:"UNAVAILABLE" })))
-    const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive)
+    const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, !current.title)
     const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-24)
-    const response = { ...reply, conversationId: current.id, revision: current.revision + 1 }
+    const response = { ...reply, title: current.title ?? reply.title ?? null, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
       last_request_id = ${body.requestId}, last_request_digest=${digest}, last_reply = ${JSON.stringify(response)}::jsonb, lease_id = NULL, lease_until = NULL,
       updated_at = now(), expires_at = now() + interval '30 days'

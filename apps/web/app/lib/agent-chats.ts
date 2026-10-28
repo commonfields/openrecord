@@ -6,7 +6,7 @@ export type ChatActivity = { businessId: string | null; conversationId: string; 
 type ActivityStore = {
   activity: ReadonlyMap<string, ChatActivity>
   start: (businessId: string | null, requestId: string, title: string, conversationId: string, providerTag?: string) => void
-  finish: (businessId: string | null, requestId: string, saved: boolean) => void
+  finish: (businessId: string | null, requestId: string, saved: boolean, providerTag?: string, title?: string | null) => void
   forget: (businessId: string | null, conversationId?: string) => void
 }
 const ActivityContext = createContext<ActivityStore | null>(null)
@@ -20,10 +20,10 @@ export function ChatActivityProvider({ children }: { children: ReactNode }) {
       ...(providerTag ? { providerTag } : {}),
     }))
   }, [])
-  const finish = useCallback((businessId: string | null, requestId: string, saved: boolean) => {
+  const finish = useCallback((businessId: string | null, requestId: string, saved: boolean, providerTag?: string, title?: string | null) => {
     setActivity(current => {
       const entry = [...current].find(([, item]) => item.businessId === businessId && item.requestId === requestId)
-      return entry ? new Map(current).set(entry[0], { ...entry[1], working: false, saved }) : current
+      return entry ? new Map(current).set(entry[0], { ...entry[1], working: false, saved, ...(providerTag ? { providerTag } : {}), ...(title ? { title } : {}) }) : current
     })
   }, [])
   const forget = useCallback((businessId: string | null, conversationId?: string) => { setActivity(current => new Map([...current].filter(([, item]) => item.businessId !== businessId || (conversationId !== undefined && item.conversationId !== conversationId)))) }, [])
@@ -40,17 +40,18 @@ export function useChatActivity() {
 export type MergedChat = AgentChatSummary & { working: boolean; draft: boolean; providerTag?: string }
 
 export function mergeAgentChats(chats: readonly AgentChatSummary[], activity: ReadonlyMap<string, ChatActivity>, businesses: readonly { id: string; name: string }[]): MergedChat[] {
-  const merged = new Map(chats.map((chat): [string, MergedChat] => [chat.id, { ...chat, working: false, draft: false }]))
+  const merged = new Map(chats.map((chat): [string, MergedChat] => [chat.id, { ...chat, ...(chat.provider ? { providerTag: chat.provider } : {}), working: false, draft: false }]))
   for (const [, item] of activity) {
     const { businessId, conversationId } = item
     const saved = merged.get(conversationId)
     if (saved) {
-      merged.set(conversationId, { ...saved, ...(item.providerTag ? { providerTag: item.providerTag } : {}), working: item.working, updatedAt: item.working ? item.updatedAt : saved.updatedAt })
+      const providerTag = item.working ? item.providerTag ?? saved.providerTag : saved.providerTag ?? (item.saved ? item.providerTag : undefined)
+      merged.set(conversationId, { ...saved, ...(providerTag ? { providerTag } : {}), working: item.working, updatedAt: item.working ? item.updatedAt : saved.updatedAt })
       continue
     }
     merged.set(conversationId, {
       id: conversationId, businessId, businessName: businessId === null ? "General chat" : businesses.find(b => b.id === businessId)?.name ?? "Business", isClient: false,
-      ...(item.providerTag ? { providerTag: item.providerTag } : {}),
+      ...((item.working || item.saved) && item.providerTag ? { providerTag: item.providerTag } : {}),
       title: item.title, messages: 1, updatedAt: item.updatedAt, working: item.working, draft: !item.saved,
     })
   }

@@ -39,9 +39,9 @@ describe("agent workspace presentation", () => {
     expect(read("../app/globals.css")).toContain("thinking-sweep 4.5s linear infinite")
   })
   it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
-    expect(agentChat()).toContain("activity.start(businessId, requestId, text, conversationId, providerTag)")
-    expect(agentChat()).toContain("activity.finish(businessId, requestId, true)")
-    expect(read("../app/components/app-shell.tsx")).toContain('c.working ? <span role="status" className="thinking text-xs">Working…')
+    expect(agentChat()).toContain('activity.start(businessId, requestId, "New chat", conversationId, providerTag)')
+    expect(agentChat()).toContain("activity.finish(businessId, requestId, true, r.provider, r.title)")
+    expect(read("../app/components/app-shell.tsx")).toContain('aria-label="Agent is responding"')
     const picker = read("../app/components/agent-model-picker.tsx")
     expect(picker).toContain("p-0 text-xs text-muted-foreground")
     expect(agentChat()).toContain("p-0 text-xs text-muted-foreground shadow-none")
