@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -14,7 +14,7 @@ import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type Age
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { Growth } from "@/lib/growth"
-import { agentEvidencePath } from "@/lib/agent-evidence"
+import { agentEvidencePath, webSourceUrl } from "@/lib/agent-evidence"
 import { chatPath, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
@@ -398,7 +398,9 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       ) : null}
                       {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
                         const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
-                        return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link> : <span>Evidence unavailable</span>}</li>
+                        const web = webSourceUrl(c)
+                        return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link>
+                          : web ? <a className="underline underline-offset-2" href={web} rel="noopener noreferrer nofollow" target="_blank">{c.text || new URL(web).host}</a> : <span>Evidence unavailable</span>}</li>
                       })}</ul> : null}
                       {m.tools && m.tools.length > 0 ? (
                         <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
@@ -483,9 +485,15 @@ function WorkPane({ session, businessName, reads = true }: { session: AgentSessi
                   <ul className="mt-2 flex flex-wrap gap-1.5 border-t pt-2" aria-label="Evidence used">
                     {r.citations.map(c => {
                       const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
+                      const web = webSourceUrl(c)
                       return (
                         <li key={`${c.kind}:${c.id}`}>
-                          {path ? (
+                          {web ? (
+                            <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
+                              <GlobeIcon className="size-3 shrink-0" />
+                              <span className="truncate">{c.text || new URL(web).host}</span>
+                            </a>
+                          ) : path ? (
                             <Link to={path} className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
                               <FileTextIcon className="size-3 shrink-0" />
                               <span className="truncate">{c.text || "Open evidence"}</span>
@@ -1060,7 +1068,8 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
       <CopyButton text={proposal.payload.text} />
       <ul className="flex flex-wrap gap-2" aria-label="Draft evidence">{proposal.payload.references.map(c => {
         const path = agentEvidencePath(businessId, c)
-        return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : <span>Evidence unavailable</span>}</li>
+        const web = webSourceUrl(c)
+        return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : web ? <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="underline">{c.text}</a> : <span>Evidence unavailable</span>}</li>
       })}</ul>
     </> : <p>Draft evidence unavailable</p>}
     {proposal.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><Button variant="outline" size="sm" disabled={working} onClick={() => void decide(false)}>Reject</Button></div> : null}

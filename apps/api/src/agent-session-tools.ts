@@ -23,9 +23,9 @@ export const DEFAULT_WAIT_SECONDS = 240
 /** What each role adds to the task its helper receives. */
 export const ROLE_BRIEF: Readonly<Record<SessionRole, string>> = {
   general: "",
-  researcher: "Act as the research helper: gather the evidence the task needs from the registered tools and report it with exact counts and what is unknown.",
-  seo: "Act as the search (SEO) helper: work from Google Search performance, site inspection, issues and approved truth.",
-  aeo: "Act as the AI answers (AEO/GEO) helper: work from AI Discovery and acquisition measurements, buyer questions and competitor appearances.",
+  researcher: "Act as the research helper: gather the evidence the task needs from the registered tools, including public web pages, and report it with exact counts and what is unknown.",
+  seo: "Act as the search (SEO) helper: work from the website audit, Google Search performance, site inspection, issues and approved truth.",
+  aeo: "Act as the AI answers (AEO/GEO) helper: work from AI Discovery and acquisition measurements, buyer questions, competitor appearances and the audit's AI crawler and structured data checks.",
   content: "Act as the content helper: draft source actions or client reports with the draft tools; drafts wait for approval.",
   analyst: "Act as the measurement helper: work from GA4 referral evidence, conversions, Search Console and recorded outcomes.",
 }

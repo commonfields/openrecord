@@ -16,6 +16,15 @@ export const ECC_PIN = {
   license: "MIT",
 } as const
 
+/** Site audit checks (site-audit.ts) adapted from claude-seo: crawler roles,
+ * priorities and "how to verify" per fix, rewritten for OpenRecord. */
+export const CLAUDE_SEO_PIN = {
+  repository: "https://github.com/AgriciDaniel/claude-seo",
+  commit: "6be93f45064ffbadced572b5d5c95f55fd263af0",
+  license: "MIT",
+  adaptedFrom: ["skills/seo-technical/SKILL.md", "skills/seo-geo/SKILL.md", "skills/seo-schema/SKILL.md", "skills/seo-audit/SKILL.md"],
+} as const
+
 export type SkillId = "first-improvement" | "seo-assessment" | "answer-accuracy"
 export type SpecialistId = Exclude<SkillId, "first-improvement">
 export type SkillEvidence = "WEBSITE_READ" | "CONFIRMED_BRIEF" | "GROWTH_GOAL" | "APPROVED_FACTS" | "REVIEWED_AI_ANSWER"

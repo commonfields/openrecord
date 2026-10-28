@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { matchRoutes } from "react-router"
 import { EvidenceRoutePatterns } from "../app/lib/route-patterns"
-import { agentEvidencePath } from "../app/lib/agent-evidence"
+import { agentEvidencePath, webSourceUrl } from "../app/lib/agent-evidence"
 const id = "00000000-0000-4000-8000-000000000001"
 describe("trusted agent evidence navigation", () => {
   it("maps known evidence to authenticated routes", () => {
@@ -20,5 +20,11 @@ describe("trusted agent evidence navigation", () => {
   it("rejects unknown kinds, URL injection and arbitrary IDs", () => {
     for (const kind of ["https://evil.test", "javascript:alert(1)", "invented"]) expect(agentEvidencePath(id, { kind, id, text: "x" })).toBeNull()
     expect(agentEvidencePath(id, { kind: "issue", id: "../../other", text: "x" })).toBeNull()
+  })
+  it("opens only http(s) pages the agent cited as web sources, never inside the app", () => {
+    expect(webSourceUrl({ kind: "web", id: "https://northstar.test/pricing", text: "Pricing" })).toBe("https://northstar.test/pricing")
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", "/businesses/x", "not a url"]) expect(webSourceUrl({ kind: "web", id: bad, text: "x" })).toBeNull()
+    expect(webSourceUrl({ kind: "issue", id: "https://northstar.test/", text: "x" })).toBeNull()
+    expect(agentEvidencePath(id, { kind: "web", id, text: "x" })).toBeNull()
   })
 })

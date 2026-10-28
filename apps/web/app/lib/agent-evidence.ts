@@ -23,3 +23,15 @@ export const agentEvidencePath = (businessId: string, citation: AgentCitation): 
     default: return null
   }
 }
+
+/** A public page the agent's server fetched, cited as kind "web". Opened in a
+ * new tab, never routed inside the app; only http(s) addresses qualify. */
+export const webSourceUrl = (citation: AgentCitation): string | null => {
+  if (citation.kind !== "web" || citation.id.length > 2000) return null
+  try {
+    const u = new URL(citation.id)
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null
+  } catch {
+    return null
+  }
+}
