@@ -1,4 +1,6 @@
 import { growthApi } from "./growth-routes.js"
+import { setupApi } from "./setup-routes.js"
+import { harnessApi } from "./harness-routes.js"
 import { growthMeasurementApi } from "./growth-measurement-routes.js"
 import { growthReportApi } from "./growth-report-routes.js"
 import { growthExecutionApi } from "./growth-execution-routes.js"
@@ -36,6 +38,7 @@ import {
 import {
   GrowthRepositoriesLive,
   GrowthMeasurementRepositoryLive,
+  SetupRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepository,
   BusinessRepository,
@@ -1344,7 +1347,10 @@ export const makeRouter = () => {
       const businessId = params["id"] ?? ""
       if (!isRouteId(businessId)) return yield* json(422, malformed)
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
-      return yield* json(200, { conversation: yield* loadConversation({ accountId: session.accountId, userId: session.userId, businessId }) })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const conversationId = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (conversationId !== undefined && !isRouteId(conversationId)) return yield* json(422, malformed)
+      return yield* json(200, { conversation: yield* loadConversation({ accountId: session.accountId, userId: session.userId, businessId }, conversationId) }, { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
     HttpRouter.del("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext
@@ -1352,7 +1358,10 @@ export const makeRouter = () => {
       if (!isRouteId(businessId)) return yield* json(422, malformed)
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
       if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
-      yield* deleteConversation({ accountId: session.accountId, userId: session.userId, businessId })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const conversationId = new URL(req.url, "http://localhost").searchParams.get("conversationId") ?? undefined
+      if (conversationId !== undefined && !isRouteId(conversationId)) return yield* json(422, malformed)
+      yield* deleteConversation({ accountId: session.accountId, userId: session.userId, businessId }, conversationId)
       return yield* json(200, { deleted: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
   )
@@ -1533,14 +1542,15 @@ export const makeRouter = () => {
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
   )
-  return HttpRouter.concat(runtimeApi, HttpRouter.concat(
+  return HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), growthGa4Api(withSession)))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(growthGa4Api(withSession), setupApi(withSession))))))),
   ))
 }
 
 export const RepoLayers = {
   GrowthRepositoriesLive,
+  SetupRepositoryLive,
   GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   AssayRepositoryLive,

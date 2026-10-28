@@ -2,6 +2,7 @@
 export * from "./providers.js"
 // Derives request/response shapes from Effect Schema (domain package).
 import { Schema } from "effect"
+import { HarnessSelection } from "./harness.js"
 
 // REST route table (single source of truth for client + server).
 export const Routes = {
@@ -333,6 +334,7 @@ export const AgentMessageRequest = Schema.Struct({
   requestId: Schema.UUID,
   conversationId: Schema.optional(Schema.UUID),
   revision: Schema.NonNegativeInt,
+  selection: Schema.optional(HarnessSelection),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
 
@@ -460,3 +462,6 @@ export * from "./growth-evaluation.js"
 export * from "./growth-report.js"
 export * from "./growth-execution.js"
 export * from "./growth-ga4.js"
+export * from "./setup.js"
+export * from "./mcp.js"
+export * from "./harness.js"

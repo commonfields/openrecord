@@ -17,8 +17,8 @@ import {
   UserRoundIcon,
   XIcon,
 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { AgentConnectionSection } from "@/components/harness-settings"
 import { Kbd } from "@/components/ui/kbd"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -93,7 +93,7 @@ const nav: Array<{ group: string; items: Array<{ id: SettingsSection; label: str
 
 const sectionMeta: Record<SettingsSection, { title: string; description: string }> = {
   general: { title: "General", description: "Appearance, language and how the app opens." },
-  agent: { title: "Agent", description: "How the chat box behaves when you talk to the agent." },
+  agent: { title: "Agent", description: "How the chat box behaves, and which agent it talks to." },
   checks: { title: "Checks", description: "Defaults for running buyer questions against AI providers." },
   shortcuts: { title: "Keyboard shortcuts", description: "Move around OpenRecord without the mouse." },
   account: { title: "Account", description: "Your sign-in details and current session." },
@@ -369,11 +369,7 @@ function AgentSection() {
           <PrefSwitch id="pref-voice" k="voiceInput" />
         </Row>
       </Group>
-      <Group title="Connection">
-        <Row label="Agent backend" description="The agent is not connected yet, so messages stay in this page and are not sent anywhere.">
-          <Badge variant="secondary">Not connected</Badge>
-        </Row>
-      </Group>
+      <AgentConnectionSection />
     </>
   )
 }

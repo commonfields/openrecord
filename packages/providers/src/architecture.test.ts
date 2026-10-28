@@ -8,10 +8,18 @@ const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: tru
   const path = join(dir, entry.name)
   return entry.isDirectory() ? sources(path) : /\.[cm]?tsx?$/.test(path) && !path.includes(".test.") ? [path] : []
 })
+// These entry/process owners run on the user's machine, never in the hosted
+// graph. fs-containment's import guard enforces that deployment boundary.
+const LOCAL_PROCESS_OWNERS = new Set([
+  join(root, "packages/bridge/src/main.ts"),
+  join(root, "packages/bridge/src/process.ts"),
+])
 describe("hosted Effect architecture guards", () => {
   it("has no Rust execution, subprocess, or IPC dependency in hosted sources", () => {
     for (const path of [...sources(join(root, "apps")), ...sources(join(root, "packages"))]) {
-      expect(readFileSync(path, "utf8"), path).not.toMatch(/child_process|\bspawn\s*\(|RustObservationWorker|OPENRECORD_WORKER_PATH|openrecord-worker-(job|result)-v1|target\/(debug|release)\/openrecord-worker/)
+      const source = readFileSync(path, "utf8")
+      expect(source, path).not.toMatch(/RustObservationWorker|OPENRECORD_WORKER_PATH|openrecord-worker-(job|result)-v1|target\/(debug|release)\/openrecord-worker/)
+      if (!LOCAL_PROCESS_OWNERS.has(path)) expect(source, path).not.toMatch(/child_process|\bspawn\s*\(/)
     }
   })
   it("providers use injectable HTTP and Config capabilities without direct globals", () => {

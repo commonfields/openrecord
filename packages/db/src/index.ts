@@ -30,3 +30,4 @@ export * from "./growth-ga4.js"
 export { evaluateGrowthOutcome, localDay, GROWTH_EVALUATION_LIMITATIONS, type GrowthEvaluationInput, type GrowthEvaluationActionRow } from "./growth-evaluation-rules.js"
 
 export { GrowthRepositoriesLive } from "./growth-repositories.js"
+export * from "./setup.js"

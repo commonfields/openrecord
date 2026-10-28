@@ -112,3 +112,12 @@ export function useWorkspace(): Workspace {
   if (!ctx) throw new Error("useWorkspace must be used inside WorkspaceProvider")
   return ctx
 }
+
+/** Makes the business on screen the active one, so the sidebar, switcher and
+ * breadcrumbs always describe the same business. */
+export function useActiveBusiness(id: string | undefined) {
+  const { setActiveBusinessId } = useWorkspace()
+  useEffect(() => {
+    if (id) setActiveBusinessId(id)
+  }, [id, setActiveBusinessId])
+}

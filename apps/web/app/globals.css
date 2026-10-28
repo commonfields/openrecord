@@ -273,7 +273,7 @@ html[data-reduce-motion] *::after {
   }
   /* Agent thinking: a soft light sweeps across the text, left to right. */
   .thinking {
-    animation: thinking-sweep 1.4s linear infinite;
+    animation: thinking-sweep 4.5s linear infinite;
   }
   .name-shimmer {
     animation: thinking-sweep 4.5s linear infinite;

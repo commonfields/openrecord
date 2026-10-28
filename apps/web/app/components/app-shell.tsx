@@ -1,9 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router"
 import {
+  BarChart3Icon,
   BookCheckIcon,
+  BriefcaseIcon,
+  ChevronDownIcon,
+  RadioTowerIcon,
   Building2Icon,
-  FileCheck2Icon,
   FlaskConicalIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -11,7 +14,6 @@ import {
   GlobeIcon,
   InboxIcon,
   KeyboardIcon,
-  LayoutGridIcon,
   LogOutIcon,
   MessagesSquareIcon,
   PanelLeftIcon,
@@ -22,6 +24,7 @@ import {
   UserRoundIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { NewChatDialog } from "@/components/new-chat-dialog"
 import { CommandPaletteProvider, useCommandPalette } from "@/components/command-palette"
 import { HeaderSlotContext } from "@/components/page"
 import { sectionTitles } from "@/lib/nav"
@@ -35,13 +38,13 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
 import { Auth } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
-import { chatPath, useAgentChats } from "@/lib/agent-chats"
+import { ChatActivityProvider, chatPath, useAgentChats } from "@/lib/agent-chats"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -124,6 +127,7 @@ export function AppShell() {
   useEffect(() => setMobileOpen(false), [location.pathname])
 
   return (
+    <ChatActivityProvider>
     <ChromeContext.Provider value={chrome}>
     <PaneSlotContext.Provider value={paneContext}>
     <HeaderSlotContext.Provider value={headerSlot}>
@@ -176,6 +180,7 @@ export function AppShell() {
             </TooltipTrigger>
             <TooltipContent side="bottom">Toggle sidebar (Ctrl B)</TooltipContent>
           </Tooltip>
+          <ViewTabs />
           {minimal ? null : (
             <>
               <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
@@ -197,40 +202,53 @@ export function AppShell() {
     </HeaderSlotContext.Provider>
     </PaneSlotContext.Provider>
     </ChromeContext.Provider>
+    </ChatActivityProvider>
   )
+}
+
+function useAgentView() {
+  const { activeBusiness } = useWorkspace()
+  const location = useLocation()
+  const { preferences } = usePreferences()
+  const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
+  const onOverview = base !== null && location.pathname === `${base}/overview`
+  const view = onOverview ? (new URLSearchParams(location.search).get("view") ?? preferences.landingView) : "today"
+  return location.pathname === "/agent" || (base !== null && location.pathname === `${base}/agent`) || (onOverview && view === "agent")
 }
 
 function SidebarBody() {
   const { collapsed } = useContext(SidebarStateContext)
   const { activeBusiness, overview } = useWorkspace()
+  const { open } = useCommandPalette()
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
+  const agent = useAgentView()
+  const general = useLocation().pathname === "/agent"
 
   return (
     <>
       <div className={cn("flex shrink-0 flex-col gap-2 pt-2", collapsed ? "items-center px-1.5" : "px-2")}>
-        <BusinessSwitcher />
-        <FindButton />
+        {general ? <div className="px-2 py-2 text-sm text-muted-foreground">{collapsed ? <MessagesSquareIcon className="size-4" /> : "General chat"}</div> : <BusinessSwitcher />}
+        <div className={cn("flex w-full items-center justify-between", collapsed && "flex-col gap-1")}>
+          <SearchButton onOpen={open} />
+          <NewChatDialog />
+        </div>
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
-        {base ? (
-          <SidebarGroup label="Workspace">
-            <SidebarLink to={`${base}/overview`} icon={<LayoutGridIcon />} label="Overview" />
-            <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect assay" />
-            <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Search" />
-            <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="Issues" count={attention} />
-            <SidebarLink to={`${base}/representations`} icon={<GlobeIcon />} label="Representations" />
-            <SidebarLink to={`${base}/truth`} icon={<BookCheckIcon />} label="Truth" />
-            <SidebarLink to={`${base}/checks`} icon={<RadarIcon />} label="Checks" />
-          </SidebarGroup>
-        ) : null}
-        <SidebarGroup label="Agency">
-          <SidebarLink to="/clients" icon={<FileCheck2Icon />} label="Clients" />
-          <SidebarLink to="/businesses" end icon={<Building2Icon />} label="All businesses" />
-        </SidebarGroup>
-        <ChatHistory />
+        {agent ? <ChatHistory /> : <>
+          {base ? (
+            <>
+              <SidebarGroup label="Workspace">
+                <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
+                <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
+                <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
+              </SidebarGroup>
+              <EvidenceTools base={base} />
+            </>
+          ) : null}
+        </>}
       </nav>
 
       <div className={cn("shrink-0 py-2", collapsed ? "px-1.5" : "px-2")}>
@@ -250,8 +268,8 @@ function ChatHistory() {
   const location = useLocation()
   const [all, setAll] = useState(false)
   const here = (path: string) => {
-    const [pathname] = path.split("?")
-    return location.pathname === pathname && (pathname!.startsWith("/clients/") || new URLSearchParams(location.search).get("view") === "agent")
+    const [pathname, search] = path.split("?")
+    return location.pathname === pathname && new URLSearchParams(location.search).get("chat") === new URLSearchParams(search).get("chat")
   }
 
   if (collapsed) {
@@ -271,14 +289,15 @@ function ChatHistory() {
         <DropdownMenuContent side="right" align="start" className="w-72 rounded-xl p-1.5 shadow-(--float-shadow-strong)">
           <DropdownMenuLabel className="text-[0.625rem] font-medium text-muted-foreground">Chats</DropdownMenuLabel>
           {chats?.length ? chats.map((c) => (
-            <DropdownMenuItem key={c.businessId} asChild className="rounded-md">
+            <DropdownMenuItem key={c.id} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
                 <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
+                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
                 <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             </DropdownMenuItem>
           )) : (
-            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+            <p className="px-2 py-1.5 text-[0.6875rem] text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -289,7 +308,7 @@ function ChatHistory() {
   return (
     <SidebarGroup label="Chats">
       {chats === null ? null : chats.length === 0 ? (
-        <p className="px-2 py-1 text-[0.6875rem] leading-relaxed text-muted-foreground">No chats yet. Ask the agent on a client or overview page.</p>
+        <p className="px-2 py-1 text-sm leading-relaxed text-muted-foreground">No chats yet. Open a business and ask its agent.</p>
       ) : (
         <>
           {shown.map((c) => {
@@ -297,7 +316,7 @@ function ChatHistory() {
             const active = here(to)
             return (
               <Link
-                key={c.businessId}
+                key={c.id}
                 to={to}
                 aria-current={active ? "page" : undefined}
                 title={`${c.title} · ${c.businessName}`}
@@ -306,13 +325,14 @@ function ChatHistory() {
                   active && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
               >
-                <span className={cn("truncate text-xs", active && "font-medium")}>{c.title || "Untitled chat"}</span>
-                <span className="truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
+                {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
+                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             )
           })}
           {chats.length > CHATS_SHOWN ? (
-            <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-[0.6875rem] text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:text-foreground">
               {all ? "Show fewer" : `Show all ${chats.length}`}
             </button>
           ) : null}
@@ -322,44 +342,86 @@ function ChatHistory() {
   )
 }
 
+// Specialist views stay one click away, folded until needed; they open on
+// their own when the current page is one of them.
+const EVIDENCE_TOOLS = ["search", "issues", "representations", "truth", "checks", "assay", "facts"]
+
+function EvidenceTools({ base }: { base: string }) {
+  const { collapsed } = useContext(SidebarStateContext)
+  const location = useLocation()
+  const here = EVIDENCE_TOOLS.some(t => location.pathname.startsWith(`${base}/${t}`))
+  const [open, setOpen] = useState(here)
+  useEffect(() => { if (here) setOpen(true) }, [here])
+  const links = (
+    <>
+      <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Website checks" />
+      <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="AI answer issues" />
+      <SidebarLink to={`${base}/representations`} icon={<GlobeIcon />} label="Facts on the web" />
+      <SidebarLink to={`${base}/truth`} icon={<BookCheckIcon />} label="Approved facts" />
+      <SidebarLink to={`${base}/checks`} icon={<RadarIcon />} label="AI answer checks" />
+      <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect research" />
+    </>
+  )
+  if (collapsed) return open ? <div className="flex flex-col gap-px">{links}</div> : null
+  return (
+    <div className="flex flex-col">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex items-center gap-1 rounded-md px-2 pb-1 text-left text-sm font-medium text-muted-foreground hover:text-foreground">
+        Evidence tools
+        <ChevronDownIcon className={cn("size-3 transition-transform", open ? "" : "-rotate-90")} />
+      </button>
+      {open ? <div className="flex flex-col gap-px">{links}</div> : null}
+    </div>
+  )
+}
+
 function SidebarGroup({ label, children }: { label: string; children: ReactNode }) {
   const { collapsed } = useContext(SidebarStateContext)
   return (
     <div className="flex flex-col">
-      {collapsed ? null : <div className="px-2 pb-1 text-[0.625rem] font-medium text-muted-foreground">{label}</div>}
+      {collapsed ? null : <div className="px-2 pb-1 text-sm font-medium text-muted-foreground">{label}</div>}
       <div className="flex flex-col gap-px">{children}</div>
     </div>
   )
 }
 
-function FindButton() {
-  const { collapsed } = useContext(SidebarStateContext)
-  const { open } = useCommandPalette()
-  const button = (
-    <button
-      type="button"
-      onClick={open}
-      aria-label="Find in OpenRecord (F)"
-      className={cn(
-        "flex items-center gap-2 rounded-md border bg-card text-xs text-muted-foreground shadow-(--control-shadow) outline-none transition-colors hover:text-foreground",
-        collapsed ? "size-9 justify-center" : "h-7 w-full px-2",
-      )}
-    >
-      <SearchIcon className="size-3.5 shrink-0" />
-      {collapsed ? null : (
-        <>
-          <span className="flex-1 text-left">Find…</span>
-          <kbd className="shrink-0 whitespace-nowrap font-sans text-[0.5625rem] leading-none text-muted-foreground">F</kbd>
-        </>
-      )}
-    </button>
-  )
-  if (!collapsed) return button
+function SearchButton({ onOpen }: { onOpen: () => void }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-sm" data-search-trigger onClick={onOpen} aria-label="Find in OpenRecord (F)">
+          <SearchIcon className="size-4" />
+        </Button>
+      </TooltipTrigger>
       <TooltipContent side="right">Find (F)</TooltipContent>
     </Tooltip>
+  )
+}
+
+// Header tabs share the route-derived view with the sidebar content.
+function ViewTabs() {
+  const { activeBusiness } = useWorkspace()
+  const general = useLocation().pathname === "/agent"
+  const nav = useNavigate()
+  const agent = useAgentView()
+  const view = agent ? "agent" : "today"
+  if (!activeBusiness || general) return null
+  const base = `/businesses/${activeBusiness.id}`
+  const trigger = "h-full min-h-0 self-stretch rounded-[3px] px-1 text-[0.6875rem] text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+  return (
+    <Tabs
+      className="shrink-0"
+      value={view}
+      onValueChange={(v) => {
+        if (v === view) return
+        nav(v === "agent" ? `${base}/agent` : `${base}/results`)
+      }}
+    >
+      <TabsList aria-label="Workspace view" className="grid h-6 w-auto grid-cols-2 items-stretch rounded-md border border-sidebar-border bg-sidebar-accent/60 p-0.5">
+        <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
+        <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
+      </TabsList>
+    </Tabs>
   )
 }
 
@@ -373,7 +435,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
       to={to}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "group/link relative flex h-7 items-center gap-2 rounded-md text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary-ink"
@@ -421,7 +483,6 @@ function BusinessMark({ name, className }: { name: string | null; className?: st
 function BusinessSwitcher() {
   const { collapsed } = useContext(SidebarStateContext)
   const { businesses, activeBusiness } = useWorkspace()
-  const [createOpen, setCreateOpen] = useState(false)
   const nav = useNavigate()
 
   return (
@@ -431,7 +492,7 @@ function BusinessSwitcher() {
           <button
             className={cn(
               "flex items-center gap-2 rounded-md text-left outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
-              collapsed ? "size-9 justify-center" : "h-9 w-full px-1.5",
+              collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
           >
@@ -439,8 +500,8 @@ function BusinessSwitcher() {
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
-                  <span className="block truncate text-[0.6875rem] text-muted-foreground">
+                  <span className="block truncate text-base font-medium text-foreground">{activeBusiness?.name ?? "OpenRecord"}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
                     {activeBusiness ? "Business" : "Choose a business"}
                   </span>
                 </span>
@@ -452,20 +513,19 @@ function BusinessSwitcher() {
         <DropdownMenuContent align="start" side={collapsed ? "right" : "bottom"} className="w-60">
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Businesses</DropdownMenuLabel>
           {businesses.map((b) => (
-            <DropdownMenuItem key={b.id} onSelect={() => nav(`/businesses/${b.id}/overview`)}>
+            <DropdownMenuItem key={b.id} onSelect={() => nav(`/businesses/${b.id}/agent`)}>
               <BusinessMark name={b.name} className="size-6 text-xs" />
               <span className="truncate">{b.name}</span>
               {activeBusiness?.id === b.id ? <CheckIcon className="ml-auto text-foreground" /> : null}
             </DropdownMenuItem>
           ))}
           {businesses.length > 0 ? <DropdownMenuSeparator /> : null}
-          <DropdownMenuItem onSelect={() => setCreateOpen(true)}>
+          <DropdownMenuItem onSelect={() => nav("/start")}>
             <PlusIcon />
             New business
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <CreateBusinessDialog open={createOpen} onOpenChange={setCreateOpen} />
     </>
   )
 }
@@ -488,8 +548,8 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-2 rounded-md text-left text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
-            collapsed ? "size-9 justify-center" : "h-9 w-full px-1.5",
+            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
+            collapsed ? "h-14 w-9 justify-center" : "min-h-16 w-full px-2.5 py-4",
           )}
           aria-label="Account menu"
         >
@@ -497,7 +557,7 @@ function AccountMenu() {
           {collapsed ? null : (
             <>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium text-foreground">{name}</span>
+                <span className="block truncate text-base font-medium text-foreground">{name}</span>
               </span>
               <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
             </>
@@ -553,26 +613,26 @@ function Breadcrumbs() {
 
   if (parts[0] === "businesses" && activeBusiness) {
     const base = `/businesses/${activeBusiness.id}`
-    crumbs.push({ label: activeBusiness.name, to: `${base}/overview` })
+    crumbs.push({ label: activeBusiness.name, to: `${base}/agent` })
     const section = parts[2] ?? ""
     const detail = parts[3]
     if (section === "search" && detail === "sites" && parts[5] === "findings" && parts[6]) {
-      crumbs.push({ label: "Search", to: `${base}/search` })
+      crumbs.push({ label: sectionTitles["search"] ?? "Website checks", to: `${base}/search` })
       crumbs.push({ label: "Finding" })
     } else if (section === "search" && detail) {
-      crumbs.push({ label: "Search", to: `${base}/search` })
-      crumbs.push({ label: detail === "sites" ? "Site" : (sectionTitles[detail] ?? "Search") })
+      crumbs.push({ label: sectionTitles["search"] ?? "Website checks", to: `${base}/search` })
+      crumbs.push({ label: detail === "sites" ? "Site" : (sectionTitles[detail] ?? "Website checks") })
     } else if ((section === "issues" || section === "representations") && detail) {
-      const parent = section === "issues" ? "Issues" : "Representations"
-      const child = section === "issues" ? "Issue" : detail === "discovery" ? "Discovery" : "Representation"
+      const parent = sectionTitles[section] ?? section
+      const child = section === "issues" ? "Issue" : detail === "discovery" ? "Discovery" : "Fact on the web"
       crumbs.push({ label: parent, to: `${base}/${section}` })
       crumbs.push({ label: child })
     } else {
-      crumbs.push({ label: sectionTitles[section] ?? "Overview" })
+      crumbs.push({ label: sectionTitles[section] ?? "Agent" })
     }
   } else if (parts[0] === "observations") {
     if (activeBusiness) {
-      crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/overview` })
+      crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
       crumbs.push(
         new URLSearchParams(location.search).has("claim")
           ? { label: "Issues", to: `/businesses/${activeBusiness.id}/issues` }
@@ -582,7 +642,12 @@ function Breadcrumbs() {
     crumbs.push({ label: "AI answer" })
   } else if (parts[0] === "clients") {
     crumbs.push({ label: "Clients", ...(parts[1] ? { to: "/clients" } : {}) })
+    if (parts[1] && activeBusiness?.id === parts[1]) crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
     if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
+  } else if (parts[0] === "agent") {
+    crumbs.push({ label: "General chat" })
+  } else if (parts[0] === "start") {
+    crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {
     crumbs.push({ label: "Clients", to: "/clients" }, { label: "Add a product" })
   } else {

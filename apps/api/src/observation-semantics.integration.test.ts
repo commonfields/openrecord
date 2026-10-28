@@ -22,7 +22,7 @@ suite("hosted observation semantics (TEST fixtures)", () => {
     AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
     InterventionRepositoryLive, InterventionBindingRepositoryLive, SourceTargetRepositoryLive,
     EvidenceLineageRepositoryLive, DiscoveryObservationRepositoryLive, DiscoveryMatchRepositoryLive,
-    RepoLayers.GrowthRepositoriesLive,
+    RepoLayers.GrowthRepositoriesLive, RepoLayers.SetupRepositoryLive,
     RepoLayers.AgentProposalRepositoryLive,
     RepoLayers.AssayRepositoryLive,
     RepoLayers.AssayReviewRepositoryLive,

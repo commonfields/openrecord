@@ -1,3 +1,4 @@
+import { useActiveBusiness } from "@/lib/workspace"
 import { useState } from "react"
 import { Link, useParams } from "react-router"
 import type { GrowthExecutionType, GrowthGoal, GrowthOpportunity, GrowthProfile, GrowthReview } from "@openrecord/contracts"
@@ -220,6 +221,7 @@ function CancelledHistory({ businessId, opportunity: o }: { businessId: string; 
 
 export function ClientGrowthPage() {
   const { id = "" } = useParams()
+  useActiveBusiness(id)
   const state = useApi(`growth:${id}`, async () => {
     const [record, growth, opportunities, user] = await Promise.all([Records.get(id), Growth.profile(id), Growth.list(id), Auth.me()])
     // Measurement availability for the strip: how many daily imports exist for

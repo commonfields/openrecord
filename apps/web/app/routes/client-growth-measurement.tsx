@@ -1,3 +1,4 @@
+import { useActiveBusiness } from "@/lib/workspace"
 import { useParams, useSearchParams } from "react-router"
 import { TriangleAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,7 @@ import { Growth } from "@/lib/growth"
 // path here: a Google Analytics connection is optional, never required.
 export default function ClientGrowthMeasurementPage() {
   const { id = "" } = useParams()
+  useActiveBusiness(id)
   const [params] = useSearchParams()
   const state = useApi(`growth-measurement:${id}`, async () => {
     const [record, growth] = await Promise.all([Records.get(id), Growth.profile(id)])

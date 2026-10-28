@@ -15,7 +15,7 @@ import {
   type ModelSeries,
 } from "@/components/charts"
 import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, type Stat } from "@/components/page"
-import { GoalTrend, HealthStrip, NextActions, PointsDelta, SourcesPanel, accuracy, isMissing, pct, reviewed, useOverviewData } from "@/components/today-overview"
+import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing, pct, reviewed, useOverviewData } from "@/components/today-overview"
 import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
 import { OUTCOME_LABELS, Records } from "@/lib/record"
 import { errorMessage, relativeTime, sentenceCase } from "@/lib/format"
@@ -169,11 +169,10 @@ export function Today() {
       />
 
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
-      <NextActions businessId={id} data={overview} checks={a ? a.current.checks : null} />
 
       {trend === "goal" ? (
         <section className="space-y-3">
-          <div>
+          <div className="min-w-0 max-w-full">
             {switcher}
             <p className="mt-2 text-xs text-muted-foreground">
               {goalLabel} per day, from {overview.series?.sourceKind === "GA4_AGGREGATE_EXPORT" ? "Google Analytics" : "imported exports"} · last {days} days
@@ -273,7 +272,7 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+        <div className="min-w-0 max-w-full">
           {switcher}
           <p className="mt-2 text-xs text-muted-foreground">
             {subtitle} · last {days} days

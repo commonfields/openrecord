@@ -5,6 +5,7 @@ import { PgClient } from "@effect/sql-pg"
 import { createServer } from "node:http"
 import {
   GrowthRepositoriesLive,
+  SetupRepositoryLive,
   AgentProposalRepositoryLive,
   AuthRepositoryLive,
   AssayRepositoryLive,
@@ -51,6 +52,7 @@ const Repos = Layer.mergeAll(
   // W8: GA4 OAuth client, redirect URI and token encryption keys from server configuration only.
   Ga4ProviderLive,
   GrowthRepositoriesLive,
+  SetupRepositoryLive,
   GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive,
   RecordRepositoryLive,
