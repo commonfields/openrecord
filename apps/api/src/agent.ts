@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { Effect, type Either } from "effect"
+import { Effect, Schema, type Either } from "effect"
 import type { AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent } from "./agent-model.js"
 import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
