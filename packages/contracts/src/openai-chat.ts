@@ -78,7 +78,8 @@ const ToolCall = Schema.Struct({ type: Schema.optional(Schema.String), function:
 const Completion = Schema.Struct({
   model: Schema.optional(Schema.String),
   choices: Schema.Array(Schema.Struct({
-    message: Schema.Struct({ content: Schema.optional(Schema.NullOr(Schema.String)), tool_calls: Schema.optional(Schema.NullOr(Schema.Array(ToolCall))) }),
+    message: Schema.Struct({ content: Schema.optional(Schema.NullOr(Schema.String)), reasoning_content: Schema.optional(Schema.NullOr(Schema.String)),
+      tool_calls: Schema.optional(Schema.NullOr(Schema.Array(ToolCall))) }),
     finish_reason: Schema.optional(Schema.NullOr(Schema.String)),
   })).pipe(Schema.minItems(1)),
   usage: Schema.optional(Schema.NullOr(Schema.Struct({
@@ -87,10 +88,12 @@ const Completion = Schema.Struct({
   }))),
 })
 export interface ChatUsage { readonly model: string | null; readonly promptTokens: number | null; readonly outputTokens: number | null; readonly thoughtTokens: number | null; readonly totalTokens: number | null }
+/** `thought` is the model's reasoning (`reasoning_content`) when the endpoint returns it. */
 export type ChatAnswer =
-  | { readonly kind: "text"; readonly text: string; readonly usage: ChatUsage }
-  | { readonly kind: "tools"; readonly calls: ReadonlyArray<{ readonly name: string; readonly args: Record<string, unknown> }>; readonly usage: ChatUsage }
+  | { readonly kind: "text"; readonly text: string; readonly usage: ChatUsage; readonly thought?: string }
+  | { readonly kind: "tools"; readonly calls: ReadonlyArray<{ readonly name: string; readonly args: Record<string, unknown> }>; readonly usage: ChatUsage; readonly thought?: string }
   | { readonly kind: "malformed" }
+const MAX_THOUGHT = 8000
 
 /** A completion's answer: requested tool calls (at most `maxCalls`) or the reply text. */
 export const chatCompletionAnswer = (raw: unknown, maxCalls = 6): ChatAnswer => {
@@ -100,6 +103,8 @@ export const chatCompletionAnswer = (raw: unknown, maxCalls = 6): ChatAnswer => 
   const u = parsed.right.usage
   const usage: ChatUsage = { model: parsed.right.model ?? null, promptTokens: u?.prompt_tokens ?? null, outputTokens: u?.completion_tokens ?? null,
     thoughtTokens: u?.completion_tokens_details?.reasoning_tokens ?? null, totalTokens: u?.total_tokens ?? null }
+  const reasoning = (choice.message.reasoning_content ?? "").trim()
+  const thought = reasoning ? { thought: reasoning.length > MAX_THOUGHT ? reasoning.slice(-MAX_THOUGHT) : reasoning } : {}
   const calls = choice.message.tool_calls ?? []
   if (calls.length) {
     if (calls.length > maxCalls) return { kind: "malformed" }
@@ -111,12 +116,12 @@ export const chatCompletionAnswer = (raw: unknown, maxCalls = 6): ChatAnswer => 
       if (!object) return { kind: "malformed" }
       decoded.push({ name: call.function.name, args: object })
     }
-    return { kind: "tools", calls: decoded, usage }
+    return { kind: "tools", calls: decoded, usage, ...thought }
   }
   // A reply cut off by the token limit is not a complete answer.
   if (choice.finish_reason === "length") return { kind: "malformed" }
   const text = (choice.message.content ?? "").trim()
-  return text ? { kind: "text", text, usage } : { kind: "malformed" }
+  return text ? { kind: "text", text, usage, ...thought } : { kind: "malformed" }
 }
 
 /** Model IDs from `GET /v1/models`. */
@@ -124,4 +129,41 @@ const ModelList = Schema.Struct({ data: Schema.Array(Schema.Struct({ id: Schema.
 export const chatModelIds = (raw: unknown): ReadonlyArray<{ readonly id: string; readonly ownedBy: string | null }> | null => {
   const parsed = Schema.decodeUnknownEither(ModelList)(raw)
   return parsed._tag === "Left" ? null : parsed.right.data.map(m => ({ id: m.id, ownedBy: m.owned_by ?? null }))
+}
+
+/** Folds `stream: true` chunks (SSE `data:` payloads) into one completion that
+ * chatCompletionAnswer reads. Reasoning is readable at any point while it streams. */
+export const chatStream = () => {
+  let content = "", reasoning = "", model: string | undefined, finish: string | null = null, usage: unknown = undefined
+  const calls: Array<{ name: string; arguments: string }> = []
+  return {
+    push(chunk: unknown) {
+      const c = record(chunk)
+      if (!c) return
+      if (typeof c["model"] === "string") model = c["model"]
+      if (record(c["usage"])) usage = c["usage"]
+      const choices = Array.isArray(c["choices"]) ? c["choices"] : []
+      const choice = record(choices[0])
+      if (!choice) return
+      if (typeof choice["finish_reason"] === "string") finish = choice["finish_reason"]
+      const delta = record(choice["delta"])
+      if (!delta) return
+      if (typeof delta["content"] === "string") content += delta["content"]
+      if (typeof delta["reasoning_content"] === "string") reasoning += delta["reasoning_content"]
+      for (const raw of Array.isArray(delta["tool_calls"]) ? delta["tool_calls"] : []) {
+        const call = record(raw)
+        if (!call) continue
+        const index = typeof call["index"] === "number" ? call["index"] : calls.length
+        const fn = record(call["function"]) ?? {}
+        const slot = calls[index] ??= { name: "", arguments: "" }
+        if (typeof fn["name"] === "string") slot.name += fn["name"]
+        if (typeof fn["arguments"] === "string") slot.arguments += fn["arguments"]
+      }
+    },
+    /** The reasoning so far, trimmed to its latest part. */
+    thought: () => reasoning.trim().slice(-MAX_THOUGHT),
+    completion: () => ({ ...(model ? { model } : {}), ...(usage ? { usage } : {}), choices: [{ finish_reason: finish,
+      message: { content: content || null, reasoning_content: reasoning || null,
+        tool_calls: calls.length ? calls.map(call => ({ type: "function", function: call })) : null } }] }),
+  }
 }

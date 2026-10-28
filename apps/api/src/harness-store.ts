@@ -190,6 +190,31 @@ export const pollHarnessJobs = (bridge: BridgeIdentity, reports: ReadonlyArray<H
     )
   })
 
+/** Holds a poll until a job is claimable, the bridge must refresh, or a running
+ * job is cancelled (the bridge then stops it), for at most `ms`. */
+export const longPollHarnessJobs = (bridge: BridgeIdentity, reports: ReadonlyArray<HarnessReport>, acceptJob: boolean, ms = 8000) =>
+  Effect.gen(function* () {
+    const first = yield* pollHarnessJobs(bridge, reports, acceptJob)
+    if (first.job || first.refresh || !acceptJob) return first
+    const until = Date.now() + ms
+    let latest = first
+    while (Date.now() < until) {
+      yield* Effect.sleep("200 millis")
+      latest = yield* pollHarnessJobs(bridge, [], acceptJob)
+      if (latest.job || latest.refresh || latest.active.length !== first.active.length || latest.active.some((id, i) => id !== first.active[i])) return latest
+    }
+    return latest
+  })
+
+/** Records a running job's reasoning so far. A finished, cancelled or foreign job refuses it. */
+export const recordHarnessProgress = (bridge: BridgeIdentity, id: string, progress: { readonly lease: string; readonly thought: string }) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    const rows = yield* sql`UPDATE agent_harness_jobs SET progress = ${JSON.stringify({ thought: progress.thought, at: new Date().toISOString() })}::jsonb
+      WHERE id = ${id} AND bridge_id = ${bridge.id} AND lease = ${progress.lease} AND status = 'RUNNING' AND deadline > now() RETURNING id`
+    if (!rows.length) return yield* fail("CANCELLED")
+  })
+
 export const completeHarnessJob = (bridge: BridgeIdentity, id: string, result: HarnessJobResult) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -202,30 +227,42 @@ export const completeHarnessJob = (bridge: BridgeIdentity, id: string, result: H
     if (!rows.length) return yield* fail("CANCELLED")
   })
 
+// Reasoning parts are shown to the operator, never sent back to a model: re-sending them costs tokens.
+const withoutThoughts = (contents: HarnessModelInput["contents"]) => contents.map(c => ({ ...c,
+  parts: c.parts.filter(p => !(typeof p === "object" && p !== null && (p as { thought?: unknown }).thought === true)) }))
+
 export const invokeHarness = (
   scope: Session & { businessId: string | null },
   selection: HarnessSelection,
-  input: HarnessModelInput
+  input: HarnessModelInput,
+  onThought?: (thought: string) => Effect.Effect<void, unknown>
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const instance = yield* resolveHarness(scope, selection)
-    const jobInput = { ...input, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
+    const jobInput = { system: input.system, tools: input.tools, contents: withoutThoughts(input.contents), ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
     if (Buffer.byteLength(JSON.stringify(jobInput), "utf8") > 100000) return yield* fail("CONTEXT_LIMIT")
     const id = randomUUID()
     yield* sql`INSERT INTO agent_harness_jobs(id,instance_id,bridge_id,account_id,user_id,business_id,model,input)
     VALUES(${id},${instance.id},${instance.bridgeId},${scope.accountId},${scope.userId},${scope.businessId},${selection.model},${JSON.stringify(jobInput)}::jsonb)`
     return yield* Effect.gen(function* () {
-      for (let attempt = 0; attempt < 200; attempt++) {
-        yield* resolveHarness(scope, selection)
-        const rows = yield* sql`SELECT status,result FROM agent_harness_jobs WHERE id=${id}`
+      // Checked every 150 ms (the job deadline still bounds the wait); the
+      // instance is re-validated about once a second.
+      let thought = ""
+      for (let attempt = 0; attempt < 700; attempt++) {
+        if (attempt % 7 === 0) yield* resolveHarness(scope, selection)
+        const rows = yield* sql`SELECT status,result,progress->>'thought' AS thought FROM agent_harness_jobs WHERE id=${id}`
         const row = rows[0]
         if (!row || row["status"] === "CANCELLED") return yield* fail("CANCELLED")
         if (row["status"] === "COMPLETED" || row["status"] === "FAILED") {
           const result = yield* Schema.decodeUnknown(HarnessJobResult)(row["result"])
           return result
         }
-        yield* Effect.sleep("500 millis")
+        if (onThought && typeof row["thought"] === "string" && row["thought"] !== thought) {
+          thought = row["thought"]
+          yield* onThought(thought).pipe(Effect.ignore)
+        }
+        yield* Effect.sleep("150 millis")
       }
       return yield* fail("UNAVAILABLE")
     }).pipe(

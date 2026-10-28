@@ -7,7 +7,7 @@
 // environment variable or the private bridge configuration file. Plain HTTP
 // is accepted only for a loopback address.
 import { Schema } from "effect"
-import { HARNESS_NAMES, chatCompletionAnswer, chatCompletionRequest, chatModelIds, type HarnessAnswer, type HarnessJob, type HarnessReport } from "@openrecord/contracts"
+import { HARNESS_NAMES, chatCompletionAnswer, chatCompletionRequest, chatModelIds, chatStream, type HarnessAnswer, type HarnessJob, type HarnessReport } from "@openrecord/contracts"
 import { BridgeFailure } from "./process.js"
 
 export const CLIPROXY_DEFAULT_URL = "http://127.0.0.1:8317"
@@ -100,11 +100,62 @@ export async function probeCliProxy(instance: CliProxyInstance, env: NodeJS.Proc
 }
 
 const AnswerText = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16000))
-export async function executeCliProxy(instance: CliProxyInstance, job: HarnessJob, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<HarnessAnswer> {
+const MAX_STREAM_BYTES = 2_000_000
+
+/** Reads an SSE stream of chat chunks, reporting the reasoning as it grows. */
+async function readStream(response: Response, onThought: ((thought: string) => void) | undefined) {
+  const reader = response.body?.getReader()
+  if (!reader) throw new BridgeFailure("MALFORMED")
+  const stream = chatStream()
+  const decoder = new TextDecoder()
+  let buffer = "", size = 0, last = ""
+  const line = (raw: string) => {
+    const data = raw.startsWith("data:") ? raw.slice(5).trim() : null
+    if (!data || data === "[DONE]") return
+    try { stream.push(JSON.parse(data)) } catch { throw new BridgeFailure("MALFORMED") }
+    const thought = stream.thought()
+    if (onThought && thought && thought !== last) { last = thought; onThought(thought) }
+  }
+  try {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) break
+      size += next.value.byteLength
+      if (size > MAX_STREAM_BYTES) throw new BridgeFailure("MALFORMED")
+      buffer += decoder.decode(next.value, { stream: true })
+      let cut: number
+      while ((cut = buffer.indexOf("\n")) >= 0) { line(buffer.slice(0, cut).replace(/\r$/, "")); buffer = buffer.slice(cut + 1) }
+    }
+    if (buffer.trim()) line(buffer.trim())
+  } finally { await reader.cancel().catch(() => {}) }
+  return stream.completion()
+}
+
+export async function executeCliProxy(instance: CliProxyInstance, job: HarnessJob, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env,
+  onThought?: (thought: string) => void): Promise<HarnessAnswer> {
   if (job.input.reasoningEffort) throw new BridgeFailure("UNAVAILABLE")
-  const answer = chatCompletionAnswer(await call(instance, env, "/v1/chat/completions", signal, chatCompletionRequest(job.input, job.model)))
+  const secret = key(instance, env)
+  let response: Response
+  try {
+    // Streamed so the model's reasoning reaches the chat while it works.
+    response = await fetch(endpoint(instance, "/v1/chat/completions"), {
+      method: "POST", redirect: "error", signal,
+      headers: { accept: "text/event-stream, application/json", "content-type": "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
+      body: JSON.stringify({ ...chatCompletionRequest(job.input, job.model), stream: true, stream_options: { include_usage: true } }),
+    })
+  } catch (e) {
+    if (e instanceof BridgeFailure) throw e
+    throw new BridgeFailure(signal.aborted ? "TIMEOUT" : "UNAVAILABLE")
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
+    throw statusFailure(response.status)
+  }
+  const raw = (response.headers.get("content-type") ?? "").includes("text/event-stream") ? await readStream(response, onThought) : await readBounded(response)
+  const answer = chatCompletionAnswer(raw)
   if (answer.kind === "malformed") throw new BridgeFailure("MALFORMED")
-  if (answer.kind === "tools") return { kind: "tools", calls: answer.calls.map(c => ({ name: c.name, args: c.args })) }
+  const thought = answer.thought ? { thought: answer.thought } : {}
+  if (answer.kind === "tools") return { kind: "tools", calls: answer.calls.map(c => ({ name: c.name, args: c.args })), ...thought }
   if (!Schema.is(AnswerText)(answer.text)) throw new BridgeFailure("MALFORMED")
-  return { kind: "text", text: answer.text }
+  return { kind: "text", text: answer.text, ...thought }
 }

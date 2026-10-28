@@ -23,7 +23,11 @@ const TaskRef = Schema.Struct({ id: Schema.UUID, sessionId: Schema.UUID, title: 
 export const MessageOrigin = Schema.Struct({ kind: Schema.Literal("task", "message", "result", "wake"),
   fromSessionId: Schema.optional(Schema.UUID), taskId: Schema.optional(Schema.UUID), title: Schema.optional(Schema.String) })
 export type MessageOrigin = typeof MessageOrigin.Type
-const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
+// What the run did, for the chat's trace. The model never sees it again.
+const Activity = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("thought"), text: Schema.String.pipe(Schema.maxLength(2000)), ms: Schema.Number }),
+  Schema.Struct({ kind: Schema.Literal("tool"), tool: Schema.String, text: Schema.String.pipe(Schema.maxLength(500)), failed: Schema.optional(Schema.Boolean) }))
+const Message = Schema.Struct({ activity: Schema.optional(Schema.Array(Activity).pipe(Schema.maxItems(24))), durationMs: Schema.optional(Schema.Number), role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
   decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session) })
@@ -166,6 +170,7 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
     readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
+    readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined
   }, unknown, R>
 /** The agent without session tools; the turn context is not passed on. */
 const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal) =>
@@ -235,7 +240,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal,
       { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message, ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const messages = [...current.messages, { role: "user", text: body.message, ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,

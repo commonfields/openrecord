@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { chatCompletionAnswer, chatCompletionRequest, chatMessages, chatModelIds } from "./openai-chat.js"
+import { chatCompletionAnswer, chatCompletionRequest, chatMessages, chatModelIds, chatStream } from "./openai-chat.js"
 
 const tools = [{ name: "read_open_issues", description: "Read issues", parametersJsonSchema: { type: "object", properties: { limit: { type: "integer" } }, additionalProperties: false } }]
 
@@ -57,5 +57,29 @@ describe("chat completion answers", () => {
     expect(chatModelIds({ object: "list", data: [{ id: "claude-opus-5-5", owned_by: "anthropic" }, { id: "gpt-6-luna" }] }))
       .toEqual([{ id: "claude-opus-5-5", ownedBy: "anthropic" }, { id: "gpt-6-luna", ownedBy: null }])
     expect(chatModelIds({ data: "no" })).toBeNull()
+  })
+})
+
+describe("reasoning and streaming", () => {
+  it("returns the model's own reasoning with the answer", () => {
+    expect(chatCompletionAnswer({ choices: [{ finish_reason: "stop", message: { content: "Done.", reasoning_content: "  Check the issues first.  " } }] }))
+      .toMatchObject({ kind: "text", text: "Done.", thought: "Check the issues first." })
+    expect(chatCompletionAnswer({ choices: [{ finish_reason: "stop", message: { content: "Done.", reasoning_content: null } }] })).not.toHaveProperty("thought")
+  })
+  it("folds streamed chunks, including split tool arguments, into one answer", () => {
+    const stream = chatStream()
+    for (const chunk of [
+      { model: "claude-sonnet-5-5", choices: [{ delta: { reasoning_content: "Look at " } }] },
+      { choices: [{ delta: { reasoning_content: "open issues." } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "a", type: "function", function: { name: "read_issue", arguments: '{"claim' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'Id":"x"}' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 1, function: { name: "read_open_issues", arguments: "{}" } }] } }] },
+      { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } },
+      "not an object",
+    ]) stream.push(chunk)
+    expect(stream.thought()).toBe("Look at open issues.")
+    expect(chatCompletionAnswer(stream.completion())).toEqual({ kind: "tools", thought: "Look at open issues.",
+      calls: [{ name: "read_issue", args: { claimId: "x" } }, { name: "read_open_issues", args: {} }],
+      usage: { model: "claude-sonnet-5-5", promptTokens: 5, outputTokens: 2, thoughtTokens: null, totalTokens: 7 } })
   })
 })

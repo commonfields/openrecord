@@ -16,7 +16,9 @@ import {
   createPair,
   harnessCatalog,
   invokeHarness,
+  longPollHarnessJobs,
   pollHarnessJobs,
+  recordHarnessProgress,
   registerBridge,
   requestHarnessRefresh,
   resolveHarness,
@@ -293,5 +295,31 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
     const catalog = Schema.decodeUnknownSync(HarnessCatalog)(await response.json())
     expect(catalog.instances[0]?.enabled).toBe(false)
     expect(JSON.stringify(catalog)).not.toContain(c.registered.token)
+  })
+  it("hands a job to a waiting bridge at once and streams its reasoning to the turn", async () => {
+    const scope = await fixture(), c = await connect(scope)
+    await run(activateHarness(scope, c.instance.id, true))
+    await run(pollHarnessJobs(c.bridge, [c.status]))
+    const selection = { instanceId: c.instance.id, model: "fixture-model" }
+    const thoughts: string[] = []
+    // A bridge already waiting in a long poll receives the job as soon as it is queued.
+    const waiting = run(longPollHarnessJobs(c.bridge, [], true, 5000))
+    const started = Date.now()
+    const turn = run(invokeHarness({ ...scope }, selection, { system: "TEST", tools: [],
+      contents: [{ role: "user", parts: [{ text: "Question" }] }, { role: "model", parts: [{ text: "earlier reasoning", thought: true }, { text: "Earlier answer" }] }] },
+      thought => Effect.sync(() => { thoughts.push(thought) })))
+    const polled = await waiting
+    expect(polled.job).not.toBeNull()
+    expect(Date.now() - started).toBeLessThan(2000)
+    // Reasoning shown in the chat is never sent to the provider again.
+    expect(JSON.stringify(polled.job!.input.contents)).not.toContain("earlier reasoning")
+    await run(recordHarnessProgress(c.bridge, polled.job!.id, { lease: polled.job!.lease, thought: "Reading the question" }))
+    for (let i = 0; i < 40 && !thoughts.length; i++) await new Promise(r => setTimeout(r, 50))
+    expect(thoughts).toEqual(["Reading the question"])
+    await expect(run(recordHarnessProgress(c.bridge, polled.job!.id, { lease: randomUUID(), thought: "forged" }))).rejects.toMatchObject({ reason: "CANCELLED" })
+    await run(completeHarnessJob(c.bridge, polled.job!.id, { lease: polled.job!.lease, kind: "completed", answer: { kind: "text", text: "Answer", thought: "Final reasoning" } }))
+    expect(await turn).toMatchObject({ kind: "completed", answer: { kind: "text", text: "Answer", thought: "Final reasoning" } })
+    // A finished job accepts no more progress.
+    await expect(run(recordHarnessProgress(c.bridge, polled.job!.id, { lease: polled.job!.lease, thought: "late" }))).rejects.toMatchObject({ reason: "CANCELLED" })
   })
 })

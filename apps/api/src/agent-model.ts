@@ -52,7 +52,9 @@ const Response = Schema.Struct({
 })
 export type ModelContent = { readonly role: "user" | "model"; readonly parts: ReadonlyArray<unknown> }
 export type ModelResponse = typeof Response.Type
-export type ModelInput = { readonly contents: ReadonlyArray<ModelContent>; readonly tools: ReadonlyArray<unknown>; readonly system: string }
+export type ModelInput = { readonly contents: ReadonlyArray<ModelContent>; readonly tools: ReadonlyArray<unknown>; readonly system: string
+  /** Called with the reasoning produced so far in this step, when the provider streams it. Display only. */
+  readonly onThought?: ((thought: string) => Effect.Effect<void, unknown>) | undefined }
 export type AgentModel = (input: ModelInput) => Effect.Effect<ModelResponse, AgentModelError>
 
 /** Reads a JSON body of at most `max` bytes. */
@@ -75,6 +77,8 @@ const readJson = async (response: Response, max = 256000): Promise<unknown> => {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { throw new AgentModelError({ reason: "MALFORMED" }) }
 }
+/** Gemini models that think and can return thought summaries. */
+const THINKING_GEMINI = /^gemini-(?:2\.5|[3-9])/
 const refuseStatus = async (response: Response) => {
   await response.body?.cancel()
   throw new AgentModelError({ reason: response.status === 429 ? "RATE_LIMITED" : "UNAVAILABLE" })
@@ -96,7 +100,9 @@ export const configuredAgentModel = Effect.gen(function*() {
       method: "POST", signal, redirect: "error",
       headers: { "content-type": "application/json", "x-goog-api-key": Redacted.value(cfg.apiKey) },
       body: JSON.stringify({ contents: input.contents, systemInstruction: { parts: [{ text: input.system }] },
-        ...(input.tools.length ? { tools: [{ functionDeclarations: input.tools }] } : {}), generationConfig: { maxOutputTokens: cfg.maxOutputTokens } }),
+        ...(input.tools.length ? { tools: [{ functionDeclarations: input.tools }] } : {}),
+        // Thinking models return a summary of the reasoning they already do; it adds no thinking.
+        generationConfig: { maxOutputTokens: cfg.maxOutputTokens, ...(THINKING_GEMINI.test(cfg.model) ? { thinkingConfig: { includeThoughts: true } } : {}) } }),
     })
     if (!response.ok) return refuseStatus(response)
     const parsed = Schema.decodeUnknownEither(Response)(await readJson(response))
@@ -113,7 +119,8 @@ export const configuredAgentModel = Effect.gen(function*() {
     if (!response.ok) return refuseStatus(response)
     const answer = chatCompletionAnswer(await readJson(response, 1000000))
     if (answer.kind === "malformed") throw new AgentModelError({ reason: "MALFORMED" })
-    const parts = answer.kind === "text" ? [{ text: answer.text.slice(0, 20000) }] : answer.calls.map(c => ({ functionCall: { name: c.name, args: c.args } }))
+    const thought = answer.thought ? [{ text: answer.thought.slice(-8000), thought: true }] : []
+    const parts = [...thought, ...(answer.kind === "text" ? [{ text: answer.text.slice(0, 20000) }] : answer.calls.map(c => ({ functionCall: { name: c.name, args: c.args } })))]
     const u = answer.usage
     return { candidates: [{ content: { role: "model", parts }, finishReason: "STOP" }], ...(u.model ? { modelVersion: u.model } : {}),
       usageMetadata: { ...(u.promptTokens !== null ? { promptTokenCount: u.promptTokens } : {}), ...(u.outputTokens !== null ? { candidatesTokenCount: u.outputTokens } : {}),

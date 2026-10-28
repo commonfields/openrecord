@@ -9,7 +9,7 @@ import { Effect } from "effect"
 import { AgentModelError } from "./agent-model.js"
 import { decisionRefs, mergeDecisions, toolLabel, type ToolEffect } from "./agent-registry.js"
 
-export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
+export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_REQUESTED" | "MODEL_THINKING" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
 export type RunStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
 export type RunOutcome = "ANSWERED" | "ANSWERED_WITH_GAPS"
 export interface RunEvent { readonly type: RunEventType; readonly payload: Record<string, unknown> }
