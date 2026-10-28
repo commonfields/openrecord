@@ -3,7 +3,7 @@
 // errors without secrets. All against the local fixture: MOCK_ADAPTER_PASS.
 import { createHash, randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
-import { GA4_OAUTH_CALLBACK_PATH, GA4_READONLY_SCOPE, ga4LatestCompleteDay, ga4PropertyMatchesRef, ga4RangeRefusal, ga4ScopesAcceptable } from "@openrecord/contracts"
+import { GA4_OAUTH_CALLBACK_PATH, GA4_READONLY_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, ga4LatestCompleteDay, ga4PropertyMatchesRef, ga4RangeRefusal, ga4ScopesAcceptable } from "@openrecord/contracts"
 import {
   Ga4Error, authorizationUrl, exchangeCode, fixtureGoogle, ga4ConfigFromEnv, getProperty, identityFromIdToken, keyEventReportBody, listAccessibleProperties,
   listKeyEvents, makeTokenCipher, observationDigest, observationEvidence, parseActivityReport, parseCipherKeys, parseKeyEventReport, pkceChallenge,
@@ -36,8 +36,8 @@ describe("OAuth authorization request", () => {
     const g = google()
     const url = new URL(authorizationUrl(oauth(g), { state: "abc", codeVerifier: "v".repeat(43) }))
     const q = url.searchParams
-    expect(q.get("scope")).toBe(`openid email ${GA4_READONLY_SCOPE}`)
-    expect(q.get("scope")).not.toMatch(/analytics\.edit|analytics\.manage|auth\/analytics( |$)/)
+    expect(q.get("scope")).toBe(`openid email ${GA4_READONLY_SCOPE} ${SEARCH_CONSOLE_READONLY_SCOPE}`)
+    expect(q.get("scope")).not.toMatch(/analytics\.edit|analytics\.manage|auth\/analytics( |$)|auth\/webmasters( |$)/)
     expect(q.get("code_challenge_method")).toBe("S256")
     expect(q.get("code_challenge")).toBe(createHash("sha256").update("v".repeat(43)).digest("base64url"))
     expect(q.get("state")).toBe("abc")
@@ -69,7 +69,7 @@ describe("token exchange, identity and scopes", () => {
     const g = google()
     const { tokens, callback } = await connect(g)
     expect(tokens.refreshToken).toMatch(/^1\/\/fixture-/)
-    expect(tokens.grantedScopes).toEqual(["email", GA4_READONLY_SCOPE, "openid"].sort())
+    expect(tokens.grantedScopes).toEqual(["email", GA4_READONLY_SCOPE, "openid", SEARCH_CONSOLE_READONLY_SCOPE].sort())
     // Single use.
     await expect(exchangeCode(oauth(g), callback.searchParams.get("code")!, "x".repeat(43))).rejects.toMatchObject({ kind: "AUTH", providerCode: "invalid_grant" })
     // Wrong verifier.
@@ -96,6 +96,9 @@ describe("token exchange, identity and scopes", () => {
     expect(ga4ScopesAcceptable(["openid", "email"])).toBe(false)
     expect(ga4ScopesAcceptable(["openid", "email", GA4_READONLY_SCOPE, "https://www.googleapis.com/auth/analytics.edit"])).toBe(false)
     expect(ga4ScopesAcceptable([GA4_READONLY_SCOPE, "https://www.googleapis.com/auth/analytics"])).toBe(false)
+    // Search Console alone is enough; write access to it never is.
+    expect(ga4ScopesAcceptable(["openid", "email", SEARCH_CONSOLE_READONLY_SCOPE])).toBe(true)
+    expect(ga4ScopesAcceptable([SEARCH_CONSOLE_READONLY_SCOPE, "https://www.googleapis.com/auth/webmasters"])).toBe(false)
   })
   it("refreshes, and reports a revoked grant as an authorization failure", async () => {
     const g = google()

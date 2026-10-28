@@ -1,7 +1,7 @@
 // Typed API client shared with the backend contract (packages/contracts).
 // Most server state comes from these calls; ordinary React state covers UI-local interaction.
 import { AssayRoutes, type AssayQueue, type RegisterAssaySourceRequest, type RunAssayRequest, type ReviewAssayFactRequest, type ReviewAssayFindingRequest, Routes } from "@openrecord/contracts"
-import type { ProviderInfo, ProviderCatalogResponse, ProviderDailyAnswer, HarnessSelection } from "@openrecord/contracts"
+import type { GrowthOpportunity, ProviderInfo, ProviderCatalogResponse, ProviderDailyAnswer, HarnessSelection } from "@openrecord/contracts"
 export class ApiError extends Error {
   readonly status: number
   readonly tag: string
@@ -239,11 +239,14 @@ export type AgentMessage = {
   run?: AgentRunRef
   citations?: AgentCitation[]
   toolCalls?: AgentToolCall[]
+  // Proposals this reply saved; each renders as an approval card under it.
+  decisions?: AgentDecisionRef[]
   // Which provider answered, recorded by the server at turn time. Absent on
   // messages sent before selection existed.
   inference?: { provider: string; requestedModel: string | null; instanceId?: string } | null
 }
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
+export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; id: string }
 // The run behind an agent message: how it ended and which checks did not run.
 export type AgentRunRef = { id: string; status: "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"; outcome?: "ANSWERED" | "ANSWERED_WITH_GAPS"; gaps?: string[] }
 export type AgentRunEvent = { seq: number; type: string; at: string; payload: Record<string, unknown> }
@@ -259,7 +262,7 @@ export const Agent = {
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
   send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[] }>(`${agentBase(businessId)}/messages`, {
+    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[] }>(`${agentBase(businessId)}/messages`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
     }),
   // Live journal of the run answering a request, after the last seen sequence.
@@ -275,6 +278,17 @@ export const Agent = {
     method: "POST", body: JSON.stringify({ provider: "9router", requestedModel }),
   }),
 }
+
+/** Everything waiting on a person, across the businesses this session can reach. */
+export type DecisionItem =
+  | { type: "AGENT_PROPOSAL"; business: { id: string; name: string }; createdAt: string; proposal: AgentProposal }
+  | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; opportunity: GrowthOpportunity }
+export const Decisions = {
+  list: () => api<{ items: DecisionItem[]; count: number }>("/api/decisions"),
+}
+/** Fired after anything is decided or proposed, so counts and lists reload. */
+export const DECISIONS_CHANGED = "openrecord:decisions-changed"
+export const notifyDecisionsChanged = () => window.dispatchEvent(new Event(DECISIONS_CHANGED))
 
 export const Observations = {
   get: (observationId: string) =>

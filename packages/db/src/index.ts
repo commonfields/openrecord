@@ -27,6 +27,7 @@ export * from "./growth-evaluation.js"
 export * from "./growth-report.js"
 export * from "./growth-execution.js"
 export * from "./growth-ga4.js"
+export * from "./search-console.js"
 export { evaluateGrowthOutcome, localDay, GROWTH_EVALUATION_LIMITATIONS, type GrowthEvaluationInput, type GrowthEvaluationActionRow } from "./growth-evaluation-rules.js"
 
 export { GrowthRepositoriesLive } from "./growth-repositories.js"

@@ -270,15 +270,16 @@ function ProposeStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
 }
 
 /** A proposed initiative with its reasoning, and the human decision on it. */
-export function InitiativeDecision({ businessId, opportunity, measurement }: { businessId: string; opportunity: GrowthOpportunity; measurement: "CONNECTED" | "MANUAL_ONLY" | "NONE" }) {
+export function InitiativeDecision({ businessId, opportunity, measurement, onDecided }: { businessId: string; opportunity: GrowthOpportunity; measurement: "CONNECTED" | "MANUAL_ONLY" | "NONE"; onDecided?: () => void }) {
   const [current, setCurrent] = useState(opportunity)
   const [busy, setBusy] = useState<"approve" | "cancel" | null>(null)
   const decide = async (decision: "approve" | "cancel") => {
     setBusy(decision)
     try {
       const r = await Growth.decide(businessId, current.id, decision, { expectedStatus: current.status, expectedRevision: current.revision, idempotencyKey: crypto.randomUUID(),
-        reason: decision === "approve" ? "Approved in the agent workspace" : "Declined in the agent workspace" })
+        reason: decision === "approve" ? "Approved in OpenRecord" : "Declined in OpenRecord" })
       setCurrent(r.opportunity)
+      onDecided?.()
     } catch (err) {
       toast.error(growthError(err))
     } finally {

@@ -67,6 +67,7 @@ export const Growth = {
   profile: (id: string) => api<{ profile: GrowthProfile | null; goals: GrowthGoal[] }>(base(id)),
   save: (id: string, input: GrowthProfileInput, requestKey: string) => api<{ profile: GrowthProfile }>(base(id), { method: "PUT", body: JSON.stringify({ ...input, idempotencyKey: requestKey }) }),
   list: (id: string) => api<{ opportunities: GrowthOpportunity[] }>(`${base(id)}/opportunities`),
+  get: (id: string, opportunityId: string) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}`),
   create: (id: string, input: CreateGrowthOpportunity) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities`, { method: "POST", body: JSON.stringify(input) }),
   review: (id: string, opportunityId: string, input: GrowthReview) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/review`, { method: "POST", body: JSON.stringify(input) }),
   decide: (id: string, opportunityId: string, decision: "propose" | "approve" | "cancel", input: GrowthDecision) => api<{ opportunity: GrowthOpportunity }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/${decision}`, { method: "POST", body: JSON.stringify(input) }),

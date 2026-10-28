@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { MCP_PROHIBITED } from "@openrecord/contracts"
 import { agentDeclarations, runConversation } from "./agent.js"
 import { AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
-import { AGENT_TOOL_SPECS, classifyToolFailure, proposalReceipt, toolLabel } from "./agent-registry.js"
+import { AGENT_TOOL_SPECS, classifyToolFailure, decisionRefs, mergeDecisions, proposalReceipt, toolLabel } from "./agent-registry.js"
 import { buildContext, compactToolResults, type ContextMessage } from "./agent-context.js"
 import { interruptionNote, memoryJournal } from "./agent-run.js"
 import { AgentInvalidInput, AgentUnknownTool, type AgentToolResult } from "./agent-tools.js"
@@ -168,5 +168,19 @@ describe("tool registry and interruption notes", () => {
     expect(note.citations).toEqual([...read.citations, ...saved.citations])
     expect(note.worked).toBe(true)
     expect(interruptionNote("CANCELLED", "CANCELLED", []).worked).toBe(false)
+  })
+
+  it("turns proposal receipts into approval cards, and only real IDs", () => {
+    const proposal = "6f1d3c1e-8a5b-4c2d-9e7f-0a1b2c3d4e5f", opportunity = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    expect(decisionRefs({ proposalId: proposal, status: "PROPOSED" })).toEqual([{ type: "AGENT_PROPOSAL", id: proposal }])
+    expect(decisionRefs({ opportunityId: opportunity })).toEqual([{ type: "GROWTH_OPPORTUNITY", id: opportunity }])
+    expect(decisionRefs({ proposalId: "proposal-fixture", questionId: proposal })).toEqual([])
+    const many = Array.from({ length: 12 }, (_, i) => ({ type: "AGENT_PROPOSAL" as const, id: `${i}` }))
+    expect(mergeDecisions([...many.slice(0, 2), ...many])).toHaveLength(10)
+    const note = interruptionNote("CANCELLED", "CANCELLED", [
+      { type: "TOOL_STARTED", payload: { invocationId: "a", tool: "propose_growth_opportunity", effect: "propose" } },
+      { type: "TOOL_COMPLETED", payload: { invocationId: "a", tool: "propose_growth_opportunity", effect: "propose", summary: "Growth hypothesis saved for human review", receipt: { opportunityId: opportunity, status: "PROPOSED" } } },
+    ])
+    expect(note.decisions).toEqual([{ type: "GROWTH_OPPORTUNITY", id: opportunity }])
   })
 })

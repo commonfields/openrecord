@@ -9,7 +9,7 @@ import { HttpApp, HttpRouter } from "@effect/platform"
 import { Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { GA4_OAUTH_CALLBACK_PATH, GA4_READONLY_SCOPE, type Ga4Binding, type Ga4Connection } from "@openrecord/contracts"
+import { GA4_OAUTH_CALLBACK_PATH, GA4_READONLY_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, type Ga4Binding, type Ga4Connection } from "@openrecord/contracts"
 import { AuthRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import { fixtureGa4Config, fixtureGa4Layer, fixtureGoogle } from "@openrecord/ga4"
 import { growthGa4Api } from "./growth-ga4-routes.js"
@@ -87,9 +87,9 @@ suite("GA4 connection over HTTP (OAuth, property authorization, tenancy; local G
     const q = new URL(flow.authorizationUrl).searchParams
     expect(q.get("redirect_uri")).toBe(CLIENT.redirectUri)
     expect(q.get("code_challenge_method")).toBe("S256")
-    expect(q.get("scope")).toBe(`openid email ${GA4_READONLY_SCOPE}`)
+    expect(q.get("scope")).toBe(`openid email ${GA4_READONLY_SCOPE} ${SEARCH_CONSOLE_READONLY_SCOPE}`)
     const [conn] = await s.connections(s.a)
-    expect(conn).toMatchObject({ accountId: s.a.accountId, googleEmail: "agency@example.test", status: "ACTIVE", grantedScopes: ["email", GA4_READONLY_SCOPE, "openid"].sort() })
+    expect(conn).toMatchObject({ accountId: s.a.accountId, googleEmail: "agency@example.test", status: "ACTIVE", grantedScopes: ["email", GA4_READONLY_SCOPE, "openid", SEARCH_CONSOLE_READONLY_SCOPE].sort() })
     // Ciphertext only at rest; the state's plaintext is never stored.
     const creds = (await pool.query("SELECT refresh_ciphertext, access_ciphertext FROM growth_ga4_credentials WHERE connection_id=$1", [conn!.id])).rows[0]
     expect(String(creds.refresh_ciphertext)).toMatch(/^v1\./)

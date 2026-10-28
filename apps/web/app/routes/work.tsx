@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, PageHeader, Panel, PanelHeader } from "@/components/page"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { NextActions, useOverviewData } from "@/components/today-overview"
+import { AgentProposalCard } from "@/components/agent-chat"
 import { Agent } from "@/lib/api"
 import { formatDateTime, sentenceCase } from "@/lib/format"
 import { GROWTH_EXECUTION_LABELS, Growth, growthPath } from "@/lib/growth"
@@ -23,7 +24,8 @@ export function WorkPage() {
   const waiting = list.filter(o => o.status === "PROPOSED")
   const approved = list.filter(o => o.status === "APPROVED")
   const done = list.filter(o => o.status === "REVIEWED" || o.executions.length > 0)
-  const agentWaiting = proposals.data?.proposals.filter(p => p.status === "PROPOSED").length ?? 0
+  const agentOpen = proposals.data?.proposals.filter(p => p.status === "PROPOSED") ?? []
+  const agentWaiting = agentOpen.length
 
   return (
     <div className="rise-in mx-auto w-full max-w-4xl space-y-6 pb-4">
@@ -44,12 +46,9 @@ export function WorkPage() {
               {waiting.map(o => (
                 <Panel key={o.id} className="p-5"><InitiativeDecision businessId={id} opportunity={o} measurement="NONE" /></Panel>
               ))}
-              {agentWaiting ? (
-                <Panel className="flex items-center gap-3 p-4 text-xs">
-                  <span className="flex-1">The agent prepared {agentWaiting} {agentWaiting === 1 ? "item" : "items"} for your review.</span>
-                  <Button asChild size="sm" variant="outline"><Link to={`/businesses/${id}/agent`}>Review in the agent</Link></Button>
-                </Panel>
-              ) : null}
+              {agentOpen.map(p => (
+                <AgentProposalCard key={p.id} businessId={id} businessName={activeBusiness?.name ?? "this business"} proposal={p} onDone={() => { proposals.reload() }} />
+              ))}
             </section>
           ) : null}
 

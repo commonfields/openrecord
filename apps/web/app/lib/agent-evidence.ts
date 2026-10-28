@@ -19,6 +19,7 @@ export const agentEvidencePath = (businessId: string, citation: AgentCitation): 
     case "growth_goal": return `/clients/${businessId}/growth`
     case "growth_opportunity": return `/clients/${businessId}/growth#opportunity-${citation.id}`
     case "record": return `/clients/${businessId}`
+    case "search_console": return `${base}/results#search-console`
     default: return null
   }
 }

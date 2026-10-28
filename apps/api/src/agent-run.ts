@@ -7,7 +7,7 @@
 import { SqlClient } from "@effect/sql"
 import { Effect } from "effect"
 import { AgentModelError } from "./agent-model.js"
-import { toolLabel, type ToolEffect } from "./agent-registry.js"
+import { decisionRefs, mergeDecisions, toolLabel, type ToolEffect } from "./agent-registry.js"
 
 export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
 export type RunStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
@@ -106,6 +106,10 @@ export const interruptionNote = (status: RunStatus, reason: string | null, event
     citations: [...citations.values()],
     toolCalls: events.filter(e => e.type === "TOOL_COMPLETED" || e.type === "TOOL_FAILED").map(e => ({ tool: str(e.payload["tool"]), summary: str(e.payload["summary"]) })),
     worked: events.some(e => e.type === "TOOL_STARTED"),
+    decisions: mergeDecisions(completed.filter(e => e.payload["effect"] === "propose").flatMap(e => {
+      const receipt = e.payload["receipt"]
+      return receipt !== null && typeof receipt === "object" ? decisionRefs(receipt as Record<string, unknown>) : []
+    })),
   }
 }
 
@@ -129,7 +133,7 @@ export const settleRuns = (conversationId: string) => Effect.gen(function*() {
       const events = (yield* sql`SELECT type, payload FROM agent_run_events WHERE run_id = ${id} ORDER BY seq`) as unknown as ReadonlyArray<JournalRow>
       const note = interruptionNote(status, run["failure_reason"] === null ? null : String(run["failure_reason"]), events)
       if (note.worked) appended.push({ role: "user", text: String(run["objective"]) },
-        { role: "agent", text: note.text, citations: note.citations, toolCalls: note.toolCalls, run: { id, status } })
+        { role: "agent", text: note.text, citations: note.citations, toolCalls: note.toolCalls, ...(note.decisions.length ? { decisions: note.decisions } : {}), run: { id, status } })
     }
     yield* sql`UPDATE agent_runs SET settled_at = now() WHERE id = ${id}`
   }

@@ -12,6 +12,7 @@ import { readRunProgress, type RunJournal } from "./agent-run.js"
 import { cancelHarnessConversation } from "./harness-store.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { harnessApi } from "./harness-routes.js"
+import { decisionApi } from "./decision-routes.js"
 import { requireSession } from "./router.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -37,11 +38,13 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
   const web = HttpApp.toWebHandlerLayer(harnessApi(act => Effect.flatMap(requireSession, ({ session }) => act(session))),
     Layer.mergeAll(AuthRepositoryLive, AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, SetupRepositoryLive)
       .pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))))
+  const decisionsWeb = HttpApp.toWebHandlerLayer(decisionApi(act => Effect.flatMap(requireSession, ({ session }) => act(session))),
+    Layer.mergeAll(AuthRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))))
   const get = (path: string, cookie?: string) => web.handler(new Request(`http://localhost${path}`, { headers: cookie ? { cookie: `or_session=${cookie}` } : {} }))
   const session = async (accountId: string, userId: string) =>
     String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
-  afterAll(async () => { await web.dispose(); await pool.end() })
+  afterAll(async () => { await web.dispose(); await decisionsWeb.dispose(); await pool.end() })
   const fixture = async () => {
     const accountId = (await pool.query("INSERT INTO accounts(name) VALUES ('TEST runs') RETURNING id")).rows[0].id as string
     const userId = (await pool.query("INSERT INTO users(email,password_hash) VALUES ($1,'TEST-only') RETURNING id", [`runs-${randomUUID()}@example.test`])).rows[0].id as string
@@ -67,7 +70,9 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     expect(after._tag === "Right" && after.right).toMatchObject({ revision: 1, messages: [
       { role: "user", text: "Re-check the opening hours" },
       { role: "agent", run: { status: "FAILED" }, citations: [{ kind: "question", id: questionId }],
-        toolCalls: [{ tool: "propose_check_run", summary: "Re-check proposed; approval required" }] },
+        toolCalls: [{ tool: "propose_check_run", summary: "Re-check proposed; approval required" }],
+        // The saved proposal stays decidable from the note itself.
+        decisions: [{ type: "AGENT_PROPOSAL", id: saved[0] }] },
     ] })
     const note = after._tag === "Right" ? after.right!.messages[1]!.text : ""
     expect(note).toContain("This request timed out before it finished.")
@@ -89,6 +94,26 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     const done = (await runs(scope.businessId))[1]
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "ANSWERED" })
     expect((await events(done.id)).find(e => e.type === "TOOL_COMPLETED")!.payload).toMatchObject({ receipt: { proposalId: saved[0] } })
+    const reloaded = await run(loadConversation(scope))
+    expect(reloaded._tag === "Right" && reloaded.right!.messages[3]).toMatchObject({ role: "agent", decisions: [{ type: "AGENT_PROPOSAL", id: saved[0] }] })
+  })
+
+  it("lists what waits on the signed-in account, across its businesses, until it is decided", async () => {
+    const { scope, questionId } = await fixture(), other = await fixture()
+    const steps: ModelResponse[] = [call("propose_check_run", { questionId }), text("A re-check is waiting for your approval.")]
+    const sent = await run(sendConversation(scope, { message: "Re-check the hours", requestId: randomUUID(), revision: 0 }, responder(() => Effect.succeed(steps.shift()!))))
+    expect(sent._tag === "Right" && sent.right).toMatchObject({ decisions: [{ type: "AGENT_PROPOSAL" }] })
+    const [proposalId] = await proposals(scope.businessId)
+    const list = (cookie?: string) => decisionsWeb.handler(new Request("http://localhost/api/decisions", { headers: cookie ? { cookie: `or_session=${cookie}` } : {} }))
+    expect((await list()).status).toBe(401)
+    const owner = await session(scope.accountId, scope.userId)
+    const response = await list(owner)
+    expect(response.status).toBe(200)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    expect(await response.json()).toMatchObject({ count: 1, items: [{ type: "AGENT_PROPOSAL", business: { id: scope.businessId, name: "TEST Client" }, proposal: { id: proposalId, status: "PROPOSED" } }] })
+    expect(await (await list(await session(other.scope.accountId, other.scope.userId))).json()).toEqual({ items: [], count: 0 })
+    await pool.query("UPDATE agent_proposals SET status='REJECTED', decided_by_user_id=$2, decided_at=now() WHERE id=$1", [proposalId, scope.userId])
+    expect(await (await list(owner)).json()).toEqual({ items: [], count: 0 })
   })
 
   it("leaves the conversation untouched and sendable when a run fails before any tool work", async () => {

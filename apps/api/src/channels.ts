@@ -12,6 +12,8 @@ export interface ChannelFacts {
     readonly boundToBusiness: boolean
   }
   readonly github: { readonly configured: boolean; readonly targets: number }
+  /** Search Console through the Google connection: whether any active connection can read it, and the site bound to this business. */
+  readonly searchConsole: { readonly scopeGranted: boolean; readonly site: string | null }
   /** Providers the server declares. A declaration is not proof they work. */
   readonly answerProviders: ReadonlyArray<string>
   /** When a real (non-fixture) AI answer was last collected for this business. */
@@ -29,7 +31,7 @@ const OFFERED = {
   website: ["DISCOVER", "PROPOSE", "VERIFY"],
   ga4: ["READ", "MEASURE"],
   github: ["EXECUTE", "VERIFY"],
-  searchConsole: [],
+  searchConsole: ["READ", "MEASURE"],
 } as const satisfies Record<string, ReadonlyArray<ChannelCapability>>
 
 const host = (url: string | null) => {
@@ -84,8 +86,19 @@ export const deriveChannelInventory = (f: ChannelFacts): ChannelInventory => {
             note: "Your administrator must allow this business's repository before OpenRecord can open pull requests.", action: null },
   )
 
-  channels.push({ key: "search-console", label: "Google Search Console", identity: null, state: "UNSUPPORTED", active: [], offered: [...OFFERED.searchConsole],
-    note: "Not available yet. Search traffic is not measured.", action: null })
+  const searchConsoleHref = `${base}/channels#search-console`
+  channels.push(
+    !f.ga4.configured
+      ? { key: "search-console", label: "Google Search Console", identity: null, state: "UNSUPPORTED", active: [], offered: [...OFFERED.searchConsole],
+          note: "Google sign-in is not configured on this server, so search clicks and queries cannot be read.", action: null }
+      : f.searchConsole.site
+        ? { key: "search-console", label: "Google Search Console", identity: f.searchConsole.site, state: "CONNECTED", active: [...OFFERED.searchConsole], offered: [...OFFERED.searchConsole],
+            note: "Read-only. Clicks, impressions, average position and top queries from Google Search, read live for the agent and Results.",
+            action: { kind: "OPEN", label: "Search performance", href: `${base}/results#search-console` } }
+        : { key: "search-console", label: "Google Search Console", identity: null, state: "PERMISSION_REQUIRED", active: [], offered: [...OFFERED.searchConsole],
+            note: f.searchConsole.scopeGranted ? "Google access is granted. Choose the Search Console site for this business." : "Grant read-only access to see which Google searches bring people to your site.",
+            action: { kind: "OPEN", label: f.searchConsole.scopeGranted ? "Choose site" : "Connect", href: searchConsoleHref } },
+  )
 
   for (const c of f.discovery?.channels ?? [])
     channels.push({ key: `profile:${c.kind}`, label: PROFILE_LABELS[c.kind], identity: c.kind === "EMAIL" ? c.url.replace(/^mailto:/, "") : c.url, state: "DISCOVERED",

@@ -57,7 +57,7 @@ Before getting any value, a new user filled one of these:
 | GitHub | one server-wide token plus a repository allowlist | repository, files, PRs | one operation: remove an accidental `noindex` via a PR, never merged | read-back of the merged file plus a live page check | no |
 | Gemini, 9Router | API keys | AI answers (check runs) | no | no | no |
 
-Search Console is not connected: the provider always reports missing credentials and the route returns fixture data (`packages/site-operator/src/gsc.ts:52-71`).
+Search Console is not connected: the provider always reports missing credentials and the route returns fixture data (`packages/site-operator/src/gsc.ts:52-71`). *(Superseded: read-only Search Console performance now runs through the GA4 Google connection. See "Google Search Console" in `docs/architecture/agency-agent-v1.md`. The site-operator fixture provider is unchanged.)*
 
 **Ledger-only channels.** `EMAIL`, `PAID`, `SOCIAL`, `THIRD_PARTY_PROFILE` and `OTHER` exist only as growth-ledger categories (`packages/contracts/src/growth.ts:99`). Nothing reads, posts to or measures them.
 
