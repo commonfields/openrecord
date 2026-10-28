@@ -452,7 +452,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
       to={to}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary-ink"
