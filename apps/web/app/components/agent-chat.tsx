@@ -271,12 +271,9 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   // turns where it read stored evidence.
   const openProposals = proposals.filter(p => p.status === "PROPOSED")
   const keptDrafts = proposals.filter(p => p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")
-  const reads = messages.flatMap((m, i) => m.role === "agent" && !m.pending && ((m.tools?.length ?? 0) > 0 || (m.citations?.length ?? 0) > 0)
-    ? [{ id: m.id, question: messages[i - 1]?.role === "user" ? messages[i - 1]!.text : null, tools: m.tools ?? [], citations: m.citations ?? [] }]
-    : [])
-  const hasWork = openProposals.length > 0 || keptDrafts.length > 0 || reads.length > 0
+  const hasWork = openProposals.length > 0 || keptDrafts.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking }
+  return { businessId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -386,6 +383,29 @@ function HelperBanner({ session }: { session: AgentSession }) {
 
 // ---- the conversation ----
 
+// A finished reply's work log: its recorded steps, or for replies saved
+// before steps were kept, the tools it ran.
+const workLog = (m: Message): AgentActivity[] => m.activity?.length ? m.activity
+  : (m.tools ?? []).map(t => ({ kind: "tool" as const, tool: t.tool, text: t.summary }))
+
+// One source the answer used: a page on the web, or a record in this workspace.
+function SourceChip({ businessId, citation: c }: { businessId: string | null; citation: AgentCitation }) {
+  const path = businessId === null ? null : agentEvidencePath(businessId, c)
+  const web = webSourceUrl(c)
+  const chip = "inline-flex max-w-72 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+  return web ? (
+    <a href={web} rel="noopener noreferrer nofollow" target="_blank" className={chip}>
+      <GlobeIcon className="size-3 shrink-0" />
+      <span className="truncate">{c.text || new URL(web).host}</span>
+    </a>
+  ) : path ? (
+    <Link to={path} className={chip}>
+      <FileTextIcon className="size-3 shrink-0" />
+      <span className="truncate">{c.text || "Open evidence"}</span>
+    </Link>
+  ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
+}
+
 function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context }: {
   session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null
 }) {
@@ -400,7 +420,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className={cn("mx-auto w-full max-w-3xl", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
+        <div className={cn("mx-auto w-full max-w-(--chat-max-width)", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
           <HelperBanner session={session} />
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
@@ -414,25 +434,23 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                   {m.role === "user" ? (
                     m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null
                   ) : (
-                    <div className="max-w-[95%] space-y-1.5">
+                    <div className="w-full space-y-1.5">
                       {m.pending ? (
                         <LiveTrace progress={m.progress ?? initialProgress()} />
                       ) : (
-                        <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/80")}>{m.text}</p>
+                        <>
+                          <RunTrace activity={workLog(m)} durationMs={m.durationMs} />
+                          <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90")}>{m.text}</p>
+                        </>
                       )}
                       {m.run?.gaps?.length ? (
                         <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
                       ) : null}
-                      {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
-                        const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
-                        const web = webSourceUrl(c)
-                        return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link>
-                          : web ? <a className="underline underline-offset-2" href={web} rel="noopener noreferrer nofollow" target="_blank">{c.text || new URL(web).host}</a> : <span>Evidence unavailable</span>}</li>
-                      })}</ul> : null}
-                      {m.tools && m.tools.length > 0 ? (
-                        <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
+                      {m.citations?.length && !m.pending ? (
+                        <ul className="flex flex-wrap gap-1.5 pt-0.5" aria-label="Sources">
+                          {m.citations.map(c => <li key={`${c.kind}:${c.id}`}><SourceChip businessId={session.businessId} citation={c} /></li>)}
+                        </ul>
                       ) : null}
-                      {m.activity?.length ? <RunTrace activity={m.activity} durationMs={m.durationMs} /> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
                       {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
@@ -456,7 +474,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           {work ? <div className="pt-6">{work}</div> : null}
         </div>
       </div>
-      <div className={cn("mx-auto w-full max-w-3xl shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
+      <div className={cn("mx-auto w-full max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
         <Composer
           onSend={session.send}
           onCommand={onCommand}
@@ -474,7 +492,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
 
 // ---- what the agent did: decisions, drafts, and the evidence it read ----
 
-function WorkPane({ session, businessName, reads = true }: { session: AgentSession; businessName: string; reads?: boolean }) {
+function WorkPane({ session, businessName }: { session: AgentSession; businessName: string }) {
   return (
     <div className="space-y-5">
       {session.openProposals.length ? (
@@ -490,51 +508,6 @@ function WorkPane({ session, businessName, reads = true }: { session: AgentSessi
         <section className="space-y-2" aria-label="Accepted drafts">
           <h3 className="text-xs font-medium">Accepted drafts · {session.keptDrafts.length}</h3>
           {session.keptDrafts.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-        </section>
-      ) : null}
-      {reads && session.reads.length ? (
-        <section className="space-y-2" aria-label="What the agent read">
-          <h3 className="text-xs font-medium">What the agent read</h3>
-          <ol className="space-y-2">
-            {[...session.reads].reverse().map(r => (
-              <li key={r.id} className="rounded-xl bg-card p-3.5 text-xs shadow-(--card-shadow)">
-                {r.question ? <p className="mb-2 line-clamp-2 font-medium">“{r.question}”</p> : null}
-                {r.tools.length ? (
-                  <ul className="space-y-1 text-muted-foreground">
-                    {r.tools.map((t, i) => (
-                      <li key={i} className="flex gap-2">
-                        <CheckIcon className="mt-0.5 size-3 shrink-0 text-primary-ink" />
-                        <span className="min-w-0">{t.summary}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {r.citations.length ? (
-                  <ul className="mt-2 flex flex-wrap gap-1.5 border-t pt-2" aria-label="Evidence used">
-                    {r.citations.map(c => {
-                      const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
-                      const web = webSourceUrl(c)
-                      return (
-                        <li key={`${c.kind}:${c.id}`}>
-                          {web ? (
-                            <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
-                              <GlobeIcon className="size-3 shrink-0" />
-                              <span className="truncate">{c.text || new URL(web).host}</span>
-                            </a>
-                          ) : path ? (
-                            <Link to={path} className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
-                              <FileTextIcon className="size-3 shrink-0" />
-                              <span className="truncate">{c.text || "Open evidence"}</span>
-                            </Link>
-                          ) : <span className="text-muted-foreground">Evidence unavailable</span>}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : null}
-              </li>
-            ))}
-          </ol>
         </section>
       ) : null}
     </div>
@@ -656,11 +629,11 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col items-center px-4 sm:px-6">
         <div aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl space-y-4 py-6">
+          <div className="mx-auto w-full max-w-(--chat-max-width) space-y-4 py-6">
             {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
           </div>
         </div>
-        <div className="w-full max-w-3xl shrink-0 pb-2">
+        <div className="w-full max-w-(--chat-max-width) shrink-0 pb-2">
           <Composer
             onSend={session.send}
             onCommand={runCommand}
@@ -716,7 +689,7 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
           {open && decisions ? (
             <section aria-label="From the agent" className="mb-4 space-y-2 rounded-xl border border-primary-ink/20 bg-primary-ink/5 p-4 animate-in fade-in duration-300">
               <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />From the agent</p>
-              <WorkPane session={session} businessName={businessName} reads={false} />
+              <WorkPane session={session} businessName={businessName} />
             </section>
           ) : null}
           {children}

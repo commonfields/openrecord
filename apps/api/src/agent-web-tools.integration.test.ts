@@ -60,6 +60,9 @@ suite("agent web tools", () => {
     expect(page.data.headings).toEqual([{ level: 1, text: "Clinic scheduling" }])
     expect(page.citations[0]).toMatchObject({ kind: "web", id: "https://northstar.test/" })
 
+    // A bare domain is read over https.
+    expect((await run(b.accountId, b.businessId, "read_web_page", { url: "northstar.test" })).right.summary).toBe(page.summary)
+
     const missing = (await run(b.accountId, b.businessId, "read_web_page", { url: "https://northstar.test/gone" })).right
     expect(missing).toMatchObject({ summary: "Not read: northstar.test/gone answered 404", citations: [] })
     expect((await run(b.accountId, b.businessId, "search_web", { query: "clinic scheduling" })).right.data).toMatchObject({ status: "NOT_CONFIGURED" })

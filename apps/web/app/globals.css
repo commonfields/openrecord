@@ -226,6 +226,18 @@
   }
 }
 
+/* Preference: chat width. Comfortable is the reading width; Wide and Full let
+   messages and the composer grow on large screens. */
+:root {
+  --chat-max-width: 48rem;
+}
+:root[data-chat-width="wide"] {
+  --chat-max-width: 72rem;
+}
+:root[data-chat-width="full"] {
+  --chat-max-width: 100%;
+}
+
 /* Preference: reduce motion. Mirrors the OS setting for people who want it here only. */
 html[data-reduce-motion] *,
 html[data-reduce-motion] *::before,
