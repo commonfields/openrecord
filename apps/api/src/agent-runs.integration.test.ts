@@ -81,8 +81,8 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     expect(failed).toMatchObject({ status: "FAILED", failure_reason: "TIMEOUT", model_steps: 1, tool_calls: 1 })
     expect(failed.settled_at).not.toBeNull()
     const journal = await events(failed.id)
-    expect(journal.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "RUN_FINISHED"])
-    expect(journal[4]!.payload).toMatchObject({ effect: "propose", receipt: { proposalId: saved[0], status: "PROPOSED", executed: false } })
+    expect(journal.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "RUN_FINISHED"])
+    expect(journal[5]!.payload).toMatchObject({ effect: "propose", receipt: { proposalId: saved[0], status: "PROPOSED", executed: false } })
     // Retrying continues from the note and returns the same pending proposal.
     let context = ""
     const retry: ModelResponse[] = [call("propose_check_run", { questionId }), text("The re-check awaits your approval.")]
@@ -180,7 +180,7 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     const live = await run(readRunProgress(scope, requestId, -1))
     expect(live._tag === "Right" && live.right.run).toMatchObject({ status: "RUNNING", toolCalls: 1 })
     const seen = live._tag === "Right" ? live.right.events : []
-    expect(seen.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_STEP"].slice(0, seen.length))
+    expect(seen.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "MODEL_STEP"].slice(0, seen.length))
     expect(seen.find(e => e.type === "TOOL_STARTED")!.payload).toMatchObject({ tool: "read_open_issues", label: "Reading open issues" })
     expect(await run(readRunProgress(other.scope, requestId, -1))).toMatchObject({ _tag: "Right", right: { run: null, events: [] } })
     release()
@@ -210,9 +210,9 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     expect(all.headers.get("cache-control")).toBe("no-store")
     const body = await all.json() as { run: { status: string }; events: Array<{ seq: number; type: string }> }
     expect(body.run).toMatchObject({ status: "COMPLETED", outcome: "ANSWERED", modelSteps: 2, toolCalls: 1 })
-    expect(body.events.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_STEP", "VERIFICATION", "RUN_FINISHED"])
-    const resumed = await (await get(`/api/agent/runs/progress?requestId=${requestId}&after=${body.events[4]!.seq}`, owner)).json() as { events: Array<{ type: string }> }
-    expect(resumed.events.map(e => e.type)).toEqual(["MODEL_STEP", "VERIFICATION", "RUN_FINISHED"])
+    expect(body.events.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "MODEL_STEP", "VERIFICATION", "RUN_FINISHED"])
+    const resumed = await (await get(`/api/agent/runs/progress?requestId=${requestId}&after=${body.events[5]!.seq}`, owner)).json() as { events: Array<{ type: string }> }
+    expect(resumed.events.map(e => e.type)).toEqual(["MODEL_REQUESTED", "MODEL_STEP", "VERIFICATION", "RUN_FINISHED"])
     const foreign = await get(path, await session(other.scope.accountId, other.scope.userId))
     expect(await foreign.json()).toEqual({ run: null, events: [] })
   })

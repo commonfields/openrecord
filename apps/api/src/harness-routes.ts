@@ -7,6 +7,7 @@ import {
   HarnessPoll,
   HarnessRegister,
   HarnessJobResult,
+  HarnessJobProgress,
   AgentMessageRequest,
   decodeRouteId
 } from "@openrecord/contracts"
@@ -24,6 +25,8 @@ import {
   createPair,
   harnessCatalog,
   pollHarnessJobs,
+  longPollHarnessJobs,
+  recordHarnessProgress,
   registerBridge,
   requestHarnessRefresh,
   revokeBridge,
@@ -205,9 +208,22 @@ export const harnessApi = (withSession: WithSession) => {
         Effect.gen(function* () {
           const body = decode(HarnessPoll, yield* readJson)
           if (!body || JSON.stringify(body).length > 200000) return yield* invalid()
-          return yield* json(200, yield* pollHarnessJobs(identity, body.reports, body.acceptJob), {
+          const accept = body.acceptJob ?? true
+          return yield* json(200, body.wait ? yield* longPollHarnessJobs(identity, body.reports, accept) : yield* pollHarnessJobs(identity, body.reports, body.acceptJob), {
             "cache-control": "no-store"
           })
+        })
+      )
+    ),
+    HttpRouter.post(
+      "/api/bridge/jobs/:id/progress",
+      bridge((identity) =>
+        Effect.gen(function* () {
+          const id = yield* routeId
+          const body = decode(HarnessJobProgress, yield* readJson)
+          if (!id || !body) return yield* invalid()
+          yield* recordHarnessProgress(identity, id, body)
+          return yield* json(200, { accepted: true })
         })
       )
     ),

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { HarnessJob, type HarnessJobResult, type HarnessReport } from "@openrecord/contracts"
+import { HarnessJob, type HarnessJobProgress, type HarnessJobResult, type HarnessReport } from "@openrecord/contracts"
 import { BridgeFailure } from "./process.js"
 
 export function serverOrigin(value: string): string {
@@ -95,13 +95,25 @@ export class BridgeClient {
       await reader.cancel()
     }
   }
-  async poll(reports: readonly HarnessReport[], acceptJob = true) {
+  // `wait`: the server holds the request briefly until a job arrives, so a
+  // message starts within moments instead of on the next poll.
+  private longPoll = true
+  async poll(reports: readonly HarnessReport[], acceptJob = true, wait = false) {
     const batch = reportBatch(reports, this.reportCursor)
-    const response = Schema.decodeUnknownSync(PollResponse)(
-      await this.request("/api/bridge/poll", { reports: batch.reports, acceptJob })
-    )
+    const ask = (held: boolean) => this.request("/api/bridge/poll", { reports: batch.reports, acceptJob, ...(held ? { wait: true } : {}) })
+    let raw: unknown
+    try { raw = await ask(wait && this.longPoll) } catch (e) {
+      // A server without long polls refuses the field; keep polling without it.
+      if (!(wait && this.longPoll) || (e instanceof BridgeFailure && e.reason === "UNAUTHENTICATED")) throw e
+      this.longPoll = false
+      raw = await ask(false)
+    }
+    const response = Schema.decodeUnknownSync(PollResponse)(raw)
     this.reportCursor = batch.next
     return response
+  }
+  async progress(id: string, progress: HarnessJobProgress) {
+    await this.request(`/api/bridge/jobs/${id}/progress`, progress)
   }
   async complete(id: string, result: HarnessJobResult) {
     await this.request(`/api/bridge/jobs/${id}/result`, result)

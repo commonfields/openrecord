@@ -171,16 +171,23 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
   const client = new BridgeClient(config.server, config.token)
   let reports: HarnessReport[] = [],
     checkedAt = 0,
-    failures = 0
+    failures = 0,
+    quick = true,
+    discovering: Promise<void> | null = null
   try {
     log("bridge running: credentials stay with local providers")
     while (!shutdown.signal.aborted) {
       try {
-        if (Date.now() - checkedAt > 30000 && !jobs.size) {
-          reports = await Promise.all(config.instances.map(probe))
+        // Discovery runs beside the poll loop: a message sent while providers
+        // are being checked starts at once instead of after the check.
+        if (Date.now() - checkedAt > 30000 && !jobs.size && !discovering) {
           checkedAt = Date.now()
+          discovering = Promise.all(config.instances.map(probe)).then(found => { reports = found; checkedAt = Date.now() }, () => {}).finally(() => { discovering = null })
+          if (!reports.length) await discovering
         }
-        const poll = await client.poll(reports, jobs.size < 4)
+        const asked = Date.now()
+        const poll = await client.poll(reports, jobs.size < 4, true)
+        quick = !poll.job && Date.now() - asked < 500
         if (poll.refresh) checkedAt = 0
         failures = 0
         for (const [id, job] of jobs) if (!poll.active.includes(id)) job.controller.abort()
@@ -189,11 +196,24 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
             controller = new AbortController()
           const instance = config.instances.find((i) => i.id === job.localId)
           const signal = AbortSignal.any([controller.signal, shutdown.signal, AbortSignal.timeout(90000)])
+          // The model's reasoning so far, sent at most every 400 ms while it works.
+          let sentAt = 0, pending: string | null = null, timer: ReturnType<typeof setTimeout> | null = null
+          const send = () => {
+            timer = null
+            if (pending === null) return
+            const thought = pending.slice(-4000)
+            pending = null; sentAt = Date.now()
+            client.progress(job.id, { lease: job.lease, thought }).catch(() => {})
+          }
+          const onThought = (thought: string) => {
+            pending = thought
+            if (!timer) timer = setTimeout(send, Math.max(0, 400 - (Date.now() - sentAt)))
+          }
           const promise = (async () => {
             let result: HarnessJobResult
             try {
               if (!instance) throw new BridgeFailure("UNAVAILABLE")
-              result = { lease: job.lease, kind: "completed", answer: await execute(instance, job, signal) }
+              result = { lease: job.lease, kind: "completed", answer: await execute(instance, job, signal, onThought) }
             } catch (e) {
               const reason = e instanceof BridgeFailure ? e.reason : "UNAVAILABLE"
               result = { lease: job.lease, kind: "failed", reason }
@@ -208,6 +228,7 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
                     : report
                 )
             }
+            if (timer) clearTimeout(timer)
             try {
               await client.complete(job.id, result)
             } catch {
@@ -224,6 +245,8 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
         }
         if (failures++ === 0) log("OpenRecord unavailable: reconnecting")
       }
+      // A long poll that waited already paced the loop; poll again at once.
+      if (!failures && !quick) continue
       await new Promise<void>((resolve) => {
         const timer = setTimeout(done, Math.min(1000 * 2 ** Math.min(failures, 4), 15000))
         function done() {

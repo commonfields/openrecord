@@ -160,3 +160,9 @@ A task whose helper lost its turn (restart or crash) is recorded as interrupted 
 - deduplicated retries and the depth limit.
 
 No live model has been run through these tools.
+
+## What the chat shows while the agent works
+
+A pending reply starts as **Thinking**. When the model runs a tool it switches to **Working**, showing the tool as a present-tense label, and returns to **Thinking** before the next step. A seconds counter runs throughout. When the provider returns its reasoning, the latest lines appear under the status as they stream, and each finished step stays listed with a check. The live trace is folded from the run journal (`apps/web/app/components/agent-trace.tsx`).
+
+When the reply arrives, the trace folds into one line above the answer, for example "Thought for 12s · 3 steps". Opening it shows the model's reasoning for each step and every tool result. The trace is stored on the agent message as `activity` (at most 24 entries) and `durationMs`. It is never part of the history the model sees.

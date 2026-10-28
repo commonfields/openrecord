@@ -309,9 +309,26 @@ export function parseAnswer(raw: string): HarnessAnswer {
   }
 }
 
-export async function execute(instance: LocalInstance, job: HarnessJob, signal: AbortSignal): Promise<HarnessAnswer> {
+/** Reasoning text from `codex exec --json` events: completed reasoning items, in order. */
+export function codexReasoning(jsonl: string): string {
+  const parts: string[] = []
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim().startsWith("{")) continue
+    try {
+      const event = JSON.parse(line) as { type?: string; item?: { type?: string; item_type?: string; text?: unknown; summary?: unknown } }
+      const item = event.item
+      if (event.type !== "item.completed" || !item || (item.type ?? item.item_type) !== "reasoning") continue
+      if (typeof item.text === "string") parts.push(item.text)
+      else if (Array.isArray(item.summary)) parts.push(...item.summary.flatMap(s => typeof s === "string" ? [s] : typeof (s as { text?: unknown })?.text === "string" ? [(s as { text: string }).text] : []))
+    } catch { /* Not an event line. */ }
+  }
+  return parts.join("\n\n").trim().slice(-8000)
+}
+const withThought = (answer: HarnessAnswer, thought: string): HarnessAnswer => thought.trim() ? { ...answer, thought: thought.trim().slice(-8000) } : answer
+
+export async function execute(instance: LocalInstance, job: HarnessJob, signal: AbortSignal, onThought?: (thought: string) => void): Promise<HarnessAnswer> {
   if (instance.id !== job.localId || instance.driver !== job.driver) throw new BridgeFailure("UNAVAILABLE")
-  if (instance.driver === "cliproxy") return executeCliProxy(instance, job, signal)
+  if (instance.driver === "cliproxy") return executeCliProxy(instance, job, signal, process.env, onThought)
   if (job.input.reasoningEffort && instance.driver !== "codex" && instance.driver !== "opencode") throw new BridgeFailure("UNAVAILABLE")
   const driver = instance.driver
   return withWorkspace(async (cwd) => {
@@ -362,7 +379,7 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
       const schemaFile = join(cwd, "answer-schema.json"),
         answerFile = join(cwd, "answer.json")
       await writeFile(schemaFile, JSON.stringify(ANSWER_SCHEMA), { mode: 0o600 })
-      await capture(
+      const events = await capture(
         binary,
         [
           "exec",
@@ -419,9 +436,9 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
       )
       const answer = await readFile(answerFile, "utf8")
       if (answer.length > 64000) throw new BridgeFailure("MALFORMED")
-      return parseAnswer(answer)
+      return withThought(parseAnswer(answer), codexReasoning(events))
     }
-    let text = ""
+    let text = "", thought = ""
     const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, signal, (method, params) => {
       if (method === "session/update") {
         const update = Schema.decodeUnknownEither(
@@ -434,6 +451,11 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
         )(params)
         if (update._tag === "Right" && update.right.update.sessionUpdate === "agent_message_chunk")
           text += update.right.update.content?.text ?? ""
+        // ACP streams the model's reasoning as thought chunks.
+        if (update._tag === "Right" && update.right.update.sessionUpdate === "agent_thought_chunk" && update.right.update.content?.text) {
+          thought += update.right.update.content.text
+          onThought?.(thought.trim().slice(-8000))
+        }
       }
     })
     try {
@@ -463,7 +485,7 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
         })
       )
       if (result.stopReason !== "end_turn") throw new BridgeFailure("UNAVAILABLE")
-      return parseAnswer(text)
+      return withThought(parseAnswer(text), thought)
     } finally {
       rpc.close()
     }

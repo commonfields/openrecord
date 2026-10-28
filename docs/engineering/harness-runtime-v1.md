@@ -34,13 +34,40 @@ The bridge now runs up to four jobs at once, so helper sessions working in paral
 
 A self-hosted server can also call CLIProxyAPI directly, without a bridge: `AGENT_PROVIDER=cliproxy`, `AGENT_MODEL=<model id>`, `AGENT_API_KEY=<client key>` and `AGENT_BASE_URL` (default `http://127.0.0.1:8317`; plain HTTP only on loopback).
 
+## Latency and the model's reasoning
+
+A model step through the bridge used to wait on fixed timers on both sides: about one second for the bridge's next poll, then half a second for the server's next check. The bridge also stopped taking jobs for about 6.6 seconds while it re-checked its providers. Now:
+
+- **Long polls.** The bridge always long-polls. The server holds `/api/bridge/poll` for up to 8 seconds and hands over a job within about 200 ms of it being queued. It also answers early when the bridge must refresh or a running job was cancelled. An older server refuses the `wait` field; the bridge then falls back to plain polls.
+- **Discovery in the background.** Provider discovery runs beside the poll loop instead of in front of it.
+- **Faster result checks.** The server checks a job's result and progress every 150 ms.
+
+**Reasoning.** Providers' own reasoning reaches the chat where they expose it:
+
+| Provider | How it arrives |
+| --- | --- |
+| CLIProxyAPI | Streamed (`stream: true`, `reasoning_content` deltas) |
+| OpenCode, Cursor | Streamed (ACP `agent_thought_chunk`) |
+| Codex | Reasoning items from `exec --json`, at the end of the step |
+| Hosted Gemini thinking models | `includeThoughts` summaries |
+| Hosted CLIProxyAPI | `reasoning_content` |
+| Claude Code | Nothing: its JSON print mode returns only the final result |
+
+**Flow.** While a job runs, the bridge posts the reasoning so far to `/api/bridge/jobs/:id/progress`, at most every 400 ms; a lease check refuses posts for jobs that are no longer running. The server stores it in `agent_harness_jobs.progress` (migration 0043). The run loop journals:
+
+- `MODEL_REQUESTED` when each step starts;
+- `MODEL_THINKING` snapshots, at most twice a second and 40 per step;
+- each step's reasoning on `MODEL_STEP`.
+
+**Token cost.** None of this asks the model for extra text. Reasoning parts are dropped from the transcript before the next step and before a bridge job is stored, so reasoning is never sent back to a model and adds no input tokens.
+
 ## Current limits
 
 The five drivers are Codex, Claude Code, OpenCode, Cursor and CLIProxyAPI. OpenCode and Cursor use ACP; CLIProxyAPI uses its OpenAI-compatible HTTP API. Discovery does not establish subscription entitlement. Provider-specific minimum-version compatibility and successful live generation still need validation before release.
 
 Discovery rotates report batches below a 150 KB UTF-8 request budget. Individual catalogs are limited to 500 models and a 125 KB report budget. Settings marks a catalog that was truncated. Other account instances remain discoverable on later polls.
 
-Replies are delivered after the bounded server tool loop completes. This version does not stream token deltas or resume native CLI threads. A process or connection failure ends the attempt instead of transparently replaying it.
+Replies are delivered after the bounded server tool loop completes; the reasoning and each tool step stream to the chat while it runs, but the answer text does not stream token by token. CLI drivers start a new process for every model step and do not resume native CLI threads, so CLIProxyAPI is the faster bridge path. A process or connection failure ends the attempt instead of transparently replaying it.
 
 Each provider job has a 100-second server deadline and a 90-second local execution timeout. The server bounds a whole turn at 540 seconds, with a 600-second conversation lease. Deployment proxies and HTTP clients must allow that request duration. Cancellation checks run during generation and before application tool calls. Cancellation cannot undo a tool action that already completed or a provider's usage charge.
 

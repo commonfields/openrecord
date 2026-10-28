@@ -58,15 +58,21 @@ export const HarnessPairRequest = Schema.Struct({ name: Text(100) })
 export const HarnessRegister = Schema.Struct({ code: Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{43}$/)) })
 export const HarnessPoll = Schema.Struct({
   reports: Schema.Array(HarnessReport).pipe(Schema.maxItems(32)),
-  acceptJob: Schema.optional(Schema.Boolean)
+  acceptJob: Schema.optional(Schema.Boolean),
+  // Hold the request a few seconds until a job arrives (long poll).
+  wait: Schema.optional(Schema.Boolean)
 })
 
 // The server owns the tool loop. Harnesses return either text or requested
 // application tool calls; the bridge never executes those tool calls locally.
+// `thought` is the model's own reasoning for this step, when the provider
+// returns it. It is shown to the operator and never sent back to the model.
+const Thought = Schema.optional(Schema.String.pipe(Schema.maxLength(8000)))
 export const HarnessAnswer = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("text"), text: Text(16000) }),
+  Schema.Struct({ kind: Schema.Literal("text"), text: Text(16000), thought: Thought }),
   Schema.Struct({
     kind: Schema.Literal("tools"),
+    thought: Thought,
     calls: Schema.Array(
       Schema.Struct({
         name: Text(100),
@@ -101,6 +107,9 @@ export const HarnessJobResult = Schema.Union(
   })
 )
 export type HarnessJobResult = typeof HarnessJobResult.Type
+/** A running job's reasoning so far (the latest text, not a delta), fenced by its lease. */
+export const HarnessJobProgress = Schema.Struct({ lease: Schema.UUID, thought: Schema.String.pipe(Schema.maxLength(4000)) })
+export type HarnessJobProgress = typeof HarnessJobProgress.Type
 export const HARNESS_NAMES: Readonly<Record<HarnessDriver, string>> = {
   codex: "Codex",
   claude: "Claude Code",

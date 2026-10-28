@@ -26,7 +26,7 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
       model: scripted([calls("read_open_issues", "propose_check_run"), text("A re-check awaits your approval.")]),
       dispatch: name => Effect.succeed(name === "propose_check_run" ? saved : read) }))
     expect(answer).toMatchObject({ outcome: "ANSWERED", gaps: [] })
-    expect(events.map(e => e.type)).toEqual(["CONTEXT_BUILT", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_STEP", "VERIFICATION"])
+    expect(events.map(e => e.type)).toEqual(["CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "MODEL_STEP", "VERIFICATION"])
     const started = events.filter(e => e.type === "TOOL_STARTED").map(e => e.payload["invocationId"])
     expect(new Set(started).size).toBe(2)
     expect(started.every(id => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id))).toBe(true)
@@ -48,7 +48,7 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     const out = await Effect.runPromise(Effect.either(runConversation({ message: "Read", history: [], journal, model: scripted([calls("read_open_issues")]),
       dispatch: () => Effect.fail(new AgentModelError({ reason: "CANCELLED" })) })))
     expect(out).toMatchObject({ _tag: "Left", left: { reason: "CANCELLED" } })
-    expect(events.map(e => e.type)).toEqual(["CONTEXT_BUILT", "MODEL_STEP", "TOOL_STARTED"])
+    expect(events.map(e => e.type)).toEqual(["CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED"])
   })
 
   it("winds down at the budget: refuses extra calls, asks for a final answer and marks the gap", async () => {
@@ -182,5 +182,34 @@ describe("tool registry and interruption notes", () => {
       { type: "TOOL_COMPLETED", payload: { invocationId: "a", tool: "propose_growth_opportunity", effect: "propose", summary: "Growth hypothesis saved for human review", receipt: { opportunityId: opportunity, status: "PROPOSED" } } },
     ])
     expect(note.decisions).toEqual([{ type: "GROWTH_OPPORTUNITY", id: opportunity }])
+  })
+})
+
+describe("the model's reasoning (deterministic fixtures, no live model)", () => {
+  const thinking = (thought: string, response: ModelResponse): ModelResponse => ({ ...response, candidates: [{ ...response.candidates[0]!,
+    content: { role: "model", parts: [{ text: thought, thought: true }, ...response.candidates[0]!.content.parts] } }] })
+  it("records each step's reasoning, returns a trace and never sends reasoning back to the model", async () => {
+    const { events, journal } = memoryJournal()
+    const seen: string[] = []
+    const answer = await Effect.runPromise(runConversation({ message: "What is open?", history: [], journal,
+      model: scripted([thinking("Start with the open issues.", calls("read_open_issues")), thinking("Three issues; answer now.", text("Three issues are open."))], seen),
+      dispatch: () => Effect.succeed(read) }))
+    expect(answer.reply).toBe("Three issues are open.")
+    expect(events.filter(e => e.type === "MODEL_STEP").map(e => e.payload["thought"])).toEqual(["Start with the open issues.", "Three issues; answer now."])
+    expect(answer.activity.map(a => [a.kind, a.text])).toEqual([["thought", "Start with the open issues."], ["tool", "3 open issues read"], ["thought", "Three issues; answer now."]])
+    expect(answer.durationMs).toBeGreaterThanOrEqual(0)
+    // The second request carries the first step's tool call, not its reasoning.
+    expect(seen[1]).toContain("read_open_issues")
+    expect(seen[1]).not.toContain("Start with the open issues.")
+  })
+  it("journals streamed reasoning at most twice a second, bounded per step", async () => {
+    const { events, journal } = memoryJournal()
+    const model: AgentModel = input => Effect.gen(function*() {
+      for (const text of ["Look", "Looking at", "Looking at the issues", "Looking at the issues"]) yield* input.onThought!(text).pipe(Effect.ignore)
+      return text("Done.")
+    })
+    await Effect.runPromise(runConversation({ message: "Hi", history: [], journal, model, dispatch: () => Effect.succeed(read) }))
+    // The first snapshot is recorded at once; the rest arrive within the same half second.
+    expect(events.filter(e => e.type === "MODEL_THINKING").map(e => e.payload["text"])).toEqual(["Look"])
   })
 })

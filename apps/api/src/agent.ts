@@ -16,6 +16,15 @@ import { noJournal, type RunJournal, type RunOutcome } from "./agent-run.js"
 
 export interface AgentToolCall { readonly tool: string; readonly summary: string }
 export interface AgentCitation { readonly kind: string; readonly id: string; readonly text: string }
+/** One line of what a run did, for the chat's trace: the model's own
+ * reasoning for a step, or a tool it ran. Never sent back to the model. */
+export type AgentActivity =
+  | { readonly kind: "thought"; readonly text: string; readonly ms: number }
+  | { readonly kind: "tool"; readonly tool: string; readonly text: string; readonly failed?: boolean }
+const THOUGHT_EVENT_CHARS = 1500
+const THOUGHT_EVENTS_PER_STEP = 40
+const ACTIVITY_THOUGHT_CHARS = 1200
+const MAX_ACTIVITY = 24
 export interface AgentReply {
   readonly reply: string
   readonly toolCalls: ReadonlyArray<AgentToolCall>
@@ -84,18 +93,35 @@ export const runConversation = (input: {
   const gaps: string[] = []
   const decisions: DecisionRef[] = []
   const tasks: TaskRef[] = []
+  const activity: AgentActivity[] = []
+  const startedAt = Date.now()
   let calls = 0, finalStep = false, reminded = false
   for (let step = 1; step <= budget.modelSteps; step++) {
     if (!compactToolResults(contents, MAX_CONTEXT_CHARS)) return yield* Effect.fail(new AgentModelError({ reason: "CONTEXT_LIMIT" }))
-    const response = yield* input.model({ contents, tools, system: input.system ?? AGENT_SYSTEM })
+    yield* journal.record("MODEL_REQUESTED", { step })
+    // The provider's own reasoning as it streams, recorded at most twice a second.
+    let shownAt = 0, shown = 0, lastThought = ""
+    const onThought = (thought: string) => Effect.suspend(() => {
+      const text = thought.trim().slice(-THOUGHT_EVENT_CHARS)
+      if (!text || text === lastThought || shown >= THOUGHT_EVENTS_PER_STEP || Date.now() - shownAt < 500) return Effect.void
+      lastThought = text; shownAt = Date.now(); shown++
+      return journal.record("MODEL_THINKING", { step, text })
+    })
+    const stepStarted = Date.now()
+    const response = yield* input.model({ contents, tools, system: input.system ?? AGENT_SYSTEM, onThought })
     const candidate = response.candidates[0]
     if (!candidate) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
+    const thought = candidate.content.parts.filter(p => p.thought && p.text).map(p => p.text!).join("\n\n").trim()
+    if (thought) activity.push({ kind: "thought", text: thought.slice(-ACTIVITY_THOUGHT_CHARS), ms: Date.now() - stepStarted })
+    // Reasoning is shown, never replayed to the model: sending it back costs tokens.
+    const content = { ...candidate.content, parts: candidate.content.parts.filter(p => !p.thought) }
     const stepUsage: Usage = { observedModel: response.modelVersion ?? null, promptTokens: response.usageMetadata?.promptTokenCount ?? null,
       outputTokens: response.usageMetadata?.candidatesTokenCount ?? null, thoughtTokens: response.usageMetadata?.thoughtsTokenCount ?? null,
       totalTokens: response.usageMetadata?.totalTokenCount ?? null }
     usage.push(stepUsage)
     const functions = candidate.content.parts.flatMap(p => p.functionCall ? [p.functionCall] : [])
-    yield* journal.record("MODEL_STEP", { step, toolCalls: functions.map(f => f.name), usage: stepUsage })
+    yield* journal.record("MODEL_STEP", { step, toolCalls: functions.map(f => f.name), usage: stepUsage, elapsedMs: Date.now() - stepStarted,
+      ...(thought ? { thought: thought.slice(-THOUGHT_EVENT_CHARS) } : {}) })
     if (tools.length === 0 && functions.length) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
     if (!functions.length) {
       const rawReply = candidate.content.parts.filter(p => !p.thought).map(p => p.text ?? "").join("").trim()
@@ -105,7 +131,7 @@ export const runConversation = (input: {
       if (missing.length && !reminded && !finalStep && step < budget.modelSteps && calls < budget.toolCalls) {
         reminded = true
         yield* journal.record("VERIFICATION", { passed: false, missing, action: "REMINDED" })
-        contents.push(candidate.content, { role: "user", parts: [{ text: verificationNotice(missing) }] })
+        contents.push(content, { role: "user", parts: [{ text: verificationNotice(missing) }] })
         continue
       }
       for (const tool of missing) gaps.push(`Required step not run: ${toolLabel(tool).toLowerCase()}`)
@@ -113,14 +139,16 @@ export const runConversation = (input: {
       if (!reply || reply.length > 16000) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
       const outcome: RunOutcome = gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED"
       yield* journal.record("VERIFICATION", { passed: gaps.length === 0, missing, gaps, outcome })
-      return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks) }
+      return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks),
+        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt }
     }
     // The model ignored the final notice; the run cannot end with an answer.
     if (finalStep) return yield* Effect.fail(new AgentModelError({ reason: "TOOL_LIMIT" }))
-    contents.push(candidate.content)
+    contents.push(content)
     const results: unknown[] = []
     const refuse = (name: string, failure: ToolFailure) => {
       toolCalls.push({ tool: name, summary: failure.summary })
+      activity.push({ kind: "tool", tool: name, text: failure.summary, failed: true })
       results.push({ functionResponse: { name, response: { error: failure.code, retryable: failure.retryable, guidance: failure.guidance } } })
     }
     // Calls that start work in other sessions run in parallel; everything
@@ -164,6 +192,7 @@ export const runConversation = (input: {
       }
       succeeded.add(call.name)
       toolCalls.push({ tool: call.name, summary: result.right.summary })
+      activity.push({ kind: "tool", tool: call.name, text: result.right.summary })
       for (const c of result.right.citations) citations.set(`${c.kind}:${c.id}`, c)
       if (effect === "propose") decisions.push(...decisionRefs(proposalReceipt(result.right)))
       // A helper's saved proposals become approval cards on this reply too.

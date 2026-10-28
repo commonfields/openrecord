@@ -12,7 +12,7 @@ export const harnessModel = (
     // Capture the SQL service once; the existing model loop has no transport dependencies.
     const context = yield* Effect.context<import("@effect/sql").SqlClient.SqlClient>()
     const invoke: AgentModel = (input) =>
-      invokeHarness(scope, selection, input).pipe(
+      invokeHarness(scope, selection, input, input.onThought).pipe(
         Effect.provide(context),
         Effect.flatMap((result) => {
           if (result.kind === "failed")
@@ -34,10 +34,12 @@ export const harnessModel = (
                 finishReason: "STOP",
                 content: {
                   role: "model",
-                  parts:
-                    result.answer.kind === "text"
+                  parts: [
+                    ...(result.answer.thought ? [{ text: result.answer.thought, thought: true }] : []),
+                    ...(result.answer.kind === "text"
                       ? [{ text: result.answer.text }]
-                      : result.answer.calls.map((call) => ({ functionCall: { name: call.name, args: call.args } }))
+                      : result.answer.calls.map((call) => ({ functionCall: { name: call.name, args: call.args } })))
+                  ]
                 }
               }
             ]
