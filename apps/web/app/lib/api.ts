@@ -279,9 +279,9 @@ export const Agent = {
   clear: (businessId: string | null, conversationId?: string) => api(`${agentBase(businessId)}/conversation${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`, { method: "DELETE" }),
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
-  send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
+  send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection, style?: "friendly" | "concise" | "detailed") =>
     api<{ reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number }>(`${agentBase(businessId)}/messages`, {
-      method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
+      method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection, style }),
     }),
   // Live journal of the run answering a request, after the last seen sequence.
   progress: (requestId: string, after: number) => api<AgentRunProgress>(`/api/agent/runs/progress?requestId=${encodeURIComponent(requestId)}&after=${after}`),

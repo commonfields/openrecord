@@ -73,7 +73,7 @@ export function NewChatDialog({ trigger }: { trigger?: ReactNode } = {}) {
     <DialogTrigger asChild>
       {trigger ?? <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" title="New chat"><SquarePenIcon className="size-4" /></Button>}
     </DialogTrigger>
-    <DialogContent className="gap-0 overflow-hidden rounded-[14px] p-0 sm:max-w-lg">
+    <DialogContent className="gap-0 overflow-hidden rounded-[14px] p-0 sm:max-w-2xl">
       <DialogHeader className="px-6 pb-4 pt-5">
         <DialogTitle>{mode === "chat" ? "Start a new chat" : "Choose a workspace"}</DialogTitle>
         <DialogDescription>{mode === "chat" ? "Choose context for your conversation, or start without it." : "Open a business or client's work."}</DialogDescription>

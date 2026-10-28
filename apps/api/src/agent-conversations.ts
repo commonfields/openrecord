@@ -4,7 +4,7 @@ import { Cause, Data, Effect, Schema } from "effect"
 import { agentWorkflow, DEFAULT_RUN_BUDGET, handleAgentMessage, type AgentHistory } from "./agent.js"
 import { finishRun, settleRuns, startRun, type RunJournal, type RunOutcome } from "./agent-run.js"
 import type { HarnessSelection } from "@openrecord/contracts"
-import { HarnessReasoningEffort } from "@openrecord/contracts"
+import { HarnessReasoningEffort, type AgentResponseStyle } from "@openrecord/contracts"
 import { AgentModelError } from "./agent-model.js"
 
 export class AgentConversationRefused extends Data.TaggedError("AgentConversationRefused")<{
@@ -178,6 +178,8 @@ export interface TurnContext {
   readonly deadline: number
   /** Ask the model for a short topic title with this answer. */
   readonly generateTitle?: boolean
+  /** How the person wants answers written. */
+  readonly style?: AgentResponseStyle | undefined
 }
 export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>> = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory, selection: HarnessSelection | undefined,
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
@@ -189,11 +191,12 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
   }, unknown, R>
 /** The agent without session tools; the turn context is not passed on. */
 const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
-  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal, undefined, turn.generateTitle === true)
+  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal, undefined, turn.generateTitle === true, turn.style)
 /** A turn's own time limit; handleAgentMessage enforces the same bound. */
 export const TURN_LIMIT_MS = 540000
 export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>>(scope: ConversationScope, body: {
   readonly message: string; readonly requestId: string; readonly conversationId?: string | undefined; readonly revision: number; readonly selection?: HarnessSelection | undefined
+  readonly style?: AgentResponseStyle | undefined
   /** Set when another session, not the operator, started this turn. */
   readonly origin?: MessageOrigin | undefined
 }, respond: Responder<R> = plainResponder as unknown as Responder<R>) => Effect.gen(function*() {
@@ -255,7 +258,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal,
       { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS,
         // The operator's first turn in a top-level chat also asks for a topic title.
-        generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined })
+        generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined, style: body.style })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
     const messages = [...current.messages, { role: "user", text: body.message, ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }

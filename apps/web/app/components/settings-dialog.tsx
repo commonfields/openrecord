@@ -341,8 +341,27 @@ function GeneralSection() {
 }
 
 function AgentSection() {
+  const { preferences, setPreference } = usePreferences()
   return (
     <>
+      <Group title="Responses" description="How the agent writes to you. It always says what it checked and what it couldn't.">
+        <Row label="Response style" description={{
+          friendly: "The answer first, what it means for your business, and the next step, in plain words.",
+          concise: "Just the answer and one next step.",
+          detailed: "The reasoning and evidence behind each point, with alternatives and trade-offs.",
+        }[preferences.responseStyle]}>
+          <Select value={preferences.responseStyle} onValueChange={(v) => setPreference("responseStyle", v as Preferences["responseStyle"])}>
+            <SelectTrigger className="w-36" aria-label="Response style">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="friendly">Friendly</SelectItem>
+              <SelectItem value="concise">Concise</SelectItem>
+              <SelectItem value="detailed">Detailed</SelectItem>
+            </SelectContent>
+          </Select>
+        </Row>
+      </Group>
       <Group title="Composer">
         <Row
           label="Send with Enter"

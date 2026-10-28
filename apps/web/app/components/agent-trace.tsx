@@ -7,7 +7,7 @@
 // server's run journal; nothing extra is generated.
 import { useEffect, useState, type ReactNode } from "react"
 import {
-  BrainIcon, ChartLineIcon, ChevronRightIcon, FileTextIcon, GaugeIcon, GlobeIcon, ListChecksIcon, MessageCircleQuestionIcon,
+  ChartLineIcon, ChevronRightIcon, FileTextIcon, GaugeIcon, GlobeIcon, ListChecksIcon, MessageCircleQuestionIcon,
   PenLineIcon, SearchIcon, TargetIcon, UsersIcon, WrenchIcon, XIcon, type LucideIcon,
 } from "lucide-react"
 import type { AgentActivity, AgentRunEvent } from "@/lib/api"
@@ -68,6 +68,20 @@ export function toolIcon(tool: string): LucideIcon {
   return WrenchIcon
 }
 
+// Thinking, the way Claude Code shows it: one glyph that grows and settles
+// (· ✢ ✳ ✶ ✻ ✽ and back) in the brand's periwinkle. Still when motion is
+// reduced, and as a plain ✻ on finished reasoning.
+const GLYPHS = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
+export function ThinkingGlyph({ live = true }: { live?: boolean }) {
+  const [i, setI] = useState(4)
+  useEffect(() => {
+    if (!live || window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.hasAttribute("data-reduce-motion")) return
+    const t = window.setInterval(() => setI(n => (n + 1) % GLYPHS.length), 120)
+    return () => window.clearInterval(t)
+  }, [live])
+  return <span aria-hidden className="inline-block w-3.5 text-center font-mono text-[0.8125rem] leading-none text-secondary">{live ? GLYPHS[i] : "✻"}</span>
+}
+
 // One work log line: a 24px icon slot and a muted label, like T3 Code's WorkLogLine.
 function LogRow({ icon, children, wrap, className }: { icon: ReactNode; children: ReactNode; wrap?: boolean; className?: string }) {
   return (
@@ -80,7 +94,7 @@ function LogRow({ icon, children, wrap, className }: { icon: ReactNode; children
 
 function Step({ item }: { item: AgentActivity }) {
   if (item.kind === "thought") return (
-    <LogRow icon={<BrainIcon />} wrap>
+    <LogRow icon={<ThinkingGlyph live={false} />} wrap>
       <span className="line-clamp-4 whitespace-pre-wrap">{item.text}</span>
     </LogRow>
   )
@@ -108,7 +122,7 @@ const lastLine = (text: string) => text.trim().split("\n").filter(Boolean).at(-1
 export function LiveTrace({ progress }: { progress: Progress }) {
   const now = useNow(true)
   const working = progress.phase !== "thinking" || progress.trace.some(t => t.kind === "tool")
-  const LiveIcon = progress.phase === "working" && progress.currentTool ? toolIcon(progress.currentTool) : BrainIcon
+  const LiveIcon = progress.phase === "working" && progress.currentTool ? toolIcon(progress.currentTool) : null
   const live = progress.phase === "working" ? progress.current ?? "Working" : progress.phase === "checking" ? "Checking the answer is complete" : lastLine(progress.thought) || "Thinking"
   return (
     <div className="w-full" role="status" aria-live="polite">
@@ -117,7 +131,7 @@ export function LiveTrace({ progress }: { progress: Progress }) {
       </p>
       <ul className="flex min-w-0 flex-col" aria-label="Steps so far">
         {progress.trace.map((item, i) => <Step key={i} item={item} />)}
-        <LogRow icon={<LiveIcon aria-hidden />}><span className="thinking">{live}</span></LogRow>
+        <LogRow icon={LiveIcon ? <LiveIcon aria-hidden /> : <ThinkingGlyph />}><span className="thinking">{live}</span></LogRow>
       </ul>
     </div>
   )
