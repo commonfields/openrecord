@@ -142,9 +142,9 @@ function SettingsDialog({
                       onClick={() => onSectionChange(item.id)}
                       aria-current={section === item.id ? "page" : undefined}
                       className={cn(
-                        "flex h-8 shrink-0 items-center gap-2.5 rounded-[6px] px-2 text-left text-sm whitespace-nowrap outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
+                        "flex h-8 shrink-0 items-center gap-2.5 rounded-[6px] px-2 text-left text-sm whitespace-nowrap outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
                         section === item.id
-                          ? "bg-sidebar-accent font-medium text-foreground [&_svg]:text-primary-ink"
+                          ? "bg-sidebar-accent font-medium text-foreground shadow-(--control-shadow) [&_svg]:text-primary-ink"
                           : "text-sidebar-foreground [&_svg]:text-muted-foreground",
                       )}
                     >

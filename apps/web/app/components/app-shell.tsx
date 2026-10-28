@@ -163,7 +163,7 @@ export function AppShell() {
       <div className="@container flex min-w-0 flex-1">
       <div ref={setPaneSlot} className="contents" />
       <div className={cn("flex min-w-0 flex-1 flex-col p-2 md:pl-0", pane && "max-lg:hidden")}>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-sidebar-border bg-background shadow-(--panel-shadow)">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
         <header className="flex h-12 shrink-0 items-center gap-2 px-3 lg:px-5">
           <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <PanelLeftIcon />
@@ -361,7 +361,7 @@ function ChatHistory() {
                 title={`${c.title || "Untitled chat"} · ${c.businessName}`}
                 className={cn(
                   "flex flex-col rounded-md px-2 py-1 outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                  active && "bg-sidebar-accent text-sidebar-accent-foreground",
+                  active && "bg-sidebar-accent text-sidebar-accent-foreground shadow-(--control-shadow)",
                 )}
               >
                 <ChatItem c={c} active={active} />
@@ -458,7 +458,7 @@ function ViewTabs() {
   const view = agent ? "agent" : "today"
   if (!activeBusiness || general) return null
   const base = `/businesses/${activeBusiness.id}`
-  const trigger = "h-full min-h-0 self-stretch rounded-[3px] px-1 text-[0.6875rem] text-sidebar-foreground/90 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+  const trigger = "h-full min-h-0 self-stretch rounded-[5px] px-2.5 text-xs text-muted-foreground hover:text-foreground data-[state=active]:bg-control data-[state=active]:text-foreground data-[state=active]:shadow-(--control-shadow)"
   return (
     <Tabs
       className="shrink-0"
@@ -468,7 +468,7 @@ function ViewTabs() {
         nav(v === "agent" ? `${base}/agent` : `${base}/results`)
       }}
     >
-      <TabsList aria-label="Workspace view" className="grid h-6 w-auto grid-cols-2 items-stretch rounded-md border border-sidebar-border bg-sidebar-accent/60 p-0.5">
+      <TabsList aria-label="Workspace view" className="grid h-7 w-auto grid-cols-2 items-stretch gap-0.5 rounded-[7px] bg-sidebar p-0.5 shadow-[inset_0_0_0_1px_var(--border)]">
         <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
         <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
       </TabsList>
@@ -489,7 +489,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
         "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
-          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-primary-ink"
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-(--control-shadow) [&_svg]:text-primary-ink"
           : "[&_svg]:text-muted-foreground",
       )}
     >
@@ -542,7 +542,7 @@ function BusinessSwitcher() {
         <DropdownMenuTrigger asChild>
           <button
             className={cn(
-              "flex items-center gap-2 rounded-md text-left outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
+              "flex items-center gap-2 rounded-md text-left outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent data-[state=open]:shadow-(--control-shadow)",
               collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
@@ -599,7 +599,7 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent",
+            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent data-[state=open]:shadow-(--control-shadow)",
             collapsed ? "h-14 w-9 justify-center" : "min-h-16 w-full px-2.5 py-4",
           )}
           aria-label="Account menu"

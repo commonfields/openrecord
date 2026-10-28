@@ -615,7 +615,7 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
       {/* Laid out at its final width and revealed as the pane grows, so it
           slides in from the left rather than reflowing. */}
       <div className="flex h-full w-[100cqw] shrink-0 flex-col p-2 md:pl-0 lg:w-[50cqw]">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-sidebar-border bg-background shadow-(--panel-shadow)">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
@@ -912,7 +912,7 @@ function Composer({
           // The whole box behaves like the input: clicking padding focuses it.
           if (e.target === e.currentTarget) textRef.current?.focus()
         }}
-        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-xl border border-border bg-[#fafafa] px-3 py-2 transition-colors focus-within:border-foreground/25 dark:border-[#383838] dark:bg-[#262626]"
+        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-[10px] bg-card px-3 py-2 shadow-(--card-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)"
       >
         {menuOpen ? (
           <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) bg-popover p-1 text-left shadow-(--float-shadow-strong)">
