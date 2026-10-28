@@ -498,7 +498,7 @@ describe("composer model selector and stop control", () => {
     expect(chat).not.toContain('aria-label="Delete conversation"')
     expect(chat).not.toContain('aria-label="Start a new conversation"')
     expect(chat).toContain("<LiveTrace progress=")
-    expect(read("../app/components/agent-trace.tsx")).toContain('<span className="thinking">{status}</span>')
+    expect(read("../app/components/agent-trace.tsx")).toContain('<p className="thinking text-base leading-relaxed" role="status">{status}</p>')
     expect(chat).toContain("text-base leading-relaxed whitespace-pre-wrap")
     expect(chat).toContain("provider: r.provider")
     expect(chat).toContain("model: r.requestedModel")

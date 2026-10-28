@@ -1,10 +1,11 @@
 // What the agent is doing, and what it did. While a turn runs, the run
 // journal drives a live trace: "Thinking" while the model works out its next
 // step (with its own reasoning when the provider returns it), "Working" with
-// the tool it is running, and each finished step. Once the reply arrives the
-// trace folds into one quiet line above the answer. Everything shown is the
-// model's own output or the server's journal; nothing extra is generated.
-import { useEffect, useState } from "react"
+// the tool it is running, and each finished step, in the chat's existing
+// steps style. Once the reply arrives the reasoning folds into one line under
+// the answer. Everything shown is the model's own output or the server's
+// journal; nothing extra is generated.
+import { useState } from "react"
 import { CheckIcon, ChevronRightIcon, XIcon } from "lucide-react"
 import type { AgentActivity, AgentRunEvent } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -43,65 +44,42 @@ export function progressOf(events: ReadonlyArray<AgentRunEvent>, current: Progre
 
 const seconds = (ms: number) => ms < 1000 ? "under a second" : ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
 
-function useElapsed(since: number) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-  return Math.max(0, now - since)
-}
-
+// Steps use the chat's existing completed-steps list: small, muted, one check per line.
 function Step({ item }: { item: AgentActivity }) {
-  if (item.kind === "thought") return (
-    <li className="relative pl-4 before:absolute before:left-[3px] before:top-2 before:size-1 before:rounded-full before:bg-muted-foreground/50">
-      <p className="line-clamp-6 whitespace-pre-wrap text-[0.8125rem] leading-relaxed text-muted-foreground">{item.text}</p>
-    </li>
-  )
+  if (item.kind === "thought") return <li className="line-clamp-3 whitespace-pre-wrap pl-[1.125rem]">{item.text}</li>
   return (
-    <li className="flex items-start gap-1.5 text-[0.8125rem] text-muted-foreground">
-      {item.failed ? <XIcon className="mt-0.5 size-3 shrink-0" aria-label="Not completed" /> : <CheckIcon className="mt-0.5 size-3 shrink-0" aria-label="Done" />}
-      <span className="min-w-0">{item.text}</span>
+    <li className="flex items-center gap-1.5">
+      {item.failed ? <XIcon className="size-3 shrink-0" aria-label="Not completed" /> : <CheckIcon className="size-3 shrink-0" aria-label="Done" />}
+      {item.text}
     </li>
   )
 }
 
 /** The trace of a turn still running. */
 export function LiveTrace({ progress }: { progress: Progress }) {
-  const elapsed = useElapsed(progress.startedAt)
-  const status = progress.phase === "working" ? progress.current ?? "Working" : progress.phase === "checking" ? "Checking the answer is complete" : "Thinking"
+  const status = progress.phase === "working" ? progress.current ?? "Working…" : progress.phase === "checking" ? "Checking the answer is complete…" : "Thinking…"
+  const steps = progress.thought ? [...progress.trace, { kind: "thought" as const, text: progress.thought, ms: 0 }] : progress.trace
   return (
-    <div className="space-y-2" role="status" aria-live="polite">
-      {progress.trace.length ? <ol className="space-y-1.5" aria-label="Steps so far">{progress.trace.map((item, i) => <Step key={i} item={item} />)}</ol> : null}
-      {progress.thought ? (
-        // Only the latest lines of the reasoning in progress, fading at the top.
-        <div className="relative max-h-[4.5rem] overflow-hidden border-l-2 border-border pl-3 [mask-image:linear-gradient(to_bottom,transparent,black_35%)]">
-          <p className="flex min-h-full flex-col justify-end whitespace-pre-wrap text-[0.8125rem] leading-relaxed text-muted-foreground">{progress.thought}</p>
-        </div>
-      ) : null}
-      <p className="flex items-baseline gap-2 text-base leading-relaxed">
-        <span className="thinking">{status}</span>
-        <span className="text-xs tabular-nums text-muted-foreground">{elapsed >= 1000 ? seconds(elapsed) : null}</span>
-      </p>
-    </div>
+    <>
+      {steps.length ? <ul className="space-y-0.5 text-[0.6875rem] text-muted-foreground" aria-label="Completed steps">
+        {steps.map((item, i) => <Step key={i} item={item} />)}
+      </ul> : null}
+      <p className="thinking text-base leading-relaxed" role="status">{status}</p>
+    </>
   )
 }
 
-/** The trace of a finished turn, folded into one line above its answer. */
+/** The model's reasoning for a finished turn, folded into one line under its answer. */
 export function RunTrace({ activity, durationMs }: { activity: ReadonlyArray<AgentActivity>; durationMs?: number | undefined }) {
   const [open, setOpen] = useState(false)
-  if (!activity.length) return null
-  const thought = activity.some(a => a.kind === "thought")
-  const steps = activity.filter(a => a.kind === "tool").length
-  const label = [`${thought ? "Thought" : "Worked"}${durationMs !== undefined ? ` for ${seconds(durationMs)}` : ""}`, steps ? `${steps} step${steps === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ")
+  if (!activity.some(a => a.kind === "thought")) return null
   return (
-    <div>
-      <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
-        className="group/trace flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-        <ChevronRightIcon className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        {label}
+    <div className="text-[0.6875rem] text-muted-foreground">
+      <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open} className="flex items-center gap-1.5 hover:text-foreground">
+        <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+        Thought{durationMs !== undefined ? ` for ${seconds(durationMs)}` : ""}
       </button>
-      {open ? <ol className="mt-2 space-y-1.5 border-l border-border pl-3" aria-label="What the agent did">{activity.map((item, i) => <Step key={i} item={item} />)}</ol> : null}
+      {open ? <ul className="mt-0.5 space-y-0.5" aria-label="What the agent did">{activity.map((item, i) => <Step key={i} item={item} />)}</ul> : null}
     </div>
   )
 }

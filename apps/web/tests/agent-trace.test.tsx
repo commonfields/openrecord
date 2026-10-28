@@ -20,10 +20,12 @@ describe("agent trace", () => {
     expect(p).toMatchObject({ phase: "thinking", current: null })
     expect(p.trace.map(t => t.text)).toEqual(["Check the open issues first.", "3 open issues read"])
   })
-  it("folds a finished turn into one line", () => {
+  it("folds a finished turn's reasoning into one line", () => {
     const html = renderToStaticMarkup(<RunTrace durationMs={12400} activity={[{ kind: "thought", text: "Plan", ms: 900 }, { kind: "tool", tool: "read_open_issues", text: "3 open issues read" }]} />)
-    expect(html).toContain("Thought for 12s · 1 step")
+    expect(html).toContain("Thought for 12s")
     expect(html).not.toContain("3 open issues read")
     expect(renderToStaticMarkup(<RunTrace activity={[]} />)).toBe("")
+    // Tool steps alone already show in the chat's tools line.
+    expect(renderToStaticMarkup(<RunTrace activity={[{ kind: "tool", tool: "read_open_issues", text: "3 open issues read" }]} />)).toBe("")
   })
 })

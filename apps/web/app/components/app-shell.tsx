@@ -266,7 +266,8 @@ const CHATS_SHOWN = 6
 
 function ChatHistory() {
   const { collapsed } = useContext(SidebarStateContext)
-  const chats = useAgentChats()
+  // Helper sessions open from the chat that started them, so the history lists only the person's own chats.
+  const chats = useAgentChats()?.filter(c => !c.parentSessionId) ?? null
   const location = useLocation()
   const [all, setAll] = useState(false)
   const here = (path: string) => {
@@ -295,7 +296,7 @@ function ChatHistory() {
               <Link to={chatPath(c)} className="flex flex-col items-start gap-0">
                 <span className="w-full truncate text-xs">{c.title || "Untitled chat"}</span>
                 {c.working ? <span role="status" className="thinking text-xs">Working…</span> : null}
-                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.parentSessionId ? "Helper · " : ""}{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className="w-full truncate text-[0.625rem] text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             </DropdownMenuItem>
           )) : (
@@ -329,7 +330,7 @@ function ChatHistory() {
               >
                 <span className={cn("truncate text-base", active && "font-medium")}>{c.title || "Untitled chat"}</span>
                 {c.working ? <span role="status" className="thinking text-xs">Working…</span> : c.draft ? <span className="text-xs text-muted-foreground">Not saved</span> : null}
-                <span className="truncate text-xs text-muted-foreground">{c.parentSessionId ? "Helper · " : ""}{c.businessName} · {relativeTime(c.updatedAt)}</span>
+                <span className="truncate text-xs text-muted-foreground">{c.businessName} · {relativeTime(c.updatedAt)}</span>
               </Link>
             )
           })}

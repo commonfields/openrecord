@@ -391,10 +391,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       {m.pending ? (
                         <LiveTrace progress={m.progress ?? initialProgress()} />
                       ) : (
-                        <>
-                          {m.activity?.length ? <RunTrace activity={m.activity} durationMs={m.durationMs} /> : null}
-                          <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/80")}>{m.text}</p>
-                        </>
+                        <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/80")}>{m.text}</p>
                       )}
                       {m.run?.gaps?.length ? (
                         <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
@@ -403,9 +400,10 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                         const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
                         return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link> : <span>Evidence unavailable</span>}</li>
                       })}</ul> : null}
-                      {m.tools && m.tools.length > 0 && !m.activity?.length ? (
+                      {m.tools && m.tools.length > 0 ? (
                         <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
                       ) : null}
+                      {m.activity?.length ? <RunTrace activity={m.activity} durationMs={m.durationMs} /> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
                       {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
