@@ -34,9 +34,9 @@ const failure = (e: unknown) => {
   return json(500, { _tag: "GrowthRequestFailed", ...(detail ? { detail } : {}) }, PRIVATE_HEADERS)
 }
 const refuse = (reason: string) => Effect.fail(new GrowthGa4Refused({ reason }))
-const providerConfig = Effect.map(Effect.serviceOption(Ga4Provider), o => Option.getOrElse(o, (): Ga4ProviderConfig => ({ configured: false, reason: "MISSING_CLIENT" })))
-const configured = Effect.flatMap(providerConfig, c => c.configured ? Effect.succeed(c) : refuse("Ga4NotConfigured"))
-type Configured = Extract<Ga4ProviderConfig, { configured: true }>
+export const providerConfig = Effect.map(Effect.serviceOption(Ga4Provider), o => Option.getOrElse(o, (): Ga4ProviderConfig => ({ configured: false, reason: "MISSING_CLIENT" })))
+export const configured = Effect.flatMap(providerConfig, c => c.configured ? Effect.succeed(c) : refuse("Ga4NotConfigured"))
+export type Configured = Extract<Ga4ProviderConfig, { configured: true }>
 
 /** A provider call; failures become stable reasons, never provider text. */
 const provider = <A>(f: () => Promise<A>) => Effect.tryPromise({
@@ -66,8 +66,8 @@ const accessTokenFor = (config: Configured, accountId: string, connectionId: str
   yield* repo.storeAccessToken(connectionId, config.cipher.encrypt(refreshed.right.accessToken, `${connectionId}:access`), refreshed.right.accessTokenExpiresAt)
   return refreshed.right.accessToken
 })
-/** Runs a read with the connection's token; a 401 suspends the connection. */
-const read = <A>(config: Configured, accountId: string, connectionId: string, f: (token: string) => Promise<A>) => Effect.gen(function*() {
+/** Runs a read with the connection's token; a 401 suspends the connection. Shared by every Google read (Analytics and Search Console). */
+export const read = <A>(config: Configured, accountId: string, connectionId: string, f: (token: string) => Promise<A>) => Effect.gen(function*() {
   const token = yield* accessTokenFor(config, accountId, connectionId)
   const result = yield* provider(() => f(token)).pipe(Effect.either)
   if (result._tag === "Right") return result.right
@@ -78,6 +78,7 @@ const read = <A>(config: Configured, accountId: string, connectionId: string, f:
   return yield* refuse(providerReason(result.left))
 })
 
+export const ga4Failure = failure
 export const growthGa4Api = (withSession: WithSession) => {
   const operator = operatorSessionFor(withSession)
   const scoped = <E, R>(params: ReadonlyArray<string>, run: (session: Session, p: Record<string, string>) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
@@ -99,9 +100,15 @@ export const growthGa4Api = (withSession: WithSession) => {
     const request = yield* HttpServerRequest.HttpServerRequest
     const query = new URL(request.url, "http://localhost").searchParams
     const appBase = config.configured ? config.appBaseUrl : new URL(process.env["APP_BASE_URL"] || "http://localhost:3000").origin
+    let returnTo: "MEASUREMENT" | "CHANNELS" = "MEASUREMENT"
     const back = (status: string, businessId: string | null) => HttpServerResponse.empty({
       status: 303,
-      headers: { location: businessId ? `${appBase}/clients/${businessId}/growth-measurement?ga4=${status}` : `${appBase}/clients?ga4=${status}`, "cache-control": "no-store", "referrer-policy": "no-referrer" },
+      headers: {
+        location: !businessId ? `${appBase}/clients?ga4=${status}`
+          : returnTo === "CHANNELS" ? `${appBase}/businesses/${businessId}/channels?google=${status}#search-console`
+          : `${appBase}/clients/${businessId}/growth-measurement?ga4=${status}`,
+        "cache-control": "no-store", "referrer-policy": "no-referrer",
+      },
     })
     if (!config.configured) return yield* back("not_configured", null)
     const state = query.get("state") ?? ""
@@ -114,6 +121,7 @@ export const growthGa4Api = (withSession: WithSession) => {
         return yield* back(reason === "OAuthStateExpired" ? "state_expired" : reason === "OAuthStateReused" ? "state_reused" : "state_invalid", null)
       }
       const { businessId, connectionId } = pending.right
+      returnTo = pending.right.returnTo
       if (query.get("error")) return yield* back("consent_denied", businessId)
       const code = query.get("code") ?? ""
       const verifier = config.cipher.decrypt(pending.right.verifierCiphertext, `oauth-state:${sha256(state)}`)
@@ -160,6 +168,7 @@ export const growthGa4Api = (withSession: WithSession) => {
       yield* (yield* GrowthGa4Repository).startAuthorization(session, {
         businessId: input.businessId, connectionId: input.connectionId ?? null, stateSha256: sha256(state),
         verifierCiphertext: config.cipher.encrypt(verifier, `oauth-state:${sha256(state)}`), ttlSeconds: OAUTH_STATE_TTL_SECONDS,
+        returnTo: input.returnTo,
       })
       return yield* json(200, { authorizationUrl: authorizationUrl(config.oauth, { state, codeVerifier: verifier }) }, PRIVATE_HEADERS)
     }))),

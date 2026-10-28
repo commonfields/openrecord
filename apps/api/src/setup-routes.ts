@@ -1,8 +1,8 @@
 import { HttpRouter } from "@effect/platform"
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Option } from "effect"
-import { BusinessRepository, GrowthGa4Repository, GrowthRefused, GrowthRepository, RecordRefused, SetupRefused, SetupRepository, setupKey, type Session, type SetupRow } from "@openrecord/db"
-import { SetupConfirmInput, SetupRevisionInput, SetupStartInput, decodeRouteId, type SetupView } from "@openrecord/contracts"
+import { BusinessRepository, GrowthGa4Repository, GrowthRefused, GrowthRepository, RecordRefused, SearchConsoleRepository, SetupRefused, SetupRepository, setupKey, type Session, type SetupRow } from "@openrecord/db"
+import { SetupConfirmInput, SetupRevisionInput, SetupStartInput, decodeRouteId, hasSearchConsoleScope, type SetupView } from "@openrecord/contracts"
 import { Ga4Provider } from "@openrecord/ga4"
 import { GitHubExecution } from "@openrecord/site-operator"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
@@ -35,6 +35,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
   const connections = ga4Configured ? yield* ga4Repo.connections(accountId) : []
   const bindings = ga4Configured ? yield* ga4Repo.bindings(accountId, businessId) : []
   const github = yield* Effect.serviceOption(GitHubExecution)
+  const searchConsoleSite = ga4Configured ? yield* (yield* SearchConsoleRepository).binding(accountId, businessId) : null
   const catalog = yield* loadProviderCatalog(false, false)
   return deriveChannelInventory({
     businessId,
@@ -43,6 +44,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
     siteTargets: Number(counts[0]?.["site_targets"] ?? 0),
     ga4: { configured: ga4Configured, connections: connections.map(c => ({ status: c.status, statusReason: c.statusReason, googleEmail: c.googleEmail })), boundToBusiness: bindings.some(b => b.active) },
     github: { configured: Option.isSome(github) && github.value.transport !== null, targets: Number(counts[0]?.["execution_targets"] ?? 0) },
+    searchConsole: { scopeGranted: connections.some(c => c.status === "ACTIVE" && hasSearchConsoleScope(c.grantedScopes)), site: searchConsoleSite?.siteUrl ?? null },
     answerProviders: catalog.providers.filter(p => p.id !== "mock" && p.enabled).map(p => p.id),
     lastAnswerAt: counts[0]?.["last_answer_at"] ? new Date(counts[0]["last_answer_at"] as string | Date).toISOString() : null,
   })

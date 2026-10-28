@@ -14,6 +14,7 @@ export interface Ga4Endpoints {
   readonly revoke: string
   readonly admin: string
   readonly data: string
+  readonly searchConsole: string
 }
 export const GOOGLE_ENDPOINTS: Ga4Endpoints = {
   authorize: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -21,6 +22,7 @@ export const GOOGLE_ENDPOINTS: Ga4Endpoints = {
   revoke: "https://oauth2.googleapis.com/revoke",
   admin: "https://analyticsadmin.googleapis.com/v1beta",
   data: "https://analyticsdata.googleapis.com/v1beta",
+  searchConsole: "https://www.googleapis.com/webmasters/v3",
 }
 /** A local stand-in (tests, runtime smoke) is accepted only on an exact loopback origin. */
 export const standInEndpoints = (origin: string): Ga4Endpoints | null => {
@@ -28,7 +30,7 @@ export const standInEndpoints = (origin: string): Ga4Endpoints | null => {
   try { url = new URL(origin) } catch { return null }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || url.pathname !== "/" || url.search || url.hash || url.username || url.password) return null
   const o = url.origin
-  return { authorize: `${o}/o/oauth2/v2/auth`, token: `${o}/token`, revoke: `${o}/revoke`, admin: `${o}/admin/v1beta`, data: `${o}/data/v1beta` }
+  return { authorize: `${o}/o/oauth2/v2/auth`, token: `${o}/token`, revoke: `${o}/revoke`, admin: `${o}/admin/v1beta`, data: `${o}/data/v1beta`, searchConsole: `${o}/webmasters/v3` }
 }
 
 export interface HttpResult { readonly status: number; readonly text: string; readonly headers: Headers }

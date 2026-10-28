@@ -30,6 +30,7 @@ describe("agent tool harness", () => {
       "read_open_issues",
       "read_record_outcomes",
       "read_representations",
+      "read_search_performance",
     ])
     for (const tool of AGENT_TOOLS) {
       expect(tool.name).toMatch(/^[a-z_]+$/)

@@ -103,6 +103,21 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
 /** Run-level failures (cancellation, lost lease) stop the run; they are not tool results. */
 export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof AgentModelError
 
+/** Something a person decides on, created by a proposal tool. The chat renders
+ * each one as an approval card on the reply that created it. */
+export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
+  ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
+  ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
+]
+/** At most ten, first occurrence kept. */
+export const mergeDecisions = (refs: Iterable<DecisionRef>): DecisionRef[] => {
+  const seen = new Map<string, DecisionRef>()
+  for (const r of refs) if (!seen.has(`${r.type}:${r.id}`) && seen.size < 10) seen.set(`${r.type}:${r.id}`, r)
+  return [...seen.values()]
+}
+
 /** The durable receipt of a proposal tool: identifiers and states only, never evidence text. */
 export const proposalReceipt = (result: AgentToolResult): Record<string, string | boolean | number | null> => {
   const data = result.data

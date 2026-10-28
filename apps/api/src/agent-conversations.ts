@@ -15,7 +15,9 @@ const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promp
 // The run that produced an agent message: its outcome, or how it stopped.
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })
-const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
+const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY"), id: Schema.UUID })
+const Message = Schema.Struct({ role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
+  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number })
 const parse = Schema.decodeUnknown(Conversation)
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string | null }
@@ -104,6 +106,7 @@ type Responder = (accountId: string, userId: string, businessId: string | null, 
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal) => Effect.Effect<{
     readonly reply: string; readonly citations: ReadonlyArray<unknown>; readonly toolCalls: ReadonlyArray<unknown>; readonly usage: ReadonlyArray<unknown>
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
+    readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }> | undefined
   }, unknown, Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>>
 export const sendConversation = (scope: ConversationScope, body: {
   readonly message: string; readonly requestId: string; readonly conversationId?: string | undefined; readonly revision: number; readonly selection?: HarnessSelection | undefined
@@ -162,7 +165,7 @@ export const sendConversation = (scope: ConversationScope, body: {
     }).pipe(Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason:"UNAVAILABLE" })))
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, body.message, history, body.selection, assertActive, journal)
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const messages = [...current.messages, { role: "user", text: body.message }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,

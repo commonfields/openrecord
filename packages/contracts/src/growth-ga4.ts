@@ -14,10 +14,12 @@ import { GrowthIsoDay } from "./growth-measurement.js"
 
 /** The only Analytics scope OpenRecord requests. `openid email` identify the authorizing Google account. */
 export const GA4_READONLY_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
-export const GA4_OAUTH_SCOPES: ReadonlyArray<string> = ["openid", "email", GA4_READONLY_SCOPE]
+/** Read-only Search Console access (search performance). Requested with Analytics in one Google connection. */
+export const SEARCH_CONSOLE_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+export const GA4_OAUTH_SCOPES: ReadonlyArray<string> = ["openid", "email", GA4_READONLY_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE]
 /** Any granted scope outside this set (for example `analytics.edit`) is refused: OpenRecord never holds write access to analytics configuration. */
 export const GA4_ACCEPTED_SCOPES: ReadonlyArray<string> = [
-  "openid", "email", GA4_READONLY_SCOPE,
+  "openid", "email", GA4_READONLY_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE,
   "https://www.googleapis.com/auth/userinfo.email",
 ]
 /** Exact callback path. The configured redirect URI must end with it. */
@@ -60,6 +62,8 @@ export const StartGa4Connection = Schema.Struct({
   businessId: Schema.UUID,
   /** Re-authorize an existing connection (must belong to the account and the same Google identity). */
   connectionId: Schema.optional(Schema.NullOr(Schema.UUID)),
+  /** Which page the operator returns to after Google. Defaults to measurement. */
+  returnTo: Schema.optional(Schema.Literal("MEASUREMENT", "CHANNELS")),
 })
 export type StartGa4Connection = typeof StartGa4Connection.Type
 export const BindGa4Property = Schema.Struct({
@@ -207,5 +211,7 @@ export const ga4PropertyMatchesRef = (property: string, propertyRef: string | nu
   return ref === property || `properties/${ref}` === property
 }
 /** True when the granted scopes include read-only Analytics and nothing broader. */
+/** Google lets a person grant only some requested scopes: either read scope is enough, and nothing broader is accepted. */
 export const ga4ScopesAcceptable = (granted: ReadonlyArray<string>): boolean =>
-  granted.includes(GA4_READONLY_SCOPE) && granted.every(s => GA4_ACCEPTED_SCOPES.includes(s))
+  (granted.includes(GA4_READONLY_SCOPE) || granted.includes(SEARCH_CONSOLE_READONLY_SCOPE)) && granted.every(s => GA4_ACCEPTED_SCOPES.includes(s))
+export const hasSearchConsoleScope = (granted: ReadonlyArray<string>): boolean => granted.includes(SEARCH_CONSOLE_READONLY_SCOPE)

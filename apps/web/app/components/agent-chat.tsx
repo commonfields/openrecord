@@ -9,7 +9,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
-import { Agent, ApiError, Providers, Questions, type AgentCitation, type AgentMessage, type AgentProposal, type AgentRunEvent, type AgentRunRef } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentProposal, type AgentRunEvent, type AgentRunRef } from "@/lib/api"
+import type { GrowthOpportunity } from "@openrecord/contracts"
+import { InitiativeDecision } from "@/components/setup-flow"
+import { Growth } from "@/lib/growth"
 import { agentEvidencePath } from "@/lib/agent-evidence"
 import { chatPath, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
@@ -21,7 +24,7 @@ import { AgentModelPicker } from "@/components/agent-model-picker"
 
 type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
-  steps?: string[]; run?: AgentRunRef }
+  steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[] }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -165,8 +168,10 @@ export function useAgentSession(businessId: string | null, enabled = true) {
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
-        ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}) }])
+        ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
+        ...(r.decisions?.length ? { decisions: r.decisions } : {}) }])
       refreshProposals()
+      if (r.decisions?.length) notifyDecisionsChanged()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
       if (!mounted.current) return
@@ -231,17 +236,53 @@ export function useAgentSession(businessId: string | null, enabled = true) {
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
   if (session.businessId === null) return null
-  const done = session.refreshProposals
+  return <AgentProposalCard businessId={session.businessId} businessName={businessName} proposal={proposal} onDone={session.refreshProposals} />
+}
+
+/** The approval card for one agent proposal, wherever it is shown. */
+export function AgentProposalCard({ businessId, businessName, proposal, onDone }: { businessId: string; businessName: string; proposal: AgentProposal; onDone: () => void }) {
+  const done = () => { onDone(); notifyDecisionsChanged() }
+  // Re-checks and measurements are decided once; afterwards only the outcome shows.
+  if (proposal.status !== "PROPOSED" && (proposal.kind === "REQUEST_CHECK" || proposal.kind === "REQUEST_ACQUISITION_BATCH"))
+    return <p className="flex items-center gap-1.5 rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">
+      {proposal.status === "REJECTED" ? <XIcon className="size-3.5" /> : <CheckIcon className="size-3.5" />}
+      {proposal.kind === "REQUEST_CHECK" ? "Re-check" : "Acquisition measurement"} {proposal.status === "REJECTED" ? "declined" : "approved and queued"}
+    </p>
   return proposal.kind === "REQUEST_CHECK"
-    ? <CheckProposal businessId={session.businessId} businessName={businessName} proposal={proposal} onDone={done} />
-    : proposal.kind === "REQUEST_ACQUISITION_BATCH" ? <AcquisitionProposal businessId={session.businessId} proposal={proposal} onDone={done} />
-    : <SavedDraft businessId={session.businessId} proposal={proposal} onDone={done} />
+    ? <CheckProposal businessId={businessId} businessName={businessName} proposal={proposal} onDone={done} />
+    : proposal.kind === "REQUEST_ACQUISITION_BATCH" ? <AcquisitionProposal businessId={businessId} proposal={proposal} onDone={done} />
+    : <SavedDraft businessId={businessId} proposal={proposal} onDone={done} />
+}
+
+/** Initiatives load on their own: the chat holds only their IDs. */
+function InitiativeCard({ businessId, opportunityId }: { businessId: string; opportunityId: string }) {
+  const [opportunity, setOpportunity] = useState<GrowthOpportunity | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    void Growth.get(businessId, opportunityId).then(r => { if (live) setOpportunity(r.opportunity) }).catch(() => { if (live) setOpportunity(null) })
+    return () => { live = false }
+  }, [businessId, opportunityId])
+  if (opportunity === undefined) return <div className="h-20 animate-pulse rounded-xl border bg-card" aria-hidden />
+  if (opportunity === null) return <p className="rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">This initiative is no longer available.</p>
+  return <div className="rounded-xl border bg-card p-4"><InitiativeDecision businessId={businessId} opportunity={opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></div>
+}
+
+/** Approval cards for what one reply saved, so the decision happens where the work was proposed. */
+function MessageDecisions({ session, businessName, refs }: { session: AgentSession; businessName: string; refs: AgentDecisionRef[] }) {
+  const businessId = session.businessId
+  if (businessId === null) return null
+  const cards = refs.flatMap(ref => {
+    if (ref.type === "GROWTH_OPPORTUNITY") return [<InitiativeCard key={ref.id} businessId={businessId} opportunityId={ref.id} />]
+    const proposal = session.proposals.find(p => p.id === ref.id)
+    return proposal ? [<AgentProposalCard key={ref.id} businessId={businessId} businessName={businessName} proposal={proposal} onDone={session.refreshProposals} />] : []
+  })
+  return cards.length ? <div className="w-full space-y-2 pt-1" aria-label="Waiting for your decision">{cards}</div> : null
 }
 
 // ---- the conversation ----
 
-function Thread({ session, compact, placeholder, onCommand, work }: {
-  session: AgentSession; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode
+function Thread({ session, businessName = "", compact, placeholder, onCommand, work }: {
+  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -282,6 +323,7 @@ function Thread({ session, compact, placeholder, onCommand, work }: {
                       {m.tools && m.tools.length > 0 ? (
                         <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
                       ) : null}
+                      {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
                   )}
                   <CopyButton text={m.text} className={m.role === "user" ? "-mr-1.5" : "-ml-1.5"} />
@@ -426,8 +468,8 @@ function useSlidePresence(open: boolean) {
 // The chat as its own card on the canvas, left of the content panel, the way
 // the sidebar sits. It grows in to half the width; on narrow screens it takes
 // the whole width and the content panel steps aside.
-function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon, onCommand }: {
-  open: boolean; session: AgentSession; placeholder: string
+function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand }: {
+  open: boolean; session: AgentSession; businessName: string; placeholder: string
   onClose: () => void; closeLabel?: string; closeIcon?: ReactNode
   onCommand: (c: AgentCommand) => void
 }) {
@@ -457,7 +499,7 @@ function AgentPane({ open, session, placeholder, onClose, closeLabel, closeIcon,
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
-              <Thread session={session} compact placeholder={placeholder} onCommand={onCommand} />
+              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} />
             </>
           ) : null}
         </div>
@@ -516,7 +558,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
 
   return (
     <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
-      <Thread session={session} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+      <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
         work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
     </section>
   )
@@ -546,7 +588,7 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
   const decisions = session.openProposals.length + session.keptDrafts.length
   return (
     <>
-      <AgentPane open={open} session={session} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand} />
+      <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand} />
       <div className="h-full min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
           {open && decisions ? (

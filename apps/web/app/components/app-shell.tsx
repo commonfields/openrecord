@@ -9,6 +9,7 @@ import {
   Building2Icon,
   FlaskConicalIcon,
   CheckIcon,
+  CheckCheckIcon,
   ChevronRightIcon,
   ChevronsUpDownIcon,
   GlobeIcon,
@@ -42,7 +43,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useSettings } from "@/components/settings-dialog"
 import { rememberedEmail, usePreferences } from "@/lib/preferences"
-import { Auth } from "@/lib/api"
+import { Auth, DECISIONS_CHANGED, Decisions } from "@/lib/api"
 import { initial, markColor, relativeTime } from "@/lib/format"
 import { ChatActivityProvider, chatPath, useAgentChats } from "@/lib/agent-chats"
 import { cn } from "@/lib/utils"
@@ -224,7 +225,9 @@ function SidebarBody() {
   const { preferences } = usePreferences()
   const attention = overview && preferences.showIssueCount ? Number(overview.needs_attention) + Number(overview.unreviewed) : 0
   const agent = useAgentView()
-  const general = useLocation().pathname === "/agent"
+  const pathname = useLocation().pathname
+  const general = pathname === "/agent"
+  const waiting = useWaitingCount(pathname)
 
   return (
     <>
@@ -238,16 +241,15 @@ function SidebarBody() {
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
         {agent ? <ChatHistory /> : <>
-          {base ? (
-            <>
-              <SidebarGroup label="Workspace">
-                <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
-                <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
-                <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
-              </SidebarGroup>
-              <EvidenceTools base={base} />
-            </>
-          ) : null}
+          <SidebarGroup label="Workspace">
+            <SidebarLink to="/approvals" icon={<CheckCheckIcon />} label="Waiting on you" count={waiting} />
+            {base ? <>
+              <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
+              <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
+              <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
+            </> : null}
+          </SidebarGroup>
+          {base ? <EvidenceTools base={base} /> : null}
         </>}
       </nav>
 
@@ -373,6 +375,20 @@ function EvidenceTools({ base }: { base: string }) {
       {open ? <div className="flex flex-col gap-px">{links}</div> : null}
     </div>
   )
+}
+
+/** How many decisions wait on the signed-in person; reloads on navigation and after any decision. */
+function useWaitingCount(pathname: string) {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let live = true
+    const load = () => { void Decisions.list().then(r => { if (live) setCount(r.count) }).catch(() => {}) }
+    load()
+    window.addEventListener(DECISIONS_CHANGED, load)
+    window.addEventListener("focus", load)
+    return () => { live = false; window.removeEventListener(DECISIONS_CHANGED, load); window.removeEventListener("focus", load) }
+  }, [pathname])
+  return count
 }
 
 function SidebarGroup({ label, children }: { label: string; children: ReactNode }) {
@@ -646,6 +662,8 @@ function Breadcrumbs() {
     if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
   } else if (parts[0] === "agent") {
     crumbs.push({ label: "General chat" })
+  } else if (parts[0] === "approvals") {
+    crumbs.push({ label: "Waiting on you" })
   } else if (parts[0] === "start") {
     crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {

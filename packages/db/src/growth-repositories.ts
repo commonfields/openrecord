@@ -5,6 +5,7 @@ import { GrowthEvaluationRepositoryLive } from "./growth-evaluation.js"
 import { GrowthReportRepositoryLive } from "./growth-report.js"
 import { GrowthExecutionRepositoryLive } from "./growth-execution.js"
 import { GrowthGa4RepositoryLive } from "./growth-ga4.js"
+import { SearchConsoleRepositoryLive } from "./search-console.js"
 
 // One growth-owned layer for callers; later workstreams extend it here.
 // W4: the read-only outcome evaluator composes the W0 and W3 repositories.
@@ -18,4 +19,6 @@ export const GrowthRepositoriesLive = Layer.mergeAll(
   GrowthReportRepositoryLive.pipe(Layer.provide(Layer.merge(GrowthRepositoryLive, evaluation))),
   // W8: authenticated GA4 measurement. Its health reads the W3 series.
   GrowthGa4RepositoryLive.pipe(Layer.provide(GrowthMeasurementRepositoryLive)),
+  // Search Console site bindings, through the same Google connection.
+  SearchConsoleRepositoryLive,
 )

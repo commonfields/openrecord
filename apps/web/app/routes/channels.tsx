@@ -3,6 +3,7 @@ import { RadioTowerIcon } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, PageHeader, Panel } from "@/components/page"
 import { ChannelList } from "@/components/setup-flow"
+import { SearchConsoleSetup } from "@/components/search-console"
 import { errorMessage } from "@/lib/format"
 import { Channels } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
@@ -20,9 +21,12 @@ export function ChannelsPage() {
       ) : !q.data ? (
         <Skeleton className="h-64 rounded-xl" />
       ) : (
-        <Panel className="p-4">
-          <ChannelList inventory={q.data.inventory} />
-        </Panel>
+        <>
+          <SearchConsoleSetup businessId={id} onChange={() => { void q.reload() }} />
+          <Panel className="p-4">
+            <ChannelList inventory={q.data.inventory} />
+          </Panel>
+        </>
       )}
     </div>
   )

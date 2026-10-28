@@ -12,7 +12,7 @@ const brief: SetupBrief = { businessName: "Acme", category: "Plumbing", audience
   conversionKind: "LEAD", metricLabel: "Calls", reportingTimeZone: "UTC", factIds: [] }
 const facts = (overrides: Partial<ChannelFacts> = {}): ChannelFacts => ({
   businessId: "b1", websiteUrl: "https://www.acme.test/", discovery: null, siteTargets: 0,
-  ga4: { configured: false, connections: [], boundToBusiness: false }, github: { configured: false, targets: 0 }, answerProviders: [], lastAnswerAt: null, ...overrides,
+  ga4: { configured: false, connections: [], boundToBusiness: false }, github: { configured: false, targets: 0 }, searchConsole: { scopeGranted: false, site: null }, answerProviders: [], lastAnswerAt: null, ...overrides,
 })
 
 describe("setup step", () => {
@@ -52,7 +52,7 @@ describe("channel inventory", () => {
     expect(byKey["profile:EMAIL"]).toMatchObject({ state: "DISCOVERED", identity: "hi@acme.test" })
     expect(byKey["ga4"]).toMatchObject({ state: "UNSUPPORTED", active: [], action: null })
     expect(byKey["github"]).toMatchObject({ state: "UNSUPPORTED", active: [] })
-    expect(byKey["search-console"]).toMatchObject({ state: "UNSUPPORTED", offered: [] })
+    expect(byKey["search-console"]).toMatchObject({ state: "UNSUPPORTED", active: [], action: null })
     expect(inv.channels.filter(c => c.state === "CONNECTED")).toEqual([])
   })
 
@@ -67,6 +67,10 @@ describe("channel inventory", () => {
   })
 
   it("offers GitHub execution only for an allowed repository", () => {
+    const sc = (searchConsole: ChannelFacts["searchConsole"]) => deriveChannelInventory(facts({ ga4: { configured: true, connections: [], boundToBusiness: false }, searchConsole })).channels.find(c => c.key === "search-console")!
+    expect(sc({ scopeGranted: false, site: null })).toMatchObject({ state: "PERMISSION_REQUIRED", active: [], action: { label: "Connect", href: "/businesses/b1/channels#search-console" } })
+    expect(sc({ scopeGranted: true, site: null })).toMatchObject({ state: "PERMISSION_REQUIRED", action: { label: "Choose site" } })
+    expect(sc({ scopeGranted: true, site: "sc-domain:acme.test" })).toMatchObject({ state: "CONNECTED", identity: "sc-domain:acme.test", active: ["READ", "MEASURE"] })
     const gh = (targets: number) => deriveChannelInventory(facts({ github: { configured: true, targets } })).channels.find(c => c.key === "github")!
     expect(gh(0)).toMatchObject({ state: "PERMISSION_REQUIRED", active: [] })
     expect(gh(1)).toMatchObject({ state: "CONNECTED", active: ["EXECUTE", "VERIFY"] })

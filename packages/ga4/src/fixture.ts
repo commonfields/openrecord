@@ -9,13 +9,22 @@
 // Passing against this fixture is MOCK_ADAPTER_PASS, never a live result.
 import { createHash, randomBytes } from "node:crypto"
 import { createServer, type Server } from "node:http"
-import { GA4_READONLY_SCOPE } from "@openrecord/contracts"
+import { GA4_READONLY_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE } from "@openrecord/contracts"
 import { Layer } from "effect"
 import { standInEndpoints, type FetchLike, type Ga4Endpoints } from "./http.js"
 import { makeTokenCipher, parseCipherKeys } from "./cipher.js"
 import { Ga4Provider, type Ga4ProviderConfig } from "./provider.js"
 
-export interface FixtureIdentity { readonly sub: string; readonly email: string; readonly emailVerified?: boolean; properties: string[] }
+export interface FixtureIdentity { readonly sub: string; readonly email: string; readonly emailVerified?: boolean; properties: string[]
+  /** Search Console sites this identity can read, with its permission level (default siteOwner). */
+  sites?: Array<{ siteUrl: string; permissionLevel?: string }> }
+/** One Search Console site: daily totals, and the top queries and pages it reports for any window. */
+export interface FixtureSite {
+  readonly siteUrl: string
+  days: Record<string, { clicks: number; impressions: number; position: number }>
+  queries?: Array<{ key: string; clicks: number; impressions: number; position: number }>
+  pages?: Array<{ key: string; clicks: number; impressions: number; position: number }>
+}
 export interface FixtureDay { keyEvents: number; eventCount: number }
 export interface FixtureProperty {
   readonly name: string
@@ -34,6 +43,7 @@ export interface FixtureGoogleOptions {
   readonly redirectUri: string
   readonly identities: FixtureIdentity[]
   readonly properties: FixtureProperty[]
+  readonly sites?: FixtureSite[]
   readonly accessTokenTtlSeconds?: number
   /** Caps rows per runReport page to exercise pagination. */
   readonly pageSizeCap?: number
@@ -61,12 +71,38 @@ export const fixtureGoogle = (opts: FixtureGoogleOptions) => {
   const identity = (sub: string) => opts.identities.find(i => i.sub === sub)
   const property = (name: string) => opts.properties.find(p => p.name === name)
 
-  const bearer = (req: Request): Grant | Response => {
+  const bearer = (req: Request, scope = GA4_READONLY_SCOPE): Grant | Response => {
     const header = req.headers.get("authorization") ?? ""
     const entry = access.get(header.replace(/^Bearer /, ""))
     if (!entry || entry.grant.revoked || entry.expiresAt <= clock) return apiError(401, "UNAUTHENTICATED")
-    if (!entry.grant.scopes.includes(GA4_READONLY_SCOPE)) return apiError(403, "PERMISSION_DENIED")
+    if (!entry.grant.scopes.includes(scope)) return apiError(403, "PERMISSION_DENIED")
     return entry.grant
+  }
+  const siteAccess = (grant: Grant, siteUrl: string) => identity(grant.sub)?.sites?.find(s => s.siteUrl === siteUrl)
+  const searchConsole = async (grant: Grant, path: string, req: Request) => {
+    if (path === "sites" && req.method === "GET")
+      return json(200, { siteEntry: (identity(grant.sub)?.sites ?? []).map(s => ({ siteUrl: s.siteUrl, permissionLevel: s.permissionLevel ?? "siteOwner" })) })
+    const analytics = /^sites\/([^/]+)\/searchAnalytics\/query$/.exec(path)
+    if (!analytics || req.method !== "POST") return apiError(404, "NOT_FOUND")
+    const siteUrl = decodeURIComponent(analytics[1]!)
+    const site = opts.sites?.find(s => s.siteUrl === siteUrl)
+    const access = siteAccess(grant, siteUrl)
+    if (!site || !access || access.permissionLevel === "siteUnverifiedUser") return apiError(403, "PERMISSION_DENIED")
+    const body = await req.json() as { startDate?: string; endDate?: string; dimensions?: string[]; rowLimit?: number }
+    if (!body.startDate || !body.endDate || body.startDate > body.endDate) return apiError(400, "INVALID_ARGUMENT")
+    const dims = body.dimensions ?? []
+    const shape = (r: { clicks: number; impressions: number; position: number }) => ({ clicks: r.clicks, impressions: r.impressions, ctr: r.impressions ? r.clicks / r.impressions : 0, position: r.position })
+    if (dims.length === 0) {
+      const inRange = Object.entries(site.days).filter(([d]) => d >= body.startDate! && d <= body.endDate!).map(([, v]) => v)
+      if (!inRange.length) return json(200, { responseAggregationType: "byProperty" })
+      const clicks = inRange.reduce((a, v) => a + v.clicks, 0), impressions = inRange.reduce((a, v) => a + v.impressions, 0)
+      const position = impressions ? inRange.reduce((a, v) => a + v.position * v.impressions, 0) / impressions : 0
+      return json(200, { rows: [{ ...shape({ clicks, impressions, position }) }], responseAggregationType: "byProperty" })
+    }
+    const list = dims.join(",") === "query" ? site.queries ?? [] : dims.join(",") === "page" ? site.pages ?? [] : null
+    if (!list) return apiError(400, "INVALID_ARGUMENT")
+    const rows = [...list].sort((a, b) => b.clicks - a.clicks).slice(0, body.rowLimit ?? 1000).map(r => ({ keys: [r.key], ...shape(r) }))
+    return json(200, { ...(rows.length ? { rows } : {}), responseAggregationType: "byProperty" })
   }
   const canRead = (grant: Grant, name: string) => identity(grant.sub)?.properties.includes(name) === true && property(name) !== undefined
   const issue = (grant: Grant, withRefresh: boolean) => {
@@ -196,6 +232,11 @@ export const fixtureGoogle = (opts: FixtureGoogleOptions) => {
     }
     if (req.method === "POST" && url.pathname === "/token") return tokenEndpoint(req)
     if (req.method === "POST" && url.pathname === "/revoke") return revokeEndpoint(req)
+    const webmasters = /^\/webmasters\/v3\/(.+)$/.exec(url.pathname)
+    if (webmasters) {
+      const grant = bearer(req, SEARCH_CONSOLE_READONLY_SCOPE)
+      return grant instanceof Response ? grant : searchConsole(grant, webmasters[1]!, req)
+    }
     const report = /^\/data\/v1beta\/(properties\/[0-9]+):runReport$/.exec(url.pathname)
     const admin = /^\/admin\/v1beta\/(.+)$/.exec(url.pathname)
     if (!report && !admin) return apiError(404, "NOT_FOUND")

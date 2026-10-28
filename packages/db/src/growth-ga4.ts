@@ -116,9 +116,9 @@ export class GrowthGa4Repository extends Context.Tag("GrowthGa4Repository")<Grow
   // connections (account-scoped)
   readonly connections: (accountId: string) => GrowthGa4Effect<ReadonlyArray<Ga4Connection>>
   readonly connection: (accountId: string, connectionId: string) => GrowthGa4Effect<Ga4Connection>
-  readonly startAuthorization: (session: Session, input: { readonly businessId: string; readonly connectionId: string | null; readonly stateSha256: string; readonly verifierCiphertext: string; readonly ttlSeconds: number }) => GrowthGa4Effect<void>
+  readonly startAuthorization: (session: Session, input: { readonly businessId: string; readonly connectionId: string | null; readonly stateSha256: string; readonly verifierCiphertext: string; readonly ttlSeconds: number; readonly returnTo?: "MEASUREMENT" | "CHANNELS" | undefined }) => GrowthGa4Effect<void>
   /** Single use. Refused for an unknown, expired, reused, or another user's state. */
-  readonly consumeAuthorization: (session: Session, stateSha256: string) => GrowthGa4Effect<{ readonly businessId: string; readonly connectionId: string | null; readonly verifierCiphertext: string; readonly stateId: string }>
+  readonly consumeAuthorization: (session: Session, stateSha256: string) => GrowthGa4Effect<{ readonly businessId: string; readonly connectionId: string | null; readonly verifierCiphertext: string; readonly stateId: string; readonly returnTo: "MEASUREMENT" | "CHANNELS" }>
   readonly saveAuthorization: (session: Session, expectedConnectionId: string | null, grant: Ga4AuthorizationGrant) => GrowthGa4Effect<Ga4Connection>
   readonly credentials: (connectionId: string) => GrowthGa4Effect<Ga4Credentials>
   readonly storeAccessToken: (connectionId: string, accessCiphertext: string, accessExpiresAt: number) => GrowthGa4Effect<void>
@@ -191,12 +191,12 @@ export const GrowthGa4RepositoryLive = Layer.effect(GrowthGa4Repository, Effect.
       yield* member(session)
       yield* business(session.accountId, input.businessId)
       if (input.connectionId !== null) yield* readConnection(session.accountId, input.connectionId)
-      yield* sql`INSERT INTO growth_ga4_oauth_states(account_id,user_id,business_id,connection_id,state_sha256,verifier_ciphertext,expires_at)
-        VALUES(${session.accountId},${session.userId},${input.businessId},${input.connectionId},${input.stateSha256},${input.verifierCiphertext},now()+${input.ttlSeconds}*interval '1 second')`
+      yield* sql`INSERT INTO growth_ga4_oauth_states(account_id,user_id,business_id,connection_id,state_sha256,verifier_ciphertext,expires_at,return_to)
+        VALUES(${session.accountId},${session.userId},${input.businessId},${input.connectionId},${input.stateSha256},${input.verifierCiphertext},now()+${input.ttlSeconds}*interval '1 second',${input.returnTo ?? "MEASUREMENT"})`
     }),
     consumeAuthorization: (session, stateSha256) => sql.withTransaction(Effect.gen(function*() {
       if (!/^[a-f0-9]{64}$/.test(stateSha256)) return yield* refuse("OAuthStateInvalid")
-      const rows = yield* sql`SELECT id, account_id, user_id, business_id, connection_id, verifier_ciphertext, consumed_at, expires_at < now() AS expired
+      const rows = yield* sql`SELECT id, account_id, user_id, business_id, connection_id, verifier_ciphertext, consumed_at, return_to, expires_at < now() AS expired
         FROM growth_ga4_oauth_states WHERE state_sha256=${stateSha256} FOR UPDATE`
       const row = rows[0]
       // Another user's or account's state is indistinguishable from an unknown one.
@@ -204,7 +204,8 @@ export const GrowthGa4RepositoryLive = Layer.effect(GrowthGa4Repository, Effect.
       if (row["consumed_at"] != null) return yield* refuse("OAuthStateReused")
       yield* sql`UPDATE growth_ga4_oauth_states SET consumed_at=now() WHERE id=${String(row["id"])}`
       if (row["expired"] === true) return yield* Effect.fail(new GrowthGa4Refused({ reason: "OAuthStateExpired" }))
-      return { stateId: String(row["id"]), businessId: String(row["business_id"]), connectionId: row["connection_id"] == null ? null : String(row["connection_id"]), verifierCiphertext: String(row["verifier_ciphertext"]) }
+      return { stateId: String(row["id"]), businessId: String(row["business_id"]), connectionId: row["connection_id"] == null ? null : String(row["connection_id"]), verifierCiphertext: String(row["verifier_ciphertext"]),
+        returnTo: row["return_to"] === "CHANNELS" ? "CHANNELS" as const : "MEASUREMENT" as const }
     }).pipe(
       // An expired state is consumed too: commit the consumption, then refuse.
       Effect.catchIf((e): e is GrowthGa4Refused => e instanceof GrowthGa4Refused && e.reason === "OAuthStateExpired", e => Effect.gen(function*() {
