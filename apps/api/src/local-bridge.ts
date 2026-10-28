@@ -8,7 +8,7 @@
 // Never enable this on a shared or hosted server: the bridge runs the
 // provider CLIs with this machine's sign-ins for whoever is signed in.
 import { spawn, type ChildProcess } from "node:child_process"
-import { existsSync, readFileSync, unlinkSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
@@ -21,7 +21,8 @@ import type { Session } from "@openrecord/db"
 export const localBridgeEnabled = () => /^(1|true|on)$/i.test(process.env["OPENRECORD_LOCAL_BRIDGE"] ?? "")
 
 const children = new Map<string, ChildProcess>()
-process.once("exit", () => { for (const child of children.values()) child.kill("SIGTERM") })
+let exiting = false
+process.once("exit", () => { exiting = true; for (const child of children.values()) child.kill("SIGTERM") })
 
 const home = (userId: string) => join(process.env["OPENRECORD_LOCAL_BRIDGE_HOME"] ?? join(homedir(), ".openrecord", "app"), userId)
 const hash = (token: string) => createHash("sha256").update(token).digest("hex")
@@ -113,15 +114,68 @@ export const ensureLocalBridge = (session: Session, serverPort: number, connect 
       args = ["pair", "--server", `http://127.0.0.1:${serverPort}`, "--code", code]
     }
     yield* Effect.promise(() => mkdir(dir, { recursive: true, mode: 0o700 }))
-    const child = spawn(process.execPath, [...bridge.args, ...args], {
-      ...(bridge.cwd ? { cwd: bridge.cwd } : {}),
-      env: bridgeEnvironment(process.env, dir),
-      stdio: ["ignore", "pipe", "pipe"], shell: false,
-    })
-    children.set(session.userId, child)
-    // The bridge prints one JSON event per line and never prints credentials.
-    child.stdout?.on("data", (chunk: Buffer) => { for (const line of chunk.toString("utf8").split("\n")) if (line.trim()) Effect.runFork(Effect.logInfo(`local bridge: ${line.trim().slice(0, 300)}`)) })
-    child.stderr?.on("data", (chunk: Buffer) => Effect.runFork(Effect.logWarning(`local bridge: ${chunk.toString("utf8").trim().slice(0, 300)}`)))
-    child.once("exit", () => { if (children.get(session.userId) === child) children.delete(session.userId) })
+    launch(session.userId, dir, bridge, args)
     return "STARTED" as LocalBridgeStatus
   })
+
+/**
+ * Runs the bridge and keeps it running: when it exits for any reason but a
+ * revocation or the server shutting down, it starts again, waiting longer
+ * after each quick exit (2s, 4s … up to a minute).
+ */
+function launch(userId: string, dir: string, bridge: { args: string[]; cwd?: string }, args: string[], failures = 0) {
+  const child = spawn(process.execPath, [...bridge.args, ...args], {
+    ...(bridge.cwd ? { cwd: bridge.cwd } : {}),
+    env: bridgeEnvironment(process.env, dir),
+    stdio: ["ignore", "pipe", "pipe"], shell: false,
+  })
+  children.set(userId, child)
+  const startedAt = Date.now()
+  let revoked = false
+  // The bridge prints one JSON event per line and never prints credentials.
+  child.stdout?.on("data", (chunk: Buffer) => {
+    for (const line of chunk.toString("utf8").split("\n")) if (line.trim()) {
+      if (line.includes("bridge revoked")) revoked = true
+      Effect.runFork(Effect.logInfo(`local bridge: ${line.trim().slice(0, 300)}`))
+    }
+  })
+  child.stderr?.on("data", (chunk: Buffer) => Effect.runFork(Effect.logWarning(`local bridge: ${chunk.toString("utf8").trim().slice(0, 300)}`)))
+  child.once("exit", () => {
+    if (children.get(userId) !== child) return
+    children.delete(userId)
+    if (exiting || revoked || !existsSync(join(dir, "bridge.json"))) return
+    const quick = Date.now() - startedAt < 60_000
+    const next = quick ? failures + 1 : 0
+    const timer = setTimeout(() => {
+      if (!children.has(userId) && !runningElsewhere(dir)) launch(userId, dir, bridge, ["run"], next)
+    }, Math.min(1000 * 2 ** Math.max(next, 1), 60_000))
+    timer.unref()
+  })
+}
+
+/**
+ * When the server starts, start the bridge again for everyone whose computer
+ * was connected, without waiting for them to open the app.
+ */
+export const resumeLocalBridges = Effect.gen(function* () {
+  if (!localBridgeEnabled()) return 0
+  const bridge = program()
+  const base = process.env["OPENRECORD_LOCAL_BRIDGE_HOME"] ?? join(homedir(), ".openrecord", "app")
+  if (!bridge || !existsSync(base)) return 0
+  const sql = yield* SqlClient.SqlClient
+  let resumed = 0
+  for (const userId of readdirSync(base)) {
+    if (!/^[0-9a-f-]{36}$/.test(userId) || children.has(userId)) continue
+    const dir = join(base, userId), id = configuredBridgeId(dir)
+    if (!id || runningElsewhere(dir)) continue
+    const valid = yield* sql`SELECT id FROM agent_bridges WHERE id=${id} AND user_id=${userId} AND managed AND revoked_at IS NULL AND token_hash IS NOT NULL`
+    if (!valid.length) continue
+    launch(userId, dir, bridge, ["run"])
+    resumed++
+  }
+  if (resumed) yield* Effect.logInfo(`local bridge: resumed for ${resumed} user${resumed === 1 ? "" : "s"}`)
+  return resumed
+})
+
+/** For tests: the bridge process running for a user, if any. */
+export const localBridgeProcess = (userId: string) => children.get(userId) ?? null

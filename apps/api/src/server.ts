@@ -46,6 +46,7 @@ import {
 import { GitHubExecutionLive } from "@openrecord/site-operator"
 import { Ga4ProviderLive } from "@openrecord/ga4"
 import { makeRouter } from "./router.js"
+import { resumeLocalBridges } from "./local-bridge.js"
 
 const Repos = Layer.mergeAll(
   GitHubExecutionLive,
@@ -107,7 +108,9 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const PgLive = PgClient.layer({ url: config.databaseUrl })
     // Wire Postgres into the repositories (sequential), then serve.
     const ReposProvided = Layer.provideMerge(Repos, PgLive)
-    const ServerLive = HttpServer.serve(makeRouter()).pipe(
+    // This computer's bridges start with the server (local mode only).
+    const LocalBridges = Layer.effectDiscard(Effect.forkDaemon(resumeLocalBridges.pipe(Effect.delay("1 second"), Effect.catchAllCause(Effect.logWarning))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )

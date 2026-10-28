@@ -106,6 +106,8 @@ export type ConversationSummary = {
   // Brand key of the provider that wrote the last reply (hosted provider or
   // harness driver), or null while nothing has answered yet.
   readonly provider: string | null
+  /** Every provider that answered here, in order of first use. */
+  readonly providers: ReadonlyArray<string>
 }
 export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -114,7 +116,9 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
       jsonb_array_length(c.messages) AS message_count,
       (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message,
       (SELECT m->'inference'->>'provider' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
-        WHERE m->>'role' = 'agent' ORDER BY i DESC LIMIT 1) AS last_provider
+        WHERE m->>'role' = 'agent' ORDER BY i DESC LIMIT 1) AS last_provider,
+      (SELECT coalesce(jsonb_agg(p ORDER BY first), '[]'::jsonb) FROM (SELECT m->'inference'->>'provider' AS p, min(i) AS first
+        FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'agent' AND m->'inference'->>'provider' IS NOT NULL GROUP BY 1) used) AS providers
     FROM agent_conversations c
     LEFT JOIN businesses b ON b.id = c.business_id AND b.account_id = c.account_id
     JOIN account_users au ON au.account_id = c.account_id AND au.user_id = c.user_id
@@ -131,6 +135,7 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
     parentSessionId: r["parent_conversation_id"] === null ? null : String(r["parent_conversation_id"]),
     role: r["task_role"] === null ? null : String(r["task_role"]), working: r["working"] === true,
     provider: r["last_provider"] === null || r["last_provider"] === undefined ? null : String(r["last_provider"]),
+    providers: Array.isArray(r["providers"]) ? (r["providers"] as unknown[]).map(String).slice(0, 8) : [],
   }))
 })
 export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {

@@ -311,6 +311,20 @@ html[data-reduce-motion] *::after {
 .dark .name-shimmer {
   --shimmer-light: white;
 }
+/* A working chat's dot: two steady beats a second, as in T3 Code's sidebar. */
+@keyframes status-pulse {
+  0%,
+  40% {
+    opacity: 1;
+  }
+  50%,
+  90% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
 @keyframes thinking-sweep {
   from {
     background-position: 200% 0;
