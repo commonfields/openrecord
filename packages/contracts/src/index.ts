@@ -335,8 +335,11 @@ export const AgentMessageRequest = Schema.Struct({
   conversationId: Schema.optional(Schema.UUID),
   revision: Schema.NonNegativeInt,
   selection: Schema.optional(HarnessSelection),
+  /** How the person wants answers written; friendly when absent. */
+  style: Schema.optional(Schema.Literal("friendly", "concise", "detailed")),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
+export type AgentResponseStyle = NonNullable<AgentMessageRequest["style"]>
 
 // Agent proposals: the only agent write path, gated by human approval.
 // Creation records intent (never executes); approval executes exactly once

@@ -7,7 +7,7 @@ import pg from "pg"
 import { AcquisitionRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, SetupRepository, type DiscoveryResult } from "@openrecord/db"
 import type { GrowthOpportunity, HarnessAnswer, HarnessReport, SetupView } from "@openrecord/contracts"
 import { extractBusinessSignals } from "@openrecord/site-operator"
-import { dispatchAgentTool, handleAgentMessage, runConversation, turnPlan } from "./agent.js"
+import { dispatchAgentTool, handleAgentMessage, runConversation, turnPlan, voiceFor } from "./agent.js"
 import { SKILLS } from "./agent-skills.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import type { AgentModel, ModelResponse } from "./agent-model.js"
@@ -187,7 +187,8 @@ suite("first-improvement workflow end to end (disposable PostgreSQL, fixture mod
 
     expect(reply).toMatchObject({ provider: "codex", requestedModel: "codex-fixture", instanceId: instance.id, workflow: { id: "first-improvement", version: 1 } })
     expect(jobs.map(j => j.tools)).toEqual([[...SKILLS["first-improvement"].tools], [...SKILLS["first-improvement"].tools], [...SKILLS["first-improvement"].tools]])
-    expect(jobs[0]!.system).toBe(turnPlan(SKILLS["first-improvement"]).system)
+    // The workflow's own instructions, then how to write the answer.
+    expect(jobs[0]!.system.startsWith(turnPlan(SKILLS["first-improvement"]).system + voiceFor(undefined))).toBe(true)
     expect(reply.toolCalls.map(t => t.summary)).toEqual(["2 supported problems found; one selected", "This improvement is already proposed"])
     expect(await snapshot(businessId)).toBe(before)
     expect(await opportunities(businessId)).toHaveLength(1)

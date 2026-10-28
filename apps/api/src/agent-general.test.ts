@@ -17,7 +17,7 @@ describe("general chat tool boundary", () => {
   it("sends no business tools to the model", async () => {
     const model: AgentModel = input => {
       expect(input.tools).toEqual([])
-      expect(input.system).toBe("General chat")
+      expect(input.system?.startsWith("General chat")).toBe(true)
       return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ text: "Hello" }] }, finishReason: "STOP" }] })
     }
     expect(await Effect.runPromise(runConversation({ message: "Hi", history: [], model, tools: [], system: "General chat", dispatch: () => Effect.die("Must never dispatch") }))).toMatchObject({ reply: "Hello", toolCalls: [] })
@@ -25,5 +25,18 @@ describe("general chat tool boundary", () => {
   it("refuses a tool request even if a model invents one", async () => {
     const model: AgentModel = () => Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "read_business_truth", args: {} } }] }, finishReason: "STOP" }] })
     expect(await Effect.runPromise(runConversation({ message: "Read another client", history: [], model, tools: [], dispatch: () => Effect.die("Must never dispatch") }).pipe(Effect.either))).toMatchObject({ _tag: "Left", left: { reason: "MALFORMED" } })
+  })
+  it("writes in the friendly voice by default, and shorter or deeper when the person asks", async () => {
+    const systems: string[] = []
+    const model: AgentModel = input => {
+      systems.push(input.system ?? "")
+      return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ text: "Hello" }] }, finishReason: "STOP" }] })
+    }
+    for (const style of [undefined, "concise", "detailed"] as const)
+      await Effect.runPromise(runConversation({ message: "Hi", history: [], model, tools: [], system: "General chat", style, dispatch: () => Effect.die("No tools") }))
+    for (const system of systems) expect(system).toContain("what it means for their business")
+    expect(systems[0]).not.toMatch(/asked for (concise|detailed) answers/)
+    expect(systems[1]).toContain("asked for concise answers")
+    expect(systems[2]).toContain("asked for detailed answers")
   })
 })

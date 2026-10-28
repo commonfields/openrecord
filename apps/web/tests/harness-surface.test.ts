@@ -387,7 +387,7 @@ describe("api client carries the selection contract", () => {
     expect(api).toContain("selection?: HarnessSelection")
     expect(api).toContain("provider: string")
     expect(api).toContain("requestedModel: string | null")
-    expect(api).toContain("conversationId, selection })")
+    expect(api).toContain("conversationId, selection, style })")
   })
 
   it("wires the real cancel route for stopping a turn", () => {

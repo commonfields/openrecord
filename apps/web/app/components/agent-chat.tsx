@@ -97,6 +97,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const [searchParams] = useSearchParams()
   const requestedConversationId = searchParams.get("chat") ?? undefined
   const activity = useChatActivity()
+  const { responseStyle } = usePreferences().preferences
   const [messages, setMessages] = useState<Message[]>([])
   const [conversationId, setConversationId] = useState<string | undefined>()
   const [revision, setRevision] = useState(0)
@@ -188,7 +189,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     }
     let timer = setTimeout(poll, 250)
     const stopPolling = () => { polling = false; clearTimeout(timer) }
-    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
+    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection, responseStyle).then(r => {
       activity.finish(businessId, requestId, true, r.provider, r.title)
       notifyAgentChats()
       if (!mounted.current) return

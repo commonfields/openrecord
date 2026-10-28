@@ -16,6 +16,8 @@ export type Preferences = {
   reduceMotion: boolean
   /** How wide the chat's messages and composer can grow on large screens. */
   chatWidth: "comfortable" | "wide" | "full"
+  /** How the agent writes its answers: friendly by default, or shorter or deeper. */
+  responseStyle: "friendly" | "concise" | "detailed"
 }
 
 export const defaultPreferences: Preferences = {
@@ -28,6 +30,7 @@ export const defaultPreferences: Preferences = {
   showIssueCount: true,
   reduceMotion: false,
   chatWidth: "comfortable",
+  responseStyle: "friendly",
 }
 
 const KEY = "openrecord:preferences"
