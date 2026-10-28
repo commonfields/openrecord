@@ -287,7 +287,7 @@ export function AgentProposalCard({ businessId, businessName, proposal, onDone }
   const done = () => { onDone(); notifyDecisionsChanged() }
   // Re-checks and measurements are decided once; afterwards only the outcome shows.
   if (proposal.status !== "PROPOSED" && (proposal.kind === "REQUEST_CHECK" || proposal.kind === "REQUEST_ACQUISITION_BATCH"))
-    return <p className="flex items-center gap-1.5 rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">
+    return <p className="flex items-center gap-1.5 rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-3 text-xs text-muted-foreground">
       {proposal.status === "REJECTED" ? <XIcon className="size-3.5" /> : <CheckIcon className="size-3.5" />}
       {proposal.kind === "REQUEST_CHECK" ? "Re-check" : "Acquisition measurement"} {proposal.status === "REJECTED" ? "declined" : "approved and queued"}
     </p>
@@ -305,9 +305,9 @@ function InitiativeCard({ businessId, opportunityId }: { businessId: string; opp
     void Growth.get(businessId, opportunityId).then(r => { if (live) setOpportunity(r.opportunity) }).catch(() => { if (live) setOpportunity(null) })
     return () => { live = false }
   }, [businessId, opportunityId])
-  if (opportunity === undefined) return <div className="h-20 animate-pulse rounded-xl border bg-card" aria-hidden />
-  if (opportunity === null) return <p className="rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">This initiative is no longer available.</p>
-  return <div className="rounded-xl border bg-card p-4"><InitiativeDecision businessId={businessId} opportunity={opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></div>
+  if (opportunity === undefined) return <div className="h-20 animate-pulse rounded-[10px] bg-card shadow-(--card-shadow)" aria-hidden />
+  if (opportunity === null) return <p className="rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-3 text-xs text-muted-foreground">This initiative is no longer available.</p>
+  return <div className="rounded-[10px] bg-card shadow-(--card-shadow) p-4"><InitiativeDecision businessId={businessId} opportunity={opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></div>
 }
 
 /** Approval cards for what one reply saved, so the decision happens where the work was proposed. */
@@ -341,7 +341,7 @@ function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tas
       {tasks.map(t => {
         const status = statuses.get(t.id) ?? t.status
         return (
-          <li key={t.id} className="flex items-center gap-3 rounded-xl border bg-card px-3.5 py-2.5">
+          <li key={t.id} className="flex items-center gap-3 rounded-[10px] bg-card shadow-(--card-shadow) px-3.5 py-2.5">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
               {status === "RUNNING" ? <LoaderIcon className="size-3.5 animate-spin" /> : status === "COMPLETED" ? <CheckIcon className="size-3.5" /> : <XIcon className="size-3.5" />}
             </span>
@@ -374,7 +374,7 @@ function HelperBanner({ session }: { session: AgentSession }) {
   const info = session.sessionInfo
   if (!info?.parentSessionId) return null
   return (
-    <div className="mb-4 flex items-center gap-2 rounded-xl border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+    <div className="mb-4 flex items-center gap-2 rounded-[10px] bg-card shadow-(--card-shadow) px-3.5 py-2.5 text-xs text-muted-foreground">
       <UsersIcon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{roleLabel(info.role)} helper{info.title ? ` · ${info.title}` : ""}</span>
       {session.businessId !== null ? <Link className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: info.parentSessionId })}>Open the session that started it</Link> : null}
@@ -915,7 +915,7 @@ function Composer({
         className="relative flex min-h-12 cursor-text items-end gap-3 rounded-xl border border-border bg-[#fafafa] px-3 py-2 transition-colors focus-within:border-foreground/25 dark:border-[#383838] dark:bg-[#262626]"
       >
         {menuOpen ? (
-          <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-xl border bg-popover p-1 text-left shadow-(--float-shadow-strong)">
+          <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) bg-popover p-1 text-left shadow-(--float-shadow-strong)">
             {matches.map((c, i) => (
               <li key={c.key} role="option" aria-selected={i === menuIndex}>
                 <button
@@ -1101,7 +1101,7 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     catch { setError("The proposal could not be updated. Reload its current status before trying again.") }
     finally { setWorking(false) }
   }
-  return <section className="space-y-2 rounded-xl border bg-card p-4 text-xs" aria-label="Re-check proposal">
+  return <section className="space-y-2 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs" aria-label="Re-check proposal">
     <p className="font-medium">Proposed re-check for {businessName}</p>
     <p>{prompt ?? "Question unavailable"}</p><p>{proposal.message}</p>
     <p>Approval queues one external measurement call using 9Router and the exact model you select. Estimated cost is unavailable; provider charges may apply. No fact or judgment is approved.</p>
@@ -1121,7 +1121,7 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
     catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
     finally { setWorking(false) }
   }
-  return <section aria-label="Saved private draft" className="group/msg space-y-3 rounded-xl border bg-card p-4 text-xs">
+  return <section aria-label="Saved private draft" className="group/msg space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : proposal.kind === "PROPOSE_QUESTION_SET" ? "Buyer-question proposal" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
     <p>{proposal.message}</p>
     {proposal.payload ? <>
@@ -1150,7 +1150,7 @@ function AcquisitionProposal({ businessId, proposal, onDone }: { businessId: str
     catch { setError("The measurement was not approved here. Its configuration, cost or status may have changed. Reload before retrying.") }
     finally { setWorking(false) }
   }
-  return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-xl border bg-card p-4 text-xs">
+  return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">Proposed acquisition measurement</p><p className="max-h-80 overflow-auto whitespace-pre-wrap">{proposal.payload?.text ?? "Measurement plan unavailable"}</p>
     {cost === null || cost === undefined ? <p>Approval is blocked until a measurement cost bound is configured and a new proposal is prepared.</p> : null}
     <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>

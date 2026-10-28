@@ -22,6 +22,7 @@ import { AgentConnectionSection } from "@/components/harness-settings"
 import { Kbd } from "@/components/ui/kbd"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { SettingGroup, SettingRow } from "@/components/ui/setting"
 import { Auth } from "@/lib/api"
 import { formatDate, formatDateTime } from "@/lib/format"
 import { rememberedEmail, usePreferences, type Preferences } from "@/lib/preferences"
@@ -129,11 +130,11 @@ function SettingsDialog({
           <DialogPrimitive.Description className="sr-only">Change preferences and review your account</DialogPrimitive.Description>
 
           <nav className="flex shrink-0 flex-col gap-4 px-1 pt-2 pb-2 md:w-56 md:px-2 md:pt-3">
-            <div className="px-2 text-xs font-semibold text-foreground">Settings</div>
+            <div className="px-2 text-base font-medium text-foreground">Settings</div>
             <div className="flex gap-1 overflow-x-auto md:flex-col md:gap-5 md:overflow-visible">
               {nav.map((g) => (
                 <div key={g.group} className="flex gap-1 md:flex-col md:gap-0.5">
-                  <div className="hidden px-2 pb-1.5 text-xs font-medium text-muted-foreground md:block">{g.group}</div>
+                  <div className="hidden px-2 pb-1.5 text-[0.8125rem] text-muted-foreground md:block">{g.group}</div>
                   {g.items.map((item) => (
                     <button
                       key={item.id}
@@ -141,7 +142,7 @@ function SettingsDialog({
                       onClick={() => onSectionChange(item.id)}
                       aria-current={section === item.id ? "page" : undefined}
                       className={cn(
-                        "flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2 text-left text-xs whitespace-nowrap outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+                        "flex h-8 shrink-0 items-center gap-2.5 rounded-[6px] px-2 text-left text-sm whitespace-nowrap outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
                         section === item.id
                           ? "bg-sidebar-accent font-medium text-foreground [&_svg]:text-primary-ink"
                           : "text-sidebar-foreground [&_svg]:text-muted-foreground",
@@ -156,11 +157,11 @@ function SettingsDialog({
             </div>
           </nav>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-sidebar-border bg-background shadow-(--panel-shadow)">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
             <header className="flex shrink-0 items-start justify-between gap-4 px-6 py-4">
               <div className="space-y-0.5">
-                <DialogPrimitive.Title className="text-sm font-medium">{meta.title}</DialogPrimitive.Title>
-                <p className="text-xs text-muted-foreground">{meta.description}</p>
+                <DialogPrimitive.Title className="text-xl leading-6 font-medium">{meta.title}</DialogPrimitive.Title>
+                <p className="text-[0.8125rem] text-muted-foreground">{meta.description}</p>
               </div>
               <DialogPrimitive.Close asChild>
                 <Button variant="ghost" size="icon-sm" className="-mr-2 text-muted-foreground" aria-label="Close settings">
@@ -169,7 +170,7 @@ function SettingsDialog({
               </DialogPrimitive.Close>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-              <div className="mx-auto max-w-2xl space-y-8">
+              <div className="mx-auto max-w-2xl space-y-5">
                 {section === "general" ? <GeneralSection /> : null}
                 {section === "agent" ? <AgentSection /> : null}
                 {section === "checks" ? <ChecksSection /> : null}
@@ -186,31 +187,8 @@ function SettingsDialog({
   )
 }
 
-function Group({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div className="space-y-0.5">
-        <h3 className="text-xs font-medium">{title}</h3>
-        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      <div className="divide-y rounded-xl border">{children}</div>
-    </section>
-  )
-}
-
-function Row({ label, description, children, htmlFor }: { label: string; description?: ReactNode; children?: ReactNode; htmlFor?: string }) {
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-      <div className="min-w-0 space-y-0.5">
-        <label htmlFor={htmlFor} className="block text-xs font-medium">
-          {label}
-        </label>
-        {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
-      </div>
-      {children ? <div className="flex shrink-0 items-center gap-2">{children}</div> : null}
-    </div>
-  )
-}
+const Group = SettingGroup
+const Row = SettingRow
 
 function PrefSwitch({ id, k }: { id: string; k: "enterToSend" | "voiceInput" | "showIssueCount" | "reduceMotion" }) {
   const { preferences, setPreference } = usePreferences()
@@ -253,9 +231,9 @@ function GeneralSection() {
   return (
     <>
       <section className="space-y-3">
-        <div className="space-y-0.5">
-          <h3 className="text-xs font-medium">Appearance</h3>
-          <p className="text-xs text-muted-foreground">System follows your device and switches automatically.</p>
+        <div className="space-y-1">
+          <h3 className="text-base leading-5 font-medium">Appearance</h3>
+          <p className="text-[0.8125rem] text-muted-foreground">System follows your device and switches automatically.</p>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {themes.map((t) => {
@@ -268,8 +246,8 @@ function GeneralSection() {
                 aria-pressed={selected}
                 onClick={() => setPreference("theme", t.id)}
                 className={cn(
-                  "group rounded-xl border p-2 text-left outline-none transition-[box-shadow,background-color] focus-visible:ring-[3px] focus-visible:ring-ring",
-                  selected ? "border-primary-ink/50 shadow-[0_0_0_1px_var(--primary-ink)]" : "hover:bg-muted/50",
+                  "group rounded-[10px] bg-card p-2 text-left shadow-(--card-shadow) outline-none transition-[box-shadow,background-color] focus-visible:ring-[3px] focus-visible:ring-ring",
+                  selected ? "bg-accent shadow-[0_0_0_1.5px_var(--primary-ink)]" : "hover:bg-accent",
                 )}
               >
                 {t.id === "system" ? (
@@ -289,7 +267,7 @@ function GeneralSection() {
             )
           })}
         </div>
-        <div className="divide-y rounded-xl border">
+        <div className="divide-y divide-border overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
           <Row label="Chat width" description="How wide messages and the composer can grow on large screens.">
             <Select value={preferences.chatWidth} onValueChange={(v) => setPreference("chatWidth", v as Preferences["chatWidth"])}>
               <SelectTrigger className="w-36" aria-label="Chat width">
@@ -490,7 +468,7 @@ function AccountSection({ onDone }: { onDone: () => void }) {
 
   return (
     <>
-      <div className="flex items-center gap-4 rounded-xl border p-4">
+      <div className="flex min-h-20 items-center gap-4 rounded-[10px] bg-card p-3.5 shadow-(--card-shadow)">
         <span className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
           {email ? email.charAt(0).toUpperCase() : <UserRoundIcon className="size-5" />}
         </span>

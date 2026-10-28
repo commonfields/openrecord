@@ -77,13 +77,19 @@
   --series-11: #65a30d;
   --series-12: #7c3aed;
 
-  /* Card: a black-5% hairline and one short, faint drop. */
-  --card-shadow: 0 0 0 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.03);
+  /* Card: a black-5% hairline, a soft contact shadow and a faint lift. */
+  --card-shadow: 0 0 0 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 12px -6px rgb(0 0 0 / 0.08);
+  /* Controls (outline buttons, inputs, selects): a lit top edge over a crisp outline. */
+  --control: #ffffff;
+  --control-hover: #f4f4f4;
+  --primary-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 0 0 1px rgb(0 0 0 / 0.8), 0 1px 2px rgb(0 0 0 / 0.2);
+  /* Keycaps: a raised bottom edge. */
+  --key-shadow: 0 0 0 1px rgb(0 0 0 / 0.1), 0 2px 0 rgb(0 0 0 / 0.08), inset 0 1px 0 rgb(255 255 255 / 0.9);
   --card-shadow-raised: 0 0 0 1px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.05);
   --float-shadow: var(--card-shadow);
   --float-shadow-strong: 0 0 0 1px rgb(0 0 0 / 0.07), 0 4px 10px -2px rgb(0 0 0 / 0.07), 0 14px 32px -8px rgb(0 0 0 / 0.12);
   --panel-shadow: 0 0 0 1px rgb(0 0 0 / 0.04);
-  --control-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  --control-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 0 0 1px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.06);
   --badge-shadow: 0 1px 2px rgb(0 0 0 / 0.06), inset 0 1px 0 rgb(255 255 255 / 0.5);
 }
 
@@ -151,12 +157,17 @@
   --series-11: #a3e635;
   --series-12: #a78bfa;
 
-  --card-shadow: 0 0 0 1px rgb(255 255 255 / 0.05);
-  --card-shadow-raised: 0 0 0 1px rgb(255 255 255 / 0.05), 0 2px 8px rgb(0 0 0 / 0.25);
+  /* Cards: white-5% edge, a lit top line, and a contact shadow so they sit above the page. */
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.5), 0 6px 16px -8px rgb(0 0 0 / 0.5);
+  --control: #2a2a2a;
+  --control-hover: #303030;
+  --primary-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.5);
+  --key-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.7), 0 2px 0 rgb(0 0 0 / 0.55), 0 3px 6px rgb(0 0 0 / 0.35);
+  --card-shadow-raised: var(--card-shadow);
   --float-shadow: var(--card-shadow);
   --float-shadow-strong: 0 0 0 1px rgb(255 255 255 / 0.07), 0 1px 3px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.45);
   --panel-shadow: 0 0 0 1px rgb(255 255 255 / 0.05);
-  --control-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  --control-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 0 0 1px rgb(0 0 0 / 0.6), 0 1px 2px rgb(0 0 0 / 0.45);
   --badge-shadow: 0 1px 2px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 
@@ -179,6 +190,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);

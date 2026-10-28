@@ -210,7 +210,7 @@ export function SiteFindingPage() {
               ) : (
                 <>
                   {mutations.map((m: SiteMutation) => (
-                    <div key={m.id} className="rounded-lg border p-3 text-xs">
+                    <div key={m.id} className="rounded-[10px] bg-card shadow-(--card-shadow) p-3 text-xs">
                       <p className="font-medium">Change {m.state.toLowerCase().replace(/_/g, " ")}</p>
                       {m.branch ? <p className="text-muted-foreground">Branch: <span className="font-mono">{m.branch}</span></p> : null}
                       {m.commitSha ? <p className="text-muted-foreground">Commit: <span className="font-mono">{m.commitSha.slice(0, 12)}</span></p> : null}
@@ -219,7 +219,7 @@ export function SiteFindingPage() {
                     </div>
                   ))}
                   {verifications.map((v: SiteVerification) => (
-                    <div key={v.id} className="rounded-lg border p-3 text-xs">
+                    <div key={v.id} className="rounded-[10px] bg-card shadow-(--card-shadow) p-3 text-xs">
                       <p className="font-medium">
                         {v.result === "VERIFIED_FIXED" ? "OpenRecord verified the fix on the live site." : v.result === "VERIFIED_NOT_FIXED" ? "The live site still shows the problem." : "Verification pending."}
                       </p>

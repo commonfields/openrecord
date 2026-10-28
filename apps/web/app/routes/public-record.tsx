@@ -92,7 +92,7 @@ function Step({ label, answers, summary }: { label: string; answers: PublicAnswe
 function FactRecord({ fact }: { fact: PublicFact }) {
   const c = fact.comparison
   return (
-    <article className="space-y-4 rounded-xl border p-5">
+    <article className="space-y-4 rounded-[10px] bg-card shadow-(--card-shadow) p-5">
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Approved fact {fact.position}</p>
         <h2 className="text-sm font-semibold">{fact.fact.label}: {fact.fact.value}</h2>

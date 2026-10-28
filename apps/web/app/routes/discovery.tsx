@@ -175,7 +175,7 @@ export function DiscoveryPage() {
               className="py-10"
             />
           ) : (
-            <ul className="divide-y rounded-lg border">
+            <ul className="divide-y rounded-[10px] bg-card shadow-(--card-shadow)">
               {scopeList.map((s) => (
                 <li key={s.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
                   <div className="min-w-0 flex-1">
@@ -301,7 +301,7 @@ export function DiscoveryPage() {
                 className="py-10"
               />
             ) : (
-              <div className="overflow-x-auto rounded-lg border">
+              <div className="overflow-x-auto rounded-[10px] bg-card shadow-(--card-shadow)">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
