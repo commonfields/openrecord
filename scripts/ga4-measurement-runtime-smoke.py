@@ -43,6 +43,8 @@ CLIENT_ID = "smoke-client.apps.googleusercontent.com"
 CLIENT_SECRET = "smoke-secret-" + uuid.uuid4().hex
 KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 READONLY = "https://www.googleapis.com/auth/analytics.readonly"
+# Search Console is read through the same connection; both scopes are read-only.
+SEARCH_CONSOLE_READONLY = "https://www.googleapis.com/auth/webmasters.readonly"
 P1, P_FOREIGN, EVENT, TZ = "properties/515151", "properties/929292", "book_appointment", "Asia/Makassar"
 checks = []
 
@@ -291,7 +293,7 @@ try:
     assert op.call("POST", "/api/auth/signin", {"email": email, "password": "disposable-fixture-password"})[0] == 200
     auth_url = op.ok("POST", "/api/growth/ga4/connect", {"businessId": biz})["authorizationUrl"]
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(auth_url).query))
-    check("G.02 the authorization request is read-only, PKCE S256, with the exact redirect URI", q["scope"] == f"openid email {READONLY}" and q["code_challenge_method"] == "S256" and q["redirect_uri"] == REDIRECT
+    check("G.02 the authorization request is read-only, PKCE S256, with the exact redirect URI", q["scope"] == f"openid email {READONLY} {SEARCH_CONSOLE_READONLY}" and q["code_challenge_method"] == "S256" and q["redirect_uri"] == REDIRECT
           and CLIENT_SECRET not in auth_url)
     status, _, headers = op.call("GET", auth_url)
     callback = headers.get("location")
