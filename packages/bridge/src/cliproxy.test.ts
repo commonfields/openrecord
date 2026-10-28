@@ -3,10 +3,10 @@ import type { AddressInfo } from "node:net"
 import { randomUUID } from "node:crypto"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import type { HarnessJob } from "@openrecord/contracts"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { cliProxyConfigKey, cliProxyConfigPaths, cliProxyOrigin, executeCliProxy, probeCliProxy } from "./cliproxy.js"
+import { cliProxyConfigKey, cliProxyConfigPaths, findCliProxy, resetCliProxyStart, cliProxyOrigin, executeCliProxy, probeCliProxy } from "./cliproxy.js"
 import { codexReasoning, execute, probe, type LocalInstance } from "./adapters.js"
 
 // A loopback stand-in for CLIProxyAPI's OpenAI-compatible surface. No provider is called.
@@ -125,4 +125,30 @@ describe("CLIProxyAPI driver (loopback stand-in; no provider calls)", () => {
       expect(seen.at(-1)?.auth).toBe("Bearer from-env")
     })
   })
+
+  it("starts an installed CLIProxyAPI in the background when it is not running", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cliproxy-home-")), bin = join(home, "bin")
+    const port = 20000 + Math.floor(Math.random() * 20000)
+    mkdirSync(join(home, ".cli-proxy-api"), { recursive: true }); mkdirSync(bin)
+    const config = join(home, ".cli-proxy-api", "config.yaml")
+    writeFileSync(config, `port: ${port}\naccess:\n  api-keys:\n    - "started-key"\n`)
+    // A stand-in proxy: reads its port from -config, answers /v1/models, exits after a few seconds.
+    writeFileSync(join(bin, "cli-proxy-api"), `#!${process.execPath}
+const fs = require("node:fs"); const http = require("node:http")
+const cfg = fs.readFileSync(process.argv[process.argv.indexOf("-config") + 1], "utf8")
+const port = Number(cfg.match(/port: (\\d+)/)[1])
+const s = http.createServer((req, res) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ object: "list", data: [{ id: "claude-sonnet-5-5" }], auth: req.headers.authorization })))
+s.listen(port, "127.0.0.1"); setTimeout(() => process.exit(0), 4000)
+`)
+    chmodSync(join(bin, "cli-proxy-api"), 0o755)
+    const instance = { id: randomUUID(), name: "CLIProxyAPI", baseUrl: `http://127.0.0.1:${port}` }
+    const env = { PATH: bin, CLIPROXY_CONFIG: config }
+    expect(findCliProxy(env, home)).toEqual({ binary: join(bin, "cli-proxy-api"), config })
+    resetCliProxyStart()
+    const report = await probeCliProxy(instance, env, home)
+    expect(report).toMatchObject({ installed: true, state: "ready", auth: "authenticated", models: [{ id: "claude-sonnet-5-5" }] })
+    // Not installed: nothing to start, and it stays not running.
+    resetCliProxyStart()
+    expect(await probeCliProxy({ ...instance, baseUrl: "http://127.0.0.1:1" }, { PATH: "" }, mkdtempSync(join(tmpdir(), "empty-")))).toMatchObject({ installed: false })
+  }, 20000)
 })

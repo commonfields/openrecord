@@ -41,7 +41,7 @@ describe("agent workspace presentation", () => {
   it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
     expect(agentChat()).toContain('activity.start(businessId, requestId, "New chat", conversationId, providerTag)')
     expect(agentChat()).toContain("activity.finish(businessId, requestId, true, r.provider, r.title)")
-    expect(read("../app/components/app-shell.tsx")).toContain('aria-label="Agent is responding"')
+    expect(read("../app/components/app-shell.tsx")).toContain("motion-safe:animate-[status-pulse_2s_infinite]")
     const picker = read("../app/components/agent-model-picker.tsx")
     expect(picker).toContain("p-0 text-xs text-muted-foreground")
     expect(agentChat()).toContain("p-0 text-xs text-muted-foreground shadow-none")
@@ -373,7 +373,7 @@ describe("harness client", () => {
 
   it("keeps the pairing code out of persistent storage", () => {
     const dialog = harnessSettings()
-    expect(dialog).toContain("Get pairing code")
+    expect(dialog).toContain("Get code")
     expect(dialog).not.toMatch(/localStorage/)
     expect([...harnessLib().matchAll(/localStorage\.(get|remove|set)Item/g)].length).toBeGreaterThan(0)
     // The only localStorage key is the non-sensitive selection.
@@ -409,10 +409,10 @@ describe("settings → agent connection surface", () => {
   it("shows hosted, bridges, all four providers and real loading/error states", () => {
     const dialog = harnessSettings()
     expect(dialog).toContain("OpenRecord hosted")
-    expect(dialog).toContain("Bridges")
+    expect(dialog).toContain("Computers")
     // All four providers are surfaced through the shared driver table.
     expect(dialog).toContain("HARNESS_DRIVERS")
-    expect(dialog).toContain("Not reported by any paired bridge yet")
+    expect(dialog).toContain("No computer is connected yet")
     expect(dialog).toContain("Checking provider status")
     expect(dialog).toContain("Couldn't load providers")
     expect(dialog).toContain("Retry")
@@ -426,7 +426,7 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain('BRIDGE_SCRIPT = "/openrecord-bridge.mjs"')
     expect(dialog).toContain("Node 24")
     expect(dialog).toContain("Download bridge")
-    expect(dialog).toContain("short-lived")
+    expect(dialog).toContain("Don't share it")
     expect(dialog).toContain("loginCommand")
     expect(dialog).toContain("Harness.setEnabled")
     expect(dialog).toContain("Harness.refresh")
@@ -434,7 +434,14 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain("pairCommand")
     expect(dialog).toContain("<ProviderLogo")
     expect(dialog).toContain("onClick={connect}>Connect")
-    expect(dialog).toContain("node openrecord-bridge.mjs run")
+    // An offline computer folds to one line; no restart command under each provider.
+    expect(dialog).not.toContain('value="node openrecord-bridge.mjs run"')
+    expect(dialog).toContain("Prompt for your coding agent")
+    const prompt = harnessLib()
+    expect(prompt).toContain("export function agentSetupPrompt(code: string")
+    expect(prompt).toContain("KeepAlive")
+    expect(prompt).toContain("Restart=always")
+    expect(prompt).toContain("Do not set ANTHROPIC_API_KEY or OPENAI_API_KEY")
   })
 })
 

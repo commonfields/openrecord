@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
+import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
+import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
 import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
@@ -383,6 +384,30 @@ function HelperBanner({ session }: { session: AgentSession }) {
 
 // ---- the conversation ----
 
+// The model that answered a reply, and whether it differs from the one that
+// answered the reply before it in this session.
+const modelOf = (m: Message) => m.role === "agent" && m.provider ? `${m.provider}:${m.model ?? ""}` : null
+function handover(messages: ReadonlyArray<Message>, i: number) {
+  const now = modelOf(messages[i]!)
+  if (!now) return false
+  for (let j = i - 1; j >= 0; j--) { const before = modelOf(messages[j]!); if (before) return before !== now }
+  return false
+}
+
+// One session, several models: the next reply came from another model, which
+// was given the conversation so far.
+function ModelHandover({ message }: { message: Message }) {
+  const name = message.model ?? message.provider ?? "another model"
+  return (
+    <li role="note" className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground">
+      <span className="h-px flex-1 bg-border" />
+      <ProviderLogo bare provider={modelBrand(message.model ?? "", message.provider ?? "")} className="size-3" />
+      Switched to {name} · it has the conversation so far
+      <span className="h-px flex-1 bg-border" />
+    </li>
+  )
+}
+
 // A finished reply's work log: its recorded steps, or for replies saved
 // before steps were kept, the tools it ran.
 const workLog = (m: Message): AgentActivity[] => m.activity?.length ? m.activity
@@ -424,12 +449,14 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           <HelperBanner session={session} />
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
-              {session.messages.map((m) => m.origin?.kind === "wake" ? (
+              {session.messages.map((m, i) => m.origin?.kind === "wake" ? (
                 <li key={m.id} className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground" role="note">
                   <span className="h-px flex-1 bg-border" />Helper results arrived. Continuing<span className="h-px flex-1 bg-border" />
                 </li>
               ) : (
-                <li key={m.id} className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
+                <Fragment key={m.id}>
+                {handover(session.messages, i) ? <ModelHandover message={m} /> : null}
+                <li className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
                   {m.origin ? <OriginLabel session={session} origin={m.origin} /> : null}
                   {m.role === "user" ? (
                     m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null
@@ -457,6 +484,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                   )}
                   <CopyButton text={m.text} className={m.role === "user" ? "-mr-1.5" : "-ml-1.5"} />
                 </li>
+                </Fragment>
               ))}
             </ol>
           ) : null}

@@ -63,6 +63,34 @@ export function loginCommand(driver: HarnessDriver, localId?: string): string {
     : `node openrecord-bridge.mjs login --driver ${driver}`
 }
 
+// The provider's own sign-in command, for a computer where OpenRecord runs
+// the bridge itself (there is no bridge script to call there).
+export function nativeLoginCommand(driver: HarnessDriver): string {
+  return { codex: "codex login", claude: "claude auth login", opencode: "opencode auth login", cursor: "cursor-agent login", cliproxy: "cli-proxy-api -claude-login   # or -codex-login" }[driver]
+}
+
+// A prompt the person pastes into the coding agent on another computer
+// (Claude Code, Codex, Cursor…) to install, pair and keep the bridge running.
+export function agentSetupPrompt(code: string, expiresAt: string, origin = typeof window === "undefined" ? "" : window.location.origin): string {
+  return `Set up the OpenRecord bridge on this computer so OpenRecord can use the AI subscriptions signed in here. Work step by step and tell me what you did.
+
+1. Check that Node.js 24 or later is installed (node --version). If not, install it the usual way for this system (Homebrew, nvm, winget or the package manager).
+2. Download the bridge:
+   mkdir -p ~/.openrecord/bin && curl -fsSL ${origin}/openrecord-bridge.mjs -o ~/.openrecord/bin/openrecord-bridge.mjs
+3. Pair it. The code works once and expires at ${expiresAt}:
+   node ~/.openrecord/bin/openrecord-bridge.mjs pair --server ${origin} --code ${code}
+   It keeps running after it prints "bridge running". Stop it with Ctrl-C once you see that line.
+4. Keep the bridge running in the background and after restarts, using the absolute path to node:
+   - macOS: a LaunchAgent at ~/Library/LaunchAgents/io.openrecord.bridge.plist running "node ~/.openrecord/bin/openrecord-bridge.mjs run" with RunAtLoad and KeepAlive, loaded with launchctl.
+   - Linux: a systemd user service with Restart=always, enabled and started.
+   - Windows: a Task Scheduler task that runs at logon and restarts on failure.
+   Then check it is running: node ~/.openrecord/bin/openrecord-bridge.mjs probe
+5. Report which of these are installed and signed in: codex, claude, opencode, cursor-agent. Do not sign in for me or change their settings; tell me the sign-in command for any that are signed out.
+6. If CLIProxyAPI is installed, check its config.yaml lists a key under access api-keys. The bridge starts it in the background and reads that key itself.
+
+Never print, log or share the pairing code or ~/.openrecord/bridge.json. Do not set ANTHROPIC_API_KEY or OPENAI_API_KEY for the bridge: they would bill an API key instead of my subscriptions.`
+}
+
 // ---- model selection ----
 
 export function harnessStatusLabel(instance: HarnessInstance, checking: boolean): string | null {

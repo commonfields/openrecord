@@ -6,9 +6,10 @@
 // The proxy's client key stays on this computer: it is read from an
 // environment variable or the private bridge configuration file. Plain HTTP
 // is accepted only for a loopback address.
-import { readFileSync, statSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { accessSync, constants, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { delimiter, dirname, join } from "node:path"
 import { Schema } from "effect"
 import { HARNESS_NAMES, chatCompletionAnswer, chatCompletionRequest, chatModelIds, chatStream, type HarnessAnswer, type HarnessJob, type HarnessReport } from "@openrecord/contracts"
 import { BridgeFailure } from "./process.js"
@@ -124,7 +125,54 @@ async function call(instance: CliProxyInstance, env: NodeJS.ProcessEnv, path: st
   return readBounded(response)
 }
 
-export async function probeCliProxy(instance: CliProxyInstance, env: NodeJS.ProcessEnv = process.env): Promise<HarnessReport> {
+const CLIPROXY_BINARIES = ["cli-proxy-api", "cliproxyapi", "CLIProxyAPI"].flatMap(n => process.platform === "win32" ? [`${n}.exe`] : [n])
+const executable = (path: string) => { try { accessSync(path, constants.X_OK); return statSync(path).isFile() } catch { return false } }
+/** An installed CLIProxyAPI and the config it should run with, or null. */
+export function findCliProxy(env: NodeJS.ProcessEnv = process.env, home = homedir()): { binary: string; config: string } | null {
+  const config = cliProxyConfigPaths(env, home).find(p => { try { return statSync(p).isFile() } catch { return false } })
+  if (!config) return null
+  const dirs = [...(env["PATH"] ?? "").split(delimiter).filter(Boolean), dirname(config), join(home, "CLIProxyAPI"), join(home, "cliproxyapi")]
+  for (const dir of dirs) for (const name of CLIPROXY_BINARIES) if (executable(join(dir, name))) return { binary: join(dir, name), config }
+  return null
+}
+
+// Started at most once every five minutes per bridge, so a proxy that keeps
+// exiting is not restarted in a loop.
+let startedAt = 0
+/**
+ * Starts CLIProxyAPI in the background when it is installed on this computer
+ * but not running, so the person's subscriptions are usable without keeping a
+ * terminal open. It keeps running after the bridge stops.
+ */
+export async function startCliProxy(instance: CliProxyInstance, env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<boolean> {
+  let origin: URL
+  try { origin = cliProxyOrigin(instance.baseUrl) } catch { return false }
+  if (!LOOPBACK.has(origin.hostname) || Date.now() - startedAt < 300_000) return false
+  const found = findCliProxy(env, home)
+  if (!found) return false
+  startedAt = Date.now()
+  try {
+    const child = spawn(found.binary, ["-config", found.config], { cwd: dirname(found.config), detached: true, stdio: "ignore", shell: false, env })
+    child.on("error", () => {})
+    child.unref()
+  } catch { return false }
+  // Wait for it to answer, up to ten seconds.
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500))
+    try { await fetch(endpoint(instance, "/v1/models"), { signal: AbortSignal.timeout(1000), redirect: "error" }); return true } catch { /* not yet */ }
+  }
+  return false
+}
+/** For tests: allow another start at once. */
+export const resetCliProxyStart = () => { startedAt = 0 }
+
+export async function probeCliProxy(instance: CliProxyInstance, env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<HarnessReport> {
+  const first = await probeCliProxyOnce(instance, env)
+  if (first.installed || !(await startCliProxy(instance, env, home))) return first
+  return probeCliProxyOnce(instance, env)
+}
+
+async function probeCliProxyOnce(instance: CliProxyInstance, env: NodeJS.ProcessEnv): Promise<HarnessReport> {
   const base: HarnessReport = { localId: instance.id, driver: "cliproxy", name: instance.name || HARNESS_NAMES.cliproxy,
     installed: false, version: null, auth: "unknown", state: "unavailable", models: [] }
   let origin: URL
