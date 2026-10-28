@@ -236,6 +236,7 @@ export type AgentCitation = { kind: string; id: string; text: string }
 export type AgentMessage = {
   role: "user" | "agent"
   text: string
+  run?: AgentRunRef
   citations?: AgentCitation[]
   toolCalls?: AgentToolCall[]
   // Which provider answered, recorded by the server at turn time. Absent on
@@ -243,6 +244,10 @@ export type AgentMessage = {
   inference?: { provider: string; requestedModel: string | null; instanceId?: string } | null
 }
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[] }
+// The run behind an agent message: how it ended and which checks did not run.
+export type AgentRunRef = { id: string; status: "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"; outcome?: "ANSWERED" | "ANSWERED_WITH_GAPS"; gaps?: string[] }
+export type AgentRunEvent = { seq: number; type: string; at: string; payload: Record<string, unknown> }
+export type AgentRunProgress = { run: { id: string; status: string; modelSteps: number; toolCalls: number } | null; events: AgentRunEvent[] }
 export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
 export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
@@ -254,9 +259,11 @@ export const Agent = {
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
   send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection) =>
-    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null }>(`${agentBase(businessId)}/messages`, {
+    api<{ reply: string; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[] }>(`${agentBase(businessId)}/messages`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection }),
     }),
+  // Live journal of the run answering a request, after the last seen sequence.
+  progress: (requestId: string, after: number) => api<AgentRunProgress>(`/api/agent/runs/progress?requestId=${encodeURIComponent(requestId)}&after=${after}`),
   // Stops the turn in flight. The pending send settles on its own after this.
   cancel: (businessId: string | null, conversationId?: string) =>
     api<{ cancelled: boolean }>(`${agentBase(businessId)}/cancel`, { method: "POST", body: JSON.stringify({ conversationId }) }),

@@ -93,7 +93,9 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
   it("fixture conversation reads scoped goal/opportunities and proposes MODEL_SUGGESTION with validated observed references", async () => {
     const f = await fixture(), other = await fixture()
     const action = await run(Effect.flatMap(RecordRepository, r => r.recordAction(f.session, f.profile.businessId, { type: "OTHER", slot: null, note: "TEST stored action", links: [], performedAt: new Date().toISOString() })))
-    const args = { ...proposal(f), observedReferences: [{ kind: "RECORD_ACTION", id: action.id }, { kind: "RECORD_ACTION", id: randomUUID() }] }
+    // The model never supplies retry identity; the server derives it from the content.
+    const { idempotencyKey: _key, ...fields } = proposal(f)
+    const args = { ...fields, observedReferences: [{ kind: "RECORD_ACTION", id: action.id }, { kind: "RECORD_ACTION", id: randomUUID() }] }
     let step = 0
     const model: AgentModel = input => {
       expect(input.system).toContain("MODEL_SUGGESTION hypotheses")
@@ -120,14 +122,16 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     }
     const foreignProposal = await run(Effect.either(dispatchAgentTool(other.session.accountId, other.session.userId, f.profile.businessId, "propose_growth_opportunity", args)))
     expect(foreignProposal).toMatchObject({ _tag: "Left", left: { _tag: "AgentNotInScope" } })
-    const foreignGoal = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, goalId: other.profile.primaryGoal.id, idempotencyKey: randomUUID() })))
+    const foreignGoal = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, goalId: other.profile.primaryGoal.id })))
     expect(foreignGoal).toMatchObject({ _tag: "Left", left: { reason: "GoalNotFound" } })
-    const noEvidence = await run(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, idempotencyKey: randomUUID(), observedReferences: [] }))
+    const noEvidence = await run(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, observedReferences: [] }))
     expect(noEvidence.data).toMatchObject({ hypothesis: true, validatedObservedReferences: 0 })
     const updated = await run(Effect.flatMap(GrowthRepository, r => r.list(f.session.accountId, f.profile.businessId)))
     expect(updated.find(o => o.evidence.length === 1)?.evidence[0]?.type).toBe("MODEL_SUGGESTION")
     const malformed = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, initialStatus: "APPROVED" })))
     expect(malformed._tag).toBe("Left")
+    const modelKey = await run(Effect.either(dispatchAgentTool(f.session.accountId, f.session.userId, f.profile.businessId, "propose_growth_opportunity", { ...args, idempotencyKey: randomUUID() })))
+    expect(modelKey._tag).toBe("Left")
   })
   it("requires a request identity on profile updates and replays the original result", async () => {
     const f = await fixture()
