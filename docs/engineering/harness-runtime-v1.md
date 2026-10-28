@@ -24,9 +24,19 @@ The server stores job input until completion, cancellation, or expiry cleanup. I
 
 Request replay includes the selected instance and model in its digest. Switching models on a later turn sends bounded conversation history to the newly selected provider. There is no fallback and no automatic retry of an uncertain generation request.
 
+## CLIProxyAPI driver
+
+The fifth driver, `cliproxy`, is a local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) server rather than a CLI. The bridge lists its models with `GET /v1/models` and runs each model step as one `POST /v1/chat/completions` with native tool calling. The CLI drivers instead prompt the model to answer inside a JSON envelope. `packages/contracts/src/openai-chat.ts` converts OpenRecord's transcript (text, `functionCall` and `functionResponse` parts) to chat messages and back. Call IDs come from position, because the transcript stores none: the k-th call in model content i is `call_i_k`, and the server's responses that follow answer them in order.
+
+The proxy's client key comes from an environment variable (`CLIPROXY_API_KEY` by default) or the private bridge configuration. Plain HTTP is accepted only for a loopback host. A 401 or 403 reports the instance as unauthenticated, a 429 as usage limited, and an unreachable proxy as not installed. Reasoning-effort options are not offered for this driver.
+
+The bridge now runs up to four jobs at once, so helper sessions working in parallel are not queued behind one another.
+
+A self-hosted server can also call CLIProxyAPI directly, without a bridge: `AGENT_PROVIDER=cliproxy`, `AGENT_MODEL=<model id>`, `AGENT_API_KEY=<client key>` and `AGENT_BASE_URL` (default `http://127.0.0.1:8317`; plain HTTP only on loopback).
+
 ## Current limits
 
-The four drivers are Codex, Claude Code, OpenCode, and Cursor. OpenCode and Cursor use ACP. Discovery does not establish subscription entitlement. Provider-specific minimum-version compatibility and successful live generation still need validation before release.
+The five drivers are Codex, Claude Code, OpenCode, Cursor and CLIProxyAPI. OpenCode and Cursor use ACP; CLIProxyAPI uses its OpenAI-compatible HTTP API. Discovery does not establish subscription entitlement. Provider-specific minimum-version compatibility and successful live generation still need validation before release.
 
 Discovery rotates report batches below a 150 KB UTF-8 request budget. Individual catalogs are limited to 500 models and a 125 KB report budget. Settings marks a catalog that was truncated. Other account instances remain discoverable on later polls.
 

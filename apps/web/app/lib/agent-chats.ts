@@ -37,7 +37,8 @@ export function useChatActivity() {
 }
 
 export function mergeAgentChats(chats: readonly AgentChatSummary[], activity: ReadonlyMap<string, ChatActivity>, businesses: readonly { id: string; name: string }[]) {
-  const merged = new Map(chats.map(chat => [chat.id, { ...chat, working: false, draft: false }]))
+  // The server reports a session as working while any turn runs there, including a helper's.
+  const merged = new Map(chats.map(chat => [chat.id, { ...chat, working: chat.working ?? false, draft: false }]))
   for (const [, item] of activity) {
     const { businessId, conversationId } = item
     const saved = merged.get(conversationId)

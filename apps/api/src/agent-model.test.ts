@@ -45,3 +45,40 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
     expect(await invoke()).toMatchObject({ _tag: "Left", left: { reason: "TIMEOUT" } })
   })
 })
+
+describe("CLIProxyAPI assistant transport (local HTTP fixtures only)", () => {
+  const proxy = (extra: Array<[string, string]> = []) => ConfigProvider.fromMap(new Map([
+    ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_PROVIDER", "cliproxy"], ["AGENT_MODEL", "claude-sonnet-5-5"], ["AGENT_API_KEY", "TEST-client-key"],
+    ["AGENT_BASE_URL", "http://127.0.0.1:8317/v1/"], ["AGENT_TIMEOUT_MS", "50"], ...extra,
+  ]))
+  const call = (cfg = proxy()) => Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({
+    contents: [{ role: "user", parts: [{ text: "What is open?" }] }], tools: [{ name: "read_open_issues", description: "Read", parametersJsonSchema: { type: "object", properties: {} } }], system: "sys" })).pipe(Effect.withConfigProvider(cfg))))
+  it("sends native tools to the chat endpoint and maps calls and usage back", async () => {
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("http://127.0.0.1:8317/v1/chat/completions")
+      expect(new Headers(init.headers).get("authorization")).toBe("Bearer TEST-client-key")
+      expect(JSON.parse(String(init.body))).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 2048, tools: [{ type: "function", function: { name: "read_open_issues" } }] })
+      return new Response(JSON.stringify({ model: "claude-sonnet-5-5-observed", usage: { prompt_tokens: 9, completion_tokens: 2, total_tokens: 11 },
+        choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "read_open_issues", arguments: "{}" } }] } }] }))
+    })
+    vi.stubGlobal("fetch", fetch)
+    expect(await call()).toMatchObject({ _tag: "Right", right: { modelVersion: "claude-sonnet-5-5-observed", usageMetadata: { promptTokenCount: 9, totalTokenCount: 11 },
+      candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ functionCall: { name: "read_open_issues", args: {} } }] } }] } })
+  })
+  it("returns text replies", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "Two issues." } }] })))
+    expect(await call()).toMatchObject({ _tag: "Right", right: { candidates: [{ content: { parts: [{ text: "Two issues." }] } }] } })
+  })
+  it.each([[429, "RATE_LIMITED"], [401, "UNAVAILABLE"]])("redacts proxy error %s", async (status, reason) => {
+    vi.stubGlobal("fetch", async () => new Response("secret upstream detail", { status }))
+    const out = await call()
+    expect(out).toMatchObject({ _tag: "Left", left: { reason } })
+    expect(JSON.stringify(out)).not.toContain("secret")
+  })
+  it("refuses a non-loopback plain HTTP endpoint before any request", async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal("fetch", fetch)
+    expect(await call(proxy([["AGENT_BASE_URL", "http://192.168.1.3:8317"]]))).toMatchObject({ _tag: "Left", left: { reason: "UNCONFIGURED" } })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+})

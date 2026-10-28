@@ -10,6 +10,7 @@ import { HARNESS_NAMES, HarnessDriver, type HarnessJobResult, type HarnessReport
 import { LocalInstance, executableFor, execute, probe } from "./adapters.js"
 import { BridgeClient, serverOrigin } from "./client.js"
 import { BridgeFailure, driverEnvironment } from "./process.js"
+import { CLIPROXY_DEFAULT_KEY_ENV, CLIPROXY_DEFAULT_URL, cliProxyOrigin } from "./cliproxy.js"
 
 const Config = Schema.Struct({
   server: Schema.String,
@@ -67,7 +68,7 @@ export async function main(args = process.argv.slice(2)) {
   const command = args[0] ?? "run"
   if (command === "--help" || command === "help") {
     process.stdout.write(
-      "OpenRecord local harness bridge (Node 24+)\n\npair --server <OpenRecord origin> --code <code from Settings>\nrun                         Start a paired bridge\nprobe                       Check installed providers without generating answers\nlogin --driver <driver>     Run an official provider login\nlogin --instance <local id> Sign in to a specific local instance\nadd --driver <driver> --name <name> [--home <directory>] [--binary <path>]\n\nDrivers: codex, claude, opencode, cursor. Provider credentials remain local.\n"
+      "OpenRecord local harness bridge (Node 24+)\n\npair --server <OpenRecord origin> --code <code from Settings>\nrun                         Start a paired bridge\nprobe                       Check installed providers without generating answers\nlogin --driver <driver>     Run an official provider login\nlogin --instance <local id> Sign in to a specific local instance\nadd --driver <driver> --name <name> [--home <directory>] [--binary <path>]\nadd --driver cliproxy [--url <origin>] [--api-key-env <NAME>]\n\nDrivers: codex, claude, opencode, cursor, cliproxy. Provider credentials remain local.\nCLIProxyAPI defaults to " + CLIPROXY_DEFAULT_URL + " with its client key in " + CLIPROXY_DEFAULT_KEY_ENV + ".\n"
     )
     return
   }
@@ -81,7 +82,8 @@ export async function main(args = process.argv.slice(2)) {
       const registered = Schema.decodeUnknownSync(Schema.Struct({ bridgeId: Schema.UUID, token: Schema.String }))(
         await new BridgeClient(server, "").request("/api/bridge/register", { code }, false)
       )
-      const drivers: HarnessDriver[] = ["codex", "claude", "opencode", "cursor"]
+      // CLIProxyAPI is discovered at its default local address; it shows as not running until started.
+      const drivers: HarnessDriver[] = ["codex", "claude", "opencode", "cursor", "cliproxy"]
       await save({
         server,
         ...registered,
@@ -98,13 +100,21 @@ export async function main(args = process.argv.slice(2)) {
       driver = Schema.decodeUnknownSync(HarnessDriver)(option(args, "--driver"))
     const home = option(args, "--home"),
       binary = option(args, "--binary"),
+      url = option(args, "--url"),
+      apiKeyEnv = option(args, "--api-key-env"),
       name = option(args, "--name") ?? HARNESS_NAMES[driver]
     if (config.instances.length >= 32) throw new BridgeSetupError("At most 32 local instances are supported")
+    if (driver === "cliproxy") {
+      try { cliProxyOrigin(url) } catch { throw new BridgeSetupError("Use an https:// URL, or http:// on 127.0.0.1 or localhost") }
+      if (apiKeyEnv !== undefined && !/^[A-Z_][A-Z0-9_]{0,99}$/.test(apiKeyEnv)) throw new BridgeSetupError("--api-key-env must name an environment variable")
+    }
     await save({
       ...config,
       instances: [
         ...config.instances,
-        { id: randomUUID(), driver, name, ...(home ? { home } : {}), ...(binary ? { binary } : {}) }
+        driver === "cliproxy"
+          ? { id: randomUUID(), driver, name, ...(url ? { baseUrl: url } : {}), ...(apiKeyEnv ? { apiKeyEnv } : {}) }
+          : { id: randomUUID(), driver, name, ...(home ? { home } : {}), ...(binary ? { binary } : {}) }
       ]
     })
     log("instance added: restart the bridge to discover it")
@@ -117,16 +127,19 @@ export async function main(args = process.argv.slice(2)) {
     const instance = config.instances.find((i) => (id ? i.id === id : i.driver === driver))
     if (!instance)
       throw new BridgeSetupError("Choose --driver codex|claude|opencode|cursor or --instance from local configuration")
+    if (instance.driver === "cliproxy")
+      throw new BridgeSetupError("Sign in to providers in CLIProxyAPI itself (for example: cli-proxy-api --claude-login)")
+    const loginDriver = instance.driver
     const binary = await executableFor(instance)
     const commands = { codex: ["login"], claude: ["auth", "login"], opencode: ["auth", "login"], cursor: ["login"] }
-    const env = driverEnvironment(instance.driver)
+    const env = driverEnvironment(loginDriver)
     if (instance.home) {
       if (instance.driver === "codex") env["CODEX_HOME"] = instance.home
       else if (instance.driver === "claude") env["CLAUDE_CONFIG_DIR"] = instance.home
       else if (instance.driver === "opencode") env["OPENCODE_CONFIG_DIR"] = instance.home
     }
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(binary, commands[instance.driver], { env, shell: false, stdio: "inherit" })
+      const child = spawn(binary, commands[loginDriver], { env, shell: false, stdio: "inherit" })
       child.once("error", () => reject(new BridgeSetupError("Provider CLI is unavailable")))
       child.once("exit", (code) =>
         code === 0 ? resolve() : reject(new BridgeSetupError("Provider sign-in did not complete"))
@@ -167,7 +180,7 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
           reports = await Promise.all(config.instances.map(probe))
           checkedAt = Date.now()
         }
-        const poll = await client.poll(reports, jobs.size < 2)
+        const poll = await client.poll(reports, jobs.size < 4)
         if (poll.refresh) checkedAt = 0
         failures = 0
         for (const [id, job] of jobs) if (!poll.active.includes(id)) job.controller.abort()

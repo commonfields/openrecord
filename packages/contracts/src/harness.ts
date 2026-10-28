@@ -2,7 +2,9 @@ import { Schema } from "effect"
 
 const Text = (max: number) => Schema.String.pipe(Schema.minLength(1), Schema.maxLength(max))
 const ModelId = Text(200).pipe(Schema.filter((value) => !value.startsWith("-") && !/[\u0000-\u001f\u007f]/.test(value)))
-export const HarnessDriver = Schema.Literal("codex", "claude", "opencode", "cursor")
+// "cliproxy" is a local CLIProxyAPI endpoint: an OpenAI-compatible proxy over the
+// user's own CLI subscriptions, called with native tool calling.
+export const HarnessDriver = Schema.Literal("codex", "claude", "opencode", "cursor", "cliproxy")
 export type HarnessDriver = typeof HarnessDriver.Type
 export const HarnessReasoningEffort = Schema.Literal("none", "minimal", "low", "medium", "high", "xhigh", "max", "thinking")
 export type HarnessReasoningEffort = typeof HarnessReasoningEffort.Type
@@ -103,5 +105,6 @@ export const HARNESS_NAMES: Readonly<Record<HarnessDriver, string>> = {
   codex: "Codex",
   claude: "Claude Code",
   opencode: "OpenCode",
-  cursor: "Cursor"
+  cursor: "Cursor",
+  cliproxy: "CLIProxyAPI"
 }

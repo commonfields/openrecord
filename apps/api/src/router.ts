@@ -99,7 +99,8 @@ import {
   loadRepresentations,
 } from "./reads.js"
 import { loadInterventions, recordIntervention } from "./interventions.js"
-import { deleteConversation, listConversations, loadConversation, sendConversation } from "./agent-conversations.js"
+import { deleteConversation, listConversations, loadConversation } from "./agent-conversations.js"
+import { sendSessionTurn } from "./agent-sessions.js"
 import { createBinding, createTarget } from "./tracking.js"
 import { loadIssueLoop } from "./issue-loop.js"
 import { loadIssuePacket } from "./packet-read.js"
@@ -1328,7 +1329,7 @@ export const makeRouter = () => {
           if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
           const body = decodeRequest(AgentMessageRequest, (yield* readJson) as unknown)
           if (!body) return yield* json(422, malformed)
-          const reply = yield* sendConversation({ accountId: session.accountId, userId: session.userId, businessId }, body)
+          const reply = yield* sendSessionTurn({ accountId: session.accountId, userId: session.userId, businessId }, body)
           return yield* json(200, reply)
         }),
       ).pipe(Effect.catchAll((e) => {

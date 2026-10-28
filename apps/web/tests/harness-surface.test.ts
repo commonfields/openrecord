@@ -355,8 +355,8 @@ describe("harness client", () => {
     for (const path of ["/api/agent/providers", "/api/agent/bridges/pairs", "/api/agent/bridges/", "/api/agent/providers/", "/refresh", "PATCH", "DELETE"]) {
       expect(lib, `missing: ${path}`).toContain(path)
     }
-    // The four providers are all surfaced, never hard-coded to one.
-    expect(HARNESS_NAMES).toEqual({ codex: "Codex", claude: "Claude Code", opencode: "OpenCode", cursor: "Cursor" })
+    // Every provider is surfaced, never hard-coded to one.
+    expect(HARNESS_NAMES).toEqual({ codex: "Codex", claude: "Claude Code", opencode: "OpenCode", cursor: "Cursor", cliproxy: "CLIProxyAPI" })
   })
 
   it("builds the local bridge setup command with the current origin and code", () => {

@@ -53,6 +53,9 @@ export interface AgentToolResult {
   readonly summary: string
   readonly citations: ReadonlyArray<AgentCitation>
   readonly data: unknown
+  /** Session tools only: approvals a helper saved, and the tasks it reports on. */
+  readonly decisions?: ReadonlyArray<import("./agent-registry.js").DecisionRef> | undefined
+  readonly tasks?: ReadonlyArray<import("./agent-registry.js").TaskRef> | undefined
 }
 
 /** Every service any tool may need. The registry is closed: adding a tool

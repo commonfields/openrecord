@@ -42,6 +42,7 @@ const BRANDS: Record<string, Brand> = {
   moonshot: { icon: siKimi, label: "Moonshot" },
   ollama: { icon: siOllama, label: "Ollama" },
   openrouter: { icon: siOpenrouter, label: "OpenRouter" },
+  cliproxy: { icon: null, label: "CLIProxyAPI", tile: "bg-[#020c44] text-white ring-[#020c44] dark:bg-[#7096f9] dark:ring-[#7096f9]", glyph: "CP" },
   mock: { icon: null, label: "Mock", tile: "border border-dashed border-border bg-transparent text-muted-foreground ring-0", glyph: "M" },
   "9router": { icon: null, label: "9Router", tile: "bg-primary-ink/15 text-primary-ink ring-primary-ink/30", glyph: "9" },
 }

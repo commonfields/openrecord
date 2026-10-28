@@ -17,6 +17,7 @@ suite("harness migration rehearsal (new disposable databases only)", () => {
       await admin.connect()
       let created = false
       let client: pg.Client | undefined
+      const ADDED = ["last_request_digest", "archived_at", "parent_conversation_id", "depth", "task_title", "task_role", "user_revision"].map(c => `'${c}'`).join("-")
       const fingerprint = async () => {
         if (!client) throw new Error("TEST database missing")
         const tables = await client.query<{ tablename: string }>(
@@ -26,7 +27,8 @@ suite("harness migration rehearsal (new disposable databases only)", () => {
         for (const { tablename } of tables.rows) {
           const identifier = tablename.replaceAll('"', '""')
           const digest = await client.query<{ digest: string }>(
-            `SELECT md5(coalesce(string_agg((to_jsonb(item)-'last_request_digest'-'archived_at')::text,'|' ORDER BY (to_jsonb(item)-'last_request_digest'-'archived_at')::text),'')) AS digest FROM "${identifier}" item`
+            // Columns later migrations add with defaults are not existing data.
+            `SELECT md5(coalesce(string_agg((to_jsonb(item)-${ADDED})::text,'|' ORDER BY (to_jsonb(item)-${ADDED})::text),'')) AS digest FROM "${identifier}" item`
           )
           result[tablename] = digest.rows[0]?.digest ?? ""
         }

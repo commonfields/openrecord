@@ -16,8 +16,10 @@ import { AGENT_TOOLS, AgentInvalidInput, AgentUnknownTool, runAgentTool, type Ag
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import { AgentModelError } from "./agent-model.js"
 import { diagnoseMarketingProblems, firstImprovementDeclarations, proposeFirstImprovement, type AgentOrigin } from "./agent-first-improvement.js"
+import { STARTS_WORK } from "./agent-session-tools.js"
 
-export type ToolEffect = "read" | "propose"
+/** "delegate": starts a turn in another session (agent-sessions.ts). */
+export type ToolEffect = "read" | "propose" | "delegate"
 export interface ToolContext {
   readonly accountId: string; readonly userId: string; readonly businessId: string
   readonly origin?: AgentOrigin | undefined
@@ -63,7 +65,7 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
 ]
 
 export const findToolSpec = (name: string) => AGENT_TOOL_SPECS.find(s => s.declaration.name === name)
-export const toolEffect = (name: string): ToolEffect => findToolSpec(name)?.effect ?? "read"
+export const toolEffect = (name: string): ToolEffect => findToolSpec(name)?.effect ?? (STARTS_WORK.has(name) ? "delegate" : "read")
 
 export const dispatchToolSpec = (ctx: ToolContext, name: string, args: unknown) => Effect.gen(function*() {
   const spec = findToolSpec(name)
@@ -72,7 +74,8 @@ export const dispatchToolSpec = (ctx: ToolContext, name: string, args: unknown) 
 })
 
 /** Short present-tense label for run progress, from the tool name alone. */
-const VERBS: Readonly<Record<string, string>> = { read: "Reading", discover: "Listing", propose: "Proposing", draft: "Drafting", prepare: "Preparing", compare: "Comparing", diagnose: "Diagnosing" }
+const VERBS: Readonly<Record<string, string>> = { read: "Reading", discover: "Listing", propose: "Proposing", draft: "Drafting", prepare: "Preparing", compare: "Comparing", diagnose: "Diagnosing",
+  delegate: "Delegating", message: "Messaging", cancel: "Cancelling", list: "Listing" }
 export const toolLabel = (name: string) => {
   const [verb = "", ...rest] = name.split("_")
   return `${VERBS[verb] ?? "Running"} ${rest.join(" ")}`.trim()
@@ -111,6 +114,15 @@ export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): Decisi
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
 ]
+/** A task another session ran for this one. The chat renders it as a card linking to that session. */
+export type TaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
+export interface TaskRef { readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: TaskStatus }
+/** At most ten, first occurrence kept; a later status for the same task replaces the earlier one. */
+export const mergeTasks = (refs: Iterable<TaskRef>): TaskRef[] => {
+  const seen = new Map<string, TaskRef>()
+  for (const r of refs) if (seen.has(r.id) || seen.size < 10) seen.set(r.id, r)
+  return [...seen.values()]
+}
 /** At most ten, first occurrence kept. */
 export const mergeDecisions = (refs: Iterable<DecisionRef>): DecisionRef[] => {
   const seen = new Map<string, DecisionRef>()

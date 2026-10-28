@@ -52,7 +52,9 @@ export function driverEnvironment(driver: HarnessDriver, source: NodeJS.ProcessE
       "CLAUDE_CODE_OAUTH_TOKEN"
     ],
     opencode: ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"],
-    cursor: ["CURSOR_API_KEY"]
+    cursor: ["CURSOR_API_KEY"],
+    // Called over HTTP, never started as a child process.
+    cliproxy: []
   }
   const environment: NodeJS.ProcessEnv = { NO_COLOR: "1", TERM: "dumb" }
   for (const key of [...common, ...specific[driver]]) if (source[key] !== undefined) environment[key] = source[key]
