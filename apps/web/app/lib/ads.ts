@@ -1,7 +1,7 @@
 // Ad account client: which platforms this server can connect, the account's
 // sign-ins, the ad accounts bound to a business, and live performance.
 // Read-only: OpenRecord cannot create, change or pause an ad.
-import type { AdAccountPerformance, AdBinding, AdConnection, AdPerformanceDays, AdProvider } from "@openrecord/contracts"
+import type { AdAccountPerformance, AdBinding, AdConnection, AdPerformanceDays, AdProvider, ChannelProvider, LocalProfilePerformance } from "@openrecord/contracts"
 import { api, ApiError } from "./api"
 
 export type AdPlatformStatus = { configured: true } | { configured: false; reason: "MISSING_REDIRECT_URI" | "MISSING_ENCRYPTION_KEY" | "MISSING_APP" | "MISSING_DEVELOPER_TOKEN" }
@@ -10,18 +10,24 @@ export type AdPerformanceResult = { accounts: AdAccountPerformance[]; failures: 
 const client = (id: string) => `/api/ads/clients/${encodeURIComponent(id)}`
 
 export const Ads = {
-  status: (businessId: string) => api<{ providers: Record<AdProvider, AdPlatformStatus>; connections: AdConnection[]; bindings: AdBinding[] }>(client(businessId)),
-  connect: (businessId: string, provider: AdProvider) => api<{ authorizationUrl: string }>("/api/ads/connect", { method: "POST", body: JSON.stringify({ provider, businessId }) }),
+  status: (businessId: string) => api<{ providers: Record<ChannelProvider, AdPlatformStatus>; connections: AdConnection[]; bindings: AdBinding[] }>(client(businessId)),
+  connect: (businessId: string, provider: ChannelProvider) => api<{ authorizationUrl: string }>("/api/ads/connect", { method: "POST", body: JSON.stringify({ provider, businessId }) }),
   accounts: (connectionId: string) => api<{ accounts: AdAccountChoice[] }>(`/api/ads/connections/${encodeURIComponent(connectionId)}/accounts`),
   bind: (businessId: string, connectionId: string, externalId: string) =>
     api<{ binding: AdBinding }>(`${client(businessId)}/bindings`, { method: "POST", body: JSON.stringify({ connectionId, externalId }) }),
   unbind: (businessId: string, bindingId: string) => api<{ ended: true }>(`${client(businessId)}/bindings/${encodeURIComponent(bindingId)}/end`, { method: "POST", body: "{}" }),
   disconnect: (connectionId: string) => api<{ disconnected: true }>(`/api/ads/connections/${encodeURIComponent(connectionId)}/disconnect`, { method: "POST", body: "{}" }),
   performance: (businessId: string, days: AdPerformanceDays) => api<AdPerformanceResult>(`${client(businessId)}/performance?days=${days}`),
+  local: (businessId: string, days: AdPerformanceDays) => api<{ locations: LocalProfilePerformance[]; failures: Array<{ locationName: string; reason: string }> }>(`${client(businessId)}/local?days=${days}`),
 }
 
 /** Why a platform can't be connected yet, for the person running the server. */
-export const SETUP_NEEDED: Record<AdProvider, Record<string, string>> = {
+export const SETUP_NEEDED: Record<ChannelProvider, Record<string, string>> = {
+  google_business: {
+    MISSING_APP: "Needs the Google sign-in client (GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET), with Business Profile API access granted by Google.",
+    MISSING_REDIRECT_URI: "Needs ADS_OAUTH_REDIRECT_URI, added to the Google client's redirect URIs.",
+    MISSING_ENCRYPTION_KEY: "Needs a token encryption key (ADS_TOKEN_ENCRYPTION_KEYS).",
+  },
   meta: {
     MISSING_APP: "Needs a Meta app with Facebook Login and the ads_read permission (META_APP_ID and META_APP_SECRET).",
     MISSING_REDIRECT_URI: "Needs ADS_OAUTH_REDIRECT_URI, registered in the Meta app.",

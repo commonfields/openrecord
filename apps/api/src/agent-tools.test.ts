@@ -29,6 +29,7 @@ describe("agent tool harness", () => {
       "read_growth_goal",
       "read_growth_opportunities",
       "read_issue",
+      "read_local_profile",
       "read_observation",
       "read_open_issues",
       "read_proposals",

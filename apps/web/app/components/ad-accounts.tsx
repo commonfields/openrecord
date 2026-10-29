@@ -3,8 +3,8 @@
 // (Results). Read-only: OpenRecord cannot create, change or pause an ad.
 import { useEffect, useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router"
-import { MegaphoneIcon } from "lucide-react"
-import { AD_PROVIDER_NAME, AD_PROVIDERS, type AdCampaignRow, type AdConnection, type AdPerformanceDays, type AdProvider } from "@openrecord/contracts"
+import { MapPinIcon, MegaphoneIcon, StarIcon } from "lucide-react"
+import { AD_PROVIDER_NAME, AD_PROVIDERS, CHANNEL_PROVIDERS, type AdCampaignRow, type AdConnection, type AdPerformanceDays, type ChannelProvider, type LocalTotals } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -13,7 +13,8 @@ import { ADS_CALLBACK_COPY, Ads, SETUP_NEEDED, adsError, type AdAccountChoice } 
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 
-const BLURB: Record<AdProvider, string> = {
+const BLURB: Record<ChannelProvider, string> = {
+  google_business: "Your Google listing on Search and Maps: calls, directions, searches and reviews.",
   meta: "Facebook and Instagram ads: spend, clicks, leads and purchases.",
   google_ads: "Search, YouTube and Display ads: spend, clicks and conversions.",
 }
@@ -34,20 +35,20 @@ export function AdAccountsSetup({ businessId }: { businessId: string }) {
     setBusy(true); setError(null)
     try { await f(); await status.reload() } catch (e) { setError(adsError(e)) } finally { setBusy(false) }
   }
-  const connect = (provider: AdProvider) => act(async () => { window.location.assign((await Ads.connect(businessId, provider)).authorizationUrl) })
+  const connect = (provider: ChannelProvider) => act(async () => { window.location.assign((await Ads.connect(businessId, provider)).authorizationUrl) })
 
   return (
     <Panel id="ads" className="space-y-3 p-4">
       <div className="flex items-start gap-2">
         <MegaphoneIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-xs font-medium">Ad accounts</h2>
-          <p className="text-[0.6875rem] text-muted-foreground">So the agent can see what the ads cost and what they bring in. Read-only: OpenRecord can't create, change or pause an ad.</p>
+          <h2 className="text-xs font-medium">Ads and Google listing</h2>
+          <p className="text-[0.6875rem] text-muted-foreground">So the agent can see what the ads cost, what they bring in, and how people find you on Google. Read-only: OpenRecord can't change an ad, edit your listing or reply to reviews.</p>
         </div>
       </div>
       {callbackCopy ? <p role="status" className={cn("text-xs", callbackCopy.ok ? "text-foreground" : "text-destructive")}>{callbackCopy.text}</p> : null}
       <ul className="divide-y divide-border">
-        {AD_PROVIDERS.map(provider => {
+        {CHANNEL_PROVIDERS.map(provider => {
           const platform = s.providers[provider]
           const bound = s.bindings.filter(b => b.provider === provider)
           const signIns = s.connections.filter(c => c.provider === provider)
@@ -84,7 +85,9 @@ export function AdAccountsSetup({ businessId }: { businessId: string }) {
                     <div className="flex flex-wrap items-center gap-2">
                       <Button size="sm" disabled={busy} onClick={() => void connect(provider)}>Connect {AD_PROVIDER_NAME[provider]}</Button>
                       <p className="text-[0.6875rem] text-muted-foreground">
-                        {provider === "meta" ? "You'll sign in with Facebook and allow read-only access to ads (ads_read)." : "You'll sign in with Google. Google offers no read-only option for ads, so OpenRecord only ever reads."}
+                        {provider === "meta" ? "You'll sign in with Facebook and allow read-only access to ads (ads_read)."
+                          : provider === "google_ads" ? "You'll sign in with Google. Google offers no read-only option for ads, so OpenRecord only ever reads."
+                          : "You'll sign in with Google. Google offers no read-only option for Business Profile, so OpenRecord only ever reads."}
                       </p>
                     </div>
                   ) : null}
@@ -166,10 +169,11 @@ export function AdPerformancePanel({ businessId }: { businessId: string }) {
   const status = useApi(`ads:${businessId}`, () => Ads.status(businessId))
   const [days, setDays] = useState<AdPerformanceDays>(28)
   const bound = status.data?.bindings ?? []
-  const perf = useApi(bound.length ? `ad-performance:${businessId}:${bound.map(b => b.id).join(",")}:${days}` : null, () => Ads.performance(businessId, days))
+  const perf = useApi(bound.some(b => b.provider !== "google_business") ? `ad-performance:${businessId}:${bound.map(b => b.id).join(",")}:${days}` : null, () => Ads.performance(businessId, days))
   const anyConfigured = status.data ? AD_PROVIDERS.some(p => status.data!.providers[p].configured) : false
+  const adBound = bound.filter(b => b.provider !== "google_business")
   if (!status.data || !anyConfigured) return null
-  if (!bound.length) return (
+  if (!adBound.length) return (
     <Panel id="ads" className="flex flex-wrap items-center gap-3 p-4 text-xs">
       <MegaphoneIcon aria-hidden className="size-3.5 text-muted-foreground" />
       <p className="min-w-0 flex-1">Connect Meta or Google Ads to see what the ads cost and what they bring in.</p>
@@ -229,5 +233,82 @@ function Campaigns({ rows, currency }: { rows: ReadonlyArray<AdCampaignRow>; cur
         ))}
       </ol>
     </div>
+  )
+}
+
+/** Live Google Business Profile performance: what people did from the listing, how often it was shown, what they searched, and reviews. */
+export function LocalProfilePanel({ businessId }: { businessId: string }) {
+  const status = useApi(`ads:${businessId}`, () => Ads.status(businessId))
+  const [days, setDays] = useState<AdPerformanceDays>(28)
+  const bound = (status.data?.bindings ?? []).filter(b => b.provider === "google_business")
+  const perf = useApi(bound.length ? `local:${businessId}:${bound.map(b => b.id).join(",")}:${days}` : null, () => Ads.local(businessId, days))
+  if (!status.data?.providers.google_business.configured) return null
+  if (!bound.length) return (
+    <Panel id="local" className="flex flex-wrap items-center gap-3 p-4 text-xs">
+      <MapPinIcon aria-hidden className="size-3.5 text-muted-foreground" />
+      <p className="min-w-0 flex-1">Connect Google Business Profile to see calls, direction requests and reviews from your Google listing.</p>
+      <Button asChild size="sm" variant="outline"><Link to={`/businesses/${businessId}/channels#ads`}>Connect</Link></Button>
+    </Panel>
+  )
+  const r = perf.data
+  const actions = (t: LocalTotals) => t.calls + t.directionRequests + t.websiteClicks + t.bookings + t.conversations
+  return (
+    <Panel id="local">
+      <PanelHeader icon={<MapPinIcon />} title="Google listing" description={r?.locations[0] ? `${r.locations[0].current.start} to ${r.locations[0].current.end}, compared with the ${days} days before` : "Google Business Profile"}>
+        <div className="flex rounded-md border border-border/70 p-0.5" role="group" aria-label="Period">
+          {([7, 28, 90] as const).map(d => (
+            <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d}
+              className={cn("rounded px-2 py-0.5 text-[0.6875rem]", days === d ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground")}>{d}d</button>
+          ))}
+        </div>
+      </PanelHeader>
+      {perf.error && !r ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{adsError(perf.error)}</p> : !r ? <Skeleton className="m-4 h-24 rounded-lg" /> : (
+        <div className="space-y-5 px-4 pb-4">
+          {r.locations.map(l => {
+            const c = l.current.totals, b = l.previous.totals
+            return (
+              <section key={l.locationId} className="space-y-3" aria-label={l.locationName}>
+                <h3 className="text-xs font-medium">{l.locationName}</h3>
+                <StatStrip stats={[
+                  { key: "actions", label: "Actions from the listing", value: count(actions(c)), delta: delta(actions(c), actions(b)), hint: "Calls, directions, website, bookings, messages" },
+                  { key: "calls", label: "Calls", value: count(c.calls), delta: delta(c.calls, b.calls) },
+                  { key: "directions", label: "Direction requests", value: count(c.directionRequests), delta: delta(c.directionRequests, b.directionRequests) },
+                  { key: "views", label: "Times shown", value: count(c.impressions), delta: delta(c.impressions, b.impressions), hint: `${count(c.searchImpressions)} Search · ${count(c.mapsImpressions)} Maps` },
+                ]} />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <h4 className="text-[0.6875rem] font-medium text-muted-foreground">What people searched{l.searchTerms ? ` · ${l.searchTerms.month}` : ""}</h4>
+                    {!l.searchTerms ? <p className="text-xs text-muted-foreground">Not available from Google right now.</p> : !l.searchTerms.terms.length ? <p className="text-xs text-muted-foreground">No search terms for last month.</p> : (
+                      <ol className="space-y-1 text-xs">
+                        {l.searchTerms.terms.slice(0, 6).map(t => (
+                          <li key={t.term} className="flex items-baseline gap-2"><span className="min-w-0 flex-1 truncate">{t.term}</span><span className="tabular-nums text-muted-foreground">{t.atLeast ? "≥ " : ""}{count(t.impressions)}</span></li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <h4 className="text-[0.6875rem] font-medium text-muted-foreground">Reviews</h4>
+                    {!l.reviews ? <p className="text-xs text-muted-foreground">Not available from Google right now.</p> : (
+                      <>
+                        <p className="flex items-center gap-1.5 text-xs">
+                          <StarIcon aria-hidden className="size-3.5 fill-current text-amber-500" />
+                          <span className="font-medium">{l.reviews.averageRating ?? "—"}</span>
+                          <span className="text-muted-foreground">from {count(l.reviews.total)} reviews · {l.reviews.inWindow} new this period · {l.reviews.unanswered} of the newest {l.reviews.sampled} unanswered</span>
+                        </p>
+                        {l.reviews.recent.slice(0, 3).map((rv, i) => (
+                          <p key={i} className="line-clamp-2 text-xs text-muted-foreground">{rv.rating ? `${rv.rating}★ ` : ""}{rv.text || "No comment"}</p>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )
+          })}
+          {r.failures.map(f => <p key={f.locationName} role="alert" className="text-xs text-destructive">{f.locationName}: {FAILURE[f.reason] ?? "Google didn't answer. Try again later."}</p>)}
+          <p className="text-[0.6875rem] text-muted-foreground">From Google Business Profile, read live; data ends yesterday. Calls and directions are taps on the listing, not completed calls or visits. Changes between periods describe what happened, not why.</p>
+        </div>
+      )}
+    </Panel>
   )
 }

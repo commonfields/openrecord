@@ -12,10 +12,11 @@ import { Data, Effect, Option } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import {
   AD_PERFORMANCE_DAYS, AD_TOP_CAMPAIGNS, BindAdAccount, StartAdConnection, adWindows, decodeRouteId,
-  type AdAccount, type AdAccountPerformance, type AdBinding, type AdConnection, type AdPerformanceDays, type AdProvider,
+  type AdAccount, type AdAccountPerformance, type AdBinding, type AdConnection, type AdPerformanceDays, type AdProvider, type ChannelProvider, type LocalProfilePerformance,
 } from "@openrecord/contracts"
 import {
-  AdsError, AdsProvider, GOOGLE_ADS_ACCEPTED_SCOPES, GOOGLE_ADS_CONVERSIONS, GOOGLE_ADS_SCOPE, META_CONVERSIONS, googleAdsAccounts, googleAdsAuthorizationUrl,
+  AdsError, AdsProvider, GOOGLE_ADS_ACCEPTED_SCOPES, GOOGLE_ADS_CONVERSIONS, GOOGLE_ADS_SCOPE, GOOGLE_BUSINESS_ACCEPTED_SCOPES, GOOGLE_BUSINESS_SCOPE, META_CONVERSIONS,
+  googleAdsAccounts, googleAdsAuthorizationUrl, googleBusinessAuthorizationUrl, googleBusinessLocations, googleBusinessReviews, googleBusinessSearchTerms, googleBusinessTotals,
   googleAdsCampaigns, googleAdsTotals, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaIdentity, metaRevoke, metaTotals, type AdsConfig,
 } from "@openrecord/ads"
 import { Ga4Error, exchangeCode, identityFromIdToken, newOAuthSecret, refreshAccessToken, revokeToken } from "@openrecord/ga4"
@@ -28,11 +29,14 @@ const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex
 const STATE_TTL_SECONDS = 600
 const META_PERMISSIONS = new Set(["ads_read", "public_profile", "email"])
 
-const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" } }
+const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" }, googleBusiness: { configured: false, reason: "MISSING_APP" } }
 const adsConfig = Effect.map(Effect.serviceOption(AdsProvider), o => Option.getOrElse(o, () => NOT_CONFIGURED))
 const cipherOf = (c: AdsConfig) => c.cipher ? Effect.succeed(c.cipher) : refuse("AdsNotConfigured")
 const metaOf = (c: AdsConfig) => c.meta.configured ? Effect.succeed(c.meta.config) : refuse("AdsNotConfigured")
 const googleOf = (c: AdsConfig) => c.googleAds.configured ? Effect.succeed(c.googleAds) : refuse("AdsNotConfigured")
+const businessOf = (c: AdsConfig) => c.googleBusiness.configured ? Effect.succeed(c.googleBusiness) : refuse("AdsNotConfigured")
+/** The Google sign-in (client and endpoints) a Google provider uses. */
+const googleClientOf = (c: AdsConfig, provider: ChannelProvider) => provider === "google_business" ? Effect.map(businessOf(c), b => b.oauth) : Effect.map(googleOf(c), g => g.oauth)
 
 /** A platform call; failures become stable reasons, never platform text. */
 const call = <A>(f: () => Promise<A>) => Effect.tryPromise({
@@ -45,17 +49,17 @@ const reasonOf = (e: AdsError) => e.kind === "QUOTA" ? "ProviderQuota" : e.kind 
 
 type ConnectionRow = AdConnection & { readonly subject: string; readonly access: string | null; readonly accessExpiresAt: number | null; readonly refresh: string | null }
 const toConnection = (r: Record<string, unknown>): ConnectionRow => ({
-  id: String(r["id"]), provider: r["provider"] as AdProvider, displayName: String(r["display_name"]), status: r["status"] as AdConnection["status"],
+  id: String(r["id"]), provider: r["provider"] as ChannelProvider, displayName: String(r["display_name"]), status: r["status"] as AdConnection["status"],
   connectedAt: new Date(r["connected_at"] as string).toISOString(), expiresAt: r["access_expires_at"] ? new Date(r["access_expires_at"] as string).toISOString() : null,
   subject: String(r["subject"]), access: (r["access_ciphertext"] as string | null) ?? null, refresh: (r["refresh_ciphertext"] as string | null) ?? null,
   accessExpiresAt: r["access_expires_at"] ? new Date(r["access_expires_at"] as string).getTime() : null,
 })
 const publicConnection = ({ subject: _s, access: _a, refresh: _r, accessExpiresAt: _e, ...c }: ConnectionRow): AdConnection =>
   c.provider === "meta" ? c : { ...c, expiresAt: null }
-const toBinding = (r: Record<string, unknown>): AdBinding & { readonly loginCustomerId: string | null } => ({
-  id: String(r["id"]), provider: r["provider"] as AdProvider, connectionId: String(r["connection_id"]), externalId: String(r["external_id"]),
+const toBinding = (r: Record<string, unknown>): AdBinding & { readonly loginCustomerId: string | null; readonly parentId: string | null } => ({
+  id: String(r["id"]), provider: r["provider"] as ChannelProvider, connectionId: String(r["connection_id"]), externalId: String(r["external_id"]),
   name: String(r["name"]), currency: (r["currency"] as string | null) ?? null, boundAt: new Date(r["bound_at"] as string).toISOString(),
-  loginCustomerId: (r["login_customer_id"] as string | null) ?? null,
+  loginCustomerId: (r["login_customer_id"] as string | null) ?? null, parentId: (r["parent_id"] as string | null) ?? null,
 })
 
 const connections = (accountId: string) => Effect.gen(function*() {
@@ -90,10 +94,10 @@ const accessToken = (config: AdsConfig, c: ConnectionRow) => Effect.gen(function
   const cached = c.access && (c.accessExpiresAt === null || c.accessExpiresAt - 60_000 > Date.now()) ? cipher.decrypt(c.access, `ads:${c.id}:access`) : null
   if (cached) return cached
   if (c.provider === "meta" || !c.refresh) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
-  const google = yield* googleOf(config)
+  const oauth = yield* googleClientOf(config, c.provider)
   const refreshToken = cipher.decrypt(c.refresh, `ads:${c.id}:refresh`)
   if (!refreshToken) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
-  const fresh = yield* call(() => refreshAccessToken(google.oauth, refreshToken)).pipe(Effect.either)
+  const fresh = yield* call(() => refreshAccessToken(oauth, refreshToken)).pipe(Effect.either)
   if (fresh._tag === "Left") {
     if (fresh.left.kind === "AUTH" || fresh.left.kind === "INVALID") { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
     return yield* refuse(reasonOf(fresh.left))
@@ -112,16 +116,18 @@ const withToken = <A>(config: AdsConfig, c: ConnectionRow, f: (token: string) =>
   return yield* refuse(reasonOf(result.left))
 })
 
-const listAccounts = (config: AdsConfig, c: ConnectionRow) => c.provider === "meta"
+const listAccounts = (config: AdsConfig, c: ConnectionRow): Effect.Effect<ReadonlyArray<AdAccount>, AdsRefused | import("@effect/sql/SqlError").SqlError, SqlClient.SqlClient> => c.provider === "meta"
   ? Effect.flatMap(metaOf(config), m => withToken(config, c, t => metaAdAccounts(m, t)))
-  : Effect.flatMap(googleOf(config), g => withToken(config, c, t => googleAdsAccounts(g.config, t)))
+  : c.provider === "google_ads" ? Effect.flatMap(googleOf(config), g => withToken(config, c, t => googleAdsAccounts(g.config, t)))
+  : Effect.flatMap(businessOf(config), b => withToken(config, c, async t => (await googleBusinessLocations(b.config, t)).map((l): AdAccount => ({
+      externalId: l.locationId, name: l.address ? `${l.name} · ${l.address}` : l.name, currency: null, loginCustomerId: null, parentId: l.accountId, active: true }))))
 
 // ---- performance -----------------------------------------------------------
 
 /** Live performance of every ad account bound to a business. One account failing never hides the others. */
 export const adPerformance = (accountId: string, businessId: string, days: AdPerformanceDays, provider?: AdProvider) => Effect.gen(function*() {
   const config = yield* adsConfig
-  const bindings = (yield* adBindings(accountId, businessId)).filter(b => !provider || b.provider === provider)
+  const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider !== "google_business" && (!provider || b.provider === provider))
   const windows = adWindows(Date.now(), days)
   const results = yield* Effect.forEach(bindings, b => Effect.gen(function*() {
     const c = yield* connection(accountId, b.connectionId)
@@ -131,7 +137,7 @@ export const adPerformance = (accountId: string, businessId: string, days: AdPer
       : yield* Effect.flatMap(googleOf(config), g => withToken(config, c, t => Promise.all([
           googleAdsTotals(g.config, t, b.externalId, b.loginCustomerId, windows.current), googleAdsTotals(g.config, t, b.externalId, b.loginCustomerId, windows.previous),
           googleAdsCampaigns(g.config, t, b.externalId, b.loginCustomerId, windows.current, AD_TOP_CAMPAIGNS)])))
-    return { provider: b.provider, accountName: b.name, externalId: b.externalId, currency: b.currency, days,
+    return { provider: b.provider as AdProvider, accountName: b.name, externalId: b.externalId, currency: b.currency, days,
       current: { ...windows.current, totals: current }, previous: { ...windows.previous, totals: previous }, topCampaigns,
       conversionDefinition: b.provider === "meta" ? META_CONVERSIONS : GOOGLE_ADS_CONVERSIONS, collectedAt: new Date().toISOString() } satisfies AdAccountPerformance
   }).pipe(Effect.either), { concurrency: 3 })
@@ -139,6 +145,29 @@ export const adPerformance = (accountId: string, businessId: string, days: AdPer
     accounts: results.flatMap(r => r._tag === "Right" ? [r.right] : []),
     failures: results.flatMap((r, i) => r._tag === "Left" ? [{ provider: bindings[i]!.provider, accountName: bindings[i]!.name,
       reason: r.left instanceof AdsRefused ? r.left.reason : "ProviderUnavailable" }] : []),
+  }
+})
+
+/** Live Google Business Profile performance for each location bound to a business. Search terms and reviews are read separately, so one failing never hides the rest. */
+export const localPerformance = (accountId: string, businessId: string, days: AdPerformanceDays) => Effect.gen(function*() {
+  const config = yield* adsConfig
+  const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider === "google_business")
+  const windows = adWindows(Date.now(), days)
+  // Search terms come by month: the last complete one.
+  const now = new Date(), last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  const month = { year: last.getUTCFullYear(), month: last.getUTCMonth() + 1 }
+  const results = yield* Effect.forEach(bindings, b => Effect.gen(function*() {
+    const c = yield* connection(accountId, b.connectionId)
+    const gbp = (yield* businessOf(config)).config
+    const [current, previous] = yield* withToken(config, c, t => Promise.all([googleBusinessTotals(gbp, t, b.externalId, windows.current), googleBusinessTotals(gbp, t, b.externalId, windows.previous)]))
+    const terms = yield* withToken(config, c, t => googleBusinessSearchTerms(gbp, t, b.externalId, month)).pipe(Effect.orElseSucceed(() => null))
+    const reviews = b.parentId ? yield* withToken(config, c, t => googleBusinessReviews(gbp, t, b.parentId!, b.externalId, windows.current)).pipe(Effect.orElseSucceed(() => null)) : null
+    return { locationName: b.name, locationId: b.externalId, days, current: { ...windows.current, totals: current }, previous: { ...windows.previous, totals: previous },
+      searchTerms: terms ? { month: `${month.year}-${String(month.month).padStart(2, "0")}`, terms } : null, reviews, collectedAt: new Date().toISOString() } satisfies LocalProfilePerformance
+  }).pipe(Effect.either), { concurrency: 3 })
+  return {
+    locations: results.flatMap(r => r._tag === "Right" ? [r.right] : []),
+    failures: results.flatMap((r, i) => r._tag === "Left" ? [{ locationName: bindings[i]!.name, reason: r.left instanceof AdsRefused ? r.left.reason : "ProviderUnavailable" }] : []),
   }
 })
 
@@ -177,7 +206,7 @@ export const adsApi = (withSession: WithSession) => {
         AND user_id = ${session.userId} AND consumed_at IS NULL AND expires_at > now() RETURNING business_id, provider, verifier_ciphertext`
       const pending = rows[0]
       if (!pending) return yield* back("state_invalid", null)
-      const businessId = String(pending["business_id"]), provider = pending["provider"] as AdProvider
+      const businessId = String(pending["business_id"]), provider = pending["provider"] as ChannelProvider
       if (query.get("error")) return yield* back("consent_denied", businessId)
       const code = query.get("code") ?? ""
       const verifier = cipher.decrypt(String(pending["verifier_ciphertext"]), `ads-state:${sha256(state)}`)
@@ -197,14 +226,15 @@ export const adsApi = (withSession: WithSession) => {
         }
         identity = { subject: who.right.subject, name: who.right.name, scopes, access: tokens.right.accessToken, accessExpiresAt: tokens.right.expiresAt, refresh: null }
       } else {
-        const google = yield* googleOf(config)
-        const tokens = yield* call(() => exchangeCode(google.oauth, code, verifier)).pipe(Effect.either)
+        const oauth = yield* googleClientOf(config, provider)
+        const tokens = yield* call(() => exchangeCode(oauth, code, verifier)).pipe(Effect.either)
         if (tokens._tag === "Left") return yield* back("token_exchange_failed", businessId)
         const t = tokens.right
-        const discard = (status: string) => call(() => revokeToken(google.oauth, t.refreshToken ?? t.accessToken)).pipe(Effect.ignore, Effect.zipRight(back(status, businessId)))
-        const who = identityFromIdToken(t.idToken, google.oauth.clientId)
+        const discard = (status: string) => call(() => revokeToken(oauth, t.refreshToken ?? t.accessToken)).pipe(Effect.ignore, Effect.zipRight(back(status, businessId)))
+        const who = identityFromIdToken(t.idToken, oauth.clientId)
         if (!who || !/^\d{1,30}$/.test(who.subject)) return yield* discard("identity_unverified")
-        if (!t.grantedScopes.includes(GOOGLE_ADS_SCOPE) || t.grantedScopes.some(s => !GOOGLE_ADS_ACCEPTED_SCOPES.includes(s))) return yield* discard("scope_refused")
+        const [required, accepted] = provider === "google_business" ? [GOOGLE_BUSINESS_SCOPE, GOOGLE_BUSINESS_ACCEPTED_SCOPES] : [GOOGLE_ADS_SCOPE, GOOGLE_ADS_ACCEPTED_SCOPES]
+        if (!t.grantedScopes.includes(required) || t.grantedScopes.some(s => !accepted.includes(s))) return yield* discard("scope_refused")
         identity = { subject: who.subject, name: who.email, scopes: t.grantedScopes, access: t.accessToken, accessExpiresAt: t.accessTokenExpiresAt, refresh: t.refreshToken }
       }
       // A second sign-in by the same person replaces the tokens of their existing connection.
@@ -228,11 +258,11 @@ export const adsApi = (withSession: WithSession) => {
     HttpRouter.get("/api/ads/clients/:id", route((session, p) => Effect.gen(function*() {
       yield* scopedBusiness(session, p["id"]!)
       const config = yield* adsConfig
-      const status = (s: AdsConfig["meta"] | AdsConfig["googleAds"]) => s.configured ? { configured: true } : { configured: false, reason: s.reason }
+      const status = (s: { readonly configured: true } | { readonly configured: false; readonly reason: string }) => s.configured ? { configured: true } : { configured: false, reason: s.reason }
       return yield* json(200, {
-        providers: { meta: status(config.meta), google_ads: status(config.googleAds) },
+        providers: { meta: status(config.meta), google_ads: status(config.googleAds), google_business: status(config.googleBusiness) },
         connections: (yield* connections(session.accountId)).map(publicConnection),
-        bindings: (yield* adBindings(session.accountId, p["id"]!)).map(({ loginCustomerId: _l, ...b }) => b),
+        bindings: (yield* adBindings(session.accountId, p["id"]!)).map(({ loginCustomerId: _l, parentId: _p, ...b }) => b),
       }, PRIVATE)
     }))),
     HttpRouter.post("/api/ads/connect", route(session => Effect.gen(function*() {
@@ -243,7 +273,8 @@ export const adsApi = (withSession: WithSession) => {
       const cipher = yield* cipherOf(config)
       const state = newOAuthSecret(), verifier = newOAuthSecret()
       const url = input.provider === "meta" ? metaAuthorizationUrl(yield* metaOf(config), state)
-        : yield* Effect.map(googleOf(config), g => googleAdsAuthorizationUrl(g.config, g.oauth, state, verifier))
+        : input.provider === "google_ads" ? yield* Effect.map(googleOf(config), g => googleAdsAuthorizationUrl(g.config, g.oauth, state, verifier))
+        : yield* Effect.map(businessOf(config), b => googleBusinessAuthorizationUrl(b.config, b.oauth, state, verifier))
       const sql = yield* SqlClient.SqlClient
       yield* sql`DELETE FROM ad_oauth_states WHERE expires_at < now() - interval '1 day'`
       yield* sql`INSERT INTO ad_oauth_states(state_sha256, account_id, user_id, business_id, provider, verifier_ciphertext, expires_at)
@@ -254,7 +285,7 @@ export const adsApi = (withSession: WithSession) => {
     HttpRouter.get("/api/ads/connections/:connectionId/accounts", route((session, p) => Effect.gen(function*() {
       const config = yield* adsConfig
       const accounts: ReadonlyArray<AdAccount> = yield* listAccounts(config, yield* connection(session.accountId, p["connectionId"]!))
-      return yield* json(200, { accounts: accounts.map(({ loginCustomerId: _l, ...a }) => a) }, PRIVATE)
+      return yield* json(200, { accounts: accounts.map(({ loginCustomerId: _l, parentId: _p, ...a }) => a) }, PRIVATE)
     }))),
     HttpRouter.post("/api/ads/connections/:connectionId/disconnect", route((session, p) => Effect.gen(function*() {
       const config = yield* adsConfig
@@ -263,10 +294,10 @@ export const adsApi = (withSession: WithSession) => {
       const token = c.access && config.cipher ? config.cipher.decrypt(c.access, `ads:${c.id}:access`) : null
       const refresh = c.refresh && config.cipher ? config.cipher.decrypt(c.refresh, `ads:${c.id}:refresh`) : null
       const meta = config.meta.configured ? config.meta.config : null
-      const google = config.googleAds.configured ? config.googleAds.oauth : null
+      const google = c.provider === "google_business" ? (config.googleBusiness.configured ? config.googleBusiness.oauth : null) : config.googleAds.configured ? config.googleAds.oauth : null
       if (c.provider === "meta" && token && meta) yield* call(() => metaRevoke(meta, token, c.subject)).pipe(Effect.ignore)
       const googleToken = refresh ?? token
-      if (c.provider === "google_ads" && googleToken && google) yield* call(() => revokeToken(google, googleToken)).pipe(Effect.ignore)
+      if (c.provider !== "meta" && googleToken && google) yield* call(() => revokeToken(google, googleToken)).pipe(Effect.ignore)
       const sql = yield* SqlClient.SqlClient
       yield* sql.withTransaction(Effect.gen(function*() {
         yield* sql`UPDATE ad_account_bindings SET ended_at = now(), ended_by_user_id = ${session.userId} WHERE connection_id = ${c.id} AND ended_at IS NULL`
@@ -283,14 +314,15 @@ export const adsApi = (withSession: WithSession) => {
       const c = yield* connection(session.accountId, input.connectionId)
       // Only an account this sign-in can read today may be bound; a connection is not proof of access to another.
       const externalId = input.externalId.replace(/^act_/, "")
+      if (c.provider !== "meta" && input.externalId.startsWith("act_")) return yield* refuse("InvalidRequest")
       const account = (yield* listAccounts(config, c)).find(a => a.externalId === externalId)
       if (!account) return yield* refuse("AdAccountNotAccessible")
       const sql = yield* SqlClient.SqlClient
-      const row = (yield* sql`INSERT INTO ad_account_bindings(account_id, business_id, connection_id, provider, external_id, login_customer_id, name, currency, bound_by_user_id)
-        VALUES (${session.accountId}, ${businessId}, ${c.id}, ${c.provider}, ${account.externalId}, ${account.loginCustomerId}, ${account.name}, ${account.currency && /^[A-Z]{3}$/.test(account.currency) ? account.currency : null}, ${session.userId})
-        ON CONFLICT (business_id, provider, external_id) WHERE ended_at IS NULL DO UPDATE SET connection_id = EXCLUDED.connection_id, login_customer_id = EXCLUDED.login_customer_id, name = EXCLUDED.name
+      const row = (yield* sql`INSERT INTO ad_account_bindings(account_id, business_id, connection_id, provider, external_id, login_customer_id, parent_id, name, currency, bound_by_user_id)
+        VALUES (${session.accountId}, ${businessId}, ${c.id}, ${c.provider}, ${account.externalId}, ${account.loginCustomerId}, ${account.parentId ?? null}, ${account.name.slice(0, 200)}, ${account.currency && /^[A-Z]{3}$/.test(account.currency) ? account.currency : null}, ${session.userId})
+        ON CONFLICT (business_id, provider, external_id) WHERE ended_at IS NULL DO UPDATE SET connection_id = EXCLUDED.connection_id, login_customer_id = EXCLUDED.login_customer_id, parent_id = EXCLUDED.parent_id, name = EXCLUDED.name
         RETURNING *`)[0]!
-      const { loginCustomerId: _l, ...binding } = toBinding(row)
+      const { loginCustomerId: _l, parentId: _p, ...binding } = toBinding(row)
       return yield* json(200, { binding }, PRIVATE)
     }))),
     HttpRouter.post("/api/ads/clients/:id/bindings/:bindingId/end", route((session, p) => Effect.gen(function*() {
@@ -308,6 +340,14 @@ export const adsApi = (withSession: WithSession) => {
       const days = AD_PERFORMANCE_DAYS.find(d => d === raw)
       if (!days) return yield* refuse("InvalidRequest")
       return yield* json(200, yield* adPerformance(session.accountId, p["id"]!, days), PRIVATE)
+    }))),
+    HttpRouter.get("/api/ads/clients/:id/local", route((session, p) => Effect.gen(function*() {
+      yield* scopedBusiness(session, p["id"]!)
+      const request = yield* HttpServerRequest.HttpServerRequest
+      const raw = Number(new URL(request.url, "http://localhost").searchParams.get("days") ?? 28)
+      const days = AD_PERFORMANCE_DAYS.find(d => d === raw)
+      if (!days) return yield* refuse("InvalidRequest")
+      return yield* json(200, yield* localPerformance(session.accountId, p["id"]!, days), PRIVATE)
     }))),
   )
 }

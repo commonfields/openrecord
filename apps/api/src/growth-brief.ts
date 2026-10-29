@@ -19,7 +19,7 @@ const PRIVATE = { "cache-control": "no-store" }
 
 export const BRIEF_PROMPT = (today: string) => `Write this week's growth brief for this business (today is ${today}). It is for the owner: plain words, in their language.
 
-First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues. Some may say not connected; don't treat that as zero.
+First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues. Some may say not connected; don't treat that as zero.
 
 Then write the brief in Markdown, under 300 words, with exactly these three parts:
 

@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { adWindows } from "@openrecord/contracts"
 import {
-  AdsError, adsConfigFromEnv, googleAdsAccounts, googleAdsCampaigns, googleAdsTotals, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaTotals,
+  AdsError, adsConfigFromEnv, googleAdsAccounts, googleBusinessAuthorizationUrl, googleBusinessLocations, googleBusinessReviews, googleBusinessSearchTerms, googleBusinessTotals, googleAdsCampaigns, googleAdsTotals, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaTotals,
   type GoogleAdsConfig, type MetaConfig,
 } from "../src/index.js"
 
@@ -123,5 +123,52 @@ describe("configuration and windows", () => {
   })
   it("ends the window yesterday and compares it with the same number of days before", () => {
     expect(adWindows(Date.UTC(2026, 9, 29, 15), 7)).toEqual({ current: { start: "2026-10-22", end: "2026-10-28" }, previous: { start: "2026-10-15", end: "2026-10-21" } })
+  })
+})
+
+describe("Google Business Profile", () => {
+  const gbp = (f: (url: string, init: RequestInit) => Promise<Response>) => ({ authorize: "https://accounts.test/auth", fetch: f,
+    endpoints: { accounts: "https://acct.test/v1", information: "https://info.test/v1", performance: "https://perf.test/v1", reviews: "https://rev.test/v4" } })
+  const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status })
+
+  it("lists every account's locations, reads daily totals, search terms and reviews, and only ever GETs", async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = []
+    const f = async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method })
+      const u = new URL(url)
+      if (u.host === "acct.test") return json({ accounts: [{ name: "accounts/111" }, { name: "bad" }] })
+      if (u.host === "info.test") return json({ locations: [{ name: "locations/2222", title: "Northstar Dental", storefrontAddress: { addressLines: ["1 Main St"], locality: "Austin" }, websiteUri: "https://northstar.test" }] })
+      if (u.pathname.endsWith(":fetchMultiDailyMetricsTimeSeries")) return json({ multiDailyMetricTimeSeries: [{ dailyMetricTimeSeries: [
+        { dailyMetric: "CALL_CLICKS", timeSeries: { datedValues: [{ date: {}, value: "3" }, { date: {} }, { date: {}, value: "2" }] } },
+        { dailyMetric: "BUSINESS_DIRECTION_REQUESTS", timeSeries: { datedValues: [{ value: "7" }] } },
+        { dailyMetric: "BUSINESS_IMPRESSIONS_MOBILE_MAPS", timeSeries: { datedValues: [{ value: "100" }] } },
+        { dailyMetric: "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH", timeSeries: { datedValues: [{ value: "40" }] } }] }] })
+      if (u.pathname.includes("/searchkeywords/")) return json({ searchKeywordsCounts: [{ searchKeyword: "dentist austin", insightsValue: { value: "120" } }, { searchKeyword: "emergency dentist", insightsValue: { threshold: "15" } }] })
+      if (u.host === "rev.test") return json({ averageRating: 4.66, totalReviewCount: 87, reviews: [
+        { starRating: "FIVE", comment: "Great care", createTime: "2026-10-20T10:00:00Z", reviewReply: { comment: "Thanks!" } },
+        { starRating: "TWO", comment: "Long wait", createTime: "2026-10-25T10:00:00Z" },
+        { starRating: "FOUR", createTime: "2026-08-01T10:00:00Z" }] })
+      return json({ error: { status: "NOT_FOUND" } }, 404)
+    }
+    const c = gbp(f)
+    expect(await googleBusinessLocations(c, "tok")).toEqual([{ locationId: "2222", accountId: "111", name: "Northstar Dental", address: "1 Main St, Austin", website: "https://northstar.test" }])
+    expect(await googleBusinessTotals(c, "tok", "2222", window)).toEqual({ calls: 5, websiteClicks: 0, directionRequests: 7, bookings: 0, conversations: 0, impressions: 140, searchImpressions: 40, mapsImpressions: 100 })
+    const perf = new URL(calls.find(x => x.url.includes(":fetchMulti"))!.url)
+    expect(perf.searchParams.getAll("dailyMetrics")).toContain("CALL_CLICKS")
+    expect([perf.searchParams.get("dailyRange.start_date.month"), perf.searchParams.get("dailyRange.end_date.day")]).toEqual(["10", "28"])
+    expect(await googleBusinessSearchTerms(c, "tok", "2222", { year: 2026, month: 9 })).toEqual([
+      { term: "dentist austin", impressions: 120, atLeast: false }, { term: "emergency dentist", impressions: 15, atLeast: true }])
+    expect(await googleBusinessReviews(c, "tok", "111", "2222", window)).toMatchObject({ averageRating: 4.7, total: 87, sampled: 3, unanswered: 2, inWindow: 2,
+      recent: [{ rating: 5, text: "Great care", replied: true }, { rating: 2, text: "Long wait", replied: false }, { rating: 4, text: "", replied: false }] })
+    expect(calls.every(x => x.method === "GET")).toBe(true)
+  })
+
+  it("asks only for business.manage with PKCE, and turns on with the Google client alone", () => {
+    const url = new URL(googleBusinessAuthorizationUrl({ authorize: "https://accounts.test/auth" }, { clientId: "c", redirectUri: "https://api.test/api/ads/oauth/callback" }, "s", "v".repeat(43)))
+    expect(url.searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/business.manage")
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256")
+    const base = { ADS_OAUTH_REDIRECT_URI: "https://api.test/api/ads/oauth/callback", GA4_TOKEN_ENCRYPTION_KEYS: `k1:${Buffer.alloc(32, 1).toString("base64")}` }
+    expect(adsConfigFromEnv(base).googleBusiness).toEqual({ configured: false, reason: "MISSING_APP" })
+    expect(adsConfigFromEnv({ ...base, GOOGLE_OAUTH_CLIENT_ID: "c", GOOGLE_OAUTH_CLIENT_SECRET: "s" }).googleBusiness.configured).toBe(true)
   })
 })

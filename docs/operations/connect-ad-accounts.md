@@ -1,4 +1,4 @@
-# Connect ad accounts (Meta and Google Ads)
+# Connect ad accounts and Google Business Profile
 
 OpenRecord reads a client's own ad accounts so the agent can answer "what did the ads cost and what did they bring in". Access is read-only. OpenRecord never creates, changes or pauses an ad.
 
@@ -48,6 +48,27 @@ OpenRecord asks only for `ads_read`. Meta sometimes grants more; if it does, Ope
    ```
 
 Google offers no read-only scope for Ads: the `adwords` scope could change campaigns. OpenRecord only ever calls `customers:listAccessibleCustomers` and `googleAds:search`, both of which read. Accounts reached through a manager account are listed one level down and read with `login-customer-id`.
+
+## Google Business Profile
+
+Gives the agent `read_local_profile`:
+- calls, direction requests, website clicks, bookings and messages from the listing;
+- how often the listing was shown on Google Search and Maps;
+- last month's top search terms;
+- the rating, the review count and the newest reviews, with how many are unanswered.
+
+To set it up:
+1. Use the same Google OAuth client, with the same redirect URI as above.
+2. In the Google Cloud project, enable these four APIs:
+   - My Business Account Management
+   - My Business Business Information
+   - Business Profile Performance
+   - Google My Business (for reviews)
+3. Request **Business Profile API access** for the project. Until Google approves it, the APIs answer with zero quota.
+
+No other server setting is needed: the platform turns on with the Google client alone.
+
+Google offers one scope for Business Profile, `business.manage`. It could edit a listing or reply to reviews, but OpenRecord only sends GET requests with it. Search terms and reviews are read separately, so if Google refuses either one, calls and directions still show.
 
 ## Storage and removal
 

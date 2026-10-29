@@ -9,11 +9,13 @@
 //   GOOGLE_OAUTH_CLIENT_ID/SECRET  the Google client GA4 uses
 //   GOOGLE_ADS_DEVELOPER_TOKEN     from the Google Ads API Center of a manager account
 //   GOOGLE_ADS_API_VERSION         default v21
+//   (Google Business Profile uses the Google client above; Google must grant the project Business Profile API access.)
 //   ADS_PROVIDER_STAND_IN_URL      loopback stand-in for tests only
 import { Context, Layer } from "effect"
-import { AD_OAUTH_CALLBACK_PATH, type AdProvider } from "@openrecord/contracts"
+import { AD_OAUTH_CALLBACK_PATH, type ChannelProvider } from "@openrecord/contracts"
 import { GOOGLE_ENDPOINTS, makeTokenCipher, parseCipherKeys, standInEndpoints, type Ga4OAuthConfig, type TokenCipher } from "@openrecord/ga4"
 import { GOOGLE_ADS_ENDPOINT, type GoogleAdsConfig } from "./google-ads.js"
+import { GOOGLE_BUSINESS_ENDPOINTS, type GoogleBusinessConfig } from "./google-business.js"
 import { META_ENDPOINTS, type MetaConfig } from "./meta.js"
 import type { FetchLike } from "./http.js"
 
@@ -23,9 +25,11 @@ export interface AdsConfig {
   readonly appBaseUrl: string
   readonly meta: { readonly configured: true; readonly config: MetaConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
   readonly googleAds: { readonly configured: true; readonly config: GoogleAdsConfig; readonly oauth: Ga4OAuthConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
+  /** Google Business Profile needs no developer token, only the Google client and the API access Google grants the project. */
+  readonly googleBusiness: { readonly configured: true; readonly config: GoogleBusinessConfig; readonly oauth: Ga4OAuthConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
 }
 export class AdsProvider extends Context.Tag("AdsProvider")<AdsProvider, AdsConfig>() {}
-export const adsConfigured = (c: AdsConfig, provider: AdProvider) => (provider === "meta" ? c.meta : c.googleAds).configured
+export const adsConfigured = (c: AdsConfig, provider: ChannelProvider) => (provider === "meta" ? c.meta : provider === "google_ads" ? c.googleAds : c.googleBusiness).configured
 
 const validRedirect = (raw: string) => {
   try {
@@ -62,7 +66,13 @@ export const adsConfigFromEnv = (env: Record<string, string | undefined> = proce
     : { configured: true,
         config: { developerToken: v("GOOGLE_ADS_DEVELOPER_TOKEN"), version: googleVersion, endpoint: origin ? `${origin}/googleads` : GOOGLE_ADS_ENDPOINT, authorize: endpoints.authorize, fetch: fetchImpl },
         oauth: { clientId: v("GOOGLE_OAUTH_CLIENT_ID"), clientSecret: v("GOOGLE_OAUTH_CLIENT_SECRET"), redirectUri, endpoints, fetch: fetchImpl } }
-  return { cipher, appBaseUrl, meta, googleAds }
+  const googleBusiness: AdsConfig["googleBusiness"] = common ? { configured: false, reason: common }
+    : !v("GOOGLE_OAUTH_CLIENT_ID") || !v("GOOGLE_OAUTH_CLIENT_SECRET") ? { configured: false, reason: "MISSING_APP" }
+    : { configured: true,
+        config: { authorize: endpoints.authorize, fetch: fetchImpl,
+          endpoints: origin ? { accounts: `${origin}/gbp/accounts`, information: `${origin}/gbp/information`, performance: `${origin}/gbp/performance`, reviews: `${origin}/gbp/reviews` } : GOOGLE_BUSINESS_ENDPOINTS },
+        oauth: { clientId: v("GOOGLE_OAUTH_CLIENT_ID"), clientSecret: v("GOOGLE_OAUTH_CLIENT_SECRET"), redirectUri, endpoints, fetch: fetchImpl } }
+  return { cipher, appBaseUrl, meta, googleAds, googleBusiness }
 }
 
 export const AdsProviderLive = Layer.sync(AdsProvider, () => adsConfigFromEnv())

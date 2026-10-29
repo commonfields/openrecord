@@ -9,7 +9,11 @@ import { SEARCH_PERFORMANCE_DAYS, type SearchWindow } from "./search-console.js"
 export const AD_PROVIDERS = ["meta", "google_ads"] as const
 export const AdProvider = Schema.Literal(...AD_PROVIDERS)
 export type AdProvider = typeof AdProvider.Type
-export const AD_PROVIDER_NAME: Readonly<Record<AdProvider, string>> = { meta: "Meta Ads", google_ads: "Google Ads" }
+/** Everything signed in through the same connection tables: the ad platforms and Google Business Profile. */
+export const CHANNEL_PROVIDERS = ["meta", "google_ads", "google_business"] as const
+export const ChannelProvider = Schema.Literal(...CHANNEL_PROVIDERS)
+export type ChannelProvider = typeof ChannelProvider.Type
+export const AD_PROVIDER_NAME: Readonly<Record<ChannelProvider, string>> = { meta: "Meta Ads", google_ads: "Google Ads", google_business: "Google Business Profile" }
 export const AD_OAUTH_CALLBACK_PATH = "/api/ads/oauth/callback"
 export const AD_PERFORMANCE_DAYS = SEARCH_PERFORMANCE_DAYS
 export type AdPerformanceDays = typeof AD_PERFORMANCE_DAYS[number]
@@ -18,7 +22,7 @@ export const AD_TOP_CAMPAIGNS = 10
 export type AdConnectionStatus = "ACTIVE" | "REAUTHORIZATION_REQUIRED" | "DISCONNECTED"
 export interface AdConnection {
   readonly id: string
-  readonly provider: AdProvider
+  readonly provider: ChannelProvider
   /** The signed-in person on the platform: a name or email, never a token. */
   readonly displayName: string
   readonly status: AdConnectionStatus
@@ -32,11 +36,13 @@ export interface AdAccount {
   readonly currency: string | null
   /** Google Ads: the manager account the access goes through, sent as login-customer-id. */
   readonly loginCustomerId: string | null
+  /** Google Business Profile: the account the location belongs to. */
+  readonly parentId?: string | null
   readonly active: boolean
 }
 export interface AdBinding {
   readonly id: string
-  readonly provider: AdProvider
+  readonly provider: ChannelProvider
   readonly connectionId: string
   readonly externalId: string
   readonly name: string
@@ -84,8 +90,27 @@ export const adWindows = (nowMs: number, days: AdPerformanceDays): { readonly cu
   return { current: { start: day(start), end: day(end) }, previous: { start: day(prevEnd - (days - 1) * DAY), end: day(prevEnd) } }
 }
 
-export const StartAdConnection = Schema.Struct({ provider: AdProvider, businessId: Schema.UUID })
+export const StartAdConnection = Schema.Struct({ provider: ChannelProvider, businessId: Schema.UUID })
 export const BindAdAccount = Schema.Struct({
   connectionId: Schema.UUID,
-  externalId: Schema.String.pipe(Schema.pattern(/^(act_)?\d{1,20}$/)),
+  externalId: Schema.String.pipe(Schema.pattern(/^(act_)?\d{1,30}$/)),
 })
+
+/** One Google Business Profile location: what people did from the profile, how often it was shown, what they searched, and its reviews. */
+export interface LocalTotals {
+  readonly calls: number; readonly websiteClicks: number; readonly directionRequests: number; readonly bookings: number; readonly conversations: number
+  readonly impressions: number; readonly searchImpressions: number; readonly mapsImpressions: number
+}
+export interface LocalProfilePerformance {
+  readonly locationName: string
+  readonly locationId: string
+  readonly days: AdPerformanceDays
+  readonly current: SearchWindow & { readonly totals: LocalTotals }
+  readonly previous: SearchWindow & { readonly totals: LocalTotals }
+  readonly searchTerms: { readonly month: string; readonly terms: ReadonlyArray<{ readonly term: string; readonly impressions: number; readonly atLeast: boolean }> } | null
+  readonly reviews: {
+    readonly averageRating: number | null; readonly total: number; readonly sampled: number; readonly unanswered: number; readonly inWindow: number
+    readonly recent: ReadonlyArray<{ readonly rating: number | null; readonly text: string; readonly createdAt: string; readonly replied: boolean }>
+  } | null
+  readonly collectedAt: string
+}

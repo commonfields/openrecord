@@ -13,7 +13,7 @@ import { AuthRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import { AdsProvider, adsConfigFromEnv } from "@openrecord/ads"
 import { adsApi } from "./ads.js"
 import { growthApi } from "./growth-routes.js"
-import { readAdPerformance } from "./agent-ads-tools.js"
+import { readAdPerformance, readLocalProfile } from "./agent-ads-tools.js"
 import { requireSession, RepoLayers } from "./router.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -23,7 +23,7 @@ const product = {
 }
 
 const suite = url ? describe : describe.skip
-suite("ad account connections over HTTP and for the agent (scripted Meta)", () => {
+suite("ad and listing connections over HTTP and for the agent (scripted Meta and Google)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope
   const repos = Layer.mergeAll(RepoLayers.GrowthRepositoriesLive, RepoLayers.BusinessRepositoryLive, AuthRepositoryLive, RecordRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const handlers: Array<{ dispose: () => Promise<void> }> = []
@@ -82,7 +82,7 @@ suite("ad account connections over HTTP and for the agent (scripted Meta)", () =
     expect(before.data).toMatchObject({ status: "NOT_CONNECTED" })
 
     const status = await ok<{ providers: Record<string, { configured: boolean; reason?: string }> }>(call(a, "GET", `/api/ads/clients/${ba}`))
-    expect(status.providers).toEqual({ meta: { configured: true }, google_ads: { configured: false, reason: "MISSING_APP" } })
+    expect(status.providers).toEqual({ meta: { configured: true }, google_ads: { configured: false, reason: "MISSING_APP" }, google_business: { configured: false, reason: "MISSING_APP" } })
     const { authorizationUrl } = await ok<{ authorizationUrl: string }>(call(a, "POST", "/api/ads/connect", { provider: "meta", businessId: ba }))
     const state = new URL(authorizationUrl).searchParams.get("state")!
     expect(new URL(authorizationUrl).searchParams.get("scope")).toBe("ads_read")
@@ -133,5 +133,83 @@ suite("ad account connections over HTTP and for the agent (scripted Meta)", () =
     for (const text of seen) for (const secret of ["LONG-LIVED-SECRET", "SHORT-SECRET", "APP-SECRET-DO-NOT-LEAK"]) expect(text).not.toContain(secret)
     for (const c of graphCalls) expect(c).not.toMatch(/SECRET/)
     expect(graphCalls.every(c => !/ads_management|\/ads\b|\/campaigns\b/.test(c) || c.startsWith("GET"))).toBe(true)
+  })
+
+  it("signs in to Google Business Profile, keeps the refresh token encrypted, binds a location and reads it live", async () => {
+    const O = "http://127.0.0.1:9"
+    const idToken = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`
+    let scope = "openid email https://www.googleapis.com/auth/business.manage"
+    const google = async (input: string, init: RequestInit) => {
+      const u = new URL(input)
+      const body = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status })
+      if (u.pathname === "/token") {
+        const form = new URLSearchParams(String(init.body))
+        if (form.get("grant_type") === "refresh_token") return body({ access_token: "REFRESHED-SECRET", expires_in: 3600, scope })
+        expect(form.get("code_verifier")).toMatch(/^[A-Za-z0-9_-]{43}$/)
+        return body({ access_token: "GOOGLE-ACCESS-SECRET", refresh_token: "GOOGLE-REFRESH-SECRET", expires_in: 3600, scope,
+          id_token: idToken({ iss: "https://accounts.google.com", aud: "gclient", sub: "777", email: "owner@salon.test", email_verified: true, exp: Math.floor(Date.now() / 1000) + 600 }) })
+      }
+      if (u.pathname === "/revoke") return body({})
+      expect(init.method).toBe("GET")
+      if (u.pathname === "/gbp/accounts/accounts") return body({ accounts: [{ name: "accounts/555" }] })
+      if (u.pathname === "/gbp/information/accounts/555/locations") return body({ locations: [{ name: "locations/9001", title: "Salon Main", storefrontAddress: { locality: "Austin" } }] })
+      if (u.pathname.endsWith(":fetchMultiDailyMetricsTimeSeries")) return body({ multiDailyMetricTimeSeries: [{ dailyMetricTimeSeries: [{ dailyMetric: "CALL_CLICKS", timeSeries: { datedValues: [{ value: "9" }] } }] }] })
+      if (u.pathname.includes("/searchkeywords/")) return body({ error: { status: "PERMISSION_DENIED" } }, 403)
+      if (u.pathname === "/gbp/reviews/accounts/555/locations/9001/reviews") return body({ averageRating: 4.8, totalReviewCount: 40, reviews: [] })
+      return body({ error: { status: "NOT_FOUND" } }, 404)
+    }
+    const config = adsConfigFromEnv({
+      ADS_OAUTH_REDIRECT_URI: "https://api.example.test/api/ads/oauth/callback", APP_BASE_URL: "https://app.example.test", ADS_PROVIDER_STAND_IN_URL: `${O}/`,
+      GA4_TOKEN_ENCRYPTION_KEYS: `k1:${Buffer.alloc(32, 3).toString("base64")}`, GOOGLE_OAUTH_CLIENT_ID: "gclient", GOOGLE_OAUTH_CLIENT_SECRET: "GCLIENT-SECRET",
+    }, google as typeof fetch)
+    expect(config.googleBusiness.configured).toBe(true)
+    const layer = Layer.provideMerge(Layer.succeed(AdsProvider, config), repos)
+    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(
+      growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))),
+      adsApi(r => Effect.flatMap(requireSession, ({ session }) => r(session)))), layer)
+    handlers.push(web)
+    const seen: string[] = []
+    const call = async (acct: Acct, method: string, path: string, body?: unknown) => {
+      const r = await web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", cookie: `or_session=${acct.cookie}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
+      seen.push(await r.clone().text(), r.headers.get("location") ?? "")
+      return r
+    }
+    const ok = async <T>(r: Promise<Response>): Promise<T> => { const x = await r; if (x.status !== 200) throw new Error(`Expected 200, got ${x.status}: ${await x.text()}`); return await x.json() as T }
+    const a = await account()
+    const ba = (await ok<{ profile: { businessId: string } }>(call(a, "POST", "/api/growth/products", { ...product, idempotencyKey: randomUUID() }))).profile.businessId
+
+    const start = await ok<{ authorizationUrl: string }>(call(a, "POST", "/api/ads/connect", { provider: "google_business", businessId: ba }))
+    const auth = new URL(start.authorizationUrl)
+    expect(auth.searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/business.manage")
+    const back = await call(a, "GET", `/api/ads/oauth/callback?state=${auth.searchParams.get("state")}&code=gcode`)
+    expect(back.headers.get("location")).toBe(`https://app.example.test/businesses/${ba}/channels?ads=connected#ads`)
+    const stored = (await pool.query("SELECT * FROM ad_connections WHERE account_id=$1 AND provider='google_business'", [a.accountId])).rows[0]
+    expect(stored).toMatchObject({ subject: "777", display_name: "owner@salon.test", status: "ACTIVE" })
+    expect(stored.refresh_ciphertext).toMatch(/^v1\./)
+    expect(JSON.stringify(stored)).not.toMatch(/SECRET/)
+
+    const { accounts } = await ok<{ accounts: Array<{ externalId: string; name: string }> }>(call(a, "GET", `/api/ads/connections/${stored.id}/accounts`))
+    expect(accounts).toEqual([{ externalId: "9001", name: "Salon Main · Austin", currency: null, active: true }])
+    expect((await call(a, "POST", `/api/ads/clients/${ba}/bindings`, { connectionId: stored.id, externalId: "act_9001" })).status).toBe(422)
+    await ok(call(a, "POST", `/api/ads/clients/${ba}/bindings`, { connectionId: stored.id, externalId: "9001" }))
+    expect((await pool.query("SELECT parent_id FROM ad_account_bindings WHERE business_id=$1", [ba])).rows[0].parent_id).toBe("555")
+
+    // An expired access token is refreshed with the stored refresh token.
+    await pool.query("UPDATE ad_connections SET access_expires_at = now() - interval '1 hour' WHERE id=$1", [stored.id])
+    const local = await ok<{ locations: Array<{ current: { totals: { calls: number } }; searchTerms: unknown; reviews: { averageRating: number } | null }> }>(call(a, "GET", `/api/ads/clients/${ba}/local?days=7`))
+    expect(local.locations[0]!.current.totals.calls).toBe(9)
+    // Search terms refused by Google don't hide the rest.
+    expect(local.locations[0]!.searchTerms).toBeNull()
+    expect(local.locations[0]!.reviews?.averageRating).toBe(4.8)
+    const tool = await Effect.runPromise(readLocalProfile(a.accountId, ba, { days: 7 }).pipe(Effect.provide(layer)))
+    expect(tool.summary).toContain("Salon Main · Austin, last 7 days: 9 calls")
+    // The ad panel doesn't count the listing as an ad account.
+    expect((await ok<{ accounts: unknown[] }>(call(a, "GET", `/api/ads/clients/${ba}/performance?days=7`))).accounts).toEqual([])
+
+    // More than read access is refused and revoked.
+    scope = "openid email https://www.googleapis.com/auth/business.manage https://www.googleapis.com/auth/adwords"
+    const again = await ok<{ authorizationUrl: string }>(call(a, "POST", "/api/ads/connect", { provider: "google_business", businessId: ba }))
+    expect((await call(a, "GET", `/api/ads/oauth/callback?state=${new URL(again.authorizationUrl).searchParams.get("state")}&code=gcode`)).headers.get("location")).toContain("ads=scope_refused")
+    for (const text of seen) expect(text).not.toMatch(/SECRET/)
   })
 })
