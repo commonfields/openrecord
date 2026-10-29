@@ -167,7 +167,12 @@ export const resumeLocalBridges = Effect.gen(function* () {
   for (const userId of readdirSync(base)) {
     if (!/^[0-9a-f-]{36}$/.test(userId) || children.has(userId)) continue
     const dir = join(base, userId), id = configuredBridgeId(dir)
-    if (!id || runningElsewhere(dir)) continue
+    if (!id) continue
+    // After a restart the previous server's bridge may still be shutting down
+    // and holding its lock; wait for it (up to 20s) rather than skip the user.
+    let waited = 0
+    while (runningElsewhere(dir) && waited < 20_000) { yield* Effect.sleep("1 second"); waited += 1000 }
+    if (runningElsewhere(dir) || children.has(userId)) continue
     const valid = yield* sql`SELECT id FROM agent_bridges WHERE id=${id} AND user_id=${userId} AND managed AND revoked_at IS NULL AND token_hash IS NOT NULL`
     if (!valid.length) continue
     launch(userId, dir, bridge, ["run"])
