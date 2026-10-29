@@ -41,11 +41,20 @@ Add it to `SCENARIOS` with:
 
 Keep the checks about the business outcome (the right number, honesty about unknowns, no invented or causal claims), not about exact wording.
 
-## First run, 2026-10-29
+## Results, 2026-10-29
 
-| Model | Passed |
-|---|---|
-| codex:gpt-6-sol | 8/8 |
-| claude:sonnet | 8/8 |
+| Model | First run (8 scenarios) | With first-measurement (9 scenarios) |
+|---|---|---|
+| codex:gpt-6-sol | 8/8 | 9/9 |
+| claude:sonnet | 8/8 | 9/9 |
 
-Both were regraded after the checks learned to ignore negated or reported phrasing. Claude was faster, at a median of 13s per answer against 22s for Codex.
+All scores are after regrading: on both runs, every failure turned out to be the grader misreading a correct answer.
+- Negated or reported phrasing: "we can't tell whether it caused it", "please don't add them into 16 sales".
+- A number written as a word: "six".
+- A future-tense mention: "once it's approved".
+
+The checks now judge whole sentences.
+
+One real finding came from the first-measurement scenario. Codex proposed only 4 buyer questions and no competitors, because `propose_question_set`'s description said nothing about either. The description now asks for 10 to 15 questions and the competitors from `read_competitors`, and Codex passes.
+
+Median answer time: about 20 seconds on Codex, 18 on Claude.
