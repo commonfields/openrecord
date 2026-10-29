@@ -29,8 +29,8 @@ const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex
 const STATE_TTL_SECONDS = 600
 const META_PERMISSIONS = new Set(["ads_read", "public_profile", "email"])
 
-const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" }, googleBusiness: { configured: false, reason: "MISSING_APP" } }
-const adsConfig = Effect.map(Effect.serviceOption(AdsProvider), o => Option.getOrElse(o, () => NOT_CONFIGURED))
+const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" }, googleBusiness: { configured: false, reason: "MISSING_APP" }, stripe: { configured: false, reason: "MISSING_ENCRYPTION_KEY" } }
+export const adsConfig = Effect.map(Effect.serviceOption(AdsProvider), o => Option.getOrElse(o, () => NOT_CONFIGURED))
 const cipherOf = (c: AdsConfig) => c.cipher ? Effect.succeed(c.cipher) : refuse("AdsNotConfigured")
 const metaOf = (c: AdsConfig) => c.meta.configured ? Effect.succeed(c.meta.config) : refuse("AdsNotConfigured")
 const googleOf = (c: AdsConfig) => c.googleAds.configured ? Effect.succeed(c.googleAds) : refuse("AdsNotConfigured")
@@ -39,7 +39,7 @@ const businessOf = (c: AdsConfig) => c.googleBusiness.configured ? Effect.succee
 const googleClientOf = (c: AdsConfig, provider: ChannelProvider) => provider === "google_business" ? Effect.map(businessOf(c), b => b.oauth) : Effect.map(googleOf(c), g => g.oauth)
 
 /** A platform call; failures become stable reasons, never platform text. */
-const call = <A>(f: () => Promise<A>) => Effect.tryPromise({
+export const call = <A>(f: () => Promise<A>) => Effect.tryPromise({
   try: f,
   catch: e => e instanceof AdsError ? e : e instanceof Ga4Error ? new AdsError({ kind: e.kind, status: e.status, providerCode: e.providerCode }) : new AdsError({ kind: "UNAVAILABLE", status: null, providerCode: null }),
 })

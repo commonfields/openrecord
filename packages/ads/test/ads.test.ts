@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { adWindows } from "@openrecord/contracts"
 import {
-  AdsError, adsConfigFromEnv, googleAdsAccounts, googleBusinessAuthorizationUrl, googleBusinessLocations, googleBusinessReviews, googleBusinessSearchTerms, googleBusinessTotals, googleAdsCampaigns, googleAdsTotals, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaTotals,
+  AdsError, adsConfigFromEnv, googleAdsAccounts, googleBusinessAuthorizationUrl, googleBusinessLocations, googleBusinessReviews, googleBusinessSearchTerms, googleBusinessTotals, googleAdsCampaigns, googleAdsTotals, stripeKeyKind, stripeRevenue, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaTotals,
   type GoogleAdsConfig, type MetaConfig,
 } from "../src/index.js"
 
@@ -170,5 +170,39 @@ describe("Google Business Profile", () => {
     const base = { ADS_OAUTH_REDIRECT_URI: "https://api.test/api/ads/oauth/callback", GA4_TOKEN_ENCRYPTION_KEYS: `k1:${Buffer.alloc(32, 1).toString("base64")}` }
     expect(adsConfigFromEnv(base).googleBusiness).toEqual({ configured: false, reason: "MISSING_APP" })
     expect(adsConfigFromEnv({ ...base, GOOGLE_OAUTH_CLIENT_ID: "c", GOOGLE_OAUTH_CLIENT_SECRET: "s" }).googleBusiness.configured).toBe(true)
+  })
+})
+
+describe("Stripe revenue", () => {
+  it("accepts only restricted keys", () => {
+    expect(stripeKeyKind("sk_live_" + "a".repeat(30))).toEqual({ ok: false, reason: "SECRET_KEY" })
+    expect(stripeKeyKind("pk_live_" + "a".repeat(30))).toEqual({ ok: false, reason: "NOT_A_KEY" })
+    expect(stripeKeyKind(" rk_live_" + "a".repeat(26) + "WXYZ ")).toEqual({ ok: true, livemode: true, last4: "WXYZ" })
+    expect(stripeKeyKind("rk_test_" + "b".repeat(30))).toMatchObject({ ok: true, livemode: false })
+  })
+
+  it("sums paid charges minus refunds per currency, in major units, across pages, with GET only", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    const f = async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      const u = new URL(url)
+      if (u.pathname.endsWith("/customers")) return new Response(JSON.stringify({ data: [{ id: "cus_1" }, { id: "cus_2" }], has_more: false }))
+      const page2 = u.searchParams.get("starting_after") === "ch_2"
+      return new Response(JSON.stringify(page2
+        ? { data: [{ id: "ch_3", status: "succeeded", paid: true, amount: 5000, amount_refunded: 0, currency: "jpy", customer: "cus_9" }], has_more: false }
+        : { data: [
+            { id: "ch_1", status: "succeeded", paid: true, amount: 12000, amount_refunded: 2000, currency: "usd", customer: "cus_1" },
+            { id: "ch_x", status: "failed", paid: false, amount: 99999, amount_refunded: 0, currency: "usd" },
+            { id: "ch_2", status: "succeeded", paid: true, amount: 3000, amount_refunded: 0, currency: "usd", billing_details: { email: "A@x.test" } }], has_more: true }))
+    }
+    const t = await stripeRevenue({ endpoint: "https://stripe.test/v1", fetch: f }, "rk_test_key", window)
+    expect(t.byCurrency).toEqual([
+      { currency: "USD", net: 130, gross: 150, refunded: 20, orders: 2, averageOrder: 65 },
+      { currency: "JPY", net: 5000, gross: 5000, refunded: 0, orders: 1, averageOrder: 5000 },
+    ])
+    expect(t).toMatchObject({ payingCustomers: 3, newCustomers: 2, truncated: false })
+    const first = new URL(calls[0]!.url)
+    expect(first.searchParams.get("created[gte]")).toBe(String(Date.parse("2026-10-01T00:00:00Z") / 1000))
+    expect(calls.every(c => c.init.method === "GET" && (c.init.headers as Record<string, string>)["authorization"] === "Bearer rk_test_key")).toBe(true)
   })
 })

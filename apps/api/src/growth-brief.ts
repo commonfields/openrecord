@@ -19,11 +19,11 @@ const PRIVATE = { "cache-control": "no-store" }
 
 export const BRIEF_PROMPT = (today: string) => `Write this week's growth brief for this business (today is ${today}). It is for the owner: plain words, in their language.
 
-First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues. Some may say not connected; don't treat that as zero.
+First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_revenue (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues. Some may say not connected; don't treat that as zero.
 
 Then write the brief in Markdown, under 300 words, with exactly these three parts:
 
-**What changed**: up to three bullets. Each gives the number, the period it's compared with, and what it means for the business. Only what the evidence shows.
+**What changed**: up to three bullets. Each gives the number, the period it's compared with, and what it means for the business; lead with revenue and customers when they are connected. Only what the evidence shows.
 
 **Do this next**: exactly one action, the most valuable thing to do this week, why it matters, and how we'll know it worked. If it's a new idea, save it with propose_growth_opportunity so it waits for approval; if a saved idea already covers it, name that one instead. Never save more than one.
 

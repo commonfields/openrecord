@@ -114,3 +114,35 @@ export interface LocalProfilePerformance {
   } | null
   readonly collectedAt: string
 }
+
+/** Revenue from the business's own payment account (Stripe), per currency, never converted or added across currencies. */
+export interface CurrencyRevenue {
+  readonly currency: string
+  /** Paid, minus what was refunded, in major units. */
+  readonly net: number
+  readonly gross: number
+  readonly refunded: number
+  readonly orders: number
+  readonly averageOrder: number | null
+}
+export interface RevenueTotals {
+  readonly byCurrency: ReadonlyArray<CurrencyRevenue>
+  /** Distinct paying customers (by customer, else by billing email). */
+  readonly payingCustomers: number
+  /** Customers created in the window, when the key may list customers. */
+  readonly newCustomers: number | null
+  /** True when there were more charges than OpenRecord reads at once (3,000). */
+  readonly truncated: boolean
+}
+
+export interface RevenuePerformance {
+  readonly provider: "stripe"
+  readonly accountName: string
+  readonly livemode: boolean
+  readonly days: AdPerformanceDays
+  readonly current: SearchWindow & { readonly totals: RevenueTotals }
+  readonly previous: SearchWindow & { readonly totals: RevenueTotals }
+  readonly collectedAt: string
+}
+export interface RevenueConnection { readonly id: string; readonly provider: "stripe"; readonly displayName: string; readonly livemode: boolean; readonly last4: string; readonly status: "ACTIVE" | "REVOKED"; readonly connectedAt: string }
+export const ConnectStripe = Schema.Struct({ key: Schema.String.pipe(Schema.minLength(10), Schema.maxLength(300)) })

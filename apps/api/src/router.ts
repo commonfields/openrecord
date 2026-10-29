@@ -6,6 +6,7 @@ import { searchConsoleApi } from "./search-console-routes.js"
 import { adsApi } from "./ads.js"
 import { briefApi } from "./growth-brief.js"
 import { setupDraft } from "./setup-draft.js"
+import { revenueApi } from "./revenue.js"
 import { growthMeasurementApi } from "./growth-measurement-routes.js"
 import { growthReportApi } from "./growth-report-routes.js"
 import { growthExecutionApi } from "./growth-execution-routes.js"
@@ -1550,7 +1551,7 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), adsApi(withSession)), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(adsApi(withSession), revenueApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   ))
 }
 

@@ -8,6 +8,7 @@ import { AD_PROVIDER_NAME, AdProvider, type AdTotals } from "@openrecord/contrac
 import type { AgentToolDef, AgentToolResult } from "./agent-tools.js"
 import { AdsRefused, adPerformance, localPerformance } from "./ads.js"
 import { AgentNotInScope } from "./agent-tool-errors.js"
+import { revenuePerformance } from "./revenue.js"
 
 const Input = Schema.Struct({ days: Schema.optional(Schema.Literal(7, 28, 90)), provider: Schema.optional(AdProvider) })
 const money = (n: number, currency: string | null) => currency ? new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(n) : n.toFixed(0)
@@ -79,7 +80,48 @@ export const readLocalProfile = (accountId: string, businessId: string, input: t
   } satisfies AgentToolResult
 })
 
+const revenueLine = (t: import("@openrecord/contracts").RevenueTotals) => t.byCurrency.length
+  ? t.byCurrency.map(c => `${money(c.net, c.currency)} from ${c.orders} order${c.orders === 1 ? "" : "s"}`).join(" and ") : "no paid orders"
+
+export const readRevenue = (accountId: string, businessId: string, input: typeof LocalInput.Type) => Effect.gen(function*() {
+  const days = input.days ?? 28
+  const read = yield* revenuePerformance(accountId, businessId, days).pipe(Effect.either)
+  if (read._tag === "Left") {
+    const e: unknown = read.left
+    if (e instanceof AdsRefused && e.reason === "RevenueKeyRefused") return {
+      summary: "Stripe no longer accepts the connected key", citations: [],
+      data: { status: "RECONNECT_REQUIRED", recovery: "The key was removed or lost its read permission. Ask the person to paste a new restricted key on the Channels page. Until then revenue is unknown." },
+    } satisfies AgentToolResult
+    if (e instanceof AdsRefused && e.reason === "RevenueNotConfigured") return { summary: "Revenue can't be read on this server", citations: [], data: { status: "UNAVAILABLE", recovery: "The server has no token encryption key, so payment accounts can't be connected." } } satisfies AgentToolResult
+    if (e instanceof AdsRefused && e.reason.endsWith("NotFound")) return yield* Effect.fail(new AgentNotInScope())
+    return yield* Effect.fail(read.left)
+  }
+  const r = read.right
+  if (!r) return {
+    summary: "No payment account is connected for this business", citations: [],
+    data: { status: "NOT_CONNECTED", recovery: "Connect Stripe on the Channels page with a restricted read-only key to see revenue, orders and paying customers. Until then revenue is unknown, not zero." },
+  } satisfies AgentToolResult
+  const c = r.current.totals, b = r.previous.totals
+  return {
+    summary: `Stripe (${r.accountName}${r.livemode ? "" : ", test mode"}), last ${days} days: ${revenueLine(c)}, ${c.payingCustomers} paying customer${c.payingCustomers === 1 ? "" : "s"} (the ${days} days before: ${revenueLine(b)})`.slice(0, 600),
+    citations: [{ kind: "revenue", id: `stripe:${businessId}`, text: `Stripe: ${r.accountName}` }],
+    data: {
+      source: "The business's own Stripe account, read live with a read-only key: successful charges minus refunds, per currency, and customers created.",
+      ...r,
+      note: "Net revenue is paid minus refunded, before Stripe's fees. Currencies are never converted or added together. Stripe can't tell which marketing channel brought a sale; set revenue beside channel numbers, never attribute it to one. A change between periods is not proof of cause."
+        + (r.livemode ? "" : " This is a test-mode key: these are test payments, not real revenue.")
+        + (c.truncated || b.truncated ? " There were more charges than OpenRecord reads at once (3,000), so totals are a lower bound." : ""),
+    },
+  } satisfies AgentToolResult
+})
+
 export const ADS_AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [{
+  name: "read_revenue",
+  description: "Read this business's connected Stripe account: net revenue (paid minus refunded) per currency, paid orders, average order, paying customers and new customers for the last 7, 28 or 90 days (default 28) and the period before. Read live with a restricted read-only key. NOT_CONNECTED means unknown, never zero. Stripe can't say which channel brought a sale. Read-only.",
+  parameters: JSONSchema.make(LocalInput),
+  decode: raw => Schema.decodeUnknown(LocalInput, { onExcessProperty: "error" })(raw),
+  run: readRevenue,
+}, {
   name: "read_local_profile",
   description: "Read this business's connected Google Business Profile: calls, direction requests, website clicks, bookings and messages from the profile, how often it was shown on Google Search and Maps, for the last 7, 28 or 90 days (default 28) and the period before; last month's top search terms; and the rating, review count and newest reviews with how many are unanswered. Read live; data ends yesterday. NOT_CONNECTED means unknown, never zero. Read-only.",
   parameters: JSONSchema.make(LocalInput),

@@ -16,6 +16,7 @@ import { AD_OAUTH_CALLBACK_PATH, type ChannelProvider } from "@openrecord/contra
 import { GOOGLE_ENDPOINTS, makeTokenCipher, parseCipherKeys, standInEndpoints, type Ga4OAuthConfig, type TokenCipher } from "@openrecord/ga4"
 import { GOOGLE_ADS_ENDPOINT, type GoogleAdsConfig } from "./google-ads.js"
 import { GOOGLE_BUSINESS_ENDPOINTS, type GoogleBusinessConfig } from "./google-business.js"
+import { STRIPE_ENDPOINT, type StripeConfig } from "./stripe.js"
 import { META_ENDPOINTS, type MetaConfig } from "./meta.js"
 import type { FetchLike } from "./http.js"
 
@@ -26,6 +27,8 @@ export interface AdsConfig {
   readonly meta: { readonly configured: true; readonly config: MetaConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
   readonly googleAds: { readonly configured: true; readonly config: GoogleAdsConfig; readonly oauth: Ga4OAuthConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
   /** Google Business Profile needs no developer token, only the Google client and the API access Google grants the project. */
+  /** Stripe needs only the encryption key: each business pastes its own restricted key. */
+  readonly stripe: { readonly configured: true; readonly config: StripeConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
   readonly googleBusiness: { readonly configured: true; readonly config: GoogleBusinessConfig; readonly oauth: Ga4OAuthConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
 }
 export class AdsProvider extends Context.Tag("AdsProvider")<AdsProvider, AdsConfig>() {}
@@ -72,7 +75,9 @@ export const adsConfigFromEnv = (env: Record<string, string | undefined> = proce
         config: { authorize: endpoints.authorize, fetch: fetchImpl,
           endpoints: origin ? { accounts: `${origin}/gbp/accounts`, information: `${origin}/gbp/information`, performance: `${origin}/gbp/performance`, reviews: `${origin}/gbp/reviews` } : GOOGLE_BUSINESS_ENDPOINTS },
         oauth: { clientId: v("GOOGLE_OAUTH_CLIENT_ID"), clientSecret: v("GOOGLE_OAUTH_CLIENT_SECRET"), redirectUri, endpoints, fetch: fetchImpl } }
-  return { cipher, appBaseUrl, meta, googleAds, googleBusiness }
+  const stripe: AdsConfig["stripe"] = !cipher ? { configured: false, reason: "MISSING_ENCRYPTION_KEY" }
+    : { configured: true, config: { endpoint: origin ? `${origin}/stripe/v1` : STRIPE_ENDPOINT, fetch: fetchImpl } }
+  return { cipher, appBaseUrl, meta, googleAds, googleBusiness, stripe }
 }
 
 export const AdsProviderLive = Layer.sync(AdsProvider, () => adsConfigFromEnv())
