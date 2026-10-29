@@ -17,6 +17,7 @@ import {
 import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, type Stat } from "@/components/page"
 import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing, pct, reviewed, useOverviewData } from "@/components/today-overview"
 import { SearchPerformancePanel } from "@/components/search-console"
+import { AdPerformancePanel } from "@/components/ad-accounts"
 import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
 import { OUTCOME_LABELS, Records } from "@/lib/record"
 import { errorMessage, relativeTime, sentenceCase } from "@/lib/format"
@@ -171,6 +172,7 @@ export function Today() {
 
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
       <SearchPerformancePanel businessId={id} />
+      <AdPerformancePanel businessId={id} />
 
       {trend === "goal" ? (
         <section className="space-y-3">

@@ -45,6 +45,7 @@ import {
 } from "@openrecord/db"
 import { GitHubExecutionLive } from "@openrecord/site-operator"
 import { Ga4ProviderLive } from "@openrecord/ga4"
+import { AdsProviderLive } from "@openrecord/ads"
 import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
 
@@ -52,6 +53,8 @@ const Repos = Layer.mergeAll(
   GitHubExecutionLive,
   // W8: GA4 OAuth client, redirect URI and token encryption keys from server configuration only.
   Ga4ProviderLive,
+  // Meta and Google Ads app credentials and redirect URI, from server configuration only.
+  AdsProviderLive,
   GrowthRepositoriesLive,
   SetupRepositoryLive,
   GrowthMeasurementRepositoryLive,

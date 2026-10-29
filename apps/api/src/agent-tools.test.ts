@@ -20,6 +20,7 @@ describe("agent tool harness", () => {
       "map_website",
       "read_acquisition_citations",
       "read_acquisition_overview",
+      "read_ad_performance",
       "read_ai_referral_evidence",
       "read_business_truth",
       "read_buyer_question_results",
