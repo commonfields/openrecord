@@ -6,8 +6,8 @@
 // The proxy's client key stays on this computer: it is read from an
 // environment variable or the private bridge configuration file. Plain HTTP
 // is accepted only for a loopback address.
-import { spawn } from "node:child_process"
 import { accessSync, constants, readFileSync, statSync } from "node:fs"
+import { startDetached } from "./process.js"
 import { homedir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import { Schema } from "effect"
@@ -151,11 +151,7 @@ export async function startCliProxy(instance: CliProxyInstance, env: NodeJS.Proc
   const found = findCliProxy(env, home)
   if (!found) return false
   startedAt = Date.now()
-  try {
-    const child = spawn(found.binary, ["-config", found.config], { cwd: dirname(found.config), detached: true, stdio: "ignore", shell: false, env })
-    child.on("error", () => {})
-    child.unref()
-  } catch { return false }
+  if (!startDetached(found.binary, ["-config", found.config], { cwd: dirname(found.config), env })) return false
   // Wait for it to answer, up to ten seconds.
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 500))
