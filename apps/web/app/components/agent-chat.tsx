@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
+import { ChatMarkdown } from "@/components/chat-markdown"
 import { LiveTrace, RunTrace, initialProgress, progressOf, type Progress } from "@/components/agent-trace"
 import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
@@ -269,13 +270,37 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     })
   }
 
+  // Messages written while a turn runs wait here, in order, and go out one at
+  // a time as each turn finishes, like T3 Code's queued follow-ups. "Send now"
+  // stops the turn under way so the chosen message starts at once.
+  const [queued, setQueued] = useState<ReadonlyArray<{ id: string; text: string }>>([])
+  const flush = useRef(false)
+  const sendRef = useRef(send)
+  sendRef.current = send
+  const enqueue = (text: string) => setQueued(q => [...q, { id: crypto.randomUUID(), text }])
+  const unqueue = (id: string) => setQueued(q => q.filter(m => m.id !== id))
+  const sendNow = (id: string) => {
+    setQueued(q => { const m = q.find(x => x.id === id); return m ? [m, ...q.filter(x => x.id !== id)] : q })
+    flush.current = true
+    if (pending.current) stopTurn()
+  }
+  useEffect(() => {
+    if (busy || !ready || !sendable || pending.current || !queued.length) return
+    // A failed or stopped turn holds the queue, unless the person chose "Send now".
+    if (failed && !flush.current) return
+    flush.current = false
+    const [next, ...rest] = queued
+    setQueued(rest)
+    sendRef.current(next!.text)
+  }, [busy, ready, sendable, failed, queued])
+
   // Work the agent produced: proposals to decide on, accepted drafts, and the
   // turns where it read stored evidence.
   const openProposals = proposals.filter(p => p.status === "PROPOSED")
   const keptDrafts = proposals.filter(p => p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")
   const hasWork = openProposals.length > 0 || keptDrafts.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking }
+  return { businessId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking, queued, enqueue, unqueue, sendNow }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -468,7 +493,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       ) : (
                         <>
                           <RunTrace activity={workLog(m)} durationMs={m.durationMs} />
-                          <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90")}>{m.text}</p>
+                          <ChatMarkdown text={m.text} className={m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90"} />
                         </>
                       )}
                       {m.run?.gaps?.length ? (
@@ -757,9 +782,30 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 
 // Composer copy that explains why typing is disabled without pretending:
 // unreachable agent, or a selection known to be missing.
+// Messages waiting for the turn under way, above the composer: each can go
+// out now (stopping the agent) or be taken back into the box.
+function QueuedMessages({ session }: { session: AgentSession }) {
+  return (
+    <ol aria-label="Queued messages" className="mb-1.5 space-y-1">
+      {session.queued.map((m, i) => (
+        <li key={m.id} className="flex min-h-9 items-center gap-2 rounded-[10px] bg-card py-1 pr-1 pl-3 text-sm shadow-(--card-shadow)">
+          <CornerDownRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{m.text}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{i === 0 ? "Next" : `Queued ${i + 1}`}</span>
+          <Button type="button" size="sm" variant="secondary" onClick={() => session.sendNow(m.id)}>Send now</Button>
+          <Button type="button" size="icon-sm" variant="ghost" className="text-muted-foreground" onClick={() => session.unqueue(m.id)} aria-label="Remove queued message">
+            <XIcon className="size-3.5" />
+          </Button>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 function composerPlaceholder(session: AgentSession, fallback: string): string {
   if (session.selection.status === "unavailable") return "The model you used is unavailable now — pick another model below"
   if (session.selection.status === "unset") return "Pick a model for the agent below"
+  if (session.busy && session.messages.length) return "Write a follow-up. It sends when the agent finishes"
   return session.unavailable ?? fallback
 }
 
@@ -843,7 +889,9 @@ function Composer({
   const matches = onCommand ? commandMatches(text) : []
   const [menuIndex, setMenuIndex] = useState(0)
   const menuOpen = matches.length > 0
-  const canSend = !disabled && !modelBlocked && text.trim().length > 0 && text.trim().length <= 4000
+  // While the agent works, a message is queued for when it finishes instead.
+  const queueing = inFlight && session !== undefined
+  const canSend = (!disabled || queueing) && !modelBlocked && text.trim().length > 0 && text.trim().length <= 4000
 
   const run = (c: AgentCommand) => {
     if (disabled || modelBlocked) {
@@ -861,7 +909,8 @@ function Composer({
     if (!canSend) return
     if (command) return run(command)
     recognitionRef.current?.stop()
-    onSend(text.trim())
+    if (queueing) session.enqueue(text.trim())
+    else onSend(text.trim())
     setText("")
     textRef.current?.focus()
   }
@@ -908,6 +957,7 @@ function Composer({
       onDrop={e => { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") }}
       className="w-full space-y-0.5"
     >
+      {session?.queued.length ? <QueuedMessages session={session} /> : null}
       <div
         onClick={(e) => {
           // The whole box behaves like the input: clicking padding focuses it.
@@ -958,7 +1008,7 @@ function Composer({
           rows={1}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
-          disabled={disabled && !onCommand}
+          disabled={disabled && !onCommand && !queueing}
           aria-expanded={onCommand ? menuOpen : undefined}
           aria-autocomplete={onCommand ? "list" : undefined}
           maxLength={4000}
@@ -1009,18 +1059,27 @@ function Composer({
               <TooltipContent>{listening ? "Stop voice input" : "Voice input"}</TooltipContent>
             </Tooltip>
           ) : null}
+          {queueing && text.trim().length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="submit" size="icon-sm" variant="secondary" className="size-8 rounded-full" disabled={!canSend} aria-label="Queue message">
+                  <ArrowUpIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Queue it. It sends when the agent finishes.</TooltipContent>
+            </Tooltip>
+          ) : null}
           {inFlight && session ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant="secondary"
                   size="icon-sm"
-                  className="rounded-full"
+                  className="size-8 rounded-full bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
                   onClick={session.stopTurn}
                   aria-label="Stop the agent"
                 >
-                  <SquareIcon className="size-3.5 fill-current" />
+                  <span aria-hidden className="size-2.5 rounded-[2px] bg-current" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Stop the agent</TooltipContent>
@@ -1028,11 +1087,11 @@ function Composer({
           ) : text.trim().length > 0 ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span>
+                <span className="flex">
                   <Button
                     type="submit"
                     size="icon-sm"
-                    className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50"
+                    className="size-8 rounded-full shadow-none bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50"
                     disabled={!canSend}
                     aria-label="Send message"
                   >

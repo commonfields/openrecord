@@ -76,17 +76,17 @@ export function ThinkingGlyph({ live = true }: { live?: boolean }) {
   const [i, setI] = useState(4)
   useEffect(() => {
     if (!live || window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.hasAttribute("data-reduce-motion")) return
-    const t = window.setInterval(() => setI(n => (n + 1) % GLYPHS.length), 120)
+    const t = window.setInterval(() => setI(n => (n + 1) % GLYPHS.length), 220)
     return () => window.clearInterval(t)
   }, [live])
-  return <span aria-hidden className="inline-block w-3.5 text-center font-mono text-[0.8125rem] leading-none text-secondary">{live ? GLYPHS[i] : "✻"}</span>
+  return <span aria-hidden className="inline-flex size-4 items-center justify-center font-mono text-base leading-none text-secondary">{live ? GLYPHS[i] : "✻"}</span>
 }
 
 // One work log line: a 24px icon slot and a muted label, like T3 Code's WorkLogLine.
 function LogRow({ icon, children, wrap, className }: { icon: ReactNode; children: ReactNode; wrap?: boolean; className?: string }) {
   return (
-    <li className={cn("flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed text-muted-foreground", wrap ? "items-start" : "items-center", className)}>
-      <span className="flex size-6 shrink-0 items-center justify-center [&_svg]:size-3.5">{icon}</span>
+    <li className={cn("flex min-h-6 min-w-0 gap-1 text-sm leading-relaxed text-muted-foreground", wrap ? "items-start" : "items-center", className)}>
+      <span className="flex size-6 shrink-0 items-center justify-end pr-0.5 [&_svg]:size-3.5">{icon}</span>
       <span className={cn("min-w-0 flex-1", wrap ? "pt-px" : "truncate")}>{children}</span>
     </li>
   )
