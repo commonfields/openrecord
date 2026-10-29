@@ -11,6 +11,7 @@ import { Cause, Effect, Schedule, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import { decodeRouteId, type HarnessSelection } from "@openrecord/contracts"
 import { sendSessionTurn } from "./agent-sessions.js"
+import { businessWebsite } from "./agent-web-tools.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 export const BRIEF_INTERVAL_DAYS = 7
@@ -45,7 +46,7 @@ const toBrief = (r: Record<string, unknown>): Brief => ({
 })
 
 /** The model this person last used for this business, if any. */
-const lastSelection = (scope: Scope) => Effect.gen(function*() {
+export const lastSelection = (scope: Scope) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT m->'inference' AS inference FROM agent_conversations c, jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
     WHERE c.account_id = ${scope.accountId} AND c.user_id = ${scope.userId} AND c.business_id = ${scope.businessId}
@@ -56,7 +57,7 @@ const lastSelection = (scope: Scope) => Effect.gen(function*() {
 
 /** Runs the brief's turn: the session runtime in production, a fixture in tests. */
 export type BriefSender<R> = (scope: Scope, body: { readonly message: string; readonly requestId: string; readonly conversationId: string; readonly revision: number; readonly selection: HarnessSelection | undefined }) => Effect.Effect<unknown, unknown, R>
-const production: BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>> = (scope, body) => sendSessionTurn(scope, body)
+export const production: BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>> = (scope, body) => sendSessionTurn(scope, body)
 
 const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
 
@@ -176,7 +177,9 @@ export const briefApi = (withSession: WithSession) => {
       const latest = rows[0] ? toBrief(rows[0]) : null
       // While a new one is being written, the last finished one stays readable.
       const previous = latest?.status !== "READY" && rows[1] ? toBrief(rows[1]) : null
-      return yield* json(200, { brief: latest, previous: previous?.status === "READY" ? previous : null, schedule }, PRIVATE)
+      // Without a goal the agent can't save or measure ideas, so Today offers to finish setup.
+      const goal = yield* sql`SELECT 1 FROM growth_goals g JOIN businesses b ON b.id = g.business_id WHERE g.business_id = ${scope.businessId} AND b.account_id = ${scope.accountId} LIMIT 1`
+      return yield* json(200, { brief: latest, previous: previous?.status === "READY" ? previous : null, schedule, hasGoal: goal.length > 0, website: yield* businessWebsite(scope.businessId) }, PRIVATE)
     }))),
     HttpRouter.post("/api/businesses/:id/brief/run", business(scope => Effect.gen(function*() {
       return yield* json(200, { brief: yield* startBrief(scope, "MANUAL") }, PRIVATE)

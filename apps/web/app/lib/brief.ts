@@ -10,7 +10,7 @@ export type Brief = {
 export type BriefSchedule = { enabled: boolean; nextRunAt: string }
 const base = (id: string) => `/api/businesses/${encodeURIComponent(id)}/brief`
 export const Briefs = {
-  get: (businessId: string) => api<{ brief: Brief | null; previous: Brief | null; schedule: BriefSchedule }>(base(businessId)),
+  get: (businessId: string) => api<{ brief: Brief | null; previous: Brief | null; schedule: BriefSchedule; hasGoal: boolean; website: string | null }>(base(businessId)),
   run: (businessId: string) => api<{ brief: Brief }>(`${base(businessId)}/run`, { method: "POST", body: "{}" }),
   schedule: (businessId: string, enabled: boolean) => api<{ schedule: BriefSchedule }>(`${base(businessId)}/schedule`, { method: "POST", body: JSON.stringify({ enabled }) }),
 }

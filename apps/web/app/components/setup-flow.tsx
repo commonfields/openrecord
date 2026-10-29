@@ -1,8 +1,9 @@
-import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 import { ArrowRightIcon, CheckIcon, GlobeIcon, LoaderCircleIcon, RotateCwIcon, SparklesIcon } from "lucide-react"
 import type { ChannelCapability, ChannelEntry, ChannelInventory, GrowthOpportunity, SetupView } from "@openrecord/contracts"
+import { ThinkingGlyph } from "@/components/agent-trace"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -23,7 +24,8 @@ export function useSetup(businessId: string) {
   const latest = q.data?.setup ?? null
   // A server response always wins over an older local copy.
   const setup = override && (!latest || override.revision >= latest.revision) ? override : latest
-  const discovering = setup?.step === "DISCOVER"
+  // Poll while the homepage is read and while the agent drafts the brief from it.
+  const discovering = setup?.step === "DISCOVER" || (setup?.step === "CONFIRM" && setup.draft?.status === "RUNNING")
   const settled = !q.loading
   useEffect(() => { if (settled) setPolling(discovering) }, [settled, discovering])
   return { setup, loading: q.loading && !q.data, set: setOverride, reload: q.reload }
@@ -122,6 +124,20 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
   const [saving, setSaving] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const set = (k: keyof typeof form) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+  // The agent's draft fills whatever the person hasn't typed yet; their own words always win.
+  const draft = setup.draft?.status === "READY" ? setup.draft.value : null
+  const drafted = useRef(false)
+  useEffect(() => {
+    if (!draft || drafted.current || setup.brief) return
+    drafted.current = true
+    setForm(f => ({
+      businessName: f.businessName && f.businessName !== guessName(setup) ? f.businessName : draft.businessName,
+      category: f.category || draft.category, audience: f.audience || draft.audience,
+      valueProposition: f.valueProposition && f.valueProposition !== (signals?.description ?? "") ? f.valueProposition : draft.valueProposition,
+      goalStatement: f.goalStatement || draft.goalStatement, conversionKind: f.category || f.audience ? f.conversionKind : draft.conversionKind,
+      metricLabel: f.metricLabel || draft.metricLabel,
+    }))
+  }, [draft, setup, signals])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -157,6 +173,15 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-partial-soft px-3 py-2 text-xs">
           <span className="min-w-0 flex-1">The homepage couldn't be read ({setup.discovery.failure.toLowerCase().replace(/_/g, " ")}). Describe the business below, or try again.</span>
           <Button type="button" variant="outline" size="sm" onClick={retry} disabled={retrying}><RotateCwIcon />Try again</Button>
+        </div>
+      ) : setup.draft?.status === "RUNNING" ? (
+        <p role="status" className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+          <ThinkingGlyph /><span className="thinking">Your agent is reading your website and filling this in for you</span>
+        </p>
+      ) : draft ? (
+        <div className="space-y-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs">
+          <p className="font-medium">Drafted by your agent from your website <span className="font-normal text-muted-foreground">· check it, change anything, then confirm</span></p>
+          {draft.competitors.length ? <p className="text-muted-foreground">Competitors it found: {draft.competitors.map(c => c.name).join(", ")}</p> : null}
         </div>
       ) : signals ? (
         <div className="space-y-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs">
@@ -414,9 +439,9 @@ export function ChannelList({ inventory, showManual = true }: { inventory: Chann
 /* --------------------------------------------------------------- start */
 
 /** Website and goal: everything setup needs to begin. */
-export function SetupStartForm({ businessId, onStarted, autoFocus }: { businessId?: string; onStarted: (s: SetupView) => void; autoFocus?: boolean }) {
+export function SetupStartForm({ businessId, onStarted, autoFocus, website: known }: { businessId?: string; onStarted: (s: SetupView) => void; autoFocus?: boolean; website?: string | null }) {
   const id = useId()
-  const [website, setWebsite] = useState("")
+  const [website, setWebsite] = useState(known ?? "")
   const [goal, setGoal] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

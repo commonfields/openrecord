@@ -19,6 +19,7 @@ import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing,
 import { SearchPerformancePanel } from "@/components/search-console"
 import { AdPerformancePanel } from "@/components/ad-accounts"
 import { WeeklyBrief } from "@/components/weekly-brief"
+import { SetupCard } from "@/components/setup-card"
 import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
 import { OUTCOME_LABELS, Records } from "@/lib/record"
 import { errorMessage, relativeTime, sentenceCase } from "@/lib/format"
@@ -171,6 +172,7 @@ export function Today() {
         }
       />
 
+      <SetupCard businessId={id} />
       <WeeklyBrief businessId={id} />
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
       <SearchPerformancePanel businessId={id} />

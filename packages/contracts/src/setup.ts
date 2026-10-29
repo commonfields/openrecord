@@ -115,6 +115,19 @@ export interface SetupAssessment {
   readonly measurement: "CONNECTED" | "MANUAL_ONLY" | "NONE"
 }
 
+/** What the agent drafted from the website for the person to check. A suggestion, never authority. */
+export const SetupDraft = Schema.Struct({
+  businessName: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200)),
+  category: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(300)),
+  audience: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1000)),
+  valueProposition: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000)),
+  goalStatement: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1000)),
+  conversionKind: GrowthConversionKind,
+  metricLabel: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(120)),
+  competitors: Schema.Array(Schema.Struct({ name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(120)), website: Schema.optional(Schema.String.pipe(Schema.maxLength(300))) })).pipe(Schema.maxItems(8)),
+})
+export type SetupDraft = typeof SetupDraft.Type
+
 export interface SetupView {
   readonly id: string
   readonly businessId: string
@@ -132,4 +145,6 @@ export interface SetupView {
   readonly inventory: ChannelInventory
   readonly assessment: SetupAssessment | null
   readonly opportunity: GrowthOpportunity | null
+  /** The agent's draft of the brief: RUNNING while it reads the site. Absent once the brief is confirmed. */
+  readonly draft?: { readonly status: "RUNNING" } | { readonly status: "FAILED" } | { readonly status: "READY"; readonly value: SetupDraft }
 }
