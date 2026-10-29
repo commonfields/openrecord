@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -11,8 +11,9 @@ import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
 import { ChatMarkdown } from "@/components/chat-markdown"
+import { ACCEPT, MAX_FILE_CHARS, MAX_FILES, MAX_TOTAL_CHARS, addAttachments, readAttachment } from "@/lib/attachments"
 import { LiveTrace, RunTrace, initialProgress, progressOf, type Progress } from "@/components/agent-trace"
-import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentAttachment, type AgentCitation, type AgentContextUse, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { Growth } from "@/lib/growth"
@@ -26,7 +27,7 @@ import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHar
 import { AgentModelPicker } from "@/components/agent-model-picker"
 import { NewChatDialog } from "@/components/new-chat-dialog"
 
-type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
+type Message = { id: string; role: "user" | "agent"; text: string; attachments?: AgentAttachment[]; context?: AgentContextUse; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
   steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[]
   // Helper sessions this reply started, and which session sent this message.
@@ -111,7 +112,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const [sessionInfo, setSessionInfo] = useState<AgentSessionInfo | null>(null)
   // Why the conversation could not load, and the last message that got no reply.
   const [unavailable, setUnavailable] = useState<string | null>(null)
-  const [failed, setFailed] = useState<{ text: string; note: string; retry: boolean } | null>(null)
+  const [failed, setFailed] = useState<{ text: string; attachments?: AgentAttachment[]; note: string; retry: boolean } | null>(null)
   // Which provider the next turn runs on, and its current catalog, shared by
   // chat and composer. The server re-validates every selection at send time.
   const { catalog } = useHarnessCatalog({ enabled, pollMs: 30_000 })
@@ -160,7 +161,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     return () => { live = false }
   }, [businessId, conversationId, pendingWorking])
 
-  const send = (text: string) => {
+  const send = (text: string, attachments: AgentAttachment[] = []) => {
     if (pending.current || !ready || !conversationId) return
     // A turn cannot start on a selection known to be missing; the server has
     // the final word on anything else.
@@ -174,7 +175,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     activity.start(businessId, requestId, "New chat", conversationId, providerTag)
     // A reply starts as "Thinking"; it turns to "Working" once the model runs a tool.
     let progress = initialProgress()
-    setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "", pending: true, progress }])
+    setMessages(m => [...m, { id: uid(), role: "user", text, ...(attachments.length ? { attachments } : {}) }, { id: uid(), role: "agent", text: "", pending: true, progress }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
     // Follow the run's journal while the reply is pending. Polling resumes from
     // the last sequence seen, so a missed poll loses nothing.
@@ -190,7 +191,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     }
     let timer = setTimeout(poll, 250)
     const stopPolling = () => { polling = false; clearTimeout(timer) }
-    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection, responseStyle).then(r => {
+    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection, responseStyle, attachments).then(r => {
       activity.finish(businessId, requestId, true, r.provider, r.title)
       notifyAgentChats()
       if (!mounted.current) return
@@ -198,14 +199,14 @@ export function useAgentSession(businessId: string | null, enabled = true) {
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
         ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}),
-        ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}) }])
+        ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}), ...(r.context ? { context: r.context } : {}) }])
       refreshProposals()
       if (r.decisions?.length) notifyDecisionsChanged()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
       if (!mounted.current) return
       setMessages(m => m.slice(0, -1))
-      setFailed({ text, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
+      setFailed({ text, attachments, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
       refreshProposals()
       void Agent.load(businessId, conversationId).then(r => {
         if (mounted.current && r.conversation && r.conversation.revision > revision) {
@@ -247,9 +248,9 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   // Sends the message that got no reply again, in place of the unanswered copy.
   const retry = () => {
     if (!failed || pending.current) return
-    const text = failed.text
+    const { text, attachments } = failed
     setMessages(m => m.length && m[m.length - 1]!.role === "user" ? m.slice(0, -1) : m)
-    send(text)
+    send(text, attachments)
   }
 
   const startNew = () => {
@@ -273,11 +274,11 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   // Messages written while a turn runs wait here, in order, and go out one at
   // a time as each turn finishes, like T3 Code's queued follow-ups. "Send now"
   // stops the turn under way so the chosen message starts at once.
-  const [queued, setQueued] = useState<ReadonlyArray<{ id: string; text: string }>>([])
+  const [queued, setQueued] = useState<ReadonlyArray<{ id: string; text: string; attachments: AgentAttachment[] }>>([])
   const flush = useRef(false)
   const sendRef = useRef(send)
   sendRef.current = send
-  const enqueue = (text: string) => setQueued(q => [...q, { id: crypto.randomUUID(), text }])
+  const enqueue = (text: string, attachments: AgentAttachment[] = []) => setQueued(q => [...q, { id: crypto.randomUUID(), text, attachments }])
   const unqueue = (id: string) => setQueued(q => q.filter(m => m.id !== id))
   const sendNow = (id: string) => {
     setQueued(q => { const m = q.find(x => x.id === id); return m ? [m, ...q.filter(x => x.id !== id)] : q })
@@ -291,7 +292,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     flush.current = false
     const [next, ...rest] = queued
     setQueued(rest)
-    sendRef.current(next!.text)
+    sendRef.current(next!.text, next!.attachments)
   }, [busy, ready, sendable, failed, queued])
 
   // Work the agent produced: proposals to decide on, accepted drafts, and the
@@ -350,7 +351,7 @@ function MessageDecisions({ session, businessName, refs }: { session: AgentSessi
 
 // ---- sessions working together ----
 
-const ROLE_LABEL: Readonly<Record<string, string>> = { general: "Helper", researcher: "Research", seo: "Search", aeo: "AI answers", content: "Content", analyst: "Measurement" }
+const ROLE_LABEL: Readonly<Record<string, string>> = { general: "Helper", researcher: "Research", seo: "Search", aeo: "AI answers", content: "Content", analyst: "Measurement", reviewer: "Review", verifier: "Fact-check" }
 const roleLabel = (role: string | null | undefined) => ROLE_LABEL[role ?? "general"] ?? "Helper"
 const TASK_STATUS: Readonly<Record<AgentTaskStatus, string>> = { RUNNING: "Working", COMPLETED: "Done", FAILED: "Stopped", CANCELLED: "Cancelled", INTERRUPTED: "Interrupted" }
 /** Each task's latest known status: a later message (its posted result) supersedes the card that started it. */
@@ -373,7 +374,7 @@ function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tas
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{t.title}</span>
-              <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)} · {TASK_STATUS[status]}</span>
+              <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)}{t.model ? ` · ${t.model}` : ""} · {TASK_STATUS[status]}</span>
             </span>
             {session.businessId !== null ? <Link className="shrink-0 text-xs font-medium underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: t.sessionId })}>Open</Link> : null}
           </li>
@@ -485,7 +486,14 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                 <li className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
                   {m.origin ? <OriginLabel session={session} origin={m.origin} /> : null}
                   {m.role === "user" ? (
-                    m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null
+                    <>
+                      {m.attachments?.length ? (
+                        <ul aria-label="Attached files" className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                          {m.attachments.map((f, j) => <li key={`${f.name}:${j}`}><AttachmentChip file={f} /></li>)}
+                        </ul>
+                      ) : null}
+                      {m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null}
+                    </>
                   ) : (
                     <div className="w-full space-y-1.5">
                       {m.pending ? (
@@ -782,6 +790,51 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 
 // Composer copy that explains why typing is disabled without pretending:
 // unreachable agent, or a selection known to be missing.
+// How full the chat's memory was on the last turn, as a small ring. Past the
+// budget, older messages are summarized rather than dropped, so the chat keeps going.
+export function ContextMeter({ messages }: { messages: ReadonlyArray<{ context?: AgentContextUse | undefined }> }) {
+  const use = [...messages].reverse().find(m => m.context)?.context
+  if (!use || use.budgetChars <= 0) return null
+  const pct = Math.min(100, Math.round(use.historyChars / use.budgetChars * 100))
+  const summarized = use.compacted + use.omitted
+  const r = 6, c = 2 * Math.PI * r
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} role="img" aria-label={`Chat memory ${pct}% full`} className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">
+          <svg viewBox="0 0 16 16" className="size-3.5 -rotate-90" aria-hidden>
+            <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+            <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)}
+              className={pct >= 90 ? "text-amber-600 dark:text-amber-400" : undefined} />
+          </svg>
+          {pct}%
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        Chat memory {pct}% full. {use.verbatim} recent message{use.verbatim === 1 ? "" : "s"} go to the model in full{summarized ? `; ${summarized} older ${summarized === 1 ? "one is" : "ones are"} summarized to make room` : ""}.
+        {pct >= 90 ? " Start a new chat for a fresh topic." : ""}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+// A file attached to a message: its name and size, removable before sending.
+function AttachmentChip({ file, onRemove }: { file: AgentAttachment; onRemove?: () => void }) {
+  const lines = file.text.split("\n").length
+  return (
+    <span className="flex h-8 max-w-64 items-center gap-2 rounded-[8px] bg-card pr-1 pl-2.5 text-[0.8125rem] shadow-(--card-shadow)" title={file.name}>
+      <FileTextIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate font-medium">{file.name}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{lines.toLocaleString()} line{lines === 1 ? "" : "s"}</span>
+      {onRemove ? (
+        <button type="button" onClick={onRemove} aria-label={`Remove ${file.name}`} className="flex size-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground">
+          <XIcon className="size-3.5" />
+        </button>
+      ) : <span className="w-1.5" />}
+    </span>
+  )
+}
+
 // Messages waiting for the turn under way, above the composer: each can go
 // out now (stopping the agent) or be taken back into the box.
 function QueuedMessages({ session }: { session: AgentSession }) {
@@ -859,7 +912,7 @@ function Composer({
   modelBlocked,
   context,
 }: {
-  onSend: (text: string) => void
+  onSend: (text: string, attachments?: AgentAttachment[]) => void
   /** Slash commands run as conversational turns through the selected agent. */
   onCommand?: ((command: AgentCommand) => void) | undefined
   disabled: boolean
@@ -878,6 +931,8 @@ function Composer({
   const { preferences } = usePreferences()
   const { openSettings } = useSettings()
   const [text, setText] = useState("")
+  const [files, setFiles] = useState<AgentAttachment[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
   const [listening, setListening] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<Recognition | null>(null)
@@ -891,7 +946,21 @@ function Composer({
   const menuOpen = matches.length > 0
   // While the agent works, a message is queued for when it finishes instead.
   const queueing = inFlight && session !== undefined
-  const canSend = (!disabled || queueing) && !modelBlocked && text.trim().length > 0 && text.trim().length <= 4000
+  const canSend = (!disabled || queueing) && !modelBlocked && (text.trim().length > 0 || files.length > 0) && text.trim().length <= 4000
+
+  // Files from the attach button, a drop or a paste. Unreadable ones are named in one notice.
+  const attach = async (list: FileList | ReadonlyArray<File>) => {
+    const results = await Promise.all([...list].map(readAttachment))
+    const read = results.flatMap(r => "attachment" in r ? [r.attachment] : [])
+    const errors = results.flatMap(r => "error" in r ? [r.error] : [])
+    const truncated = results.flatMap(r => "attachment" in r && r.truncated ? [r.attachment.name] : [])
+    const { attachments: next, dropped } = addAttachments(files, read)
+    setFiles(next)
+    if (errors.length) toast.error(errors[0]!, errors.length > 1 ? { description: `${errors.length - 1} more file${errors.length > 2 ? "s" : ""} not attached.` } : undefined)
+    if (dropped.length) toast.error(`Not attached: ${dropped.join(", ")}`, { description: `Up to ${MAX_FILES} files and ${MAX_TOTAL_CHARS.toLocaleString()} characters per message.` })
+    if (truncated.length) toast(`Only the first ${MAX_FILE_CHARS.toLocaleString()} characters of ${truncated.join(", ")} were attached.`)
+    textRef.current?.focus()
+  }
 
   const run = (c: AgentCommand) => {
     if (disabled || modelBlocked) {
@@ -909,9 +978,11 @@ function Composer({
     if (!canSend) return
     if (command) return run(command)
     recognitionRef.current?.stop()
-    if (queueing) session.enqueue(text.trim())
-    else onSend(text.trim())
+    const message = text.trim() || (files.length === 1 ? "Here's a file to look at." : "Here are some files to look at.")
+    if (queueing) session.enqueue(message, files)
+    else onSend(message, files)
     setText("")
+    setFiles([])
     textRef.current?.focus()
   }
 
@@ -954,10 +1025,19 @@ function Composer({
         submit()
       }}
       onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") }}
+      onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length) void attach(e.dataTransfer.files) }}
       className="w-full space-y-0.5"
     >
       {session?.queued.length ? <QueuedMessages session={session} /> : null}
+      {files.length ? (
+        <ul aria-label="Attached files" className="mb-1.5 flex flex-wrap gap-1.5">
+          {files.map((f, i) => (
+            <li key={`${f.name}:${i}`}>
+              <AttachmentChip file={f} onRemove={() => setFiles(list => list.filter((_, j) => j !== i))} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div
         onClick={(e) => {
           // The whole box behaves like the input: clicking padding focuses it.
@@ -986,7 +1066,7 @@ function Composer({
         ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-muted-foreground hover:text-foreground" aria-label="Chat actions" disabled={inFlight}>
+            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-muted-foreground hover:text-foreground" aria-label="Chat actions" disabled={inFlight && !queueing}>
               <PlusIcon className="size-5" />
             </Button>
           </DropdownMenuTrigger>
@@ -995,9 +1075,13 @@ function Composer({
               <DropdownMenuItem key={c.key} onSelect={() => run(c.key)}>{c.icon}<span>/{c.key}</span><span className="ml-2 text-muted-foreground">{c.description}</span></DropdownMenuItem>
             )) : null}
             {onCommand ? <DropdownMenuSeparator /> : null}
+            <DropdownMenuItem onSelect={() => fileRef.current?.click()}><PaperclipIcon />Attach files</DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => openSettings("agent")}>Manage providers</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" aria-label="Attach files"
+          onChange={e => { if (e.currentTarget.files?.length) void attach(e.currentTarget.files); e.currentTarget.value = "" }} />
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
         </label>
@@ -1012,7 +1096,7 @@ function Composer({
           aria-expanded={onCommand ? menuOpen : undefined}
           aria-autocomplete={onCommand ? "list" : undefined}
           maxLength={4000}
-          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") } }}
+          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); void attach(e.clipboardData.files) } }}
           onKeyDown={(e) => {
             if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault()
@@ -1116,6 +1200,7 @@ function Composer({
           />
         ) : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
+          <ContextMeter messages={session.messages} />
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Select value={session.reasoningEffort ?? "default"} disabled={inFlight || session.reasoningEfforts.length === 0} onValueChange={value => {

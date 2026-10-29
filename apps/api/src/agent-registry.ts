@@ -116,7 +116,7 @@ export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): Decisi
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */
 export type TaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
-export interface TaskRef { readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: TaskStatus }
+export interface TaskRef { readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: TaskStatus; readonly model?: string }
 /** At most ten, first occurrence kept; a later status for the same task replaces the earlier one. */
 export const mergeTasks = (refs: Iterable<TaskRef>): TaskRef[] => {
   const seen = new Map<string, TaskRef>()

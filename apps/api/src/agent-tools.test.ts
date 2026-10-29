@@ -17,6 +17,7 @@ describe("agent tool harness", () => {
       "audit_website",
       "compare_acquisition_batches",
       "discover_buyer_questions",
+      "map_website",
       "read_acquisition_citations",
       "read_acquisition_overview",
       "read_ai_referral_evidence",
@@ -29,10 +30,12 @@ describe("agent tool harness", () => {
       "read_issue",
       "read_observation",
       "read_open_issues",
+      "read_proposals",
       "read_record_outcomes",
       "read_representations",
       "read_search_performance",
       "read_web_page",
+      "read_web_pages",
       "search_web",
     ])
     for (const tool of AGENT_TOOLS) {

@@ -7,7 +7,7 @@
 // server's run journal; nothing extra is generated.
 import { useEffect, useState, type ReactNode } from "react"
 import {
-  ChartLineIcon, ChevronRightIcon, FileTextIcon, GaugeIcon, GlobeIcon, ListChecksIcon, MessageCircleQuestionIcon,
+  ChartLineIcon, ChevronRightIcon, FileTextIcon, GaugeIcon, GlobeIcon, ListChecksIcon, MessageCircleQuestionIcon, NetworkIcon,
   PenLineIcon, SearchIcon, TargetIcon, UsersIcon, WrenchIcon, XIcon, type LucideIcon,
 } from "lucide-react"
 import type { AgentActivity, AgentRunEvent } from "@/lib/api"
@@ -57,7 +57,9 @@ export const elapsed = (ms: number) => {
 export function toolIcon(tool: string): LucideIcon {
   if (tool === "search_web") return SearchIcon
   if (tool === "audit_website") return GaugeIcon
-  if (tool === "read_web_page") return GlobeIcon
+  if (tool === "read_web_page" || tool === "read_web_pages") return GlobeIcon
+  if (tool === "map_website") return NetworkIcon
+  if (tool === "read_proposals") return FileTextIcon
   if (/session|task|delegate|list_models/.test(tool)) return UsersIcon
   if (/^propose_|^draft_|^prepare_/.test(tool)) return PenLineIcon
   if (/question/.test(tool)) return MessageCircleQuestionIcon

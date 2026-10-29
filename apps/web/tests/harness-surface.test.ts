@@ -387,7 +387,7 @@ describe("api client carries the selection contract", () => {
     expect(api).toContain("selection?: HarnessSelection")
     expect(api).toContain("provider: string")
     expect(api).toContain("requestedModel: string | null")
-    expect(api).toContain("conversationId, selection, style })")
+    expect(api).toContain("conversationId, selection, style, ...(attachments?.length ? { attachments } : {}) })")
   })
 
   it("wires the real cancel route for stopping a turn", () => {
@@ -485,7 +485,7 @@ describe("composer model selector and stop control", () => {
     expect(chat).not.toMatch(/disabled=\{session\.busy \|\| !session\.ready \|\| !session\.sendable/)
     expect(chat).not.toMatch(/disabled=\{!session\.ready \|\| session\.busy \|\| !session\.sendable/)
     expect(chat).toContain("modelBlocked={!session.sendable}")
-    expect(chat).toContain("!modelBlocked && text.trim().length > 0")
+    expect(chat).toContain("!modelBlocked && (text.trim().length > 0 || files.length > 0)")
     expect(chat).toContain("Choose an available model before running a command.")
     expect(chat).toContain("session.send(`/${command}`)")
     // A reply starts as "Thinking" and turns to "Working" once a tool runs.

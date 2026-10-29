@@ -41,6 +41,9 @@ export interface BuiltContext {
   readonly compactedMessages: number
   readonly omittedMessages: number
   readonly chars: number
+  /** Characters of history sent (verbatim plus compacted memory), within the budget. */
+  readonly historyChars: number
+  readonly budgetChars: number
 }
 
 export const buildContext = (history: ReadonlyArray<ContextMessage>, message: string, budget: ContextBudget = DEFAULT_CONTEXT_BUDGET): BuiltContext => {
@@ -72,7 +75,8 @@ export const buildContext = (history: ReadonlyArray<ContextMessage>, message: st
   // Memory rides on the first user turn (the current message at the latest).
   const first = contents.findIndex(c => c.role === "user")
   if (memory) contents[first] = { ...contents[first]!, parts: [{ text: memory }, ...contents[first]!.parts] }
-  return { contents, verbatimMessages: recent.length, compactedMessages: lines.length, omittedMessages: omitted, chars: JSON.stringify(contents).length }
+  return { contents, verbatimMessages: recent.length, compactedMessages: lines.length, omittedMessages: omitted, chars: JSON.stringify(contents).length,
+    historyChars: used + (memory ? memory.length : 0), budgetChars: budget.historyChars }
 }
 
 /** Within one run, shrink the oldest tool results to their summaries and

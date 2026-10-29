@@ -93,6 +93,64 @@ const pool = async <T, R>(items: ReadonlyArray<T>, limit: number, deadline: numb
   return out
 }
 
+/** Sitemaps: robots.txt entries on this origin, else /sitemap.xml; one level of index. */
+const readSitemaps = async (web: WebAccessService, origin: string, declared: ReadonlyArray<string>, deadline: number, max = 500) => {
+  const sitemapUrls = [...new Set([...declared.filter(s => normal(s)?.startsWith(origin)), `${origin}/sitemap.xml`])].slice(0, 3)
+  const listed = new Set<string>()
+  let found = false, invalid = false
+  const read = async (url: string, depth: number): Promise<void> => {
+    if (depth > 1 || listed.size >= max || Date.now() > deadline) return
+    const doc = await web.fetch(url, "xml")
+    if (doc.body === null) return
+    try {
+      const parsed = parseSitemapXml(doc.body, { origin, maxEntries: max })
+      found = true
+      for (const u of parsed.urls) { const n = normal(u); if (n?.startsWith(origin) && listed.size < max) listed.add(n) }
+      for (const nested of parsed.nested.slice(0, 3)) await read(nested, depth + 1)
+    } catch { invalid = true }
+  }
+  for (const s of sitemapUrls) { if (found) break; await read(s, 0) }
+  return { listed, found, invalid }
+}
+
+export interface SiteMap {
+  readonly site: string
+  readonly sitemap: { readonly found: boolean; readonly invalid: boolean }
+  readonly pages: number
+  /** Pages grouped by their first path segment ("/blog", "/pricing"), largest first. */
+  readonly sections: ReadonlyArray<{ readonly path: string; readonly pages: number; readonly examples: ReadonlyArray<string> }>
+  readonly urls: ReadonlyArray<string>
+  readonly disallowed: number
+}
+
+/** The pages a site lists in its sitemaps and links from its home page, without reading them. */
+export const mapSite = async (web: WebAccessService, input: { readonly url: string; readonly limit?: number }): Promise<SiteMap | { readonly refused: "NOT_PUBLIC" | "INVALID_URL" | "ROBOTS_UNAVAILABLE" }> => {
+  const start = normal(input.url)
+  if (!start) return { refused: "INVALID_URL" }
+  const deadline = Date.now() + 30_000
+  let robots = await readRobots(web, new URL(start).origin)
+  if (robots.state === "NOT_PUBLIC") return { refused: "NOT_PUBLIC" }
+  if (robots.state === "DENIED" || robots.state === "UNAVAILABLE") return { refused: "ROBOTS_UNAVAILABLE" }
+  const home = robots.allows(start) ? await web.fetch(start, "page") : null
+  if (home?.failure === "SECURITY_REJECTED") return { refused: "NOT_PUBLIC" }
+  const origin = new URL(home?.finalUrl || start).origin
+  if (origin !== new URL(start).origin) {
+    robots = await readRobots(web, origin)
+    if (robots.state === "NOT_PUBLIC") return { refused: "NOT_PUBLIC" }
+  }
+  const { listed, found, invalid } = await readSitemaps(web, origin, robots.sitemaps, deadline, 2000)
+  const homeRead = home?.body && home.contentType !== "text/plain" ? readablePage(home.body, home.finalUrl) : null
+  const all = [...new Set([...(home ? [normal(home.finalUrl) ?? start] : []), ...listed, ...(homeRead?.internalLinks ?? []).flatMap(u => normal(u) ?? [])])].filter(u => u.startsWith(origin))
+  const allowed = robots.state === "PRESENT" ? all.filter(u => robots.allows(u)) : all
+  const sections = new Map<string, string[]>()
+  for (const u of allowed) { const seg = new URL(u).pathname.split("/").filter(Boolean)[0]; const key = seg ? `/${seg}` : "/"; sections.set(key, [...(sections.get(key) ?? []), u]) }
+  return {
+    site: origin, sitemap: { found, invalid }, pages: allowed.length, disallowed: all.length - allowed.length,
+    sections: [...sections].sort((a, b) => b[1].length - a[1].length).slice(0, 25).map(([path, urls]) => ({ path, pages: urls.length, examples: urls.slice(0, 3) })),
+    urls: allowed.slice(0, Math.min(Math.max(input.limit ?? 100, 1), 300)),
+  }
+}
+
 export const auditSite = async (web: WebAccessService, input: { readonly url: string; readonly maxPages?: number; readonly deadlineMs?: number }): Promise<SiteAudit | { readonly refused: "NOT_PUBLIC" | "INVALID_URL" }> => {
   const start = normal(input.url)
   if (!start) return { refused: "INVALID_URL" }
@@ -124,22 +182,7 @@ export const auditSite = async (web: WebAccessService, input: { readonly url: st
   const llms = await web.fetch(`${origin}/llms.txt`, "text")
   const llmsTxt = llms.body !== null && llms.body.trim().length > 0 && !/^\s*</.test(llms.body)
 
-  // Sitemaps: robots.txt entries on this origin, else /sitemap.xml; one level of index.
-  const sitemapUrls = [...new Set([...robots.sitemaps.filter(s => normal(s)?.startsWith(origin)), `${origin}/sitemap.xml`])].slice(0, 3)
-  const listed = new Set<string>()
-  let sitemapFound = false, sitemapInvalid = false
-  const readSitemap = async (url: string, depth: number): Promise<void> => {
-    if (depth > 1 || listed.size >= 500 || Date.now() > deadline) return
-    const doc = await web.fetch(url, "xml")
-    if (doc.body === null) return
-    try {
-      const parsed = parseSitemapXml(doc.body, { origin, maxEntries: 500 })
-      sitemapFound = true
-      for (const u of parsed.urls) { const n = normal(u); if (n?.startsWith(origin)) listed.add(n) }
-      for (const nested of parsed.nested.slice(0, 3)) await readSitemap(nested, depth + 1)
-    } catch { sitemapInvalid = true }
-  }
-  for (const s of sitemapUrls) { if (sitemapFound) break; await readSitemap(s, 0) }
+  const { listed, found: sitemapFound, invalid: sitemapInvalid } = await readSitemaps(web, origin, robots.sitemaps, deadline)
 
   const homeRead = home.body !== null && home.contentType !== "text/plain" ? readablePage(home.body, home.finalUrl) : null
   const candidates = [...new Set([normal(home.finalUrl) ?? start, ...listed, ...(homeRead?.internalLinks ?? [])])]
