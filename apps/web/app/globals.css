@@ -364,3 +364,28 @@ html.theme-switching *::after {
   --tw-ring-shadow: 0 0 #0000 !important;
   --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
+
+/* Agent answers as formatted text (chat-markdown.tsx). */
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown p { margin: 0.625rem 0; }
+.chat-markdown :is(ul, ol) { margin: 0.625rem 0; padding-left: 1.375rem; }
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown li { margin: 0.25rem 0; padding-left: 0.125rem; }
+.chat-markdown li > :is(ul, ol) { margin: 0.25rem 0; }
+.chat-markdown li::marker { color: var(--muted-foreground); }
+.chat-markdown :is(h1, h2, h3, h4) { margin: 1.25rem 0 0.5rem; font-weight: 600; line-height: 1.35; color: var(--foreground); }
+.chat-markdown h1 { font-size: 1.25rem; }
+.chat-markdown h2 { font-size: 1.125rem; }
+.chat-markdown :is(h3, h4) { font-size: 1rem; }
+.chat-markdown strong { font-weight: 600; color: var(--foreground); }
+.chat-markdown blockquote { margin: 0.75rem 0; border-left: 2px solid var(--border); padding-left: 0.875rem; color: var(--muted-foreground); }
+.chat-markdown hr { margin: 1.25rem 0; border-color: var(--border); }
+.chat-markdown :not(pre) > code { border-radius: 4px; background: var(--muted); padding: 0.1rem 0.3rem; font-size: 0.875em; }
+.chat-markdown pre { margin: 0.75rem 0; overflow-x: auto; border-radius: 10px; background: var(--card); box-shadow: var(--card-shadow); padding: 0.75rem 0.875rem; font-size: 0.8125rem; line-height: 1.6; }
+.chat-markdown :is(th, td) { padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
+.chat-markdown th { font-weight: 500; color: var(--muted-foreground); font-size: 0.8125rem; }
+.chat-markdown tr + tr, .chat-markdown thead + tbody tr { border-top: 1px solid var(--border); }
+.chat-markdown input[type="checkbox"] { margin-right: 0.375rem; vertical-align: -1px; }
+.chat-markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.25rem; }

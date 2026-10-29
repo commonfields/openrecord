@@ -470,8 +470,9 @@ describe("composer model selector and stop control", () => {
   it("shows a stop button wired to the session cancel, replacing send in flight", () => {
     const chat = agentChat()
     const stop = chat.slice(chat.indexOf("{inFlight && session ? ("), chat.indexOf(") : text.trim().length > 0 ? ("))
-    expect(stop.includes('variant="secondary"'), "Stop needs the contrasting blue button palette").toBe(true)
-    expect(stop.includes("text-foreground"), "page text color must not override the stop icon contrast").toBe(false)
+    // The same filled circle as Send, with a centered square, so the two swap in place.
+    expect(stop).toContain("size-8 rounded-full bg-primary text-primary-foreground")
+    expect(stop.includes("text-foreground "), "page text color must not override the stop icon contrast").toBe(false)
     expect(chat).toContain('aria-label="Stop the agent"')
     expect(chat).toContain("stopTurn")
     expect(chat).toContain("Agent.cancel")
