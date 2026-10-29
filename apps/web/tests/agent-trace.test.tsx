@@ -20,7 +20,7 @@ describe("agent trace", () => {
     expect(p).toMatchObject({ phase: "thinking", current: null })
     expect(p.trace.map(t => t.text)).toEqual(["Check the open issues first.", "3 open issues read"])
   })
-  it("folds a finished turn's work log into one Worked for row, like T3 Code", () => {
+  it("folds a finished turn's work log into one Worked for row", () => {
     const html = renderToStaticMarkup(<RunTrace durationMs={72400} activity={[{ kind: "thought", text: "Plan", ms: 900 }, { kind: "tool", tool: "read_open_issues", text: "3 open issues read" }]} />)
     expect(html).toContain("Worked for 1m 12s")
     expect(html).not.toContain("3 open issues read")

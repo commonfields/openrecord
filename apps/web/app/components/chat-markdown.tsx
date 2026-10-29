@@ -1,5 +1,4 @@
-// An agent answer as formatted text, the way T3 Code's ChatMarkdown shows it:
-// GitHub-flavoured Markdown (lists, tables, code, task lists) with the app's
+// An agent answer as formatted text: GitHub-flavoured Markdown (lists, tables, code, task lists) with the app's
 // type scale. Raw HTML in the answer is never rendered, and links open in a
 // new tab without passing this page as the opener.
 import { memo } from "react"

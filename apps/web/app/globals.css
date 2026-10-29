@@ -327,7 +327,7 @@ html[data-reduce-motion] *::after {
 .dark .name-shimmer {
   --shimmer-light: white;
 }
-/* A working chat's dot: two steady beats a second, as in T3 Code's sidebar. */
+/* A working chat's dot: two steady beats a second. */
 @keyframes status-pulse {
   0%,
   40% {

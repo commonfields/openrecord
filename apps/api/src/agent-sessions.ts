@@ -1,7 +1,6 @@
 // Sessions that work together. A business turn can start helper sessions
 // (delegate_task), follow up with another session (message_session), read a
-// task or another session, and cancel what it started. Modelled on T3 Code's
-// orchestrator: a helper gets only its task, runs as an ordinary durable turn
+// task or another session, and cancel what it started. A helper gets only its task, runs as an ordinary durable turn
 // in its own session, and its result returns to the caller either inside the
 // caller's turn (wait) or later, posted into the caller's session, which then
 // continues once every async task of that turn has finished (async).

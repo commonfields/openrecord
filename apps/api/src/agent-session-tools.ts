@@ -1,6 +1,5 @@
-// Tools a session uses to work with other sessions, modelled on T3 Code's
-// orchestrator (delegate_task, task_status, task_cancel, t3_thread_send,
-// t3_thread_read, t3_thread_list, orchestrator_capabilities).
+// Tools a session uses to work with other sessions: start a helper, follow
+// up with a session, read or cancel a task, and list sessions and models.
 //
 // A helper session gets only its task, never the caller's history. It runs in
 // the same business, for the same user, with the same server-owned tools as

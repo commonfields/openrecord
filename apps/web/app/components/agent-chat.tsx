@@ -272,7 +272,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   }
 
   // Messages written while a turn runs wait here, in order, and go out one at
-  // a time as each turn finishes, like T3 Code's queued follow-ups. "Send now"
+  // a time as each turn finishes. "Send now"
   // stops the turn under way so the chosen message starts at once.
   const [queued, setQueued] = useState<ReadonlyArray<{ id: string; text: string; attachments: AgentAttachment[] }>>([])
   const flush = useRef(false)

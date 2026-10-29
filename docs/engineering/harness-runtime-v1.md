@@ -4,9 +4,9 @@ OpenRecord connects a user's local provider CLIs through an outbound bridge. The
 
 ## Why the bridge runs locally
 
-T3 Code runs provider drivers beside its server. OpenRecord's hosted server is not the user's computer, so running those CLIs on the hosted server would require transferring credentials. The local bridge avoids that transfer and needs no inbound port on the user's computer.
+Provider CLIs normally run on the person's own computer, next to their sign-ins. OpenRecord's hosted server is not the user's computer, so running those CLIs on the hosted server would require transferring credentials. The local bridge avoids that transfer and needs no inbound port on the user's computer.
 
-The design follows T3 Code's distinction between driver kinds, configured instances, provider discovery, and per-turn model selection. The reference checkout is `pingdotgg/t3code` at commit `375da0fb9a20dfdbd2eb2db99050341fc30f3a23`, under the MIT license. Useful reference modules are `packages/contracts/src/providerInstance.ts`, `packages/provider-core/src/server/ProviderAdapter.ts`, and the OpenCode and Cursor provider packages. OpenRecord implements its own transport and preserves its existing Effect 3 application loop.
+The design separates driver kinds, configured instances, provider discovery, and per-turn model selection. OpenRecord implements its own transport and preserves its existing Effect 3 application loop.
 
 ## Why the server owns tools
 

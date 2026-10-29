@@ -1,5 +1,4 @@
-// What the agent is doing, and what it did, as a work log in the style of
-// T3 Code's timeline. While a turn runs: "Thinking for 4s" (or "Working for"
+// What the agent is doing, and what it did, as a work log. While a turn runs: "Thinking for 4s" (or "Working for"
 // once a tool runs) with a live clock, the finished steps as icon rows, and
 // the step under way shimmering at the bottom. Once the reply arrives the
 // whole log folds into one "Worked for 12s" row above the answer, which opens
@@ -47,7 +46,7 @@ export function progressOf(events: ReadonlyArray<AgentRunEvent>, current: Progre
   return p
 }
 
-/** "12s", "1m 05s": T3 Code's elapsed format. */
+/** "12s", "1m 05s". */
 export const elapsed = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000)), m = Math.floor(s / 60)
   return m === 0 ? `${s}s` : `${m}m ${String(s % 60).padStart(2, "0")}s`
@@ -84,7 +83,7 @@ export function ThinkingGlyph({ live = true }: { live?: boolean }) {
   return <span aria-hidden className="inline-flex size-4 items-center justify-center font-mono text-base leading-none text-secondary">{live ? GLYPHS[i] : "✻"}</span>
 }
 
-// One work log line: a 24px icon slot and a muted label, like T3 Code's WorkLogLine.
+// One work log line: a 24px icon slot and a muted label.
 function LogRow({ icon, children, wrap, className }: { icon: ReactNode; children: ReactNode; wrap?: boolean; className?: string }) {
   return (
     <li className={cn("flex min-h-6 min-w-0 gap-1 text-sm leading-relaxed text-muted-foreground", wrap ? "items-start" : "items-center", className)}>
