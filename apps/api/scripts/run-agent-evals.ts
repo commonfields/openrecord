@@ -17,12 +17,12 @@ import { Effect, Layer, ManagedRuntime, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { SqlClient } from "@effect/sql"
 import type { HarnessSelection } from "@openrecord/contracts"
-import { runConversation } from "../agent.js"
-import { configuredAgentModel, type AgentModel } from "../agent-model.js"
-import { harnessModel } from "../harness-model.js"
-import { harnessCatalog } from "../harness-store.js"
-import type { AgentToolResult } from "../agent-tools.js"
-import { SCENARIOS, grade } from "./scenarios.js"
+import { runConversation } from "../src/agent.js"
+import { configuredAgentModel, type AgentModel } from "../src/agent-model.js"
+import { harnessModel } from "../src/harness-model.js"
+import { harnessCatalog } from "../src/harness-store.js"
+import type { AgentToolResult } from "../src/agent-tools.js"
+import { SCENARIOS, grade } from "../src/evals/scenarios.js"
 
 const args = process.argv.slice(2)
 const flag = (name: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined }

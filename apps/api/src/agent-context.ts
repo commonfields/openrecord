@@ -68,10 +68,12 @@ export const buildContext = (history: ReadonlyArray<ContextMessage>, message: st
     if (memoryChars + line.length + 1 > room) break
     lines.unshift(line); memoryChars += line.length + 1
   }
-  const omitted = older.length - lines.length
-  const candidateMemory = lines.length || omitted
+  let omitted = older.length - lines.length
+  const renderMemory = () => lines.length || omitted
     ? [MEMORY_HEADER, ...(omitted ? [`- (${omitted} older messages are not shown)`] : []), ...lines].join("\n")
     : null
+  while (lines.length && (renderMemory()?.length ?? 0) > historyBudget - used) { lines.shift(); omitted++ }
+  const candidateMemory = renderMemory()
   const memory = candidateMemory && candidateMemory.length <= historyBudget - used ? candidateMemory : null
   const contents: ModelContent[] = recent.map(m => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: verbatim(m) }] }))
   contents.push({ role: "user", parts: [...(resume ? [{ text: resume }] : []), { text: message }] })

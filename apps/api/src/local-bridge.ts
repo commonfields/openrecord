@@ -8,8 +8,7 @@
 // Never enable this on a shared or hosted server: the bridge runs the
 // provider CLIs with this machine's sign-ins for whoever is signed in.
 import { spawn, type ChildProcess } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs"
-import { mkdir } from "node:fs/promises"
+import { managedBridgeId, managedBridgePid, managedBridgeUsers, prepareManagedBridgeHome, localBridgeProgramExists as existsSync } from "@openrecord/fs-containment"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -58,16 +57,12 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch
 
 /** A bridge from an earlier server process may still be running from this directory; a dead one leaves a stale lock. */
 const runningElsewhere = (dir: string) => {
-  const lock = join(dir, "bridge.lock")
-  if (!existsSync(lock)) return false
-  const pid = Number(readFileSync(lock, "utf8").trim())
-  if (Number.isInteger(pid) && pid > 0 && alive(pid)) return true
-  try { unlinkSync(lock) } catch { /* already gone */ }
-  return false
+  const pid = managedBridgePid(dir)
+  return pid !== null && alive(pid)
 }
 
 const configuredBridgeId = (dir: string) => {
-  try { const id = JSON.parse(readFileSync(join(dir, "bridge.json"), "utf8"))?.bridgeId; return typeof id === "string" ? id : null } catch { return null }
+  return managedBridgeId(dir)
 }
 
 export type LocalBridgeStatus = "DISABLED" | "UNAVAILABLE" | "OFF" | "STARTED" | "RUNNING"
@@ -113,7 +108,7 @@ export const ensureLocalBridge = (session: Session, serverPort: number, connect 
       }))
       args = ["pair", "--server", `http://127.0.0.1:${serverPort}`, "--code", code]
     }
-    yield* Effect.promise(() => mkdir(dir, { recursive: true, mode: 0o700 }))
+    yield* Effect.sync(() => prepareManagedBridgeHome(dir))
     launch(session.userId, dir, bridge, args)
     return "STARTED" as LocalBridgeStatus
   })
@@ -164,7 +159,7 @@ export const resumeLocalBridges = Effect.gen(function* () {
   if (!bridge || !existsSync(base)) return 0
   const sql = yield* SqlClient.SqlClient
   let resumed = 0
-  for (const userId of readdirSync(base)) {
+  for (const userId of managedBridgeUsers()) {
     if (!/^[0-9a-f-]{36}$/.test(userId) || children.has(userId)) continue
     const dir = join(base, userId), id = configuredBridgeId(dir)
     if (!id) continue

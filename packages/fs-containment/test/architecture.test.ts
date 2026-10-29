@@ -34,6 +34,7 @@ const LOCAL_BRIDGE_SRC = "packages/bridge/src/"
 // The user-run bridge owns its local configuration and temporary workspaces.
 // It is not a hosted mutation adapter and must never enter the hosted graph.
 const LOCAL_BRIDGE_FS = new Map([
+  ["packages/bridge/src/cliproxy.ts", new Set(["accessSync", "constants", "readFileSync", "statSync"])],
   ["packages/bridge/src/adapters.ts", new Set(["access", "mkdtemp", "mkdir", "readFile", "writeFile", "rm", "constants"])],
   ["packages/bridge/src/main.ts", new Set(["chmod", "lstat", "mkdir", "open", "readFile", "rename", "unlink", "writeFile", "realpathSync"])],
 ])
