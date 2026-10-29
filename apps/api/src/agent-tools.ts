@@ -5,6 +5,9 @@ import { SEARCH_AGENT_TOOLS } from "./agent-search-tools.js"
 import { WEB_AGENT_TOOLS } from "./agent-web-tools.js"
 import { ADS_AGENT_TOOLS } from "./agent-ads-tools.js"
 import { RESULTS_AGENT_TOOLS } from "./agent-results-tools.js"
+import { OBJECTIVE_AGENT_TOOLS } from "./objectives.js"
+import { PERFORMANCE_AGENT_TOOLS } from "./agent-performance-tools.js"
+import { INVESTIGATION_READ_TOOLS } from "./agent-investigation-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
 // read-only tools for operator assistance.
 //
@@ -401,6 +404,9 @@ export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   ...WEB_AGENT_TOOLS,
   ...ADS_AGENT_TOOLS,
   ...RESULTS_AGENT_TOOLS,
+  ...OBJECTIVE_AGENT_TOOLS,
+  ...PERFORMANCE_AGENT_TOOLS,
+  ...INVESTIGATION_READ_TOOLS,
   readBusinessTruth,
   discoverBuyerQuestions,
   readOpenIssues,

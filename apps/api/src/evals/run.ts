@@ -48,8 +48,8 @@ const scopeFor = Effect.gen(function*() {
 const main = async () => {
   const regrade = flag("regrade")
   if (regrade) {
-    const report = JSON.parse(readFileSync(regrade, "utf8")) as { model: string; rows: Array<{ id: string; reply: string; tools: string[] }> }
-    const graded = report.rows.flatMap(r => { const s = SCENARIOS.find(x => x.id === r.id); return s ? [grade(s, r.reply, r.tools)] : [] })
+    const report = JSON.parse(readFileSync(regrade, "utf8")) as { model: string; rows: Array<{ id: string; reply: string; tools: string[]; calls?: Array<{ tool: string; args: unknown }> }> }
+    const graded = report.rows.flatMap(r => { const s = SCENARIOS.find(x => x.id === r.id); return s ? [grade(s, r.reply, r.tools, r.calls)] : [] })
     for (const g of graded) console.log(`${g.passed ? "PASS" : "FAIL"}  ${g.id.padEnd(20)} ${g.passed ? "" : g.failed.join("; ")}`)
     console.log(`\n${report.model}: ${graded.filter(g => g.passed).length}/${graded.length} passed with the current checks`)
     return
@@ -75,16 +75,16 @@ const main = async () => {
 
   const picked = all("scenario").length ? SCENARIOS.filter(s => all("scenario").includes(s.id)) : SCENARIOS
   const repeat = Math.max(1, Math.min(5, Number(flag("repeat") ?? 1)))
-  const rows: Array<ReturnType<typeof grade> & { ms: number; reply: string; tools: string[]; error?: string }> = []
+  const rows: Array<ReturnType<typeof grade> & { ms: number; reply: string; tools: string[]; calls: Array<{ tool: string; args: unknown }>; error?: string }> = []
   console.log(`Running ${picked.length} scenario${picked.length === 1 ? "" : "s"}${repeat > 1 ? ` × ${repeat}` : ""} on ${label}\n`)
   for (const s of picked) for (let n = 0; n < repeat; n++) {
     const started = Date.now()
-    const tools: string[] = []
+    const tools: string[] = [], calls: Array<{ tool: string; args: unknown }> = []
     const run = await runtime.runPromise(runConversation({ message: s.message, history: [], model,
-      dispatch: name => Effect.sync(() => { tools.push(name); return s.evidence[name] ?? notConnected(name) }) }).pipe(Effect.either))
+      dispatch: (name, args) => Effect.sync(() => { tools.push(name); calls.push({ tool: name, args }); return s.evidence[name] ?? notConnected(name) }) }).pipe(Effect.either))
     const reply = run._tag === "Right" ? run.right.reply : ""
-    const g = run._tag === "Right" ? grade(s, reply, tools) : { id: s.id, passed: false, failed: ["model did not answer"], checks: s.checks.length }
-    rows.push({ ...g, ms: Date.now() - started, reply, tools, ...(run._tag === "Left" ? { error: String((run.left as { reason?: string }).reason ?? run.left) } : {}) })
+    const g = run._tag === "Right" ? grade(s, reply, tools, calls) : { id: s.id, passed: false, failed: ["model did not answer"], checks: s.checks.length }
+    rows.push({ ...g, ms: Date.now() - started, reply, tools, calls, ...(run._tag === "Left" ? { error: String((run.left as { reason?: string }).reason ?? run.left) } : {}) })
     console.log(`${g.passed ? "PASS" : "FAIL"}  ${s.id.padEnd(20)} ${String(Math.round((Date.now() - started) / 1000)).padStart(4)}s  ${g.passed ? "" : g.failed.join("; ")}`)
   }
   const passed = rows.filter(r => r.passed).length, rate = passed / rows.length

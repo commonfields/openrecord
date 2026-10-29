@@ -20,6 +20,22 @@ const scripted = (responses: ModelResponse[], seen: string[] = []): AgentModel =
 }
 
 describe("agent harness run loop (deterministic fixtures, no live model)", () => {
+  it("journals working-memory receipts without creating approvals or verified evidence", async () => {
+    const { events, journal } = memoryJournal()
+    const memory: AgentToolResult = { summary: "Assistant investigation note saved; interpretation remains unverified", citations: [],
+      data: { investigationId: "11111111-1111-4111-8111-111111111111", noteId: "22222222-2222-4222-8222-222222222222", saved: true, verified: false } }
+    const answer = await Effect.runPromise(runConversation({ message: "Remember this hypothesis", history: [], journal,
+      model: scripted([calls("record_investigation_note"), text("The hypothesis is saved as working memory.")]), dispatch: () => Effect.succeed(memory) }))
+    expect(answer.decisions).toEqual([])
+    const recorded = events.find(e => e.type === "TOOL_COMPLETED")
+    expect(recorded?.payload).toMatchObject({ effect: "record", receipt: { noteId: "22222222-2222-4222-8222-222222222222", saved: true } })
+    const interrupted = interruptionNote("INTERRUPTED", null, events)
+    expect(interrupted.text).toContain("unverified working memory")
+    expect(interrupted.text).not.toContain("Saved for your review")
+    expect(interrupted.text).not.toContain("Evidence read:")
+    expect(interrupted.decisions).toEqual([])
+  })
+
   it("journals context, model steps, tool invocations with server IDs, proposal receipts and verification", async () => {
     const { events, journal } = memoryJournal()
     const answer = await Effect.runPromise(runConversation({ message: "Re-check the opening hours", history: [], journal,

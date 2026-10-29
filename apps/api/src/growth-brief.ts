@@ -31,7 +31,7 @@ Then write the brief in Markdown, under 300 words, with exactly these three part
 
 If read_acquisition_overview shows no AI-answer question set yet and no buyer-question proposal is waiting (read_proposals), also save one with propose_question_set: 10 to 15 questions real buyers would ask an AI assistant, across the intent groups, with the competitors from read_competitors, and say in one line that it's waiting for their review. This is in addition to the one action above.
 
-End with one line naming the single connection that would make next week's brief sharper, only if something important is not connected. Never claim a change caused a result; say what moved and what else could explain it.`
+End with one line naming the single connection that would make next week's brief sharper, only if something important is not connected. Never claim a change caused a result; say what moved and what else could explain it. Write in full sentences; don't use "·" or other dots as separators.`
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
 export interface Brief {
@@ -77,7 +77,7 @@ export const startBrief = <R = Effect.Effect.Context<ReturnType<typeof sendSessi
   const inserted = yield* sql.withTransaction(Effect.gen(function*() {
     // Its own chat, kept out of the business's default chat, titled so it is easy to find.
     yield* sql`INSERT INTO agent_conversations(id, account_id, business_id, user_id, archived_at, last_reply)
-      VALUES (${conversationId}, ${scope.accountId}, ${scope.businessId}, ${scope.userId}, now(), ${JSON.stringify({ title: `Weekly brief · ${dayLabel(now)}` })}::jsonb)`
+      VALUES (${conversationId}, ${scope.accountId}, ${scope.businessId}, ${scope.userId}, now(), ${JSON.stringify({ title: `Weekly brief for ${dayLabel(now)}` })}::jsonb)`
     return yield* sql`INSERT INTO growth_briefs(account_id, business_id, user_id, trigger, conversation_id)
       VALUES (${scope.accountId}, ${scope.businessId}, ${scope.userId}, ${trigger}, ${conversationId})
       ON CONFLICT (business_id) WHERE status = 'RUNNING' DO NOTHING RETURNING *`

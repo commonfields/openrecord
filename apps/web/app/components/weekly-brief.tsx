@@ -39,8 +39,8 @@ export function WeeklyBrief({ businessId }: { businessId: string }) {
         <div className="min-w-0 flex-1">
           <h2 id="brief-title" className="text-base font-medium">This week</h2>
           <p className="text-[0.8125rem] text-muted-foreground">
-            {shown?.finishedAt ? `Written ${relativeTime(shown.finishedAt)}` : "Your agent's weekly brief"}
-            {schedule.enabled ? ` · next one ${relativeTime(schedule.nextRunAt)}` : " · weekly brief off"}
+            {shown?.finishedAt ? `Written ${relativeTime(shown.finishedAt)}.` : "Your agent's weekly brief."}{" "}
+            {schedule.enabled ? `The next one arrives ${relativeTime(schedule.nextRunAt)}.` : "The weekly brief is off."}
           </p>
         </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">

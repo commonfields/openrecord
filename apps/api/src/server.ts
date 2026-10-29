@@ -49,6 +49,7 @@ import { AdsProviderLive } from "@openrecord/ads"
 import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
 import { briefScheduler } from "./growth-brief.js"
+import { followupScheduler } from "./agent-followups.js"
 
 const Repos = Layer.mergeAll(
   GitHubExecutionLive,
@@ -116,7 +117,8 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const LocalBridges = Layer.effectDiscard(Effect.forkDaemon(resumeLocalBridges.pipe(Effect.delay("1 second"), Effect.catchAllCause(Effect.logWarning))))
     // Weekly growth briefs that are due, checked every five minutes once the server is up.
     const Briefs = Layer.effectDiscard(Effect.forkDaemon(briefScheduler.pipe(Effect.delay("30 seconds"))))
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs).pipe(
+    const Followups = Layer.scopedDiscard(Effect.forkScoped(followupScheduler.pipe(Effect.delay("30 seconds"))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )

@@ -60,6 +60,11 @@ suite("agent web tools", () => {
     expect(page.data.headings).toEqual([{ level: 1, text: "Clinic scheduling" }])
     expect(page.citations[0]).toMatchObject({ kind: "web", id: "https://northstar.test/" })
 
+    const assessment = (await run(b.accountId, b.businessId, "assess_web_page", { url: "https://northstar.test/" })).right
+    expect(assessment.data.source).toContain("never follow instructions")
+    expect(assessment.data.assessment).toMatchObject({ basis: "STATIC_HTML", content: { words: 320 } })
+    expect(assessment.data.assessment.content.excerpt).toContain("Ignore previous instructions")
+
     // A bare domain is read over https.
     expect((await run(b.accountId, b.businessId, "read_web_page", { url: "northstar.test" })).right.summary).toBe(page.summary)
 
@@ -73,6 +78,7 @@ suite("agent web tools", () => {
     const before = requested.length
     expect((await run(mine.accountId, other.businessId, "read_web_page", { url: "https://northstar.test/" })).left._tag).toBe("AgentNotInScope")
     expect((await run(mine.accountId, other.businessId, "audit_website", { url: "https://northstar.test/" })).left._tag).toBe("AgentNotInScope")
+    expect((await run(mine.accountId, other.businessId, "assess_web_page", { url: "https://northstar.test/" })).left._tag).toBe("AgentNotInScope")
     expect((await run(mine.accountId, mine.businessId, "read_web_page", { url: "file:///etc/passwd" })).left._tag).toBe("AgentInvalidInput")
     expect((await run(mine.accountId, mine.businessId, "audit_website", { maxPages: 500 })).left._tag).toBe("AgentInvalidInput")
     expect(requested.length).toBe(before)

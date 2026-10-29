@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Cause, Data, Effect, Schema } from "effect"
-import { agentWorkflow, DEFAULT_RUN_BUDGET, handleAgentMessage, type AgentHistory } from "./agent.js"
+import { agentWorkflow, DEFAULT_RUN_BUDGET, handleAgentMessage, type AgentHistory, type RunBudget } from "./agent.js"
 import { finishRun, settleRuns, startRun, type RunJournal, type RunOutcome } from "./agent-run.js"
 import type { HarnessSelection } from "@openrecord/contracts"
 import { HarnessReasoningEffort, type AgentAttachment, type AgentResponseStyle } from "@openrecord/contracts"
@@ -207,7 +207,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
   readonly attachments?: ReadonlyArray<AgentAttachment> | undefined
   /** Set when another session, not the operator, started this turn. */
   readonly origin?: MessageOrigin | undefined
-}, respond: Responder<R> = plainResponder as unknown as Responder<R>) => Effect.gen(function*() {
+}, respond: Responder<R> = plainResponder as unknown as Responder<R>, commitGuard: Effect.Effect<void, AgentModelError, SqlClient.SqlClient> = Effect.void, runBudget: RunBudget = DEFAULT_RUN_BUDGET) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const lease = randomUUID()
   const digest = createHash("sha256").update(JSON.stringify({ message:body.message, selection:body.selection ?? null, ...(body.attachments?.length ? { attachments: body.attachments } : {}) })).digest("hex")
@@ -253,7 +253,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
     ? { ...m, text: withAttachments(m.text, m.attachments.map(f => f.text.length > HISTORY_FILE_CHARS ? { ...f, text: `${f.text.slice(0, HISTORY_FILE_CHARS)}\n[… the rest of this file was read on the turn it was attached]` } : f)) } : m)
   const workflow = agentWorkflow(scope.businessId, body.message)
   const { runId, journal } = yield* startRun(scope, { conversationId: current.id, leaseId: lease, requestId: body.requestId, objective: body.message,
-    workflow: workflow ? { id: workflow.id, version: workflow.version } : null, budget: workflow?.budget ?? DEFAULT_RUN_BUDGET })
+    workflow: workflow ? { id: workflow.id, version: workflow.version } : null, budget: workflow?.budget ?? runBudget })
   // Stopped runs are recorded and settled into the conversation before the
   // lease is released, so the next reader sees what was saved and what was not.
   const stop = (status: "FAILED" | "CANCELLED" | "INTERRUPTED", reason: string) => sql.withTransaction(Effect.gen(function*() {
@@ -274,6 +274,9 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
     const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
+      // Background grants may be revoked while the model is answering. The
+      // caller can lock and recheck its authority in the same commit transaction.
+      yield* commitGuard
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
       user_revision = CASE WHEN ${body.origin === undefined} THEN revision + 1 ELSE user_revision END,
       last_request_id = ${body.requestId}, last_request_digest=${digest}, last_reply = ${JSON.stringify(response)}::jsonb, lease_id = NULL, lease_until = NULL,

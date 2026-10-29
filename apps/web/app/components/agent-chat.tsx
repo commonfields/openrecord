@@ -26,6 +26,8 @@ import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/com
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
 import { NewChatDialog } from "@/components/new-chat-dialog"
+import { AgentFollowups } from "@/components/agent-followups"
+import { followupChatEvent, followupModel } from "@/lib/agent-followups"
 
 type Message = { id: string; role: "user" | "agent"; text: string; attachments?: AgentAttachment[]; context?: AgentContextUse; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
@@ -222,6 +224,21 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const seen = useRef({ revision, refreshProposals })
   seen.current = { revision, refreshProposals }
   useEffect(() => {
+    if (businessId === null || !conversationId) return
+    let live = true
+    const refresh = () => {
+      if (pending.current) return
+      void Agent.load(businessId, conversationId).then(r => {
+        if (!live || pending.current || !r.conversation || r.conversation.revision <= seen.current.revision) return
+        setRevision(r.conversation.revision)
+        setMessages(toDisplayMessages(r.conversation.messages))
+      }).catch(() => {})
+    }
+    const event = followupChatEvent(businessId, conversationId)
+    window.addEventListener(event, refresh)
+    return () => { live = false; window.removeEventListener(event, refresh) }
+  }, [businessId, conversationId])
+  useEffect(() => {
     if (!helpersWorking || !conversationId) return
     const timer = setInterval(() => {
       if (pending.current) return
@@ -301,7 +318,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const keptDrafts = proposals.filter(p => p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")
   const hasWork = openProposals.length > 0 || keptDrafts.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking, queued, enqueue, unqueue, sendNow }
+  return { businessId, conversationId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking, queued, enqueue, unqueue, sendNow }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -478,7 +495,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
             <ol aria-live="polite" className="space-y-3">
               {session.messages.map((m, i) => m.origin?.kind === "wake" ? (
                 <li key={m.id} className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground" role="note">
-                  <span className="h-px flex-1 bg-border" />Helper results arrived. Continuing<span className="h-px flex-1 bg-border" />
+                  <span className="h-px flex-1 bg-border" />{m.origin.title ?? "Helper results arrived. Continuing"}<span className="h-px flex-1 bg-border" />
                 </li>
               ) : (
                 <Fragment key={m.id}>
@@ -1200,6 +1217,9 @@ function Composer({
           />
         ) : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
+          {session.ready && session.businessId !== null && session.conversationId && !(session.sessionInfo && session.sessionInfo.depth > 0) ? <AgentFollowups
+            key={`${session.businessId}:${session.conversationId}`} businessId={session.businessId} conversationId={session.conversationId}
+            model={followupModel(session.selection, session.reasoningEffort)} chatBusy={session.busy} /> : null}
           <ContextMeter messages={session.messages} />
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">

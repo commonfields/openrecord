@@ -8,7 +8,7 @@
 // agent-skills.ts): seo-technical, seo-geo, seo-schema and seo-audit. The text
 // is rewritten for OpenRecord; no claude-seo script or runtime is used.
 import { isAllowed, parseRobots } from "@openrecord/discovery"
-import { inspectPage, parseSitemapXml, readablePage, type DerivedFinding, type FindingKind, type ReadablePage } from "@openrecord/site-operator"
+import { inspectPage, parseSitemapXml, readablePage, structuredDataProblems, type DerivedFinding, type FindingKind, type ReadablePage } from "@openrecord/site-operator"
 import { readRobots, type RobotsState, type WebAccessService, type WebDocument } from "./web-access.js"
 
 export type AuditPriority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
@@ -216,6 +216,20 @@ export const auditSite = async (web: WebAccessService, input: { readonly url: st
 
   const ok = pages.filter((p): p is Page & { read: ReadablePage } => p.read !== null && p.doc.status !== null && p.doc.status >= 200 && p.doc.status < 300)
   const indexable = ok.filter(p => !/noindex/i.test(p.read.robotsMeta ?? ""))
+
+  const structuredIssues = indexable.map(p => ({ page: p, problems: structuredDataProblems(p.doc.body ?? "") }))
+  add("JSONLD_MISSING_CONTEXT", "MEDIUM", "Search appearance", "JSON-LD uses types without a context",
+    structuredIssues.filter(p => p.problems.includes("MISSING_CONTEXT")).map(p => p.page),
+    "Some JSON-LD uses a short type name without a context, so its meaning may not be resolved as intended.",
+    "Review the affected JSON-LD and add the appropriate context where needed.", "Check the page with a JSON-LD validator and the relevant search feature's documentation.")
+  add("JSONLD_MISSING_TYPE", "LOW", "Search appearance", "JSON-LD entities have no explicit type",
+    structuredIssues.filter(p => p.problems.includes("MISSING_TYPE")).map(p => p.page),
+    "Some top-level JSON-LD entities have properties but no explicit type. Their intended meaning may be unclear.",
+    "Review each entity and specify a suitable type if the entity is intended to describe a typed item.", "Inspect the JSON-LD and check it with a validator; do not add facts not shown on the page.")
+  add("JSONLD_INVALID_TYPE", "MEDIUM", "Search appearance", "JSON-LD contains an invalid type value",
+    structuredIssues.filter(p => p.problems.includes("INVALID_TYPE")).map(p => p.page),
+    "Some JSON-LD type values are empty or are not strings or arrays of non-empty strings.",
+    "Correct the type value to the intended type name or names.", "Check the corrected JSON-LD with a validator.")
 
   if (origin.startsWith("http:")) add("NOT_HTTPS", "HIGH", "Crawling and indexing", "The site is served without HTTPS", [{ url: origin }],
     "The home page answers over plain HTTP. Browsers mark it not secure and search engines prefer the HTTPS version.",

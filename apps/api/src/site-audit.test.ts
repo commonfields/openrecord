@@ -30,6 +30,16 @@ const words = (n: number) => "<p>" + "booking ".repeat(n) + "</p>"
 const ORG = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Northstar"}</script>`
 
 describe("site audit", () => {
+  it("reports JSON-LD structure problems without claiming rich-result eligibility", async () => {
+    const schema = `<script type="application/ld+json">{"@type":"Product","name":"Example"}</script>`
+    const { web } = site({ "https://northstar.test/": { status: 200, body: html("Northstar clinic scheduling software", `<h1>Hi</h1>${words(300)}${ORG}${schema}`) } })
+    const audit = await auditSite(web, { url: "https://northstar.test/" })
+    if ("refused" in audit) throw new Error("refused")
+    const issue = audit.issues.find(i => i.check === "JSONLD_MISSING_CONTEXT")
+    expect(issue).toMatchObject({ examples: ["https://northstar.test/"], priority: "MEDIUM" })
+    expect(issue?.verify).toContain("validator")
+  })
+
   it("audits the sitemap's pages and reports search, AI-answer and content issues with fixes and checks", async () => {
     const { web, requested } = site({
       "https://northstar.test/robots.txt": { status: 200, body: "User-agent: GPTBot\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: *\nDisallow: /admin\nSitemap: https://northstar.test/sitemap.xml" },

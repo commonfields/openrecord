@@ -180,16 +180,16 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
         </p>
       ) : draft ? (
         <div className="space-y-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs">
-          <p className="font-medium">Drafted by your agent from your website <span className="font-normal text-muted-foreground">· check it, change anything, then confirm</span></p>
+          <p className="font-medium">Drafted by your agent from your website. <span className="font-normal text-muted-foreground">Check it, change anything, then confirm.</span></p>
           {draft.competitors.length ? <p className="text-muted-foreground">Competitors it found: {draft.competitors.map(c => c.name).join(", ")}</p> : null}
         </div>
       ) : signals ? (
         <div className="space-y-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs">
-          <p className="font-medium">From your homepage <span className="font-normal text-muted-foreground">· suggestions, not verified</span></p>
+          <p className="font-medium">From your homepage. <span className="font-normal text-muted-foreground">These are suggestions, not verified.</span></p>
           {signals.title ? <p className="truncate text-muted-foreground">“{signals.title}”</p> : null}
           <p className="text-muted-foreground">
             {signals.pages.length} {signals.pages.length === 1 ? "page" : "pages"} linked
-            {signals.channels.length ? ` · ${signals.channels.length} public ${signals.channels.length === 1 ? "profile" : "profiles"}` : ""}
+            {signals.channels.length ? `, and ${signals.channels.length} public ${signals.channels.length === 1 ? "profile" : "profiles"}` : ""}
           </p>
         </div>
       ) : null}
@@ -214,7 +214,7 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
 
       {candidates.length ? (
         <fieldset className="space-y-2">
-          <legend className="text-xs font-medium">Save as approved facts <span className="font-normal text-muted-foreground">· AI answers are checked against these</span></legend>
+          <legend className="text-xs font-medium">Save as approved facts <span className="font-normal text-muted-foreground">(AI answers are checked against these)</span></legend>
           {candidates.map(c => (
             <div key={c.predicate} className="flex items-center gap-2 text-xs">
               <Checkbox id={`${id}-${c.predicate}`} checked={!!facts[c.predicate]} onCheckedChange={v => setFacts(f => ({ ...f, [c.predicate]: v === true }))} />

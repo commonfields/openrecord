@@ -5,8 +5,8 @@ import { SCENARIOS, grade } from "./scenarios.js"
 
 describe("agent quality scenarios", () => {
   it.each(SCENARIOS.map(s => [s.id, s] as const))("%s: the good answer passes and the bad one fails", (_id, s) => {
-    expect(grade(s, s.examples.good.reply, s.examples.good.tools)).toMatchObject({ passed: true, failed: [] })
-    const bad = grade(s, s.examples.bad.reply, s.examples.bad.tools)
+    expect(grade(s, s.examples.good.reply, s.examples.good.tools, s.examples.good.calls)).toMatchObject({ passed: true, failed: [] })
+    const bad = grade(s, s.examples.bad.reply, s.examples.bad.tools, s.examples.bad.calls)
     expect(bad.passed).toBe(false)
     expect(bad.failed.length).toBeGreaterThan(0)
   })

@@ -20,6 +20,7 @@ import { AgentConversationRefused, sendConversation, type ConversationScope, typ
 import type { AgentToolResult } from "./agent-tools.js"
 import type { DecisionRef, TaskRef, TaskStatus } from "./agent-registry.js"
 import { harnessCatalog, resolveHarness } from "./harness-store.js"
+import { INVESTIGATION_MEMORY, SPECIALIST_COORDINATION } from "./marketing-specialists.js"
 import {
   DEFAULT_WAIT_SECONDS, DelegateTaskInput, ListSessionsInput, MAX_RUNNING_TASKS_PER_ACCOUNT, MAX_SESSION_DEPTH, MAX_TASKS_PER_RUN, MessageSessionInput,
   NoInput, READ_ONLY_SESSION_TOOLS, ROLE_BRIEF, ReadSessionInput, SESSION_TOOL_DECLARATIONS, TaskInput, type SessionRole,
@@ -294,7 +295,7 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
   const sessionExtension = (scope: BusinessScope, turn: TurnContext, assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, context: import("effect").Context.Context<Ctx>): TurnExtension => {
     const readOnly = turn.depth >= MAX_SESSION_DEPTH || turn.origin?.kind === "wake"
     const tools = SESSION_TOOL_DECLARATIONS.filter(t => !readOnly || READ_ONLY_SESSION_TOOLS.has(t.name))
-    const system = [turn.depth > 0 ? SYSTEM_HELPER : "", readOnly ? "" : SYSTEM_BASE, turn.origin?.kind === "wake" ? SYSTEM_WAKE : ""].filter(Boolean).join("\n")
+    const system = [turn.depth > 0 ? SYSTEM_HELPER : "", readOnly ? "" : SYSTEM_BASE, SPECIALIST_COORDINATION, INVESTIGATION_MEMORY, turn.origin?.kind === "wake" ? SYSTEM_WAKE : ""].filter(Boolean).join("\n")
     const run = (name: string, args: unknown): Effect.Effect<AgentToolResult, unknown, Ctx> => Effect.gen(function*() {
       switch (name) {
         case "delegate_task": {

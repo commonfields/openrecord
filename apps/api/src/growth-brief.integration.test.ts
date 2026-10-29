@@ -62,7 +62,7 @@ suite("weekly growth brief (disposable PostgreSQL, fixture model)", () => {
     expect(calls[0]!.message).toBe(BRIEF_PROMPT(new Date().toISOString().slice(0, 10)))
     const chat = (await pool.query("SELECT archived_at, last_reply->>'title' AS title FROM agent_conversations WHERE id=$1", [first.conversationId])).rows[0]
     expect(chat.archived_at).not.toBeNull()
-    expect(chat.title).toMatch(/^Weekly brief · [A-Z][a-z]{2} \d{1,2}$/)
+    expect(chat.title).toMatch(/^Weekly brief for [A-Z][a-z]{2} \d{1,2}$/)
   })
 
   it("records a failure as a code, and the schedule runs a due brief once and moves a week ahead", async () => {
