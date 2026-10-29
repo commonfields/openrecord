@@ -140,3 +140,15 @@ export const parseCompetitors = (text: string): Array<{ name: string; aliases: s
   })
 export const formatCompetitors = (brands: Brand[]) =>
   brands.map(b => `${b.name} | ${b.aliases.join(", ")} | ${b.domains.join(", ")}${b.matchCase ? " | case" : ""}`).join("\n")
+
+/** What to measure, suggested for the person to confirm: from an accepted buyer-question proposal, else from setup. Never frozen by itself. */
+export type AcquisitionSuggestion = {
+  source: "PROPOSAL" | "SETUP" | null; brandName: string | null; category: string | null; domains: string[]
+  competitors: Array<{ name: string; website?: string }>; questions: Array<{ group: string; prompt: string }>
+  confirmedCompetitors: string[]; hasFrozenSet: boolean
+}
+export const acquisitionSuggestion = (businessId: string) =>
+  api<{ suggestion: AcquisitionSuggestion }>(`/api/businesses/${encodeURIComponent(businessId)}/acquisition/suggestion`)
+/** Suggested competitors in the competitor field's format, their website's domain as the one known domain. */
+export const suggestedCompetitorLines = (list: AcquisitionSuggestion["competitors"]) =>
+  list.map(c => { let d = ""; try { d = c.website ? new URL(c.website).hostname.replace(/^www\./, "") : "" } catch { d = "" } return `${c.name} |  | ${d}` }).join("\n")

@@ -9,6 +9,7 @@ import type { AgentToolDef, AgentToolResult } from "./agent-tools.js"
 import { AdsRefused, adPerformance, localPerformance } from "./ads.js"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import { revenuePerformance } from "./revenue.js"
+import { acquisitionSuggestion } from "./acquisition-suggestion.js"
 
 const Input = Schema.Struct({ days: Schema.optional(Schema.Literal(7, 28, 90)), provider: Schema.optional(AdProvider) })
 const money = (n: number, currency: string | null) => currency ? new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(n) : n.toFixed(0)
@@ -115,7 +116,30 @@ export const readRevenue = (accountId: string, businessId: string, input: typeof
   } satisfies AgentToolResult
 })
 
+const NoInput = Schema.Struct({})
+export const readCompetitors = (accountId: string, businessId: string) => Effect.gen(function*() {
+  const s = yield* acquisitionSuggestion(accountId, businessId)
+  const names = s.competitors.map(c => c.name)
+  return {
+    summary: s.confirmedCompetitors.length
+      ? `${s.confirmedCompetitors.length} confirmed competitor${s.confirmedCompetitors.length === 1 ? "" : "s"} in the frozen question set${names.length ? `; ${names.length} suggested` : ""}`
+      : names.length ? `${names.length} suggested competitor${names.length === 1 ? "" : "s"}, not confirmed yet` : "No competitors known yet",
+    citations: [],
+    data: {
+      confirmed: s.confirmedCompetitors, suggested: s.competitors, suggestedFrom: s.source === "PROPOSAL" ? "a saved buyer-question proposal" : s.source === "SETUP" ? "the agent's reading of the website during setup" : null,
+      brand: { name: s.brandName, category: s.category, domains: s.domains }, hasFrozenSet: s.hasFrozenSet,
+      note: "Suggested competitors are the agent's own reading, not confirmed by the person; say so, and let them confirm when they freeze the question set in AI Discovery.",
+    },
+  } satisfies AgentToolResult
+})
+
 export const ADS_AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [{
+  name: "read_competitors",
+  description: "Read the business's competitors: those confirmed in its frozen AI-answer question set, and those suggested (found when the agent drafted setup from the website, or in a saved buyer-question proposal), plus its brand name, category and domains. Use it before proposing buyer questions or comparing against competitors. Suggestions are unconfirmed. Read-only.",
+  parameters: JSONSchema.make(NoInput),
+  decode: raw => Schema.decodeUnknown(NoInput, { onExcessProperty: "error" })(raw),
+  run: (accountId, businessId) => readCompetitors(accountId, businessId),
+}, {
   name: "read_revenue",
   description: "Read this business's connected Stripe account: net revenue (paid minus refunded) per currency, paid orders, average order, paying customers and new customers for the last 7, 28 or 90 days (default 28) and the period before. Read live with a restricted read-only key. NOT_CONNECTED means unknown, never zero. Stripe can't say which channel brought a sale. Read-only.",
   parameters: JSONSchema.make(LocalInput),

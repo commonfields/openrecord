@@ -19,7 +19,7 @@ const PRIVATE = { "cache-control": "no-store" }
 
 export const BRIEF_PROMPT = (today: string) => `Write this week's growth brief for this business (today is ${today}). It is for the owner: plain words, in their language.
 
-First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_revenue (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues. Some may say not connected; don't treat that as zero.
+First read: read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_revenue (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues, read_competitors and read_proposals. Some may say not connected; don't treat that as zero.
 
 Then write the brief in Markdown, under 300 words, with exactly these three parts:
 
@@ -28,6 +28,8 @@ Then write the brief in Markdown, under 300 words, with exactly these three part
 **Do this next**: exactly one action, the most valuable thing to do this week, why it matters, and how we'll know it worked. If it's a new idea, save it with propose_growth_opportunity so it waits for approval; if a saved idea already covers it, name that one instead. Never save more than one.
 
 **What we did and what it changed**: from read_results, what was done and how the metric moved before and after, or when that will be known. If nothing has been approved yet, say so in one line.
+
+If read_acquisition_overview shows no AI-answer question set yet and no buyer-question proposal is waiting (read_proposals), also save one with propose_question_set: 10 to 15 questions real buyers would ask an AI assistant, across the intent groups, with the competitors from read_competitors, and say in one line that it's waiting for their review. This is in addition to the one action above.
 
 End with one line naming the single connection that would make next week's brief sharper, only if something important is not connected. Never claim a change caused a result; say what moved and what else could explain it.`
 

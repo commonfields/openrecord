@@ -5,7 +5,7 @@
 // imports an optional GA4 export, and opens the agency report.
 // Detection only highlights candidates; every confirmed count is a human review.
 import { useActiveBusiness } from "@/lib/workspace"
-import { useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Link, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
 import { ChevronDownIcon, FileTextIcon, LoaderCircleIcon, PlayIcon, TriangleAlertIcon, UploadIcon } from "lucide-react"
@@ -25,7 +25,7 @@ import { errorMessage, formatDateTime, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import {
   BASIS_LABELS, BATCH_STATUS_LABELS, Discovery, GROUP_LABELS, HINT_LABELS, INTENT_GROUPS, MENTION_LABELS, RECOMMENDATION_LABELS,
-  discoveryReportPath, formatCompetitors, fraction, parseCompetitors,
+  acquisitionSuggestion, discoveryReportPath, formatCompetitors, fraction, parseCompetitors, suggestedCompetitorLines,
   type Basis, type Batch, type Candidate, type Check, type DiscoveryResponse, type IntentGroup, type Mention, type QuestionSet, type Recommendation,
 } from "@/lib/acquisition"
 
@@ -81,6 +81,18 @@ function SetForm({ clientId, previous, websiteUrl, reload, onDone }: { clientId:
   const [questions, setQuestions] = useState<Record<IntentGroup, string>>(() => Object.fromEntries(INTENT_GROUPS.map(g =>
     [g, previous?.questions.filter(q => q.group === g).map(q => q.prompt).join("\n") ?? ""])) as Record<IntentGroup, string>)
   const { busy, run } = useBusy(reload)
+  // A first set starts from what was suggested (an accepted proposal, else setup); the person checks it, picks the basis and freezes it.
+  const suggestion = useApi(previous ? null : `acq-suggestion:${clientId}`, () => acquisitionSuggestion(clientId)).data?.suggestion ?? null
+  const filled = useRef(false)
+  useEffect(() => {
+    if (!suggestion || filled.current || previous) return
+    filled.current = true
+    setCategory(c => c || suggestion.category || "")
+    setName(n => n || suggestion.brandName || "")
+    setDomains(d => d || suggestion.domains.join(", "))
+    setCompetitors(c => c || suggestedCompetitorLines(suggestion.competitors))
+    setQuestions(q => Object.fromEntries(INTENT_GROUPS.map(g => [g, q[g] || suggestion.questions.filter(x => x.group === g).map(x => x.prompt).join("\n")])) as Record<IntentGroup, string>)
+  }, [suggestion, previous])
   const list = (s: string) => s.split(",").map(x => x.trim()).filter(Boolean)
   const parsed = INTENT_GROUPS.flatMap(g => questions[g].split("\n").map(p => p.trim()).filter(Boolean).map(prompt => ({ group: g, prompt })))
   const submit = () => run(() => Discovery.createSet(clientId, {
@@ -89,6 +101,12 @@ function SetForm({ clientId, previous, websiteUrl, reload, onDone }: { clientId:
   }), previous ? `Question set v${previous.version + 1} frozen` : "Question set frozen").then(ok => { if (ok) onDone() })
   return (
     <div className="space-y-4 p-4 pt-2">
+      {suggestion?.source && !previous ? (
+        <p className="rounded-xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+          Pre-filled from {suggestion.source === "PROPOSAL" ? "the buyer questions your agent proposed" : "what your agent read on your website during setup"}.
+          {suggestion.competitors.length ? " The competitors are its reading of your market." : ""} Check everything, choose the measurement basis, then freeze it.
+        </p>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label>Measurement basis</Label>
