@@ -163,9 +163,16 @@ export const briefApi = (withSession: WithSession) => {
       ? json(401, { _tag: "NotAuthenticated" }, PRIVATE) : json(500, { _tag: "BriefRequestFailed" }, PRIVATE)))
   return HttpRouter.empty.pipe(
     HttpRouter.get("/api/businesses/:id/brief", business(scope => Effect.gen(function*() {
-      const schedule = yield* ensureSchedule(scope)
+      const schedule = { ...(yield* ensureSchedule(scope)) }
       const sql = yield* SqlClient.SqlClient
-      const rows = yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND account_id = ${scope.accountId} ORDER BY started_at DESC LIMIT 2`
+      let rows = yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND account_id = ${scope.accountId} ORDER BY started_at DESC LIMIT 2`
+      // The very first brief starts the moment someone opens it; after that the week decides.
+      if (!rows.length && schedule.enabled) {
+        yield* sql`UPDATE growth_brief_schedules SET next_run_at = now() + make_interval(days => ${BRIEF_INTERVAL_DAYS}), updated_at = now() WHERE business_id = ${scope.businessId}`
+        yield* startBrief(scope, "SCHEDULE")
+        rows = yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND account_id = ${scope.accountId} ORDER BY started_at DESC LIMIT 2`
+        schedule.nextRunAt = new Date(Date.now() + BRIEF_INTERVAL_DAYS * 86_400_000).toISOString()
+      }
       const latest = rows[0] ? toBrief(rows[0]) : null
       // While a new one is being written, the last finished one stays readable.
       const previous = latest?.status !== "READY" && rows[1] ? toBrief(rows[1]) : null
