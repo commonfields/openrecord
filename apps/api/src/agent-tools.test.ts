@@ -34,6 +34,7 @@ describe("agent tool harness", () => {
       "read_proposals",
       "read_record_outcomes",
       "read_representations",
+      "read_results",
       "read_search_performance",
       "read_web_page",
       "read_web_pages",

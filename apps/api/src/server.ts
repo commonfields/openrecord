@@ -48,6 +48,7 @@ import { Ga4ProviderLive } from "@openrecord/ga4"
 import { AdsProviderLive } from "@openrecord/ads"
 import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
+import { briefScheduler } from "./growth-brief.js"
 
 const Repos = Layer.mergeAll(
   GitHubExecutionLive,
@@ -113,7 +114,9 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const ReposProvided = Layer.provideMerge(Repos, PgLive)
     // This computer's bridges start with the server (local mode only).
     const LocalBridges = Layer.effectDiscard(Effect.forkDaemon(resumeLocalBridges.pipe(Effect.delay("1 second"), Effect.catchAllCause(Effect.logWarning))))
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges).pipe(
+    // Weekly growth briefs that are due, checked every five minutes once the server is up.
+    const Briefs = Layer.effectDiscard(Effect.forkDaemon(briefScheduler.pipe(Effect.delay("30 seconds"))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )

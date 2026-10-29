@@ -325,7 +325,7 @@ export function AgentProposalCard({ businessId, businessName, proposal, onDone }
 }
 
 /** Initiatives load on their own: the chat holds only their IDs. */
-function InitiativeCard({ businessId, opportunityId }: { businessId: string; opportunityId: string }) {
+export function InitiativeCard({ businessId, opportunityId }: { businessId: string; opportunityId: string }) {
   const [opportunity, setOpportunity] = useState<GrowthOpportunity | null | undefined>(undefined)
   useEffect(() => {
     let live = true
