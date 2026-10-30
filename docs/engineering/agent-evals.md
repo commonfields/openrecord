@@ -58,3 +58,16 @@ The checks now judge whole sentences.
 One real finding came from the first-measurement scenario. Codex proposed only 4 buyer questions and no competitors, because `propose_question_set`'s description said nothing about either. The description now asks for 10 to 15 questions and the competitors from `read_competitors`, and Codex passes.
 
 Median answer time: about 20 seconds on Codex, 18 on Claude.
+
+## 2026-10-30: goal-aware scenario (10 scenarios)
+
+| Model | Passed |
+|---|---|
+| codex:gpt-6-sol | 10/10 |
+| claude:sonnet | 10/10 (the ads scenario then 3/3 on repeat) |
+
+Two real findings, both fixed in the agent's instructions:
+- Asked "what should we focus on this week?", both models read the older growth goal tool and never looked at open investigations, so they answered generically. The instructions now say to read `read_objective_investigations` first, then the latest numbers that bear on it, and to connect the answer to the goal.
+- Claude once added Meta's and Google's conversions into one total, with a caveat. The ad line now says never to total them.
+
+One grader fix: "the open question is why…" had matched the causal pattern. It now matches only "that is why" and "which is why".
