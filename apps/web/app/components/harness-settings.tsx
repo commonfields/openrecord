@@ -3,7 +3,7 @@
 // every state shown comes from the server catalog — nothing here fakes a
 // connection. The pairing code lives in component state only; the page never
 // writes secrets to persistent browser storage.
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { CheckIcon, CopyIcon, LaptopIcon, MonitorIcon, RefreshCwIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -20,6 +20,7 @@ import {
   Harness,
   harnessStatusLabel,
   agentSetupPrompt,
+  localProvidersPrompt,
   loginCommand,
   nativeLoginCommand,
   pairCommand,
@@ -204,26 +205,60 @@ function MachineGroup({ bridge, instances, reload }: { bridge: HarnessBridge; in
   )
 }
 
-// Shown when the server runs on this computer but its own bridge is off.
+// Shown when the server runs on this computer but its own bridge isn't connected yet.
+// After Connect it says what is happening, and says so plainly if the bridge doesn't come up.
+const CONNECT_TIMEOUT_MS = 45_000
 function LocalBridgeRow({ reload }: { reload: () => Promise<void> }) {
-  const [working, setWorking] = useState(false)
+  const [phase, setPhase] = useState<"idle" | "connecting" | "failed">("idle")
+  useEffect(() => {
+    if (phase !== "connecting") return
+    // The catalog polls on its own; if this row is still here after the timeout, the bridge didn't connect.
+    const t = window.setTimeout(() => setPhase("failed"), CONNECT_TIMEOUT_MS)
+    return () => window.clearTimeout(t)
+  }, [phase])
   const connect = () =>
     void (async () => {
-      setWorking(true)
+      setPhase("connecting")
       try {
         const status = await startLocalBridge(true, reload)
-        if (status === "UNAVAILABLE") toast.error("The bridge program isn't available on this computer.")
+        if (status === "UNAVAILABLE") { setPhase("failed"); toast.error("The bridge program isn't available on this computer.") }
+        if (status === "DISABLED") { setPhase("failed"); toast.error("This server isn't running in local mode (OPENRECORD_LOCAL_BRIDGE).") }
         await reload()
       } catch {
-        toast.error("Couldn't start the bridge on this computer. Try again.")
-      } finally {
-        setWorking(false)
+        setPhase("failed")
       }
     })()
   return (
-    <SettingRow label="This computer" icon={<LaptopIcon className="size-5 text-muted-foreground" />} description="Use the Codex, Claude Code, OpenCode or Cursor already signed in here, and CLIProxyAPI if it is installed. No pairing code needed.">
-      <Button size="sm" disabled={working} onClick={connect}>Connect</Button>
+    <SettingRow label="This computer" icon={<LaptopIcon className="size-5 text-muted-foreground" />}
+      description={phase === "connecting" ? "Starting the bridge here and checking which AI subscriptions are signed in. This takes a few seconds."
+        : phase === "failed" ? "The bridge didn't connect. Try again; if it still doesn't, use the prompt below with your coding agent to check the providers on this computer."
+        : "Use the Codex, Claude Code, OpenCode or Cursor already signed in here, and CLIProxyAPI if it is installed. No pairing code needed."}>
+      <Button size="sm" disabled={phase === "connecting"} onClick={connect}>
+        {phase === "connecting" ? <Spinner className="size-3.5" /> : null}
+        {phase === "connecting" ? "Connecting" : phase === "failed" ? "Try again" : "Connect"}
+      </Button>
     </SettingRow>
+  )
+}
+
+/** A copy-paste prompt for the coding agent on this computer: providers signed in, CLIProxyAPI set up safely. */
+function LocalSetupGroup() {
+  const prompt = localProvidersPrompt()
+  const [open, setOpen] = useState(false)
+  return (
+    <SettingGroup title="Set up this computer with your coding agent"
+      description="Paste this into Claude Code, Codex or Cursor here. It checks which AI subscriptions are installed and signed in, and sets up CLIProxyAPI safely. It never signs in for you or shares a key.">
+      <div className="space-y-2 px-4 py-3.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium">Prompt for your coding agent</p>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setOpen(v => !v)}>{open ? "Hide" : "Show"}</Button>
+            <CopyButton value={prompt} label="Setup prompt" />
+          </div>
+        </div>
+        {open ? <pre className="max-h-64 overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-[0.6875rem] whitespace-pre-wrap text-muted-foreground">{prompt}</pre> : null}
+      </div>
+    </SettingGroup>
   )
 }
 
@@ -374,6 +409,7 @@ export function AgentConnectionSection() {
         ) : null}
         {catalog ? <Machines catalog={catalog} reload={reload} /> : null}
       </SettingGroup>
+      {catalog?.local ? <LocalSetupGroup /> : null}
       <PairGroup local={catalog?.local === true} />
       <SettingGroup title="Privacy" description="Subscription credentials stay on each computer. The server stores provider status, account labels, and conversation data. Hosted-provider keys stay on the server.">
         <SettingRow label="Pairing codes" description="Work once, expire in ten minutes, and are shown only in this dialog, never stored." />

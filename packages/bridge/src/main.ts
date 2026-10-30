@@ -26,16 +26,29 @@ const root = home && isAbsolute(home) ? home : join(homedir(), ".openrecord"),
   file = join(root, "bridge.json")
 const log = (event: string) => process.stdout.write(JSON.stringify({ event }) + "\n")
 class BridgeSetupError extends Error {}
+/** True when the lock names a process that no longer exists (or names nothing readable). */
+export async function staleLock(lock: string) {
+  const pid = Number((await readFile(lock, "utf8").catch(() => "")).trim())
+  // An empty lock may be one another bridge has just created; give it a moment to write its pid.
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Date.now() - (await lstat(lock).then(i => i.mtimeMs).catch(() => 0)) > 5000
+  if (pid === process.pid) return false
+  try { process.kill(pid, 0); return false } catch (e) { return (e as NodeJS.ErrnoException).code === "ESRCH" }
+}
 async function acquireLock() {
   await mkdir(root, { recursive: true, mode: 0o700 })
   const info = await lstat(root)
   if (!info.isDirectory() || info.isSymbolicLink())
     throw new BridgeSetupError("Bridge configuration directory is not a regular directory")
   const lock = join(root, "bridge.lock")
-  const handle = await open(lock, "wx", 0o600).catch(() => {
-    throw new BridgeSetupError(
-      "A bridge lock exists. Stop the other bridge; after a crash remove only " + join(root, "bridge.lock") + " and restart."
-    )
+  const take = () => open(lock, "wx", 0o600)
+  const handle = await take().catch(async () => {
+    // A bridge that crashed or was cut off by a restart leaves its lock behind.
+    // Take it over only when the process it names is gone; a live one still wins.
+    if (await staleLock(lock)) { await unlink(lock).catch(() => {}); return take() }
+    throw new BridgeSetupError("Another bridge is already running from " + root + ". Stop it first.")
+  }).catch((e: unknown) => {
+    if (e instanceof BridgeSetupError) throw e
+    throw new BridgeSetupError("Another bridge is already running from " + root + ". Stop it first.")
   })
   await handle.writeFile(String(process.pid))
   return async () => {

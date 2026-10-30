@@ -91,6 +91,25 @@ export function agentSetupPrompt(code: string, expiresAt: string, origin = typeo
 Never print, log or share the pairing code or ~/.openrecord/bridge.json. Do not set ANTHROPIC_API_KEY or OPENAI_API_KEY for the bridge: they would bill an API key instead of my subscriptions.`
 }
 
+/**
+ * For a coding agent on the computer OpenRecord itself runs on: get the AI
+ * subscriptions there ready for the bridge OpenRecord already starts, and set
+ * up CLIProxyAPI safely. No pairing code: the bridge here pairs itself.
+ */
+export function localProvidersPrompt(): string {
+  return `Get the AI subscriptions on this computer ready for OpenRecord. OpenRecord already runs its own bridge here; I need the provider tools installed, signed in and reachable. Work step by step and tell me what you found and did.
+
+1. For each of codex, claude (Claude Code), opencode and cursor-agent: check whether it's installed (run it with --version) and where it lives (which <name>). Don't install anything I didn't ask for; list what's missing with its official install command.
+2. For each one that's installed, check whether it's signed in. Don't sign in for me and don't change its settings. Give me the exact sign-in command for any that are signed out (codex login, claude then /login, opencode auth login, cursor-agent login).
+3. CLIProxyAPI (optional, serves those subscriptions as one OpenAI-compatible endpoint):
+   - If it's installed (cli-proxy-api), find its config.yaml (~/.cli-proxy-api/config.yaml, the Homebrew etc folder, or ~/CLIProxyAPI). Check it listens on 127.0.0.1 port 8317, never on all interfaces, and lists at least one key under access api-keys. If there's no key, add a long random one (openssl rand -hex 32) and tell me you did, without printing it.
+   - If it isn't installed and I want it, tell me how to install it from its official releases. OpenRecord's bridge starts it in the background and reads the key itself.
+4. Make sure none of ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY is set in my shell profile for these tools: they would bill an API key instead of my subscriptions. Tell me if you find one; don't remove it without asking.
+5. Finally, tell me to open OpenRecord, then Settings, then Agent, and check that "This computer" shows each provider as Connected.
+
+Never print or share API keys, tokens, or anything under ~/.openrecord.`
+}
+
 // ---- model selection ----
 
 export function harnessStatusLabel(instance: HarnessInstance, checking: boolean): string | null {

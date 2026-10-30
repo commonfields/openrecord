@@ -87,8 +87,11 @@ export const ensureLocalBridge = (session: Session, serverPort: number, connect 
       ? (yield* sql`SELECT id FROM agent_bridges WHERE id=${existing} AND account_id=${session.accountId} AND user_id=${session.userId}
           AND managed AND revoked_at IS NULL AND token_hash IS NOT NULL`).length > 0
       : false
+    // Off only when the person disconnected it: a pairing replaced by a newer
+    // attempt (one that never finished) is not a choice to stay off.
     if (!valid && existing && !connect) {
-      const revoked = yield* sql`SELECT id FROM agent_bridges WHERE id=${existing} AND account_id=${session.accountId} AND user_id=${session.userId} AND managed AND revoked_at IS NOT NULL`
+      const revoked = yield* sql`SELECT b.id FROM agent_bridges b WHERE b.id=${existing} AND b.account_id=${session.accountId} AND b.user_id=${session.userId} AND b.managed AND b.revoked_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM agent_bridges n WHERE n.account_id=b.account_id AND n.user_id=b.user_id AND n.managed AND n.created_at > b.created_at)`
       if (revoked.length) return "OFF" as LocalBridgeStatus
     }
     let args: string[]
