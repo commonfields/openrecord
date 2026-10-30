@@ -15,6 +15,7 @@ import { growthExecutionApi } from "./growth-execution-routes.js"
 import { growthApi } from "./growth-routes.js"
 import { requireSession, RepoLayers } from "./router.js"
 import { GROWTH_AGENT_TOOLS, growthProposalDeclarations } from "./agent-growth-tools.js"
+import { dispatchToolSpec } from "./agent-registry.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const PAGE = "pricing.html"
@@ -27,7 +28,10 @@ const product = { name: "TEST Fixture Salon", websiteUrl: "https://salon.test", 
 const suite = url ? describe : describe.skip
 suite("connected execution over HTTP (authorization, tenancy, exact change; fixture provider)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope
-  const repos = Layer.mergeAll(RepoLayers.GrowthRepositoriesLive, RepoLayers.BusinessRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
+  const repos = Layer.mergeAll(RepoLayers.GrowthRepositoriesLive, RepoLayers.BusinessRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
+    RepoLayers.FactRepositoryLive, RepoLayers.QuestionRepositoryLive, RepoLayers.DiscoveryScopeRepositoryLive,
+    RepoLayers.ProductReadRepositoryLive, RepoLayers.AgentProposalRepositoryLive, RepoLayers.SetupRepositoryLive,
+  ).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   type Provider = ReturnType<typeof makeProvider>
   /** One handler per provider setup; the provider layer is what a deployment would configure. */
   const handlers: Array<{ dispose: () => Promise<void> }> = []
@@ -78,6 +82,34 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
   const targetOf = async (s: S) => (await s.ok<{ target: ExecutionTarget }>(connect(s))).target
   const prepareBody = (t: ExecutionTarget, over: Record<string, unknown> = {}) => ({ targetId: t.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: LIVE, rationale: "TEST remove an accidental noindex", siteFindingId: null, idempotencyKey: randomUUID(), ...over })
   const prepare = (s: S, oid: string, body: unknown) => s.call(s.a, "POST", `${s.base}/opportunities/${oid}/connected-executions`, body)
+
+  it("lets the agent prepare and read a scoped change without approving or writing to GitHub", async () => {
+    const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
+    const provider = fixtureGitHubLayer(s.provider.fixture, (owner, repo, account) => account === s.a.accountId && owner === s.provider.owner && repo === s.provider.repo)
+    const layer = Layer.provideMerge(provider, repos)
+    const ctx = { accountId: s.a.accountId, userId: s.a.userId, businessId: s.businessId }
+    const run = (name: string, args: unknown, who = ctx) => Effect.runPromise(Effect.either(dispatchToolSpec(who, name, args).pipe(Effect.provide(layer))))
+    const args = { opportunityId: oid, targetId: t.id, filePath: PAGE, liveUrl: LIVE, rationale: "TEST accidental noindex", siteFindingId: null }
+    const first = await run("prepare_noindex_change", args)
+    expect(first._tag).toBe("Right")
+    if (first._tag !== "Right") throw new Error("Agent preparation failed")
+    const operationId = (first.right.data as { operationId: string }).operationId
+    const replay = await run("prepare_noindex_change", args)
+    expect(replay._tag === "Right" && (replay.right.data as { operationId: string }).operationId).toBe(operationId)
+    const operation = (await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "GET", `${s.base}/connected-executions/${operationId}`))).operation
+    expect(operation).toMatchObject({ state: "PREPARED", proposedBy: "ASSISTANT", createdByUserId: s.a.userId })
+    expect(operation.events[0]).toMatchObject({ actor: "ASSISTANT", state: "PREPARED" })
+    expect(s.provider.fixture.writes).toEqual([])
+    expect((await run("read_connected_executions", { opportunityId: oid }))._tag).toBe("Right")
+    expect((await run("read_connected_executions", { opportunityId: oid }, { ...ctx, accountId: s.b.accountId, userId: s.b.userId }))._tag).toBe("Left")
+    expect((await run("prepare_noindex_change", args, { ...ctx, accountId: s.b.accountId, userId: s.b.userId }))._tag).toBe("Left")
+    expect((await run("authorize_connected_execution", { operationId }))._tag).toBe("Left")
+    const approved = await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", `${s.base}/connected-executions/${operationId}/authorize`, {
+      reviewedPatchSha256: operation.patchSha256, expectedRevision: operation.revision, reason: "TEST human reviewed exact change", idempotencyKey: randomUUID(),
+    }))
+    expect(approved.operation.state).toBe("AUTHORIZED")
+    expect(s.provider.fixture.writes).toEqual([])
+  })
 
   it("prepares exactly the deterministic change, binds it to a patch hash and never exposes file bytes or credentials", async () => {
     const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)

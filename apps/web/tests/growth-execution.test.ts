@@ -48,15 +48,15 @@ describe("connected change panel", () => {
   })
 
   it("offers each human step only in the state where it applies", () => {
-    expect(render(op("PREPARED"))).toContain("Approve this exact change")
+    expect(render(op("PREPARED"))).toContain("Approve and open pull request")
     expect(render(op("PREPARED"))).not.toContain("Open the pull request")
     expect(render(op("AUTHORIZED"))).toContain("Open the pull request")
-    expect(render(op("AUTHORIZED"))).not.toContain("Approve this exact change")
+    expect(render(op("AUTHORIZED"))).not.toContain("Approve and open pull request")
     expect(render(op("AWAITING_MERGE", { evidence: [pr] }))).toContain("Check GitHub now")
     expect(render(op("AWAITING_MERGE", { evidence: [pr] }))).toContain("Waiting for repository merge")
-    expect(render(op("AWAITING_MERGE", { evidence: [pr] }))).not.toMatch(/Open the pull request|Approve this exact change|Check the website now/)
+    expect(render(op("AWAITING_MERGE", { evidence: [pr] }))).not.toMatch(/Open the pull request|Approve and open pull request|Check the website now/)
     expect(render(op("VERIFIED", { evidence: [pr], receipt: merged }))).toContain("Check the website now")
-    for (const settled of ["FAILED", "BLOCKED", "CANCELLED"] as const) expect(render(op(settled))).not.toMatch(/Open the pull request|Approve this exact change|Check GitHub now|Check the website now/)
+    for (const settled of ["FAILED", "BLOCKED", "CANCELLED"] as const) expect(render(op(settled))).not.toMatch(/Open the pull request|Approve and open pull request|Check GitHub now|Check the website now/)
     // The exact change and its boundary are always on screen.
     const prepared = render(op("PREPARED"))
     expect(prepared).toContain("acme/salon-site, branch main")

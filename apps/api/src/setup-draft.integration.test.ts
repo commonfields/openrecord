@@ -84,4 +84,23 @@ suite("setup draft (disposable PostgreSQL, fixture model)", () => {
     expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "FAILED" })
     expect(n).toBe(1)
   })
+
+  it("settles an abandoned draft without restarting it or accepting a late result", async () => {
+    const s = await setup("DONE")
+    let release!: (value: { reply: string }) => void
+    let started!: () => void
+    const running = new Promise<void>(resolve => { started = resolve })
+    const answer = new Promise<{ reply: string }>(resolve => { release = resolve })
+    let calls = 0
+    const sender: BriefSender<never> = () => Effect.promise(() => { calls++; started(); return answer })
+    expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "RUNNING" })
+    await running
+    await pool.query("UPDATE business_setups SET draft_started_at = now() - interval '26 minutes' WHERE id=$1", [s.setupId])
+    expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "FAILED" })
+    release({ reply: reply() })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const row = (await pool.query("SELECT draft_status, draft FROM business_setups WHERE id=$1", [s.setupId])).rows[0]
+    expect(row).toMatchObject({ draft_status: "FAILED", draft: null })
+    expect(calls).toBe(1)
+  })
 })

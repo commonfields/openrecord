@@ -58,9 +58,12 @@ export function ExecutionCard({ businessId, operation: o, reload }: { businessId
     {error ? <p role="alert" className="text-destructive">{error}</p> : null}
     {o.state === "PREPARED" ? <div className="space-y-2">
       <label className="flex items-start gap-2"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} className="mt-0.5" />
-        <span>I reviewed this exact change, its repository, page and risk, and I authorize it.</span></label>
+        <span>I reviewed this exact change, its repository, page and risk, and authorize opening a pull request.</span></label>
       <Label htmlFor={`exec-reason-${o.id}`}>Reason for approving</Label><Textarea id={`exec-reason-${o.id}`} value={reason} onChange={e => setReason(e.target.value)} maxLength={1000} />
-      <div className="flex gap-2"><Button size="sm" disabled={busy || !confirm || !reason.trim()} onClick={() => void run(() => GrowthExecutions.authorize(businessId, o.id, { reviewedPatchSha256: o.patchSha256, expectedRevision: o.revision, reason, idempotencyKey: crypto.randomUUID() }))}>Approve this exact change</Button>
+      <div className="flex gap-2"><Button size="sm" disabled={busy || !confirm || !reason.trim()} onClick={() => void run(async () => {
+        const { operation } = await GrowthExecutions.authorize(businessId, o.id, { reviewedPatchSha256: o.patchSha256, expectedRevision: o.revision, reason, idempotencyKey: crypto.randomUUID() })
+        await GrowthExecutions.dispatch(businessId, o.id, { expectedRevision: operation.revision, idempotencyKey: crypto.randomUUID() })
+      })}>{busy ? "Sending…" : "Approve and open pull request"}</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => GrowthExecutions.cancel(businessId, o.id, { expectedRevision: o.revision, reason: "Cancelled by the operator", idempotencyKey: crypto.randomUUID() }))}>Cancel</Button></div></div> : null}
     {o.state === "AUTHORIZED" ? <div className="flex gap-2">
       <Button size="sm" disabled={busy} onClick={() => void run(() => GrowthExecutions.dispatch(businessId, o.id, { expectedRevision: o.revision, idempotencyKey: crypto.randomUUID() }))}>{busy ? "Sending…" : "Open the pull request"}</Button>

@@ -173,7 +173,6 @@ export function Today() {
         }
       />
 
-      <SetupCard businessId={id} />
       <WeeklyBrief businessId={id} />
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
       <RevenuePanel businessId={id} />
@@ -197,6 +196,7 @@ export function Today() {
         <HeroChart a={a} stats={stats} loading={loading} metric={trend} days={days} switcher={switcher} />
       )}
 
+      <SetupCard businessId={id} />
       <SourcesPanel businessId={id} data={overview} />
 
       <section className="space-y-3">

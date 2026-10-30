@@ -3,6 +3,7 @@
 // idea it saved ready to approve and its chat a click away for questions.
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
+import { toast } from "sonner"
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -31,27 +32,18 @@ export function WeeklyBrief({ businessId }: { businessId: string }) {
   if (!q.data) return q.loading ? <Skeleton className="h-40 rounded-xl" /> : null
   const { brief, previous, schedule } = q.data
   const shown: Brief | null = brief?.status === "READY" ? brief : previous
-  const act = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); await q.reload() } finally { setBusy(false) } }
+  const act = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); await q.reload() } catch { toast.error("Could not update the weekly brief. Try again.") } finally { setBusy(false) } }
 
   return (
-    <Panel id="brief" className="space-y-3 p-5">
-      <div className="flex flex-wrap items-start gap-3">
+    <Panel id="brief" className="overflow-hidden">
+      <div className="flex flex-wrap items-start gap-4 border-b border-border/60 px-5 py-4 sm:px-6">
         <div className="min-w-0 flex-1">
-          <h2 id="brief-title" className="text-base font-medium">This week</h2>
-          <p className="text-[0.8125rem] text-muted-foreground">
-            {shown?.finishedAt ? `Written ${relativeTime(shown.finishedAt)}.` : "Your agent's weekly brief."}{" "}
-            {schedule.enabled ? `The next one arrives ${relativeTime(schedule.nextRunAt)}.` : "The weekly brief is off."}
-          </p>
+          <h2 id="brief-title" className="text-base font-semibold tracking-tight">This week</h2>
+          <p className="mt-1 text-[0.8125rem] text-muted-foreground">{shown?.finishedAt ? `Updated ${relativeTime(shown.finishedAt)}` : "Your agent's weekly brief"}</p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          Every week
-          <Switch checked={schedule.enabled} disabled={busy} onCheckedChange={v => void act(() => Briefs.schedule(businessId, v))} aria-label="Write a brief every week" />
-        </label>
-        <Button size="sm" variant="secondary" disabled={busy || running} onClick={() => void act(() => Briefs.run(businessId))}>
-          <RefreshCwIcon />{shown ? "Write a new one" : "Write it now"}
-        </Button>
       </div>
 
+      <div className="space-y-4 px-5 py-5 sm:px-6">
       {running ? (
         <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground"><ThinkingGlyph /><span className="thinking">Reading this week's numbers and writing the brief</span></p>
       ) : brief?.status === "FAILED" ? (
@@ -60,7 +52,7 @@ export function WeeklyBrief({ businessId }: { businessId: string }) {
 
       {shown?.text ? (
         <>
-          <ChatMarkdown text={shown.text} className="text-[0.9375rem]" />
+          <ChatMarkdown text={shown.text} className="max-w-3xl text-[0.9375rem] leading-7 [&_li]:my-1.5 [&_p]:my-3" />
           {shown.decisions.filter(d => d.type === "GROWTH_OPPORTUNITY").map(d => <InitiativeCard key={d.id} businessId={businessId} opportunityId={d.id} />)}
           {shown.decisions.some(d => d.type === "AGENT_PROPOSAL") ? (
             <Button asChild size="sm" variant="secondary"><Link to="/approvals">Review what it saved</Link></Button>
@@ -74,6 +66,16 @@ export function WeeklyBrief({ businessId }: { businessId: string }) {
       ) : !running && brief?.status !== "FAILED" ? (
         <p className="text-sm text-muted-foreground">Your first brief will appear here: what changed, the one thing to do next, and what earlier work changed.</p>
       ) : null}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 bg-muted/30 px-5 py-3 sm:px-6">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch checked={schedule.enabled} disabled={busy} onCheckedChange={v => void act(() => Briefs.schedule(businessId, v))} aria-label="Write a brief every week" />
+          {schedule.enabled ? `Weekly, next ${relativeTime(schedule.nextRunAt)}` : "Weekly brief off"}
+        </label>
+        <Button size="sm" variant="secondary" disabled={busy || running} onClick={() => void act(() => Briefs.run(businessId))}>
+          <RefreshCwIcon />{shown ? "Write a new one" : "Write it now"}
+        </Button>
+      </div>
     </Panel>
   )
 }

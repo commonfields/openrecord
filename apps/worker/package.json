@@ -9,6 +9,7 @@
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/runner.ts",
+    "dev:execution": "tsx src/execution-only.ts",
     "start": "node --import tsx dist/runner.js"
   },
   "dependencies": {

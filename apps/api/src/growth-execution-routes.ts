@@ -48,18 +48,7 @@ const robotsNoindex = /<meta\s+[^>]*name=["']robots["'][^>]*noindex/i
 export const executionRepositoryPermitted = (allowed: (o: string, r: string, a: string) => boolean, owner: string, repository: string, accountId: string) =>
   !executionRepositoryDenied(owner, repository) && allowed(owner, repository, accountId)
 
-export const growthExecutionApi = (withSession: WithSession) => {
-  const operator = operatorSessionFor(withSession)
-  const scoped = <E, R>(param: string | null, run: (session: Session, businessId: string, id: string) => Effect.Effect<import("@effect/platform/HttpServerResponse").HttpServerResponse, E, R>) =>
-    operator(session => Effect.gen(function*() {
-      const { params } = yield* HttpRouter.RouteContext
-      const businessId = params["id"] ?? "", id = param === null ? "" : params[param] ?? ""
-      if (decodeRouteId(businessId)._tag === "Left" || (param !== null && decodeRouteId(id)._tag === "Left")) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
-      return yield* run(session, businessId, id)
-    })).pipe(Effect.catchAll(failure))
-  const base = "/api/growth/clients/:id"
-
-  const prepare = (session: Session, businessId: string, opportunityId: string, input: PrepareExecution) => Effect.gen(function*() {
+export const prepareConnectedExecution = (session: Session, businessId: string, opportunityId: string, input: PrepareExecution, actor: "OPERATOR" | "ASSISTANT" = "OPERATOR") => Effect.gen(function*() {
     const repo = yield* GrowthExecutionRepository
     const gh = yield* gitHubConfig
     const fingerprint = executionRequestFingerprint({ opportunityId, targetId: input.targetId, actionKind: input.actionKind, filePath: input.filePath, liveUrl: input.liveUrl, rationale: input.rationale, siteFindingId: input.siteFindingId })
@@ -87,12 +76,23 @@ export const growthExecutionApi = (withSession: WithSession) => {
     const diff = unifiedDiff(input.filePath, diffLines(file.content, after))
     const plan = { targetId: target.id, actionKind: input.actionKind, filePath: input.filePath, liveUrl: input.liveUrl, siteFindingId: input.siteFindingId, baseBranch: target.baseBranch, baseCommitSha,
       baseBlobSha: file.blobSha, afterBlobSha: gitBlobSha(after), beforeSha256, afterSha256, patchSha256, afterContent: after, diff, rationale: input.rationale.trim(), idempotencyKey: input.idempotencyKey } as const
-    return yield* repo.prepare(session, businessId, opportunityId, fingerprint, plan).pipe(
+    return yield* repo.prepare(session, businessId, opportunityId, fingerprint, plan, actor).pipe(
       // Two identical requests racing: the loser returns the winner's operation.
       // (The page guard can refuse the loser first, so that reason is a replay candidate too.)
       Effect.catchIf((e): e is GrowthExecutionRefused => e instanceof GrowthExecutionRefused && (e.reason === "IdempotencyConflict" || e.reason === "ExecutionAlreadyOpen"),
         e => repo.findPrepared(session, businessId, opportunityId, fingerprint, input.idempotencyKey).pipe(Effect.flatMap(found => found ? Effect.succeed(found) : Effect.fail(e)))))
   })
+
+export const growthExecutionApi = (withSession: WithSession) => {
+  const operator = operatorSessionFor(withSession)
+  const scoped = <E, R>(param: string | null, run: (session: Session, businessId: string, id: string) => Effect.Effect<import("@effect/platform/HttpServerResponse").HttpServerResponse, E, R>) =>
+    operator(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? "", id = param === null ? "" : params[param] ?? ""
+      if (decodeRouteId(businessId)._tag === "Left" || (param !== null && decodeRouteId(id)._tag === "Left")) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
+      return yield* run(session, businessId, id)
+    })).pipe(Effect.catchAll(failure))
+  const base = "/api/growth/clients/:id"
 
   return HttpRouter.empty.pipe(
     HttpRouter.get(`${base}/execution-targets`, scoped(null, (session, businessId) => Effect.gen(function*() {
@@ -114,7 +114,7 @@ export const growthExecutionApi = (withSession: WithSession) => {
     HttpRouter.post(`${base}/opportunities/:opportunityId/connected-executions`, scoped("opportunityId", (session, businessId, opportunityId) => Effect.gen(function*() {
       const input = decode(PrepareExecution, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
-      return yield* json(200, { operation: yield* prepare(session, businessId, opportunityId, input) }, PRIVATE_HEADERS)
+      return yield* json(200, { operation: yield* prepareConnectedExecution(session, businessId, opportunityId, input) }, PRIVATE_HEADERS)
     }))),
     HttpRouter.get(`${base}/connected-executions/:operationId`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
       return yield* json(200, { operation: yield* (yield* GrowthExecutionRepository).get(session.accountId, businessId, operationId) }, PRIVATE_HEADERS)

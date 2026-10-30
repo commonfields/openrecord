@@ -45,7 +45,12 @@ export const parseDraft = (reply: string): SetupDraft | null => {
 /** The draft's state for a setup, starting it once the website has been read and before the brief is confirmed. */
 export const setupDraft = <R = Effect.Effect.Context<ReturnType<typeof production>>>(scope: Scope, setupId: string, sender: BriefSender<R> = production as unknown as BriefSender<R>) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const row = (yield* sql`SELECT website_url, website_host, discovery_status, brief, draft, draft_status FROM business_setups WHERE id = ${setupId} AND account_id = ${scope.accountId}`)[0]
+  // A server restart can interrupt the detached writer. Two model turns can
+  // each last nine minutes, so only settle drafts older than both turn limits.
+  yield* sql`UPDATE business_setups SET draft_status = 'FAILED'
+    WHERE id = ${setupId} AND account_id = ${scope.accountId} AND business_id = ${scope.businessId}
+      AND brief IS NULL AND draft_status = 'RUNNING' AND (draft_started_at IS NULL OR draft_started_at < now() - interval '25 minutes')`
+  const row = (yield* sql`SELECT website_url, website_host, discovery_status, brief, draft, draft_status FROM business_setups WHERE id = ${setupId} AND account_id = ${scope.accountId} AND business_id = ${scope.businessId}`)[0]
   if (!row || row["brief"] !== null) return undefined
   if (row["draft_status"] === "READY") return { status: "READY", value: row["draft"] as SetupDraft } as DraftState
   if (row["draft_status"] === "RUNNING" || row["draft_status"] === "FAILED") return { status: row["draft_status"] } as DraftState
@@ -72,10 +77,10 @@ const writeDraft = <R>(scope: Scope, setupId: string, conversationId: string, ur
   const reply = Either.isRight(result) ? (result.right as { reply?: unknown }).reply : null
   const draft = typeof reply === "string" ? parseDraft(reply) : null
   yield* draft
-    ? sql`UPDATE business_setups SET draft_status = 'READY', draft = ${JSON.stringify(draft)}::jsonb WHERE id = ${setupId} AND draft_status = 'RUNNING'`
-    : sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_status = 'RUNNING'`
+    ? sql`UPDATE business_setups SET draft_status = 'READY', draft = ${JSON.stringify(draft)}::jsonb WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
+    : sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
 }).pipe(Effect.catchAllCause(cause => Effect.gen(function*() {
   yield* Effect.logWarning("setup draft failed").pipe(Effect.annotateLogs({ setup: setupId, cause: Cause.pretty(cause).slice(0, 400) }))
   const sql = yield* SqlClient.SqlClient
-  yield* sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_status = 'RUNNING'`
+  yield* sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
 }).pipe(Effect.ignore)))
