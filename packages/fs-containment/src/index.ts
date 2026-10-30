@@ -510,3 +510,4 @@ export const writeContainedFile = async (
   }
 }
 export { managedBridgeId, managedBridgePid, managedBridgeUsers, prepareManagedBridgeHome, localBridgeProgramExists } from "./local-bridge-files.js"
+export { startManagedBridge, type ManagedBridgeProcess } from "./local-bridge-process.js"

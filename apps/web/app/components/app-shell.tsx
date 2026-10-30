@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router"
 import {
   BarChart3Icon,
@@ -74,6 +74,15 @@ const PaneSlotContext = createContext<{ slot: HTMLElement | null; setPane: (v: b
 export const usePaneSlot = () => useContext(PaneSlotContext)
 
 const COLLAPSED_KEY = "openrecord:sidebar-collapsed"
+const WIDTH_KEY = "openrecord:sidebar-width"
+
+// The unchanged default width (w-64), and the resizable bounds. Minimum lets
+// the "Chats" list still be readable; maximum keeps the panel agreeable.
+const DEFAULT_WIDTH = 256
+const MIN_WIDTH = 224
+const MAX_WIDTH = 448
+
+const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)))
 
 function readCollapsed(): boolean {
   try {
@@ -83,8 +92,32 @@ function readCollapsed(): boolean {
   }
 }
 
+function readWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(WIDTH_KEY)
+    const n = raw === null ? NaN : clampWidth(Number(raw))
+    if (Number.isFinite(n)) return n
+  } catch {
+    // Convenience only.
+  }
+  return DEFAULT_WIDTH
+}
+
+// The sidebar's two dropdown menus — the business switcher and the account
+// menu — share one look: a wide rounded float. SIDEBAR_MENU_CONTENT sizes and
+// shapes the panel; SIDEBAR_MENU_ITEM is handed to each item so hover works
+// like the "Start a new chat" rows: bg-accent plus the control shadow.
+const SIDEBAR_MENU_CONTENT =
+  "w-(--radix-dropdown-menu-trigger-width) min-w-64 rounded-xl p-1.5 shadow-(--float-shadow-strong)"
+const SIDEBAR_MENU_ITEM =
+  "h-10 rounded-[8px] px-3 text-sm transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus:bg-accent focus:text-sidebar-accent-foreground"
+
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(readCollapsed)
+  const [width, setWidth] = useState(readWidth)
+  const [dragging, setDragging] = useState(false)
+  const [aside, setAside] = useState<HTMLElement | null>(null)
+  const dragOrigin = useRef({ x: 0, width: 0 })
   const [mobileOpen, setMobileOpen] = useState(false)
   const [minimal, setMinimal] = useState(false)
   const [workspace, setWorkspace] = useState(false)
@@ -114,6 +147,33 @@ export function AppShell() {
   }, [collapsed])
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(WIDTH_KEY, String(width))
+    } catch {
+      // Convenience only.
+    }
+  }, [width])
+
+  // Resizing follows the pointer from a setPointerCapture on the handle, so
+  // it keeps tracking when the pointer leaves the strip. Double-clicking the
+  // handle restores the default width.
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragOrigin.current = { x: e.clientX, width: aside?.offsetWidth ?? width }
+    setDragging(true)
+  }
+  const resize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging) return
+    setWidth(clampWidth(dragOrigin.current.width + e.clientX - dragOrigin.current.x))
+  }
+  const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    setDragging(false)
+  }
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "b" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
@@ -134,17 +194,34 @@ export function AppShell() {
     <PaneSlotContext.Provider value={paneContext}>
     <HeaderSlotContext.Provider value={headerSlot}>
     <CommandPaletteProvider>
-    <div className="flex h-svh overflow-hidden bg-sidebar">
+    <div className={cn("flex h-svh overflow-hidden bg-sidebar", dragging && "cursor-col-resize select-none")}>
       <aside
         data-collapsed={sidebarCollapsed}
+        ref={setAside}
+        style={sidebarCollapsed ? undefined : { width }}
         className={cn(
-          "hidden h-svh shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] md:flex",
-          sidebarCollapsed ? "w-[3.25rem]" : "w-64",
+          "relative hidden h-svh shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex",
+          !dragging && "transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          sidebarCollapsed && "w-[3.25rem]",
         )}
       >
         <SidebarStateContext.Provider value={{ collapsed: sidebarCollapsed, inSheet: false }}>
           <SidebarBody />
         </SidebarStateContext.Provider>
+        {/* Drag to resize; double-click restores the default width */}
+        {sidebarCollapsed ? null : (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onPointerDown={startResize}
+            onPointerMove={resize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
+            className="absolute inset-y-0 right-0 z-20 -mr-1.5 w-2 cursor-col-resize touch-none"
+          />
+        )}
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -542,7 +619,7 @@ function BusinessSwitcher() {
         <DropdownMenuTrigger asChild>
           <button
             className={cn(
-              "flex items-center gap-2 rounded-md text-left outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent data-[state=open]:shadow-(--control-shadow)",
+              "flex items-center gap-2 rounded-md text-left outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
               collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
@@ -561,17 +638,17 @@ function BusinessSwitcher() {
             )}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side={collapsed ? "right" : "bottom"} className="w-60">
+        <DropdownMenuContent align="start" side={collapsed ? "right" : "bottom"} sideOffset={8} className={SIDEBAR_MENU_CONTENT}>
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Businesses</DropdownMenuLabel>
           {businesses.map((b) => (
-            <DropdownMenuItem key={b.id} onSelect={() => nav(`/businesses/${b.id}/agent`)}>
+            <DropdownMenuItem key={b.id} className={SIDEBAR_MENU_ITEM} onSelect={() => nav(`/businesses/${b.id}/agent`)}>
               <BusinessMark name={b.name} className="size-6 text-xs" />
               <span className="truncate">{b.name}</span>
               {activeBusiness?.id === b.id ? <CheckIcon className="ml-auto text-foreground" /> : null}
             </DropdownMenuItem>
           ))}
           {businesses.length > 0 ? <DropdownMenuSeparator /> : null}
-          <DropdownMenuItem onSelect={() => nav("/start")}>
+          <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/start")}>
             <PlusIcon />
             New business
           </DropdownMenuItem>
@@ -599,7 +676,7 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-sidebar-accent data-[state=open]:shadow-(--control-shadow)",
+            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
             collapsed ? "h-14 w-9 justify-center" : "min-h-16 w-full px-2.5 py-4",
           )}
           aria-label="Account menu"
@@ -619,7 +696,7 @@ function AccountMenu() {
         align="start"
         side={collapsed ? "right" : "top"}
         sideOffset={8}
-        className="w-(--radix-dropdown-menu-trigger-width) min-w-64 rounded-xl p-1.5 shadow-(--float-shadow-strong) [&_[data-slot=dropdown-menu-item]]:h-9 [&_[data-slot=dropdown-menu-item]]:rounded-md [&_[data-slot=dropdown-menu-item]]:px-2.5 [&_[data-slot=dropdown-menu-item]]:focus:bg-sidebar-accent/70 [&_[data-slot=dropdown-menu-item]]:focus:text-sidebar-accent-foreground"
+        className={cn("w-(--radix-dropdown-menu-trigger-width) min-w-64", SIDEBAR_MENU_CONTENT)}
       >
         <div className="flex items-center gap-3 px-2.5 py-2.5">
           {avatar("size-9")}
@@ -629,25 +706,25 @@ function AccountMenu() {
           </div>
         </div>
         <DropdownMenuSeparator className="my-1.5" />
-        <DropdownMenuItem onSelect={() => openSettings("general")}>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => openSettings("general")}>
           <SettingsIcon />
           Settings
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => openSettings("account")}>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => openSettings("account")}>
           <UserRoundIcon />
           Account
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => openSettings("shortcuts")}>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => openSettings("shortcuts")}>
           <KeyboardIcon />
           Keyboard shortcuts
         </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1.5" />
-        <DropdownMenuItem onSelect={() => nav("/businesses")}>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/businesses")}>
           <Building2Icon />
           All businesses
         </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1.5" />
-        <DropdownMenuItem onSelect={() => void Auth.signout().finally(() => nav("/signin"))}>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => void Auth.signout().finally(() => nav("/signin"))}>
           <LogOutIcon />
           Sign out
         </DropdownMenuItem>

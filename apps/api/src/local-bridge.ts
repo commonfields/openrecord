@@ -7,8 +7,7 @@
 //
 // Never enable this on a shared or hosted server: the bridge runs the
 // provider CLIs with this machine's sign-ins for whoever is signed in.
-import { spawn, type ChildProcess } from "node:child_process"
-import { managedBridgeId, managedBridgePid, managedBridgeUsers, prepareManagedBridgeHome, localBridgeProgramExists as existsSync } from "@openrecord/fs-containment"
+import { managedBridgeId, managedBridgePid, managedBridgeUsers, prepareManagedBridgeHome, localBridgeProgramExists as existsSync, startManagedBridge, type ManagedBridgeProcess } from "@openrecord/fs-containment"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -19,7 +18,7 @@ import type { Session } from "@openrecord/db"
 
 export const localBridgeEnabled = () => /^(1|true|on)$/i.test(process.env["OPENRECORD_LOCAL_BRIDGE"] ?? "")
 
-const children = new Map<string, ChildProcess>()
+const children = new Map<string, ManagedBridgeProcess>()
 let exiting = false
 process.once("exit", () => { exiting = true; for (const child of children.values()) child.kill("SIGTERM") })
 
@@ -119,11 +118,7 @@ export const ensureLocalBridge = (session: Session, serverPort: number, connect 
  * after each quick exit (2s, 4s … up to a minute).
  */
 function launch(userId: string, dir: string, bridge: { args: string[]; cwd?: string }, args: string[], failures = 0) {
-  const child = spawn(process.execPath, [...bridge.args, ...args], {
-    ...(bridge.cwd ? { cwd: bridge.cwd } : {}),
-    env: bridgeEnvironment(process.env, dir),
-    stdio: ["ignore", "pipe", "pipe"], shell: false,
-  })
+  const child = startManagedBridge(dir, [...bridge.args, ...args], { ...(bridge.cwd ? { cwd: bridge.cwd } : {}), env: bridgeEnvironment(process.env, dir) })
   children.set(userId, child)
   const startedAt = Date.now()
   let revoked = false

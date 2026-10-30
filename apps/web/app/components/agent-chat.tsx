@@ -1236,9 +1236,10 @@ function Composer({
                 </TooltipTrigger>
                 <TooltipContent>{session.reasoningEfforts.length ? "Reasoning effort for the next reply" : "This provider hasn't reported reasoning controls for this model."}</TooltipContent>
               </Tooltip>
-              <SelectContent side="top" align="end">
-                <SelectItem value="default">Default</SelectItem>
-                {session.reasoningEfforts.map(effort => <SelectItem key={effort} value={effort}>{effort === "xhigh" ? "Extra high" : effort === "none" ? "Off" : effort.charAt(0).toUpperCase() + effort.slice(1)}</SelectItem>)}
+              <SelectContent side="top" align="end" className="min-w-44 p-1">
+                {/* Rows hover like the workspace's other menus: bg-accent plus the control shadow */}
+                <SelectItem value="default" className="h-10 rounded-[8px] px-3 text-sm transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus:bg-accent">Default</SelectItem>
+                {session.reasoningEfforts.map(effort => <SelectItem key={effort} value={effort} className="h-10 rounded-[8px] px-3 text-sm transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus:bg-accent">{effort === "xhigh" ? "Extra high" : effort === "none" ? "Off" : effort.charAt(0).toUpperCase() + effort.slice(1)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

@@ -270,8 +270,8 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
                     onMouseMove={() => setIndex(item.i)}
                     onClick={item.run}
                     className={cn(
-                      "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
-                      index === item.i && "bg-sidebar-accent/70 text-sidebar-accent-foreground",
+                      "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs outline-none transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) hover:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+                      index === item.i && "bg-accent text-sidebar-accent-foreground shadow-(--control-shadow)",
                     )}
                   >
                     {item.icon}

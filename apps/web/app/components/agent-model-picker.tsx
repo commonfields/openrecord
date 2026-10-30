@@ -54,7 +54,7 @@ export function AgentModelPicker({ options, value, label, checking, unavailable,
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" align="end" sideOffset={8} aria-label="Choose an agent model" className="z-50 max-h-(--radix-popover-content-available-height) w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl outline-none dark:border-[#414141] dark:bg-[#303030]" onOpenAutoFocus={event => event.preventDefault()}>
+        <Popover.Content side="top" align="end" sideOffset={8} aria-label="Choose an agent model" className="z-50 max-h-(--radix-popover-content-available-height) w-[21rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl outline-none dark:border-[#414141] dark:bg-[#303030]" onOpenAutoFocus={event => event.preventDefault()}>
           {/* The providers registered on this workspace, as bare logos: clicking
               one shows only its models, clicking it again returns to all. The
               search stays behind an icon so the bar never takes the top row. */}
@@ -75,13 +75,13 @@ export function AgentModelPicker({ options, value, label, checking, unavailable,
             </button>
           </div>
           <div className="mt-1 min-h-0">
-            <div ref={listRef} role="listbox" aria-label="Models" className="max-h-64 overflow-y-auto" onKeyDown={event => {
+            <div ref={listRef} role="listbox" aria-label="Models" className="max-h-64 overflow-y-auto px-1 py-1.5" onKeyDown={event => {
                 const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')]
                 const index = buttons.findIndex(button => button === document.activeElement)
                 const next = event.key === "ArrowDown" ? (index + 1) % buttons.length : event.key === "ArrowUp" ? (index - 1 + buttons.length) % buttons.length : event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : null
                 if (next !== null) { event.preventDefault(); buttons[next]?.focus() }
               }}>
-                {visible.map(option => <button key={option.value} type="button" role="option" aria-selected={option.value === value} disabled={locked} onClick={() => { if (!locked) { onChoose(option); setOpen(false) } }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent", option.value === value && "bg-accent/50")}>
+                {visible.map(option => <button key={option.value} type="button" role="option" aria-selected={option.value === value} disabled={locked} onClick={() => { if (!locked) { onChoose(option); setOpen(false) } }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus-visible:bg-accent", option.value === value && "bg-accent/50")}>
                   <ProviderLogo bare provider={optionLogo(option)} className="size-4" />
                   <span className="min-w-0 flex-1"><span className="block truncate">{modelName(option)}</span>{option.kind === "instance" ? <span className="block truncate text-xs text-muted-foreground">{option.instance.name}</span> : null}</span>
                   {option.value === value ? <CheckIcon className="size-4 shrink-0 text-secondary" aria-hidden /> : null}
