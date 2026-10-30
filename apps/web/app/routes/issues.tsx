@@ -510,7 +510,7 @@ function ClaimGroupRow({
 
       {open ? (
         <div className="pb-3 pl-10 pr-4">
-          <ul className="overflow-hidden rounded-lg border bg-card shadow-(--float-shadow)">
+          <ul className="overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
             {shown.map((o) => (
               <OccurrenceRow key={o.claim_id} businessId={businessId} issue={o} search={search} />
             ))}

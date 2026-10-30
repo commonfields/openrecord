@@ -41,12 +41,17 @@ export interface BuiltContext {
   readonly compactedMessages: number
   readonly omittedMessages: number
   readonly chars: number
+  /** Characters of history sent (verbatim plus compacted memory), within the budget. */
+  readonly historyChars: number
+  readonly budgetChars: number
 }
 
-export const buildContext = (history: ReadonlyArray<ContextMessage>, message: string, budget: ContextBudget = DEFAULT_CONTEXT_BUDGET): BuiltContext => {
+export const buildContext = (history: ReadonlyArray<ContextMessage>, message: string, budget: ContextBudget = DEFAULT_CONTEXT_BUDGET, resumeContext?: string): BuiltContext => {
+  const resume = resumeContext?.slice(0, Math.min(6000, Math.max(0, budget.historyChars))) ?? ""
+  const historyBudget = Math.max(0, budget.historyChars - resume.length)
   // Verbatim window: newest first, within three quarters of the budget, so the
   // memory of older turns always has room.
-  const window = Math.floor(budget.historyChars * 0.75)
+  const window = Math.floor(historyBudget * 0.75)
   let used = 0, start = history.length
   for (let i = history.length - 1; i >= 0; i--) {
     const size = verbatim(history[i]!).length
@@ -55,7 +60,7 @@ export const buildContext = (history: ReadonlyArray<ContextMessage>, message: st
   }
   const older = history.slice(0, start), recent = history.slice(start)
   // Compacted memory: keep the newest older turns that fit, then restore order.
-  const room = budget.historyChars - used - MEMORY_HEADER.length
+  const room = historyBudget - used - MEMORY_HEADER.length
   const lines: string[] = []
   let memoryChars = 0
   for (let i = older.length - 1; i >= 0; i--) {
@@ -63,16 +68,20 @@ export const buildContext = (history: ReadonlyArray<ContextMessage>, message: st
     if (memoryChars + line.length + 1 > room) break
     lines.unshift(line); memoryChars += line.length + 1
   }
-  const omitted = older.length - lines.length
-  const memory = lines.length || omitted
+  let omitted = older.length - lines.length
+  const renderMemory = () => lines.length || omitted
     ? [MEMORY_HEADER, ...(omitted ? [`- (${omitted} older messages are not shown)`] : []), ...lines].join("\n")
     : null
+  while (lines.length && (renderMemory()?.length ?? 0) > historyBudget - used) { lines.shift(); omitted++ }
+  const candidateMemory = renderMemory()
+  const memory = candidateMemory && candidateMemory.length <= historyBudget - used ? candidateMemory : null
   const contents: ModelContent[] = recent.map(m => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: verbatim(m) }] }))
-  contents.push({ role: "user", parts: [{ text: message }] })
+  contents.push({ role: "user", parts: [...(resume ? [{ text: resume }] : []), { text: message }] })
   // Memory rides on the first user turn (the current message at the latest).
   const first = contents.findIndex(c => c.role === "user")
   if (memory) contents[first] = { ...contents[first]!, parts: [{ text: memory }, ...contents[first]!.parts] }
-  return { contents, verbatimMessages: recent.length, compactedMessages: lines.length, omittedMessages: omitted, chars: JSON.stringify(contents).length }
+  return { contents, verbatimMessages: recent.length, compactedMessages: memory ? lines.length : 0, omittedMessages: memory ? omitted : older.length, chars: JSON.stringify(contents).length,
+    historyChars: used + (memory ? memory.length : 0) + resume.length, budgetChars: budget.historyChars }
 }
 
 /** Within one run, shrink the oldest tool results to their summaries and

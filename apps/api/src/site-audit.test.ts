@@ -3,7 +3,7 @@
 // and private addresses never get a request.
 import { describe, expect, it } from "vitest"
 import type { HttpTransport } from "@openrecord/representation"
-import { auditSite } from "./site-audit.js"
+import { auditSite, mapSite } from "./site-audit.js"
 import { contextDev, makeSafeFetcher, makeWebAccess, readRobots, type WebAccessService, type WebDocument, type WebKind } from "./web-access.js"
 
 type Route = { status: number; type?: string; body?: string; ms?: number; location?: string }
@@ -30,6 +30,16 @@ const words = (n: number) => "<p>" + "booking ".repeat(n) + "</p>"
 const ORG = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Northstar"}</script>`
 
 describe("site audit", () => {
+  it("reports JSON-LD structure problems without claiming rich-result eligibility", async () => {
+    const schema = `<script type="application/ld+json">{"@type":"Product","name":"Example"}</script>`
+    const { web } = site({ "https://northstar.test/": { status: 200, body: html("Northstar clinic scheduling software", `<h1>Hi</h1>${words(300)}${ORG}${schema}`) } })
+    const audit = await auditSite(web, { url: "https://northstar.test/" })
+    if ("refused" in audit) throw new Error("refused")
+    const issue = audit.issues.find(i => i.check === "JSONLD_MISSING_CONTEXT")
+    expect(issue).toMatchObject({ examples: ["https://northstar.test/"], priority: "MEDIUM" })
+    expect(issue?.verify).toContain("validator")
+  })
+
   it("audits the sitemap's pages and reports search, AI-answer and content issues with fixes and checks", async () => {
     const { web, requested } = site({
       "https://northstar.test/robots.txt": { status: 200, body: "User-agent: GPTBot\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: *\nDisallow: /admin\nSitemap: https://northstar.test/sitemap.xml" },
@@ -139,5 +149,21 @@ describe("web access", () => {
     expect(calls[0]).toEqual({ url: "https://api.context.dev/v1/web/search", body: { query: "clinic booking", numResults: 5, descriptionMaxCharacters: 300 }, auth: "Bearer k" })
     expect(calls[1]?.body).toEqual({ url: "https://a.test/", formats: { markdown: true }, sharedParams: { mainContentOnly: true } })
     expect(() => contextDev({ apiKey: "k", baseUrl: "http://api.context.dev/v1" })).toThrow()
+  })
+
+  it("maps a site's pages by section from its sitemap and home links, without reading them or disallowed pages", async () => {
+    const urls = ["/blog/a", "/blog/b", "/blog/c", "/pricing", "/admin/secret"].map(p => `<url><loc>https://northstar.test${p}</loc></url>`).join("")
+    const { web, requested } = site({
+      "https://northstar.test/robots.txt": { status: 200, body: "User-agent: *\nDisallow: /admin" },
+      "https://northstar.test/": { status: 200, body: html("Northstar", `<a href="/features">Features</a><a href="https://other.test/x">x</a>`) },
+      "https://northstar.test/sitemap.xml": { status: 200, body: `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>` },
+    })
+    const map = await mapSite(web, { url: "https://northstar.test" })
+    if ("refused" in map) throw new Error("refused")
+    expect(map).toMatchObject({ site: "https://northstar.test", sitemap: { found: true }, pages: 6, disallowed: 1 })
+    expect(map.sections[0]).toMatchObject({ path: "/blog", pages: 3 })
+    expect(map.urls).toContain("https://northstar.test/features")
+    expect(map.urls.some(u => u.includes("admin") || u.includes("other.test"))).toBe(false)
+    expect(requested).not.toContain("https://northstar.test/blog/a")
   })
 })

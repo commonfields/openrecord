@@ -5,6 +5,8 @@ import { BusinessRepository, GrowthGa4Repository, GrowthRefused, GrowthRepositor
 import { SetupConfirmInput, SetupRevisionInput, SetupStartInput, decodeRouteId, hasSearchConsoleScope, type SetupView } from "@openrecord/contracts"
 import { Ga4Provider } from "@openrecord/ga4"
 import { GitHubExecution } from "@openrecord/site-operator"
+import type { DraftState } from "./setup-draft.js"
+import type { SqlError } from "@effect/sql/SqlError"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 import { deriveChannelInventory } from "./channels.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
@@ -50,7 +52,11 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
   })
 })
 
-const viewOf = (session: Session, row: SetupRow) => Effect.gen(function*() {
+/** Drafts the brief from the website: the agent in production (router.ts), nothing in tests that don't need it. */
+export type SetupDrafter<R> = (scope: { readonly accountId: string; readonly userId: string; readonly businessId: string }, setupId: string) => Effect.Effect<DraftState | undefined, SqlError, R>
+const noDraft: SetupDrafter<never> = () => Effect.succeed(undefined)
+
+const viewOf = <D>(session: Session, row: SetupRow, drafts: SetupDrafter<D>) => Effect.gen(function*() {
   const growth = yield* GrowthRepository
   const inventory = yield* channelsFor(session.accountId, row.businessId, row)
   const profile = yield* growth.profile(session.accountId, row.businessId)
@@ -59,15 +65,18 @@ const viewOf = (session: Session, row: SetupRow) => Effect.gen(function*() {
     : row.discoveryStatus === "FAILED" ? { status: "FAILED", failure: row.discoveryFailure ?? "UNKNOWN" }
       : { status: row.discoveryStatus === "FETCHING" ? "FETCHING" : "QUEUED" }
   const settled = row.discoveryStatus === "DONE" || row.discoveryStatus === "FAILED"
+  // Once the site is read, the agent drafts the brief for the person to check.
+  const draft = yield* drafts({ accountId: session.accountId, userId: session.userId, businessId: row.businessId }, row.id)
   return {
     id: row.id, businessId: row.businessId, businessName: row.businessName, websiteUrl: row.websiteUrl, goalStatement: row.goalStatement,
     step: setupStep(row), revision: row.revision, discovery, brief: row.brief, channelsReviewedAt: row.channelsReviewedAt, inventory,
     assessment: settled ? assessSetup(row.discovery, row.discoveryFailure, inventory, profile !== null) : null,
     opportunity,
+    ...(draft ? { draft } : {}),
   } satisfies SetupView
 })
 
-export const setupApi = (withSession: WithSession) => {
+export const setupApi = <D = never>(withSession: WithSession, drafts: SetupDrafter<D> = noDraft as SetupDrafter<D>) => {
   const operator = operatorSessionFor(withSession)
   const business = <E, R>(run: (session: Session, businessId: string) => Effect.Effect<import("@effect/platform/HttpServerResponse").HttpServerResponse, E, R>) =>
     operator(session => Effect.gen(function*() {
@@ -82,7 +91,7 @@ export const setupApi = (withSession: WithSession) => {
       const input = decode(SetupRevisionInput, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" })
       const row = yield* act(session, businessId, input.expectedRevision)
-      return yield* json(200, { setup: yield* viewOf(session, row) })
+      return yield* json(200, { setup: yield* viewOf(session, row, drafts) })
     }))
 
   return HttpRouter.empty.pipe(
@@ -90,12 +99,12 @@ export const setupApi = (withSession: WithSession) => {
       const input = decode(SetupStartInput, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" })
       const { setup, created } = yield* (yield* SetupRepository).start(session, input)
-      return yield* json(200, { setup: yield* viewOf(session, setup), created })
+      return yield* json(200, { setup: yield* viewOf(session, setup, drafts), created })
     })).pipe(Effect.catchAll(failure))),
 
     HttpRouter.get("/api/businesses/:id/setup", business((session, businessId) => Effect.gen(function*() {
       const row = yield* (yield* SetupRepository).get(session.accountId, businessId)
-      return yield* json(200, { setup: row ? yield* viewOf(session, row) : null })
+      return yield* json(200, { setup: row ? yield* viewOf(session, row, drafts) : null })
     }))),
 
     HttpRouter.get("/api/businesses/:id/channels", business((session, businessId) => Effect.gen(function*() {
@@ -107,7 +116,7 @@ export const setupApi = (withSession: WithSession) => {
       const input = decode(SetupConfirmInput, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" })
       const row = yield* (yield* SetupRepository).confirm(session, businessId, input)
-      return yield* json(200, { setup: yield* viewOf(session, row) })
+      return yield* json(200, { setup: yield* viewOf(session, row, drafts) })
     }))),
 
     HttpRouter.post("/api/businesses/:id/setup/channels", withRevision((session, businessId, revision) => Effect.flatMap(SetupRepository, r => r.reviewChannels(session, businessId, revision)))),

@@ -195,7 +195,7 @@ export function RepresentationDetailPage() {
               {d.citations.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No AI answer has cited this source yet.</p>
               ) : (
-                <ul className="divide-y overflow-hidden rounded-lg border">
+                <ul className="divide-y overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow)">
                   {d.citations.map((c) => (
                     <li key={`${c.observation_id}-${c.uri}`}>
                       <Link to={`/observations/${c.observation_id}`} className="flex items-center gap-3 px-3 py-2.5 text-xs transition-colors hover:bg-muted/40">

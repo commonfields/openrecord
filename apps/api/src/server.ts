@@ -45,12 +45,18 @@ import {
 } from "@openrecord/db"
 import { GitHubExecutionLive } from "@openrecord/site-operator"
 import { Ga4ProviderLive } from "@openrecord/ga4"
+import { AdsProviderLive } from "@openrecord/ads"
 import { makeRouter } from "./router.js"
+import { resumeLocalBridges } from "./local-bridge.js"
+import { briefScheduler } from "./growth-brief.js"
+import { followupScheduler } from "./agent-followups.js"
 
 const Repos = Layer.mergeAll(
   GitHubExecutionLive,
   // W8: GA4 OAuth client, redirect URI and token encryption keys from server configuration only.
   Ga4ProviderLive,
+  // Meta and Google Ads app credentials and redirect URI, from server configuration only.
+  AdsProviderLive,
   GrowthRepositoriesLive,
   SetupRepositoryLive,
   GrowthMeasurementRepositoryLive,
@@ -107,7 +113,12 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const PgLive = PgClient.layer({ url: config.databaseUrl })
     // Wire Postgres into the repositories (sequential), then serve.
     const ReposProvided = Layer.provideMerge(Repos, PgLive)
-    const ServerLive = HttpServer.serve(makeRouter()).pipe(
+    // This computer's bridges start with the server (local mode only).
+    const LocalBridges = Layer.effectDiscard(Effect.forkDaemon(resumeLocalBridges.pipe(Effect.delay("1 second"), Effect.catchAllCause(Effect.logWarning))))
+    // Weekly growth briefs that are due, checked every five minutes once the server is up.
+    const Briefs = Layer.effectDiscard(Effect.forkDaemon(briefScheduler.pipe(Effect.delay("30 seconds"))))
+    const Followups = Layer.scopedDiscard(Effect.forkScoped(followupScheduler.pipe(Effect.delay("30 seconds"))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )

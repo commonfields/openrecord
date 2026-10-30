@@ -39,9 +39,9 @@ describe("agent workspace presentation", () => {
     expect(read("../app/globals.css")).toContain("thinking-sweep 4.5s linear infinite")
   })
   it("shows pending chat activity in the sidebar and matches model/reasoning text styles", () => {
-    expect(agentChat()).toContain("activity.start(businessId, requestId, text, conversationId)")
-    expect(agentChat()).toContain("activity.finish(businessId, requestId, true)")
-    expect(read("../app/components/app-shell.tsx")).toContain('c.working ? <span role="status" className="thinking text-xs">Working…')
+    expect(agentChat()).toContain('activity.start(businessId, requestId, "New chat", conversationId, providerTag)')
+    expect(agentChat()).toContain("activity.finish(businessId, requestId, true, r.provider, r.title)")
+    expect(read("../app/components/app-shell.tsx")).toContain("motion-safe:animate-[status-pulse_2s_infinite]")
     const picker = read("../app/components/agent-model-picker.tsx")
     expect(picker).toContain("p-0 text-xs text-muted-foreground")
     expect(agentChat()).toContain("p-0 text-xs text-muted-foreground shadow-none")
@@ -62,10 +62,10 @@ describe("agent workspace presentation", () => {
     }
     for (const label of ["Clients", "All businesses"]) expect(sidebar.includes(`label="${label}"`)).toBe(false)
     const tabs = shell.slice(shell.indexOf("function ViewTabs("), shell.indexOf("function SidebarLink("))
-    expect(tabs.includes("h-full min-h-0 self-stretch rounded-[3px]")).toBe(true)
-    expect(tabs.includes("grid-cols-2 items-stretch rounded-md border border-sidebar-border")).toBe(true)
-    expect(tabs.includes("grid h-6 w-auto")).toBe(true)
-    expect(tabs.includes("rounded-[3px] px-1 text-[0.6875rem]")).toBe(true)
+    // Compact 28px tabs; the active one is a raised control, like Settings.
+    expect(tabs.includes("h-full min-h-0 self-stretch rounded-[5px]")).toBe(true)
+    expect(tabs.includes("grid h-7 w-auto")).toBe(true)
+    expect(tabs.includes("data-[state=active]:bg-control data-[state=active]:text-foreground data-[state=active]:shadow-(--control-shadow)")).toBe(true)
     expect(tabs.includes("data-[state=active]:shadow-(--card-shadow)")).toBe(false)
     expect(sidebar.indexOf('label="Results"')).toBeLessThan(sidebar.indexOf('label="Channels"'))
     expect(sidebar.includes("<ViewTabs")).toBe(false)
@@ -104,12 +104,12 @@ describe("agent workspace presentation", () => {
   it("keeps the narrow composer low and multiline controls at the bottom without a scrollbar", () => {
     const chat = agentChat()
     expect(chat.includes("max-w-6xl")).toBe(false)
-    expect(chat.includes("max-w-3xl shrink-0 pb-2")).toBe(true)
-    expect(chat.includes("dark:bg-[#262626]")).toBe(true)
-    expect(chat.includes("border-border bg-[#fafafa] px-3 py-2")).toBe(true)
+    expect(chat.includes("max-w-(--chat-max-width) shrink-0 pb-2")).toBe(true)
+    // The chat box is a raised card: #212121 in dark, with the card shadow.
+    expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--card-shadow)")).toBe(true)
     expect(chat.includes("relative flex min-h-12 cursor-text")).toBe(true)
     expect(chat.includes("cursor-text items-end")).toBe(true)
-    expect(chat.includes("items-end gap-3 rounded-xl")).toBe(true)
+    expect(chat.includes("items-end gap-3 rounded-[10px]")).toBe(true)
     expect(chat.includes("size-8 shrink-0 self-end")).toBe(true)
     expect(chat.includes("flex shrink-0 self-end items-center")).toBe(true)
     expect(chat.includes("overflow-y-auto")).toBe(true)
@@ -124,7 +124,7 @@ describe("agent workspace presentation", () => {
     expect(chat.includes("setWorkspace(true)")).toBe(true)
     expect(chat.includes("const crowded")).toBe(false)
     expect(overview.includes('aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto"')).toBe(true)
-    expect(overview.includes("max-w-3xl shrink-0 pb-2")).toBe(true)
+    expect(overview.includes("max-w-(--chat-max-width) shrink-0 pb-2")).toBe(true)
     expect(chat.includes("Stored evidence")).toBe(false)
     expect(chat.includes("Approval required")).toBe(false)
   })
@@ -373,7 +373,7 @@ describe("harness client", () => {
 
   it("keeps the pairing code out of persistent storage", () => {
     const dialog = harnessSettings()
-    expect(dialog).toContain("Get pairing code")
+    expect(dialog).toContain("Get code")
     expect(dialog).not.toMatch(/localStorage/)
     expect([...harnessLib().matchAll(/localStorage\.(get|remove|set)Item/g)].length).toBeGreaterThan(0)
     // The only localStorage key is the non-sensitive selection.
@@ -387,7 +387,7 @@ describe("api client carries the selection contract", () => {
     expect(api).toContain("selection?: HarnessSelection")
     expect(api).toContain("provider: string")
     expect(api).toContain("requestedModel: string | null")
-    expect(api).toContain("conversationId, selection })")
+    expect(api).toContain("conversationId, selection, style, ...(attachments?.length ? { attachments } : {}) })")
   })
 
   it("wires the real cancel route for stopping a turn", () => {
@@ -409,10 +409,10 @@ describe("settings → agent connection surface", () => {
   it("shows hosted, bridges, all four providers and real loading/error states", () => {
     const dialog = harnessSettings()
     expect(dialog).toContain("OpenRecord hosted")
-    expect(dialog).toContain("Bridges")
+    expect(dialog).toContain("Computers")
     // All four providers are surfaced through the shared driver table.
     expect(dialog).toContain("HARNESS_DRIVERS")
-    expect(dialog).toContain("Not reported by any paired bridge yet")
+    expect(dialog).toContain("No computer is connected yet")
     expect(dialog).toContain("Checking provider status")
     expect(dialog).toContain("Couldn't load providers")
     expect(dialog).toContain("Retry")
@@ -426,7 +426,7 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain('BRIDGE_SCRIPT = "/openrecord-bridge.mjs"')
     expect(dialog).toContain("Node 24")
     expect(dialog).toContain("Download bridge")
-    expect(dialog).toContain("short-lived")
+    expect(dialog).toContain("Don't share it")
     expect(dialog).toContain("loginCommand")
     expect(dialog).toContain("Harness.setEnabled")
     expect(dialog).toContain("Harness.refresh")
@@ -434,7 +434,14 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain("pairCommand")
     expect(dialog).toContain("<ProviderLogo")
     expect(dialog).toContain("onClick={connect}>Connect")
-    expect(dialog).toContain("node openrecord-bridge.mjs run")
+    // An offline computer folds to one line; no restart command under each provider.
+    expect(dialog).not.toContain('value="node openrecord-bridge.mjs run"')
+    expect(dialog).toContain("Prompt for your coding agent")
+    const prompt = harnessLib()
+    expect(prompt).toContain("export function agentSetupPrompt(code: string")
+    expect(prompt).toContain("KeepAlive")
+    expect(prompt).toContain("Restart=always")
+    expect(prompt).toContain("Do not set ANTHROPIC_API_KEY or OPENAI_API_KEY")
   })
 })
 
@@ -463,8 +470,9 @@ describe("composer model selector and stop control", () => {
   it("shows a stop button wired to the session cancel, replacing send in flight", () => {
     const chat = agentChat()
     const stop = chat.slice(chat.indexOf("{inFlight && session ? ("), chat.indexOf(") : text.trim().length > 0 ? ("))
-    expect(stop.includes('variant="secondary"'), "Stop needs the contrasting blue button palette").toBe(true)
-    expect(stop.includes("text-foreground"), "page text color must not override the stop icon contrast").toBe(false)
+    // The same filled circle as Send, with a centered square, so the two swap in place.
+    expect(stop).toContain("size-8 rounded-full bg-primary text-primary-foreground")
+    expect(stop.includes("text-foreground "), "page text color must not override the stop icon contrast").toBe(false)
     expect(chat).toContain('aria-label="Stop the agent"')
     expect(chat).toContain("stopTurn")
     expect(chat).toContain("Agent.cancel")
@@ -477,7 +485,7 @@ describe("composer model selector and stop control", () => {
     expect(chat).not.toMatch(/disabled=\{session\.busy \|\| !session\.ready \|\| !session\.sendable/)
     expect(chat).not.toMatch(/disabled=\{!session\.ready \|\| session\.busy \|\| !session\.sendable/)
     expect(chat).toContain("modelBlocked={!session.sendable}")
-    expect(chat).toContain("!modelBlocked && text.trim().length > 0")
+    expect(chat).toContain("!modelBlocked && (text.trim().length > 0 || files.length > 0)")
     expect(chat).toContain("Choose an available model before running a command.")
     expect(chat).toContain("session.send(`/${command}`)")
     // A reply starts as "Thinking" and turns to "Working" once a tool runs.
@@ -498,7 +506,7 @@ describe("composer model selector and stop control", () => {
     expect(chat).not.toContain('aria-label="Delete conversation"')
     expect(chat).not.toContain('aria-label="Start a new conversation"')
     expect(chat).toContain("<LiveTrace progress=")
-    expect(read("../app/components/agent-trace.tsx")).toContain('<p className="thinking text-base leading-relaxed" role="status">{status}</p>')
+    expect(read("../app/components/agent-trace.tsx")).toContain('<span className="thinking">{working ? "Working" : "Thinking"} for {elapsed(now - progress.startedAt)}</span>')
     expect(chat).toContain("text-base leading-relaxed whitespace-pre-wrap")
     expect(chat).toContain("provider: r.provider")
     expect(chat).toContain("model: r.requestedModel")

@@ -237,3 +237,18 @@ export class RpcProcess {
     this.pending.clear()
   }
 }
+
+/**
+ * Starts a program in the background, detached from the bridge, and returns
+ * at once: for local services the bridge brings up (CLIProxyAPI), which keep
+ * running after the bridge stops. No shell; output is discarded.
+ */
+export const startDetached = (binary: string, args: ReadonlyArray<string>, options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv }): boolean => {
+  try {
+    const child = spawn(binary, [...args], { cwd: options.cwd, detached: true, stdio: "ignore", shell: false, env: options.env })
+    child.on("error", () => {})
+    child.unref()
+    return true
+  } catch { return false }
+}
+

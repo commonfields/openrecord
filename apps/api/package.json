@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json",
+    "lint": "eslint src scripts --max-warnings 0",
     "test": "vitest run",
+    "eval": "tsx scripts/run-agent-evals.ts",
     "build": "tsc -p tsconfig.json",
     "dev": "OPENRECORD_BUILD_COMMIT=$(git rev-parse HEAD 2>/dev/null) OPENRECORD_BUILD_DIRTY=$(git status --porcelain 2>/dev/null | grep -q . && echo true || (git rev-parse HEAD >/dev/null 2>&1 && echo false)) tsx src/server.ts",
     "start": "node --import tsx dist/server.js"
@@ -22,6 +23,7 @@
     "@openrecord/discovery": "workspace:*",
     "@openrecord/domain": "workspace:*",
     "@openrecord/fs-containment": "workspace:*",
+    "@openrecord/ads": "workspace:*",
     "@openrecord/ga4": "workspace:*",
     "@openrecord/protocol": "workspace:*",
     "@openrecord/representation": "workspace:*",

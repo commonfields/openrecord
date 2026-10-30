@@ -1,6 +1,5 @@
-// Tools a session uses to work with other sessions, modelled on T3 Code's
-// orchestrator (delegate_task, task_status, task_cancel, t3_thread_send,
-// t3_thread_read, t3_thread_list, orchestrator_capabilities).
+// Tools a session uses to work with other sessions: start a helper, follow
+// up with a session, read or cancel a task, and list sessions and models.
 //
 // A helper session gets only its task, never the caller's history. It runs in
 // the same business, for the same user, with the same server-owned tools as
@@ -10,8 +9,9 @@
 // depending on conversation storage.
 import { Schema } from "effect"
 import type { ToolDeclaration } from "./agent-registry.js"
+import { AEO_SPECIALIST, CONTENT_SPECIALIST, SEO_SPECIALIST } from "./marketing-specialists.js"
 
-export const SESSION_ROLES = ["general", "researcher", "seo", "aeo", "content", "analyst"] as const
+export const SESSION_ROLES = ["general", "researcher", "seo", "aeo", "content", "analyst", "reviewer", "verifier"] as const
 export type SessionRole = typeof SESSION_ROLES[number]
 /** Root sessions are depth 0; a helper at MAX_SESSION_DEPTH cannot start more helpers. */
 export const MAX_SESSION_DEPTH = 2
@@ -24,10 +24,12 @@ export const DEFAULT_WAIT_SECONDS = 240
 export const ROLE_BRIEF: Readonly<Record<SessionRole, string>> = {
   general: "",
   researcher: "Act as the research helper: gather the evidence the task needs from the registered tools, including public web pages, and report it with exact counts and what is unknown.",
-  seo: "Act as the search (SEO) helper: work from the website audit, Google Search performance, site inspection, issues and approved truth.",
-  aeo: "Act as the AI answers (AEO/GEO) helper: work from AI Discovery and acquisition measurements, buyer questions, competitor appearances and the audit's AI crawler and structured data checks.",
-  content: "Act as the content helper: draft source actions or client reports with the draft tools; drafts wait for approval.",
+  seo: SEO_SPECIALIST,
+  aeo: AEO_SPECIALIST,
+  content: CONTENT_SPECIALIST,
   analyst: "Act as the measurement helper: work from GA4 referral evidence, conversions, Search Console and recorded outcomes.",
+  reviewer: "Act as the reviewer: give an independent second opinion on the work described (a draft, a plan, an answer or a recommendation). Read the evidence and any saved draft yourself (read_proposals) rather than trusting the summary. Report what holds up, what is wrong or unsupported, what is missing, and the changes you would make, most important first. Say plainly when you agree.",
+  verifier: "Act as the fact-checker: confirm or refute each claim in the task against fresh evidence you read yourself (the business's records, its website, other public sources). For every claim say confirmed, contradicted or unverified, with the evidence and where it came from. Look for at least one source the original work did not use.",
 }
 
 const Model = Schema.Union(Schema.Literal("hosted"), Schema.Struct({ instanceId: Schema.UUID, model: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200)) }))

@@ -3,6 +3,11 @@ import { ACQUISITION_AGENT_TOOLS } from "./agent-acquisition-tools.js"
 import { REFERRAL_AGENT_TOOLS } from "./agent-referral-tools.js"
 import { SEARCH_AGENT_TOOLS } from "./agent-search-tools.js"
 import { WEB_AGENT_TOOLS } from "./agent-web-tools.js"
+import { ADS_AGENT_TOOLS } from "./agent-ads-tools.js"
+import { RESULTS_AGENT_TOOLS } from "./agent-results-tools.js"
+import { OBJECTIVE_AGENT_TOOLS } from "./objectives.js"
+import { PERFORMANCE_AGENT_TOOLS } from "./agent-performance-tools.js"
+import { INVESTIGATION_READ_TOOLS } from "./agent-investigation-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
 // read-only tools for operator assistance.
 //
@@ -356,6 +361,38 @@ const readRecordOutcomes: AgentToolDef = {
     }),
 }
 
+const KIND_LABEL: Readonly<Record<string, string>> = { REQUEST_CHECK: "AI answer check request", DRAFT_SOURCE_ACTION: "Source fix draft",
+  PREPARE_CLIENT_REPORT: "Client report draft", PROPOSE_QUESTION_SET: "Buyer question set", REQUEST_ACQUISITION_BATCH: "AI recommendation measurement" }
+const ReadProposalsInput = Schema.Struct({
+  status: Schema.optional(Schema.Literal("PROPOSED", "APPROVED", "EXECUTED", "REJECTED")),
+  proposalId: Schema.optional(Schema.UUID),
+  limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 10))),
+})
+
+const readProposals: AgentToolDef = {
+  name: "read_proposals",
+  description: "Read the drafts and requests saved for this business and their decisions: source fix drafts, client reports, buyer question sets, AI answer check requests and measurements, with each draft's full text. Use it to review, compare or build on earlier work, or when asked to check a draft. Filter by status (PROPOSED waits for a decision) or give one proposalId. Read-only.",
+  ...inputContract(ReadProposalsInput),
+  run: (accountId, businessId, input) =>
+    Effect.gen(function*() {
+      yield* scoped(accountId, businessId)
+      const all = yield* (yield* AgentProposalRepository).listByBusiness(accountId, businessId, input.proposalId ? null : input.status ?? null)
+      const picked = input.proposalId ? all.filter(p => p.id === input.proposalId) : all.slice(0, input.limit ?? 5)
+      if (input.proposalId && !picked.length) return yield* Effect.fail(new AgentNotInScope())
+      const one = picked.length === 1
+      return {
+        summary: `${picked.length} saved proposal${picked.length === 1 ? "" : "s"} read${input.status ? ` (${input.status.toLowerCase()})` : ""}`,
+        citations: picked.map(p => ({ kind: "proposal", id: p.id, text: KIND_LABEL[p.kind] ?? p.kind })),
+        data: {
+          total: all.length,
+          proposals: picked.map(p => ({ id: p.id, kind: KIND_LABEL[p.kind] ?? p.kind, status: p.status, createdAt: p.createdAt, decidedAt: p.decidedAt, proposer: p.proposer, message: p.message,
+            ...(p.payload ? { draft: one ? p.payload.text.slice(0, 12000) : p.payload.text.slice(0, 3000), draftTruncated: p.payload.text.length > (one ? 12000 : 3000),
+              references: p.payload.references.length, generatedAt: p.payload.generatedAt, ...(p.payload.measurementPlan ? { measurementPlan: p.payload.measurementPlan } : {}) } : {}) })),
+        },
+      } satisfies AgentToolResult
+    }),
+}
+
 /** The complete read-only toolset. Adding a write tool requires a
  * proposal/approval boundary review and an update to agent-tools.test.ts,
  * which asserts this exact list. */
@@ -365,6 +402,11 @@ export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   ...REFERRAL_AGENT_TOOLS,
   ...SEARCH_AGENT_TOOLS,
   ...WEB_AGENT_TOOLS,
+  ...ADS_AGENT_TOOLS,
+  ...RESULTS_AGENT_TOOLS,
+  ...OBJECTIVE_AGENT_TOOLS,
+  ...PERFORMANCE_AGENT_TOOLS,
+  ...INVESTIGATION_READ_TOOLS,
   readBusinessTruth,
   discoverBuyerQuestions,
   readOpenIssues,
@@ -373,6 +415,7 @@ export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   readObservation,
   readIssue,
   readRecordOutcomes,
+  readProposals,
 ]
 
 /** Look up a tool by name without running anything. Fails before any

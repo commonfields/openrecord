@@ -79,7 +79,7 @@ export function GrowthStageSection({ index, title, purpose, children, className 
   className?: string
 }) {
   return (
-    <section className={cn("rounded-lg border p-4", className)} aria-label={title}>
+    <section className={cn("rounded-[10px] bg-card shadow-(--card-shadow) p-4", className)} aria-label={title}>
       <div className="flex items-start gap-2.5">
         <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[0.625rem] font-semibold text-muted-foreground">{index}</span>
         <div className="min-w-0">

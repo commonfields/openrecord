@@ -329,14 +329,28 @@ export const CreateReobservationRequest = Schema.Struct({
 export type CreateReobservationRequest = typeof CreateReobservationRequest.Type
 
 // Conversation identity and history are server-owned. Client history is not trusted.
+/** A text file attached to a message: CSV, Markdown, JSON, plain text or HTML, read in the browser. */
+export const AgentAttachment = Schema.Struct({
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200)),
+  type: Schema.String.pipe(Schema.maxLength(100)),
+  text: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(40000)),
+})
+export type AgentAttachment = typeof AgentAttachment.Type
+export const MAX_ATTACHMENT_CHARS = 80000
 export const AgentMessageRequest = Schema.Struct({
   message: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4000)),
   requestId: Schema.UUID,
   conversationId: Schema.optional(Schema.UUID),
   revision: Schema.NonNegativeInt,
   selection: Schema.optional(HarnessSelection),
+  /** How the person wants answers written; friendly when absent. */
+  style: Schema.optional(Schema.Literal("friendly", "concise", "detailed")),
+  /** At most three files, 80,000 characters together. */
+  attachments: Schema.optional(Schema.Array(AgentAttachment).pipe(Schema.maxItems(3),
+    Schema.filter(files => files.reduce((n, f) => n + f.text.length, 0) <= MAX_ATTACHMENT_CHARS))),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
+export type AgentResponseStyle = NonNullable<AgentMessageRequest["style"]>
 
 // Agent proposals: the only agent write path, gated by human approval.
 // Creation records intent (never executes); approval executes exactly once
@@ -467,3 +481,5 @@ export * from "./setup.js"
 export * from "./mcp.js"
 export * from "./harness.js"
 export * from "./openai-chat.js"
+export * from "./ads.js"
+export * from "./agent-followups.js"

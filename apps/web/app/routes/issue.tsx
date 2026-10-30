@@ -328,7 +328,7 @@ function SourceEvidenceCard({ businessId, citations }: { businessId: string; cit
 
 export function CitationCard({ businessId, citation: c }: { businessId: string; citation: CitationEvidence }) {
   return (
-    <li className="space-y-3 rounded-lg border p-3">
+    <li className="space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-3">
       <div className="flex flex-wrap items-center gap-2">
         <a href={c.uri} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1.5 text-xs font-medium hover:underline">
           <LinkIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -934,7 +934,7 @@ function BeforeAfterCompare({ loop, loading }: { loop: IssueLoop | null; loading
                   ["After", comparison.after],
                 ] as const
               ).map(([label, side]) => (
-                <div key={label} className="space-y-2 rounded-lg border p-3">
+                <div key={label} className="space-y-2 rounded-[10px] bg-card shadow-(--card-shadow) p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-[0.6875rem] text-muted-foreground">
                     <span className="font-semibold tracking-wide text-foreground uppercase">{label}</span>
                     <span>{formatDateTime(side.collectedAt)}</span>

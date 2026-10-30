@@ -88,13 +88,17 @@ export const interruptionNote = (status: RunStatus, reason: string | null, event
   const finished = new Set(events.filter(e => e.type === "TOOL_COMPLETED" || e.type === "TOOL_FAILED").map(e => str(e.payload["invocationId"])))
   const completed = events.filter(e => e.type === "TOOL_COMPLETED")
   const saved = [...new Set(completed.filter(e => e.payload["effect"] === "propose").map(e => str(e.payload["summary"])))]
-  const read = [...new Set(completed.filter(e => e.payload["effect"] !== "propose").map(e => str(e.payload["summary"])))]
+  const memory = [...new Set(completed.filter(e => e.payload["effect"] === "record").map(e => str(e.payload["summary"])))]
+  const read = [...new Set(completed.filter(e => e.payload["effect"] === "read" || e.payload["effect"] === "delegate").map(e => str(e.payload["summary"])))]
   const inflight = events.filter(e => e.type === "TOOL_STARTED" && !finished.has(str(e.payload["invocationId"])))
   const lines = [status === "FAILED" ? STOPPED[reason ?? ""] ?? "The model provider failed before this request finished." : STOPPED[status] ?? STOPPED["INTERRUPTED"]!]
   if (saved.length) lines.push(`Saved for your review before stopping: ${saved.join("; ")}.`)
+  if (memory.length) lines.push(`Saved as unverified working memory before stopping: ${memory.join("; ")}.`)
   for (const e of inflight) lines.push(e.payload["effect"] === "propose"
     ? `A save was in progress (${toolLabel(str(e.payload["tool"])).toLowerCase()}) and may not have completed. Check open proposals before asking again.`
-    : `${toolLabel(str(e.payload["tool"]))} did not finish.`)
+    : e.payload["effect"] === "record"
+      ? "A working-memory save was in progress and may have completed. Read the investigation before continuing; identical notes are reused."
+      : `${toolLabel(str(e.payload["tool"]))} did not finish.`)
   if (read.length) lines.push(`Evidence read: ${read.slice(0, 5).join("; ")}.`)
   lines.push(saved.length || inflight.some(e => e.payload["effect"] === "propose")
     ? "No final answer was written. Ask again to continue; saved proposals are reused, not duplicated."

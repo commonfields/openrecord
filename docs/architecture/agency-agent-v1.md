@@ -133,7 +133,7 @@ Performance is read live and not stored: totals for the last 7, 28 or 90 complet
 
 ## Sessions that work together
 
-A business session can start helper sessions and talk to other sessions, modelled on T3 Code's orchestrator (`delegate_task`, `task_status`, `task_cancel`, `t3_thread_send`, `t3_thread_read`, `t3_thread_list`, `orchestrator_capabilities`). The tools are declared in `apps/api/src/agent-session-tools.ts`; the runtime is `apps/api/src/agent-sessions.ts`; migration `0042_agent_sessions_v1.sql` adds the storage.
+A business session can start helper sessions and talk to other sessions (`delegate_task`, `message_session`, `read_task`, `cancel_task`, `list_sessions`, `read_session`, `list_models`). The tools are declared in `apps/api/src/agent-session-tools.ts`; the runtime is `apps/api/src/agent-sessions.ts`; migration `0042_agent_sessions_v1.sql` adds the storage.
 
 - `delegate_task` starts a helper session for one self-contained task, with an optional role (research, search, AI answers, content, measurement) and an optional model from `list_models`. The helper receives only the task, never the caller's history. Several calls in one model step run in parallel, at most three at a time.
 - `message_session` runs a follow-up turn in another session of the same business, keeping that session's own history. A session cannot message itself or a session that started it, and a session that is working refuses the message.

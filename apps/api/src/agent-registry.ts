@@ -1,5 +1,5 @@
 // One registry for every tool the agent can call. Each entry declares what the
-// tool may do (read, or save a proposal for human review), whether repeating
+// tool may do (read, save working memory, or propose work), whether repeating
 // it is safe, and how it is labelled in run progress. Dispatch is closed: a
 // name that is not here never reaches a repository.
 //
@@ -17,9 +17,10 @@ import { AgentNotInScope } from "./agent-tool-errors.js"
 import { AgentModelError } from "./agent-model.js"
 import { diagnoseMarketingProblems, firstImprovementDeclarations, proposeFirstImprovement, type AgentOrigin } from "./agent-first-improvement.js"
 import { STARTS_WORK } from "./agent-session-tools.js"
+import { dispatchInvestigation, investigationDeclarations } from "./agent-investigation-tools.js"
 
-/** "delegate": starts a turn in another session (agent-sessions.ts). */
-export type ToolEffect = "read" | "propose" | "delegate"
+/** "record" saves unverified internal memory; "delegate" starts a helper turn. */
+export type ToolEffect = "read" | "propose" | "delegate" | "record"
 export interface ToolContext {
   readonly accountId: string; readonly userId: string; readonly businessId: string
   readonly origin?: AgentOrigin | undefined
@@ -47,6 +48,8 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
+  ...investigationDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
+    run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchGrowthProposal(ctx.accountId, ctx.userId, ctx.businessId, args) })),
   ...draftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
@@ -75,7 +78,7 @@ export const dispatchToolSpec = (ctx: ToolContext, name: string, args: unknown) 
 
 /** Short present-tense label for run progress, from the tool name alone. */
 const VERBS: Readonly<Record<string, string>> = { read: "Reading", discover: "Listing", propose: "Proposing", draft: "Drafting", prepare: "Preparing", compare: "Comparing", diagnose: "Diagnosing",
-  delegate: "Delegating", message: "Messaging", cancel: "Cancelling", list: "Listing", search: "Searching", audit: "Auditing" }
+  delegate: "Delegating", message: "Messaging", cancel: "Cancelling", list: "Listing", search: "Searching", audit: "Auditing", open: "Opening", record: "Recording" }
 export const toolLabel = (name: string) => {
   const [verb = "", ...rest] = name.split("_")
   return `${VERBS[verb] ?? "Running"} ${rest.join(" ")}`.trim()
@@ -100,6 +103,7 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentUnknownTool) return toolFailure("UNKNOWN_TOOL")
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
+  if (tag === "AgentInvestigationConflict") return { ...toolFailure("REFUSED"), guidance: "The investigation state changed. Read read_investigation for its current state_note_id before deciding whether a new state change is still appropriate. Do not blindly retry." }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")
   return toolFailure("TOOL_FAILED")
 }
@@ -116,7 +120,7 @@ export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): Decisi
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */
 export type TaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
-export interface TaskRef { readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: TaskStatus }
+export interface TaskRef { readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: TaskStatus; readonly model?: string }
 /** At most ten, first occurrence kept; a later status for the same task replaces the earlier one. */
 export const mergeTasks = (refs: Iterable<TaskRef>): TaskRef[] => {
   const seen = new Map<string, TaskRef>()

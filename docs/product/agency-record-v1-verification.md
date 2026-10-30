@@ -159,7 +159,7 @@ from these local results.
 
 ## Boundaries and commercial handoff
 
-T3 preview opened a tab but navigation, snapshots and evaluation timed out,
+The browser preview opened a tab but navigation, snapshots and evaluation timed out,
 despite local HTTP reachability. No alternative browser was used, and no
 browser interaction or visual-validation claim is made.
 

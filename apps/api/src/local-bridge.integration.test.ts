@@ -13,7 +13,7 @@ import pg from "pg"
 import type { HarnessReport } from "@openrecord/contracts"
 import type { Session } from "@openrecord/db"
 import { activateHarness, harnessCatalog, pollHarnessJobs, registerBridge, revokeBridge } from "./harness-store.js"
-import { ensureLocalBridge } from "./local-bridge.js"
+import { ensureLocalBridge, localBridgeProcess, resumeLocalBridges } from "./local-bridge.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -27,9 +27,12 @@ suite("local bridge (disposable PostgreSQL, stand-in bridge program)", () => {
   const saved = { ...process.env }
 
   beforeAll(async () => {
-    // The stand-in writes its arguments and home, then exits.
-    writeFileSync(script, `import { writeFileSync } from "node:fs"; import { join } from "node:path";
-      const home = process.env.OPENRECORD_BRIDGE_HOME; writeFileSync(join(home, "started.json"), JSON.stringify({ args: process.argv.slice(2), path: process.env.PATH, env: Object.keys(process.env) }))`)
+    // The stand-in records how it was started, then ends as a revoked bridge
+    // does (so it is not restarted), or, with a "crash" file, just exits.
+    writeFileSync(script, `import { appendFileSync, existsSync, writeFileSync } from "node:fs"; import { join } from "node:path";
+      const home = process.env.OPENRECORD_BRIDGE_HOME; writeFileSync(join(home, "started.json"), JSON.stringify({ args: process.argv.slice(2), path: process.env.PATH, env: Object.keys(process.env) }))
+      appendFileSync(join(home, "starts.log"), process.argv.slice(2)[0] + "\\n")
+      if (!existsSync(join(home, "crash"))) process.stdout.write(JSON.stringify({ event: "bridge revoked: pair again in Settings" }) + "\\n")`)
     process.env["OPENRECORD_LOCAL_BRIDGE"] = "1"
     process.env["OPENRECORD_BRIDGE_SCRIPT"] = script
     process.env["OPENRECORD_LOCAL_BRIDGE_HOME"] = join(root, "homes")
@@ -112,4 +115,30 @@ suite("local bridge (disposable PostgreSQL, stand-in bridge program)", () => {
     expect(await run(ensureLocalBridge(session, 3999))).toBe("DISABLED")
     process.env["OPENRECORD_LOCAL_BRIDGE"] = "1"
   })
+
+  it("starts again after an unexpected exit, and when the server starts", async () => {
+    const { bridgeId } = await (async () => {
+      expect(await run(ensureLocalBridge(session, 3999, true))).toBe("STARTED")
+      const pair = await started()
+      const registered = await run(registerBridge(pair.args[4]!))
+      writeFileSync(join(home(), "bridge.json"), JSON.stringify({ bridgeId: registered.bridgeId }))
+      return registered
+    })()
+    expect(bridgeId).toBeTruthy()
+    const starts = () => existsSync(join(home(), "starts.log")) ? readFileSync(join(home(), "starts.log"), "utf8").trim().split("\n") : []
+    unlinkSync(join(home(), "starts.log"))
+    // A crash: the bridge exits without being revoked and is started again.
+    writeFileSync(join(home(), "crash"), "")
+    expect(await run(ensureLocalBridge(session, 3999))).toBe("STARTED")
+    for (let i = 0; i < 80 && starts().length < 2; i++) await new Promise(r => setTimeout(r, 100))
+    expect(starts().slice(0, 2)).toEqual(["run", "run"])
+    // Revoked: no more restarts. Then the server starting resumes a valid bridge.
+    unlinkSync(join(home(), "crash"))
+    for (let i = 0; i < 80 && localBridgeProcess(session.userId); i++) await new Promise(r => setTimeout(r, 100))
+    await new Promise(r => setTimeout(r, 300))
+    const before = starts().length
+    expect(await run(resumeLocalBridges)).toBe(1)
+    for (let i = 0; i < 40 && starts().length === before; i++) await new Promise(r => setTimeout(r, 100))
+    expect(starts().at(-1)).toBe("run")
+  }, 30000)
 })

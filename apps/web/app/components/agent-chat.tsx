@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
+import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
+import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, GlobeIcon, LoaderIcon, MicIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -9,8 +10,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
+import { ChatMarkdown } from "@/components/chat-markdown"
+import { ACCEPT, MAX_FILE_CHARS, MAX_FILES, MAX_TOTAL_CHARS, addAttachments, readAttachment } from "@/lib/attachments"
 import { LiveTrace, RunTrace, initialProgress, progressOf, type Progress } from "@/components/agent-trace"
-import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentCitation, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
+import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentAttachment, type AgentCitation, type AgentContextUse, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { Growth } from "@/lib/growth"
@@ -22,14 +25,23 @@ import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
+import { NewChatDialog } from "@/components/new-chat-dialog"
+import { AgentFollowups } from "@/components/agent-followups"
+import { followupChatEvent, followupModel } from "@/lib/agent-followups"
 
-type Message = { id: string; role: "user" | "agent"; text: string; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
+type Message = { id: string; role: "user" | "agent"; text: string; attachments?: AgentAttachment[]; context?: AgentContextUse; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
   steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[]
   // Helper sessions this reply started, and which session sent this message.
   tasks?: AgentTaskRef[]; origin?: AgentMessageOrigin
   // A pending reply's live trace, and a finished reply's folded one.
   progress?: Progress; activity?: AgentActivity[]; durationMs?: number }
+
+// The business or client a conversation was started with, shown in the
+// composer tray to the left of the model. A general chat has none.
+export type AgentChatContext = { kind: "client" | "business"; name: string }
+export const chatContext = (businessId: string | null, name: string): AgentChatContext | null =>
+  businessId === null ? null : { kind: "business", name }
 // Failures stay out of the conversation: an unreachable agent shows in the
 // composer's placeholder, and a message that got no reply is marked under it.
 const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"] === "UNCONFIGURED"
@@ -89,6 +101,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const [searchParams] = useSearchParams()
   const requestedConversationId = searchParams.get("chat") ?? undefined
   const activity = useChatActivity()
+  const { responseStyle } = usePreferences().preferences
   const [messages, setMessages] = useState<Message[]>([])
   const [conversationId, setConversationId] = useState<string | undefined>()
   const [revision, setRevision] = useState(0)
@@ -101,7 +114,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const [sessionInfo, setSessionInfo] = useState<AgentSessionInfo | null>(null)
   // Why the conversation could not load, and the last message that got no reply.
   const [unavailable, setUnavailable] = useState<string | null>(null)
-  const [failed, setFailed] = useState<{ text: string; note: string; retry: boolean } | null>(null)
+  const [failed, setFailed] = useState<{ text: string; attachments?: AgentAttachment[]; note: string; retry: boolean } | null>(null)
   // Which provider the next turn runs on, and its current catalog, shared by
   // chat and composer. The server re-validates every selection at send time.
   const { catalog } = useHarnessCatalog({ enabled, pollMs: 30_000 })
@@ -134,17 +147,37 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     return () => { live = false; mounted.current = false }
   }, [businessId, enabled, requestedConversationId])
 
-  const send = (text: string) => {
+  // A turn can settle while its chat is not on screen — it was left mid-turn
+  // and the reply is written by the mount that sent it. A mount that opened
+  // during the turn holds the pre-send snapshot; when the pending activity for
+  // this conversation goes quiet, pull the settled thread once.
+  const pendingWorking = conversationId === undefined ? undefined : activity.activity.get(conversationId)?.working
+  useEffect(() => {
+    if (conversationId === undefined || businessId === "" || pendingWorking !== false) return
+    let live = true
+    void Agent.load(businessId, conversationId).then(r => {
+      if (!live || !r.conversation) return
+      setRevision(r.conversation.revision)
+      setMessages(toDisplayMessages(r.conversation.messages))
+    }).catch(() => {})
+    return () => { live = false }
+  }, [businessId, conversationId, pendingWorking])
+
+  const send = (text: string, attachments: AgentAttachment[] = []) => {
     if (pending.current || !ready || !conversationId) return
     // A turn cannot start on a selection known to be missing; the server has
     // the final word on anything else.
     if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
-    activity.start(businessId, requestId, text, conversationId)
+    // The working indicator in the chat history shows which provider is on it.
+    // A still-loading catalog sends nothing explicit, so the server's hosted
+    // default answers and the fallback logo says so.
+    const providerTag = selection.status === "hosted" ? selection.provider : selection.status === "instance" ? selection.instance.driver : "gemini"
+    activity.start(businessId, requestId, "New chat", conversationId, providerTag)
     // A reply starts as "Thinking"; it turns to "Working" once the model runs a tool.
     let progress = initialProgress()
-    setMessages(m => [...m, { id: uid(), role: "user", text }, { id: uid(), role: "agent", text: "", pending: true, progress }])
+    setMessages(m => [...m, { id: uid(), role: "user", text, ...(attachments.length ? { attachments } : {}) }, { id: uid(), role: "agent", text: "", pending: true, progress }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
     // Follow the run's journal while the reply is pending. Polling resumes from
     // the last sequence seen, so a missed poll loses nothing.
@@ -160,22 +193,22 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     }
     let timer = setTimeout(poll, 250)
     const stopPolling = () => { polling = false; clearTimeout(timer) }
-    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection).then(r => {
-      activity.finish(businessId, requestId, true)
+    void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection, responseStyle, attachments).then(r => {
+      activity.finish(businessId, requestId, true, r.provider, r.title)
       notifyAgentChats()
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
         ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}),
-        ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}) }])
+        ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}), ...(r.context ? { context: r.context } : {}) }])
       refreshProposals()
       if (r.decisions?.length) notifyDecisionsChanged()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
       if (!mounted.current) return
       setMessages(m => m.slice(0, -1))
-      setFailed({ text, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
+      setFailed({ text, attachments, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
       refreshProposals()
       void Agent.load(businessId, conversationId).then(r => {
         if (mounted.current && r.conversation && r.conversation.revision > revision) {
@@ -190,6 +223,21 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   const helpersWorking = ready && !busy && [...taskStatuses(messages).values()].some(t => t === "RUNNING")
   const seen = useRef({ revision, refreshProposals })
   seen.current = { revision, refreshProposals }
+  useEffect(() => {
+    if (businessId === null || !conversationId) return
+    let live = true
+    const refresh = () => {
+      if (pending.current) return
+      void Agent.load(businessId, conversationId).then(r => {
+        if (!live || pending.current || !r.conversation || r.conversation.revision <= seen.current.revision) return
+        setRevision(r.conversation.revision)
+        setMessages(toDisplayMessages(r.conversation.messages))
+      }).catch(() => {})
+    }
+    const event = followupChatEvent(businessId, conversationId)
+    window.addEventListener(event, refresh)
+    return () => { live = false; window.removeEventListener(event, refresh) }
+  }, [businessId, conversationId])
   useEffect(() => {
     if (!helpersWorking || !conversationId) return
     const timer = setInterval(() => {
@@ -217,9 +265,9 @@ export function useAgentSession(businessId: string | null, enabled = true) {
   // Sends the message that got no reply again, in place of the unanswered copy.
   const retry = () => {
     if (!failed || pending.current) return
-    const text = failed.text
+    const { text, attachments } = failed
     setMessages(m => m.length && m[m.length - 1]!.role === "user" ? m.slice(0, -1) : m)
-    send(text)
+    send(text, attachments)
   }
 
   const startNew = () => {
@@ -240,16 +288,37 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     })
   }
 
+  // Messages written while a turn runs wait here, in order, and go out one at
+  // a time as each turn finishes. "Send now"
+  // stops the turn under way so the chosen message starts at once.
+  const [queued, setQueued] = useState<ReadonlyArray<{ id: string; text: string; attachments: AgentAttachment[] }>>([])
+  const flush = useRef(false)
+  const sendRef = useRef(send)
+  sendRef.current = send
+  const enqueue = (text: string, attachments: AgentAttachment[] = []) => setQueued(q => [...q, { id: crypto.randomUUID(), text, attachments }])
+  const unqueue = (id: string) => setQueued(q => q.filter(m => m.id !== id))
+  const sendNow = (id: string) => {
+    setQueued(q => { const m = q.find(x => x.id === id); return m ? [m, ...q.filter(x => x.id !== id)] : q })
+    flush.current = true
+    if (pending.current) stopTurn()
+  }
+  useEffect(() => {
+    if (busy || !ready || !sendable || pending.current || !queued.length) return
+    // A failed or stopped turn holds the queue, unless the person chose "Send now".
+    if (failed && !flush.current) return
+    flush.current = false
+    const [next, ...rest] = queued
+    setQueued(rest)
+    sendRef.current(next!.text, next!.attachments)
+  }, [busy, ready, sendable, failed, queued])
+
   // Work the agent produced: proposals to decide on, accepted drafts, and the
   // turns where it read stored evidence.
   const openProposals = proposals.filter(p => p.status === "PROPOSED")
   const keptDrafts = proposals.filter(p => p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")
-  const reads = messages.flatMap((m, i) => m.role === "agent" && !m.pending && ((m.tools?.length ?? 0) > 0 || (m.citations?.length ?? 0) > 0)
-    ? [{ id: m.id, question: messages[i - 1]?.role === "user" ? messages[i - 1]!.text : null, tools: m.tools ?? [], citations: m.citations ?? [] }]
-    : [])
-  const hasWork = openProposals.length > 0 || keptDrafts.length > 0 || reads.length > 0
+  const hasWork = openProposals.length > 0 || keptDrafts.length > 0
 
-  return { businessId, messages, proposals, openProposals, keptDrafts, reads, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking }
+  return { businessId, conversationId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking, queued, enqueue, unqueue, sendNow }
 }
 
 function ProposalCard({ session, businessName, proposal }: { session: AgentSession; businessName: string; proposal: AgentProposal }) {
@@ -262,7 +331,7 @@ export function AgentProposalCard({ businessId, businessName, proposal, onDone }
   const done = () => { onDone(); notifyDecisionsChanged() }
   // Re-checks and measurements are decided once; afterwards only the outcome shows.
   if (proposal.status !== "PROPOSED" && (proposal.kind === "REQUEST_CHECK" || proposal.kind === "REQUEST_ACQUISITION_BATCH"))
-    return <p className="flex items-center gap-1.5 rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">
+    return <p className="flex items-center gap-1.5 rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-3 text-xs text-muted-foreground">
       {proposal.status === "REJECTED" ? <XIcon className="size-3.5" /> : <CheckIcon className="size-3.5" />}
       {proposal.kind === "REQUEST_CHECK" ? "Re-check" : "Acquisition measurement"} {proposal.status === "REJECTED" ? "declined" : "approved and queued"}
     </p>
@@ -273,16 +342,16 @@ export function AgentProposalCard({ businessId, businessName, proposal, onDone }
 }
 
 /** Initiatives load on their own: the chat holds only their IDs. */
-function InitiativeCard({ businessId, opportunityId }: { businessId: string; opportunityId: string }) {
+export function InitiativeCard({ businessId, opportunityId }: { businessId: string; opportunityId: string }) {
   const [opportunity, setOpportunity] = useState<GrowthOpportunity | null | undefined>(undefined)
   useEffect(() => {
     let live = true
     void Growth.get(businessId, opportunityId).then(r => { if (live) setOpportunity(r.opportunity) }).catch(() => { if (live) setOpportunity(null) })
     return () => { live = false }
   }, [businessId, opportunityId])
-  if (opportunity === undefined) return <div className="h-20 animate-pulse rounded-xl border bg-card" aria-hidden />
-  if (opportunity === null) return <p className="rounded-xl border bg-card px-4 py-3 text-xs text-muted-foreground">This initiative is no longer available.</p>
-  return <div className="rounded-xl border bg-card p-4"><InitiativeDecision businessId={businessId} opportunity={opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></div>
+  if (opportunity === undefined) return <div className="h-20 animate-pulse rounded-[10px] bg-card shadow-(--card-shadow)" aria-hidden />
+  if (opportunity === null) return <p className="rounded-[10px] bg-card shadow-(--card-shadow) px-4 py-3 text-xs text-muted-foreground">This initiative is no longer available.</p>
+  return <div className="rounded-[10px] bg-card shadow-(--card-shadow) p-4"><InitiativeDecision businessId={businessId} opportunity={opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></div>
 }
 
 /** Approval cards for what one reply saved, so the decision happens where the work was proposed. */
@@ -299,7 +368,7 @@ function MessageDecisions({ session, businessName, refs }: { session: AgentSessi
 
 // ---- sessions working together ----
 
-const ROLE_LABEL: Readonly<Record<string, string>> = { general: "Helper", researcher: "Research", seo: "Search", aeo: "AI answers", content: "Content", analyst: "Measurement" }
+const ROLE_LABEL: Readonly<Record<string, string>> = { general: "Helper", researcher: "Research", seo: "Search", aeo: "AI answers", content: "Content", analyst: "Measurement", reviewer: "Review", verifier: "Fact-check" }
 const roleLabel = (role: string | null | undefined) => ROLE_LABEL[role ?? "general"] ?? "Helper"
 const TASK_STATUS: Readonly<Record<AgentTaskStatus, string>> = { RUNNING: "Working", COMPLETED: "Done", FAILED: "Stopped", CANCELLED: "Cancelled", INTERRUPTED: "Interrupted" }
 /** Each task's latest known status: a later message (its posted result) supersedes the card that started it. */
@@ -316,13 +385,13 @@ function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tas
       {tasks.map(t => {
         const status = statuses.get(t.id) ?? t.status
         return (
-          <li key={t.id} className="flex items-center gap-3 rounded-xl border bg-card px-3.5 py-2.5">
+          <li key={t.id} className="flex items-center gap-3 rounded-[10px] bg-card shadow-(--card-shadow) px-3.5 py-2.5">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
               {status === "RUNNING" ? <LoaderIcon className="size-3.5 animate-spin" /> : status === "COMPLETED" ? <CheckIcon className="size-3.5" /> : <XIcon className="size-3.5" />}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{t.title}</span>
-              <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)} · {TASK_STATUS[status]}</span>
+              <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)}{t.model ? ` · ${t.model}` : ""} · {TASK_STATUS[status]}</span>
             </span>
             {session.businessId !== null ? <Link className="shrink-0 text-xs font-medium underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: t.sessionId })}>Open</Link> : null}
           </li>
@@ -349,7 +418,7 @@ function HelperBanner({ session }: { session: AgentSession }) {
   const info = session.sessionInfo
   if (!info?.parentSessionId) return null
   return (
-    <div className="mb-4 flex items-center gap-2 rounded-xl border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+    <div className="mb-4 flex items-center gap-2 rounded-[10px] bg-card shadow-(--card-shadow) px-3.5 py-2.5 text-xs text-muted-foreground">
       <UsersIcon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{roleLabel(info.role)} helper{info.title ? ` · ${info.title}` : ""}</span>
       {session.businessId !== null ? <Link className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: info.parentSessionId })}>Open the session that started it</Link> : null}
@@ -359,8 +428,55 @@ function HelperBanner({ session }: { session: AgentSession }) {
 
 // ---- the conversation ----
 
-function Thread({ session, businessName = "", compact, placeholder, onCommand, work }: {
-  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode
+// The model that answered a reply, and whether it differs from the one that
+// answered the reply before it in this session.
+const modelOf = (m: Message) => m.role === "agent" && m.provider ? `${m.provider}:${m.model ?? ""}` : null
+function handover(messages: ReadonlyArray<Message>, i: number) {
+  const now = modelOf(messages[i]!)
+  if (!now) return false
+  for (let j = i - 1; j >= 0; j--) { const before = modelOf(messages[j]!); if (before) return before !== now }
+  return false
+}
+
+// One session, several models: the next reply came from another model, which
+// was given the conversation so far.
+function ModelHandover({ message }: { message: Message }) {
+  const name = message.model ?? message.provider ?? "another model"
+  return (
+    <li role="note" className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground">
+      <span className="h-px flex-1 bg-border" />
+      <ProviderLogo bare provider={modelBrand(message.model ?? "", message.provider ?? "")} className="size-3" />
+      Switched to {name} · it has the conversation so far
+      <span className="h-px flex-1 bg-border" />
+    </li>
+  )
+}
+
+// A finished reply's work log: its recorded steps, or for replies saved
+// before steps were kept, the tools it ran.
+const workLog = (m: Message): AgentActivity[] => m.activity?.length ? m.activity
+  : (m.tools ?? []).map(t => ({ kind: "tool" as const, tool: t.tool, text: t.summary }))
+
+// One source the answer used: a page on the web, or a record in this workspace.
+function SourceChip({ businessId, citation: c }: { businessId: string | null; citation: AgentCitation }) {
+  const path = businessId === null ? null : agentEvidencePath(businessId, c)
+  const web = webSourceUrl(c)
+  const chip = "inline-flex max-w-72 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+  return web ? (
+    <a href={web} rel="noopener noreferrer nofollow" target="_blank" className={chip}>
+      <GlobeIcon className="size-3 shrink-0" />
+      <span className="truncate">{c.text || new URL(web).host}</span>
+    </a>
+  ) : path ? (
+    <Link to={path} className={chip}>
+      <FileTextIcon className="size-3 shrink-0" />
+      <span className="truncate">{c.text || "Open evidence"}</span>
+    </Link>
+  ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
+}
+
+function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context }: {
+  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -373,45 +489,53 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className={cn("mx-auto w-full max-w-3xl", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
+        <div className={cn("mx-auto w-full max-w-(--chat-max-width)", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
           <HelperBanner session={session} />
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
-              {session.messages.map((m) => m.origin?.kind === "wake" ? (
+              {session.messages.map((m, i) => m.origin?.kind === "wake" ? (
                 <li key={m.id} className="flex items-center gap-2 py-1 text-[0.6875rem] text-muted-foreground" role="note">
-                  <span className="h-px flex-1 bg-border" />Helper results arrived. Continuing<span className="h-px flex-1 bg-border" />
+                  <span className="h-px flex-1 bg-border" />{m.origin.title ?? "Helper results arrived. Continuing"}<span className="h-px flex-1 bg-border" />
                 </li>
               ) : (
-                <li key={m.id} className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
+                <Fragment key={m.id}>
+                {handover(session.messages, i) ? <ModelHandover message={m} /> : null}
+                <li className={cn("group/msg flex flex-col gap-1", m.role === "user" ? "items-end" : "items-start")}>
                   {m.origin ? <OriginLabel session={session} origin={m.origin} /> : null}
                   {m.role === "user" ? (
-                    m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null
+                    <>
+                      {m.attachments?.length ? (
+                        <ul aria-label="Attached files" className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                          {m.attachments.map((f, j) => <li key={`${f.name}:${j}`}><AttachmentChip file={f} /></li>)}
+                        </ul>
+                      ) : null}
+                      {m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null}
+                    </>
                   ) : (
-                    <div className="max-w-[95%] space-y-1.5">
+                    <div className="w-full space-y-1.5">
                       {m.pending ? (
                         <LiveTrace progress={m.progress ?? initialProgress()} />
                       ) : (
-                        <p className={cn("text-base leading-relaxed whitespace-pre-wrap", m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/80")}>{m.text}</p>
+                        <>
+                          <RunTrace activity={workLog(m)} durationMs={m.durationMs} />
+                          <ChatMarkdown text={m.text} className={m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90"} />
+                        </>
                       )}
                       {m.run?.gaps?.length ? (
                         <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
                       ) : null}
-                      {m.citations?.length ? <ul className="flex flex-wrap gap-2" aria-label="Evidence references">{m.citations.map(c => {
-                        const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
-                        const web = webSourceUrl(c)
-                        return <li key={`${c.kind}:${c.id}`} className="text-xs">{path ? <Link className="underline underline-offset-2" to={path}>{c.text || "Open evidence"}</Link>
-                          : web ? <a className="underline underline-offset-2" href={web} rel="noopener noreferrer nofollow" target="_blank">{c.text || new URL(web).host}</a> : <span>Evidence unavailable</span>}</li>
-                      })}</ul> : null}
-                      {m.tools && m.tools.length > 0 ? (
-                        <p className="text-[0.6875rem] text-muted-foreground">{m.tools.map((t) => t.summary).join("; ")}</p>
+                      {m.citations?.length && !m.pending ? (
+                        <ul className="flex flex-wrap gap-1.5 pt-0.5" aria-label="Sources">
+                          {m.citations.map(c => <li key={`${c.kind}:${c.id}`}><SourceChip businessId={session.businessId} citation={c} /></li>)}
+                        </ul>
                       ) : null}
-                      {m.activity?.length ? <RunTrace activity={m.activity} durationMs={m.durationMs} /> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
                       {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
                   )}
                   <CopyButton text={m.text} className={m.role === "user" ? "-mr-1.5" : "-ml-1.5"} />
                 </li>
+                </Fragment>
               ))}
             </ol>
           ) : null}
@@ -429,7 +553,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           {work ? <div className="pt-6">{work}</div> : null}
         </div>
       </div>
-      <div className={cn("mx-auto w-full max-w-3xl shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
+      <div className={cn("mx-auto w-full max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
         <Composer
           onSend={session.send}
           onCommand={onCommand}
@@ -438,6 +562,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           placeholder={composerPlaceholder(session, placeholder)}
           autoFocus
           session={session}
+          context={context ?? null}
         />
       </div>
     </div>
@@ -446,7 +571,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
 
 // ---- what the agent did: decisions, drafts, and the evidence it read ----
 
-function WorkPane({ session, businessName, reads = true }: { session: AgentSession; businessName: string; reads?: boolean }) {
+function WorkPane({ session, businessName }: { session: AgentSession; businessName: string }) {
   return (
     <div className="space-y-5">
       {session.openProposals.length ? (
@@ -462,51 +587,6 @@ function WorkPane({ session, businessName, reads = true }: { session: AgentSessi
         <section className="space-y-2" aria-label="Accepted drafts">
           <h3 className="text-xs font-medium">Accepted drafts · {session.keptDrafts.length}</h3>
           {session.keptDrafts.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-        </section>
-      ) : null}
-      {reads && session.reads.length ? (
-        <section className="space-y-2" aria-label="What the agent read">
-          <h3 className="text-xs font-medium">What the agent read</h3>
-          <ol className="space-y-2">
-            {[...session.reads].reverse().map(r => (
-              <li key={r.id} className="rounded-xl bg-card p-3.5 text-xs shadow-(--card-shadow)">
-                {r.question ? <p className="mb-2 line-clamp-2 font-medium">“{r.question}”</p> : null}
-                {r.tools.length ? (
-                  <ul className="space-y-1 text-muted-foreground">
-                    {r.tools.map((t, i) => (
-                      <li key={i} className="flex gap-2">
-                        <CheckIcon className="mt-0.5 size-3 shrink-0 text-primary-ink" />
-                        <span className="min-w-0">{t.summary}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {r.citations.length ? (
-                  <ul className="mt-2 flex flex-wrap gap-1.5 border-t pt-2" aria-label="Evidence used">
-                    {r.citations.map(c => {
-                      const path = session.businessId === null ? null : agentEvidencePath(session.businessId, c)
-                      const web = webSourceUrl(c)
-                      return (
-                        <li key={`${c.kind}:${c.id}`}>
-                          {web ? (
-                            <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
-                              <GlobeIcon className="size-3 shrink-0" />
-                              <span className="truncate">{c.text || new URL(web).host}</span>
-                            </a>
-                          ) : path ? (
-                            <Link to={path} className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 hover:bg-muted">
-                              <FileTextIcon className="size-3 shrink-0" />
-                              <span className="truncate">{c.text || "Open evidence"}</span>
-                            </Link>
-                          ) : <span className="text-muted-foreground">Evidence unavailable</span>}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : null}
-              </li>
-            ))}
-          </ol>
         </section>
       ) : null}
     </div>
@@ -558,10 +638,11 @@ function useSlidePresence(open: boolean) {
 // The chat as its own card on the canvas, left of the content panel, the way
 // the sidebar sits. It grows in to half the width; on narrow screens it takes
 // the whole width and the content panel steps aside.
-function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand }: {
+function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand, context }: {
   open: boolean; session: AgentSession; businessName: string; placeholder: string
   onClose: () => void; closeLabel?: string; closeIcon?: ReactNode
   onCommand: (c: AgentCommand) => void
+  context?: AgentChatContext | null
 }) {
   const pane = useSlidePresence(open)
   const { slot, setPane } = usePaneSlot()
@@ -585,11 +666,11 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
       {/* Laid out at its final width and revealed as the pane grows, so it
           slides in from the left rather than reflowing. */}
       <div className="flex h-full w-[100cqw] shrink-0 flex-col p-2 md:pl-0 lg:w-[50cqw]">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-sidebar-border bg-background shadow-(--panel-shadow)">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
-              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} />
+              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} context={context ?? null} />
             </>
           ) : null}
         </div>
@@ -627,11 +708,11 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col items-center px-4 sm:px-6">
         <div aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl space-y-4 py-6">
+          <div className="mx-auto w-full max-w-(--chat-max-width) space-y-4 py-6">
             {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
           </div>
         </div>
-        <div className="w-full max-w-3xl shrink-0 pb-2">
+        <div className="w-full max-w-(--chat-max-width) shrink-0 pb-2">
           <Composer
             onSend={session.send}
             onCommand={runCommand}
@@ -640,6 +721,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
             placeholder={composerPlaceholder(session, session.unavailable ? `${session.unavailable}. Type / for commands` : "Describe a task or ask a question")}
             autoFocus
             session={session}
+            context={chatContext(businessId, businessName)}
           />
         </div>
       </div>
@@ -649,6 +731,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
   return (
     <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
       <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+        context={chatContext(businessId, businessName)}
         work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
     </section>
   )
@@ -678,13 +761,14 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
   const decisions = session.openProposals.length + session.keptDrafts.length
   return (
     <>
-      <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand} />
+      <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={onClose} onCommand={runCommand}
+        context={{ kind: "client", name: businessName }} />
       <div className="h-full min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
           {open && decisions ? (
             <section aria-label="From the agent" className="mb-4 space-y-2 rounded-xl border border-primary-ink/20 bg-primary-ink/5 p-4 animate-in fade-in duration-300">
               <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />From the agent</p>
-              <WorkPane session={session} businessName={businessName} reads={false} />
+              <WorkPane session={session} businessName={businessName} />
             </section>
           ) : null}
           {children}
@@ -723,10 +807,93 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 
 // Composer copy that explains why typing is disabled without pretending:
 // unreachable agent, or a selection known to be missing.
+// How full the chat's memory was on the last turn, as a small ring. Past the
+// budget, older messages are summarized rather than dropped, so the chat keeps going.
+export function ContextMeter({ messages }: { messages: ReadonlyArray<{ context?: AgentContextUse | undefined }> }) {
+  const use = [...messages].reverse().find(m => m.context)?.context
+  if (!use || use.budgetChars <= 0) return null
+  const pct = Math.min(100, Math.round(use.historyChars / use.budgetChars * 100))
+  const summarized = use.compacted + use.omitted
+  const r = 6, c = 2 * Math.PI * r
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} role="img" aria-label={`Chat memory ${pct}% full`} className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">
+          <svg viewBox="0 0 16 16" className="size-3.5 -rotate-90" aria-hidden>
+            <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+            <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)}
+              className={pct >= 90 ? "text-amber-600 dark:text-amber-400" : undefined} />
+          </svg>
+          {pct}%
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        Chat memory {pct}% full. {use.verbatim} recent message{use.verbatim === 1 ? "" : "s"} go to the model in full{summarized ? `; ${summarized} older ${summarized === 1 ? "one is" : "ones are"} summarized to make room` : ""}.
+        {pct >= 90 ? " Start a new chat for a fresh topic." : ""}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+// A file attached to a message: its name and size, removable before sending.
+function AttachmentChip({ file, onRemove }: { file: AgentAttachment; onRemove?: () => void }) {
+  const lines = file.text.split("\n").length
+  return (
+    <span className="flex h-8 max-w-64 items-center gap-2 rounded-[8px] bg-card pr-1 pl-2.5 text-[0.8125rem] shadow-(--card-shadow)" title={file.name}>
+      <FileTextIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate font-medium">{file.name}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{lines.toLocaleString()} line{lines === 1 ? "" : "s"}</span>
+      {onRemove ? (
+        <button type="button" onClick={onRemove} aria-label={`Remove ${file.name}`} className="flex size-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground">
+          <XIcon className="size-3.5" />
+        </button>
+      ) : <span className="w-1.5" />}
+    </span>
+  )
+}
+
+// Messages waiting for the turn under way, above the composer: each can go
+// out now (stopping the agent) or be taken back into the box.
+function QueuedMessages({ session }: { session: AgentSession }) {
+  return (
+    <ol aria-label="Queued messages" className="mb-1.5 space-y-1">
+      {session.queued.map((m, i) => (
+        <li key={m.id} className="flex min-h-9 items-center gap-2 rounded-[10px] bg-card py-1 pr-1 pl-3 text-sm shadow-(--card-shadow)">
+          <CornerDownRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{m.text}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{i === 0 ? "Next" : `Queued ${i + 1}`}</span>
+          <Button type="button" size="sm" variant="secondary" onClick={() => session.sendNow(m.id)}>Send now</Button>
+          <Button type="button" size="icon-sm" variant="ghost" className="text-muted-foreground" onClick={() => session.unqueue(m.id)} aria-label="Remove queued message">
+            <XIcon className="size-3.5" />
+          </Button>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 function composerPlaceholder(session: AgentSession, fallback: string): string {
   if (session.selection.status === "unavailable") return "The model you used is unavailable now — pick another model below"
   if (session.selection.status === "unset") return "Pick a model for the agent below"
+  if (session.busy && session.messages.length) return "Write a follow-up. It sends when the agent finishes"
   return session.unavailable ?? fallback
+}
+
+// The business or client chosen when the chat started, shown in the composer
+// tray's left side while the model sits on the right.
+export function AgentContextChip({ context }: { context: AgentChatContext }) {
+  const icon = <FolderIcon className="size-3.5 shrink-0" aria-hidden />
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span aria-label={`Chatting about ${context.name}`} className="inline-flex max-w-56 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          {icon}
+          <span className="truncate">{context.name}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Chatting about {context.name}</TooltipContent>
+    </Tooltip>
+  )
 }
 
 // The model picker shown in every agent layout's composer tray. It lists the
@@ -760,8 +927,9 @@ function Composer({
   disabled,
   session,
   modelBlocked,
+  context,
 }: {
-  onSend: (text: string) => void
+  onSend: (text: string, attachments?: AgentAttachment[]) => void
   /** Slash commands run as conversational turns through the selected agent. */
   onCommand?: ((command: AgentCommand) => void) | undefined
   disabled: boolean
@@ -771,6 +939,8 @@ function Composer({
   session?: AgentSession
   /** No usable selection: ordinary messages are gated, commands still run. */
   modelBlocked?: boolean
+  /** The business or client this conversation was started with, if any. */
+  context?: AgentChatContext | null
 }) {
   // While a turn is in flight the composer shows Stop instead of Send and the
   // model selection is locked until the server settles the turn.
@@ -778,6 +948,8 @@ function Composer({
   const { preferences } = usePreferences()
   const { openSettings } = useSettings()
   const [text, setText] = useState("")
+  const [files, setFiles] = useState<AgentAttachment[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
   const [listening, setListening] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<Recognition | null>(null)
@@ -789,7 +961,23 @@ function Composer({
   const matches = onCommand ? commandMatches(text) : []
   const [menuIndex, setMenuIndex] = useState(0)
   const menuOpen = matches.length > 0
-  const canSend = !disabled && !modelBlocked && text.trim().length > 0 && text.trim().length <= 4000
+  // While the agent works, a message is queued for when it finishes instead.
+  const queueing = inFlight && session !== undefined
+  const canSend = (!disabled || queueing) && !modelBlocked && (text.trim().length > 0 || files.length > 0) && text.trim().length <= 4000
+
+  // Files from the attach button, a drop or a paste. Unreadable ones are named in one notice.
+  const attach = async (list: FileList | ReadonlyArray<File>) => {
+    const results = await Promise.all([...list].map(readAttachment))
+    const read = results.flatMap(r => "attachment" in r ? [r.attachment] : [])
+    const errors = results.flatMap(r => "error" in r ? [r.error] : [])
+    const truncated = results.flatMap(r => "attachment" in r && r.truncated ? [r.attachment.name] : [])
+    const { attachments: next, dropped } = addAttachments(files, read)
+    setFiles(next)
+    if (errors.length) toast.error(errors[0]!, errors.length > 1 ? { description: `${errors.length - 1} more file${errors.length > 2 ? "s" : ""} not attached.` } : undefined)
+    if (dropped.length) toast.error(`Not attached: ${dropped.join(", ")}`, { description: `Up to ${MAX_FILES} files and ${MAX_TOTAL_CHARS.toLocaleString()} characters per message.` })
+    if (truncated.length) toast(`Only the first ${MAX_FILE_CHARS.toLocaleString()} characters of ${truncated.join(", ")} were attached.`)
+    textRef.current?.focus()
+  }
 
   const run = (c: AgentCommand) => {
     if (disabled || modelBlocked) {
@@ -807,8 +995,11 @@ function Composer({
     if (!canSend) return
     if (command) return run(command)
     recognitionRef.current?.stop()
-    onSend(text.trim())
+    const message = text.trim() || (files.length === 1 ? "Here's a file to look at." : "Here are some files to look at.")
+    if (queueing) session.enqueue(message, files)
+    else onSend(message, files)
     setText("")
+    setFiles([])
     textRef.current?.focus()
   }
 
@@ -851,18 +1042,28 @@ function Composer({
         submit()
       }}
       onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") }}
+      onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length) void attach(e.dataTransfer.files) }}
       className="w-full space-y-0.5"
     >
+      {session?.queued.length ? <QueuedMessages session={session} /> : null}
+      {files.length ? (
+        <ul aria-label="Attached files" className="mb-1.5 flex flex-wrap gap-1.5">
+          {files.map((f, i) => (
+            <li key={`${f.name}:${i}`}>
+              <AttachmentChip file={f} onRemove={() => setFiles(list => list.filter((_, j) => j !== i))} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div
         onClick={(e) => {
           // The whole box behaves like the input: clicking padding focuses it.
           if (e.target === e.currentTarget) textRef.current?.focus()
         }}
-        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-xl border border-border bg-[#fafafa] px-3 py-2 transition-colors focus-within:border-foreground/25 dark:border-[#383838] dark:bg-[#262626]"
+        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-[10px] bg-card px-3 py-2 shadow-(--card-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)"
       >
         {menuOpen ? (
-          <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-xl border bg-popover p-1 text-left shadow-(--float-shadow-strong)">
+          <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) bg-popover p-1 text-left shadow-(--float-shadow-strong)">
             {matches.map((c, i) => (
               <li key={c.key} role="option" aria-selected={i === menuIndex}>
                 <button
@@ -882,7 +1083,7 @@ function Composer({
         ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-foreground" aria-label="Chat actions" disabled={inFlight}>
+            <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 self-end rounded-md text-muted-foreground hover:text-foreground" aria-label="Chat actions" disabled={inFlight && !queueing}>
               <PlusIcon className="size-5" />
             </Button>
           </DropdownMenuTrigger>
@@ -891,9 +1092,13 @@ function Composer({
               <DropdownMenuItem key={c.key} onSelect={() => run(c.key)}>{c.icon}<span>/{c.key}</span><span className="ml-2 text-muted-foreground">{c.description}</span></DropdownMenuItem>
             )) : null}
             {onCommand ? <DropdownMenuSeparator /> : null}
+            <DropdownMenuItem onSelect={() => fileRef.current?.click()}><PaperclipIcon />Attach files</DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => openSettings("agent")}>Manage providers</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" aria-label="Attach files"
+          onChange={e => { if (e.currentTarget.files?.length) void attach(e.currentTarget.files); e.currentTarget.value = "" }} />
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
         </label>
@@ -904,11 +1109,11 @@ function Composer({
           rows={1}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
-          disabled={disabled && !onCommand}
+          disabled={disabled && !onCommand && !queueing}
           aria-expanded={onCommand ? menuOpen : undefined}
           aria-autocomplete={onCommand ? "list" : undefined}
           maxLength={4000}
-          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); toast.error("Attachments are not supported. Paste relevant text instead.") } }}
+          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); void attach(e.clipboardData.files) } }}
           onKeyDown={(e) => {
             if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault()
@@ -947,7 +1152,7 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" variant="ghost" size="icon-sm"
-                  className={cn("size-8 rounded-md text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
+                  className={cn("size-8 rounded-md text-muted-foreground hover:text-foreground", listening && "bg-wrong-soft text-wrong hover:bg-wrong-soft hover:text-wrong")}
                   onClick={toggleMic} aria-label={listening ? "Stop voice input" : "Start voice input"} aria-pressed={listening}>
                   {listening ? <SquareIcon className="size-4 fill-current" /> : <MicIcon className="size-5" />}
                 </Button>
@@ -955,18 +1160,27 @@ function Composer({
               <TooltipContent>{listening ? "Stop voice input" : "Voice input"}</TooltipContent>
             </Tooltip>
           ) : null}
+          {queueing && text.trim().length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="submit" size="icon-sm" variant="secondary" className="size-8 rounded-full" disabled={!canSend} aria-label="Queue message">
+                  <ArrowUpIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Queue it. It sends when the agent finishes.</TooltipContent>
+            </Tooltip>
+          ) : null}
           {inFlight && session ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant="secondary"
                   size="icon-sm"
-                  className="rounded-full"
+                  className="size-8 rounded-full bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
                   onClick={session.stopTurn}
                   aria-label="Stop the agent"
                 >
-                  <SquareIcon className="size-3.5 fill-current" />
+                  <span aria-hidden className="size-2.5 rounded-[2px] bg-current" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Stop the agent</TooltipContent>
@@ -974,11 +1188,11 @@ function Composer({
           ) : text.trim().length > 0 ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span>
+                <span className="flex">
                   <Button
                     type="submit"
                     size="icon-sm"
-                    className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50"
+                    className="size-8 rounded-full shadow-none bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50"
                     disabled={!canSend}
                     aria-label="Send message"
                   >
@@ -993,7 +1207,20 @@ function Composer({
       </div>
       <div role="toolbar" aria-label="Chat options" className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-0.5 px-3 py-0 text-sm">
         {listening ? <span role="status" className="text-wrong">Listening</span> : null}
+        {context ? (
+          <NewChatDialog
+            trigger={
+              <button type="button" title={`Change the business or client — now chatting about ${context.name}`} aria-label={`Change the business or client — now chatting about ${context.name}`} className="max-w-56 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" disabled={inFlight}>
+                <AgentContextChip context={context} />
+              </button>
+            }
+          />
+        ) : null}
         {session ? <div className="ml-auto flex flex-wrap items-center gap-3">
+          {session.ready && session.businessId !== null && session.conversationId && !(session.sessionInfo && session.sessionInfo.depth > 0) ? <AgentFollowups
+            key={`${session.businessId}:${session.conversationId}`} businessId={session.businessId} conversationId={session.conversationId}
+            model={followupModel(session.selection, session.reasoningEffort)} chatBusy={session.busy} /> : null}
+          <ContextMeter messages={session.messages} />
           <ModelSelector session={session} locked={inFlight} />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Select value={session.reasoningEffort ?? "default"} disabled={inFlight || session.reasoningEfforts.length === 0} onValueChange={value => {
@@ -1009,9 +1236,10 @@ function Composer({
                 </TooltipTrigger>
                 <TooltipContent>{session.reasoningEfforts.length ? "Reasoning effort for the next reply" : "This provider hasn't reported reasoning controls for this model."}</TooltipContent>
               </Tooltip>
-              <SelectContent side="top" align="end">
-                <SelectItem value="default">Default</SelectItem>
-                {session.reasoningEfforts.map(effort => <SelectItem key={effort} value={effort}>{effort === "xhigh" ? "Extra high" : effort === "none" ? "Off" : effort.charAt(0).toUpperCase() + effort.slice(1)}</SelectItem>)}
+              <SelectContent side="top" align="end" className="min-w-44 p-1">
+                {/* Rows hover like the workspace's other menus: bg-accent plus the control shadow */}
+                <SelectItem value="default" className="h-10 rounded-[8px] px-3 text-sm transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus:bg-accent">Default</SelectItem>
+                {session.reasoningEfforts.map(effort => <SelectItem key={effort} value={effort} className="h-10 rounded-[8px] px-3 text-sm transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) focus:bg-accent">{effort === "xhigh" ? "Extra high" : effort === "none" ? "Off" : effort.charAt(0).toUpperCase() + effort.slice(1)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1039,7 +1267,7 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     catch { setError("The proposal could not be updated. Reload its current status before trying again.") }
     finally { setWorking(false) }
   }
-  return <section className="space-y-2 rounded-xl border bg-card p-4 text-xs" aria-label="Re-check proposal">
+  return <section className="space-y-2 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs" aria-label="Re-check proposal">
     <p className="font-medium">Proposed re-check for {businessName}</p>
     <p>{prompt ?? "Question unavailable"}</p><p>{proposal.message}</p>
     <p>Approval queues one external measurement call using 9Router and the exact model you select. Estimated cost is unavailable; provider charges may apply. No fact or judgment is approved.</p>
@@ -1059,7 +1287,7 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
     catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
     finally { setWorking(false) }
   }
-  return <section aria-label="Saved private draft" className="group/msg space-y-3 rounded-xl border bg-card p-4 text-xs">
+  return <section aria-label="Saved private draft" className="group/msg space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : proposal.kind === "PROPOSE_QUESTION_SET" ? "Buyer-question proposal" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
     <p>{proposal.message}</p>
     {proposal.payload ? <>
@@ -1088,7 +1316,7 @@ function AcquisitionProposal({ businessId, proposal, onDone }: { businessId: str
     catch { setError("The measurement was not approved here. Its configuration, cost or status may have changed. Reload before retrying.") }
     finally { setWorking(false) }
   }
-  return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-xl border bg-card p-4 text-xs">
+  return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">Proposed acquisition measurement</p><p className="max-h-80 overflow-auto whitespace-pre-wrap">{proposal.payload?.text ?? "Measurement plan unavailable"}</p>
     {cost === null || cost === undefined ? <p>Approval is blocked until a measurement cost bound is configured and a new proposal is prepared.</p> : null}
     <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>

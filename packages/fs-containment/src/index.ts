@@ -509,3 +509,5 @@ export const writeContainedFile = async (
     if (!renamed) await unlinkOwnTemp(first.root, tmp, staged)
   }
 }
+export { managedBridgeId, managedBridgePid, managedBridgeUsers, prepareManagedBridgeHome, localBridgeProgramExists } from "./local-bridge-files.js"
+export { startManagedBridge, type ManagedBridgeProcess } from "./local-bridge-process.js"
