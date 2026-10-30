@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest"
 import type { AcqBatch, AcqCheck, AcqJudgment, AcqQuestionSet, AcqReferralImport, AcqSnapshot } from "./acquisition.js"
 import {
-  SIGNUPS_NOT_MEASURED, acquisitionReport, acquisitionView, batchMetrics, configurationDifferences, currentAcqJudgment, deriveCheck, referralSummary, repeatabilityStatement,
+  SIGNUPS_NOT_MEASURED, acquisitionReport, acquisitionView, batchMetrics, citationSources, configurationDifferences, currentAcqJudgment, deriveCheck, referralSummary, repeatabilityStatement,
 } from "./acquisition-view.js"
 
 const SET: AcqQuestionSet = {
@@ -60,7 +60,7 @@ describe("batch metrics", () => {
   it("derives every rate from its own numerator and denominator", () => {
     expect(m.reviewed).toEqual({ n: 3, d: 4 })
     expect(m.candidateSamples).toEqual({ n: 3, d: 4 })
-    expect(m.mentionRate).toEqual({ n: 2, d: 4 })
+    expect(m.mentionRate).toEqual({ n: 2, d: 3 })
     expect(m.recommendationRate).toEqual({ n: 1, d: 3 })
     expect(m.ownedCitationRate).toEqual({ n: 1, d: 4 })
     expect(m.groundingObserved).toEqual({ n: 4, d: 4 })
@@ -70,8 +70,12 @@ describe("batch metrics", () => {
   it("never counts an unreviewed candidate as confirmed", () => {
     const none = batchMetrics(BATCH, SET, [check("q1", 1), check("q1", 2)].map(c => deriveCheck(c, SET)))
     expect(none.candidateSamples).toEqual({ n: 2, d: 2 })
-    expect(none.mentionRate).toEqual({ n: 0, d: 2 })
+    expect(none.mentionRate).toEqual({ n: 0, d: 0 })
     expect(none.recommendationRate).toEqual({ n: 0, d: 0 })
+  })
+  it("excludes unclear mention judgments from the confirmed mention denominator", () => {
+    const unclear = { ...check("q1", 1), judgments: [judgment({ mention: "UNCLEAR", recommendation: "UNCLEAR" })] }
+    expect(batchMetrics(BATCH, SET, [deriveCheck(unclear, SET)]).mentionRate).toEqual({ n: 0, d: 0 })
   })
   it("reports repeatability per question as counts, with unreviewed and failed samples named", () => {
     expect(m.questions.map(q => [q.key, q.statement])).toEqual([
@@ -89,6 +93,29 @@ describe("review attribution", () => {
     const correction = judgment({ recommendation: "RECOMMENDED", supersedesId: first.id })
     expect(currentAcqJudgment([first, correction])).toBe(correction)
     expect(currentAcqJudgment([])).toBeNull()
+  })
+})
+
+describe("citation sources", () => {
+  it("counts each source once per real answer and does not treat redirects as page URLs", () => {
+    const first = check("q1", 1)
+    const source = { uri: "https://supportly.test/guide", title: "Guide", position: 1, attributed: true }
+    const withSources: AcqCheck = { ...first, observation: { ...first.observation!, citations: [source, source,
+      { uri: REDIRECT, title: "helphub.test", position: 2, attributed: false },
+      { uri: REDIRECT, title: "Unknown source", position: 3, attributed: false }] } }
+    const synthetic = check("q1", 2, { synthetic: true, owned: true })
+    const summary = citationSources([withSources, synthetic, failed("q2", 1)].map(c => deriveCheck(c, SET)))
+    expect(summary).toMatchObject({ eligibleAnswers: 1, answersWithSources: 1, unresolvedAnswers: 1, groundingObserved: 1 })
+    expect(summary.domains).toEqual([
+      { domain: "helphub.test", owner: "COMPETITOR", competitor: "HelpHub", basis: "PROVIDER_TITLE", answers: 1 },
+      { domain: "supportly.test", owner: "OWNED", competitor: null, basis: "URI_HOST", answers: 1 },
+    ])
+    expect(summary.pages).toEqual([{ url: "https://supportly.test/guide", domain: "supportly.test", owner: "OWNED", competitor: null, answers: 1 }])
+  })
+  it("reports no observed sources separately from answers that were not grounded", () => {
+    const c = check("q1", 1, { grounded: false })
+    const empty: AcqCheck = { ...c, observation: { ...c.observation!, citations: [] } }
+    expect(citationSources([deriveCheck(empty, SET)])).toMatchObject({ eligibleAnswers: 1, answersWithSources: 0, groundingObserved: 0, domains: [], pages: [] })
   })
 })
 

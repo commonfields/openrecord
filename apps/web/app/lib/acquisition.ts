@@ -74,6 +74,9 @@ export type Batch = {
   id: string; setId: string; setVersion: number; scope: "SMOKE" | "FULL"; questionCount: number; sampleCount: number; provider: string; requestedModel: string | null
   retrievalRequested: boolean; maxProviderCalls: number; createdAt: string; status: BatchStatus; surface: string; collectedFrom: string | null; collectedTo: string | null
   metrics: Metrics
+  citationSources: { eligibleAnswers: number; answersWithSources: number; unresolvedAnswers: number; groundingObserved: number
+    domains: Array<{ domain: string; owner: "OWNED" | "COMPETITOR" | "OTHER" | "UNRESOLVED"; competitor: string | null; basis: "URI_HOST" | "PROVIDER_TITLE" | "UNRESOLVED"; answers: number }>
+    pages: Array<{ url: string; domain: string; owner: "OWNED" | "COMPETITOR" | "OTHER" | "UNRESOLVED"; competitor: string | null; answers: number }> }
 }
 export type Referral = {
   id: string; synthetic: boolean; propertyRef: string; dateStart: string; dateEnd: string; timeZone: string; attributionBasis: string; conversionEvent: string | null
@@ -86,6 +89,8 @@ export type DiscoveryView = {
   sets: QuestionSet[]; batches: Batch[]; checks: Check[]; referrals: Referral[]; activeBatch: boolean; detectorVersion: string; aiSourcesVersion: string
 }
 export type DiscoveryResponse = { view: DiscoveryView; surface: { provider: string; model: string }; maxAttemptsPerCheck: number }
+export type ComparisonPeriod = { batchId: string; createdAt: string; provider: string; questionSetVersion: number; requestedModel: string | null; observedModels: string[]; recommendation: Fraction; mention: Fraction; ownedCitations: Fraction; reviewed: Fraction; failed: number }
+export type BatchComparison = { state: "COMPARABLE" | "NOT_COMPARABLE"; reasons: string[]; before: ComparisonPeriod; after: ComparisonPeriod; limitation: string }
 
 export type Representative = {
   questionKey: string; prompt: string; sample: number; collectedAt: string; answerText: string; mention: Mention; recommendation: Recommendation | null
@@ -118,6 +123,7 @@ const base = (id: string) => `/api/acquisition/clients/${encodeURIComponent(id)}
 
 export const Discovery = {
   get: (id: string) => api<DiscoveryResponse>(base(id)),
+  compare: (id: string, beforeId: string, afterId: string) => api<{ comparison: BatchComparison }>(`${base(id)}/comparison/${encodeURIComponent(beforeId)}/${encodeURIComponent(afterId)}`),
   report: (id: string) => api<{ report: Report }>(`${base(id)}/report`),
   createSet: (id: string, input: CreateSetInput) => api<{ set: QuestionSet }>(`${base(id)}/question-sets`, { method: "POST", ...json(input) }),
   startBatch: (id: string, input: { setId: string; scope: "SMOKE" | "FULL"; questionKeys?: string[]; samples: number; acknowledgedMaxProviderCalls: number }) =>
@@ -128,6 +134,21 @@ export const Discovery = {
 }
 
 export const fraction = (f: Fraction) => `${f.n} of ${f.d}`
+/** Export source counts only; spreadsheet formula prefixes in provider text are escaped. */
+export const citationSourceCsv = (source: Batch["citationSources"], batch: Pick<Batch, "id" | "createdAt" | "surface">) => {
+  const cell = (value: string | number | null) => {
+    const text = String(value ?? "")
+    const safe = /^[\s\u0000-\u001f]*[=+\-@]/.test(text) ? `'${text}` : text
+    return `"${safe.replace(/"/g, '""')}"`
+  }
+  const rows = [
+    ["batch_id", "batch_created_at", "surface", "kind", "source", "classification", "competitor", "domain_basis", "answers", "eligible_answers"],
+    [batch.id, batch.createdAt, batch.surface, "answers_with_reported_sources", "", "", "", "", source.answersWithSources, source.eligibleAnswers],
+    ...source.domains.map(d => [batch.id, batch.createdAt, batch.surface, "domain", d.domain, d.owner, d.competitor, d.basis, d.answers, source.eligibleAnswers]),
+    ...source.pages.map(p => [batch.id, batch.createdAt, batch.surface, "page", p.url, p.owner, p.competitor, "URI_HOST", p.answers, source.eligibleAnswers]),
+  ]
+  return rows.map(row => row.map(cell).join(",")).join("\r\n") + "\r\n"
+}
 export const discoveryPath = (clientId: string) => `/clients/${encodeURIComponent(clientId)}/discovery`
 export const discoveryReportPath = (clientId: string) => `${discoveryPath(clientId)}/report`
 

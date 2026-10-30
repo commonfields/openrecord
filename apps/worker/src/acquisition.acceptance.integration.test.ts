@@ -134,11 +134,11 @@ suite("AI acquisition acceptance (TEST agency, TEST brand, TEST reviewer)", () =
     expect(checks[1]!.candidates.find(m => m.role === "TARGET")!.hints).toContain("NEGATIVE_CUE")
     expect(checks[2]!.candidates.filter(m => m.role === "TARGET")).toEqual([])
 
-    // Before review: candidates exist, confirmed counts are zero.
+    // Before review: candidates exist, but no confirmed mention denominator exists.
     let m = view.batches.find(b => b.id === batch.id)!.metrics
     expect(m).toMatchObject({ planned: 4, succeeded: 3, failed: 1, eligible: 3, providerAttempts: 4 })
     expect(m.candidateSamples).toEqual({ n: 2, d: 3 })
-    expect(m.mentionRate).toEqual({ n: 0, d: 3 })
+    expect(m.mentionRate).toEqual({ n: 0, d: 0 })
     expect(m.recommendationRate).toEqual({ n: 0, d: 0 })
 
     // Human review, one decision per answer.

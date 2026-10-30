@@ -52,10 +52,17 @@ chunk title. The domain is taken from the URI host for ordinary links and from t
 domain, never a lookalike. Citation support is always `NOT_VERIFIED` in V1: cited pages are not fetched. The provider's own
 "linked to answer text" flag is shown as provider-reported.
 
+The discovery view groups reported domains and direct page URLs by batch. Each count is the number of eligible answers reporting
+that source, with duplicate citations in one answer counted once. It also shows how many answers reported sources, how many used
+retrieval, and how many had an unresolved source. A provider title can identify a domain but does not identify a page; redirect URLs
+are not presented as destination pages. Domain and page counts can be exported as CSV or JSON. Owned and configured-competitor
+domains are classified; other domains are not assigned editorial categories. Page counts across batches are shown only when the
+existing batch-comparison checks pass. These counts describe provider-reported sources, not verified support or a causal change.
+
 ## Measurement contract (`packages/db/src/acquisition-view.ts`)
 
 - **Eligible sample**: a `SUCCEEDED` check with a non-synthetic observation. Failed checks stay in planned and attempt counts.
-- **Mention rate**: confirmed `MENTIONED` reviews / eligible samples. Unreviewed candidates are shown separately and never counted.
+- **Mention rate**: confirmed `MENTIONED` reviews / determinate mention reviews (`MENTIONED` or `NOT_MENTIONED`). Unreviewed and unclear answers are excluded rather than treated as absent; review coverage is shown separately.
 - **Recommendation rate**: reviewed `RECOMMENDED` / reviewed eligible samples.
 - **Owned-domain citation rate**: eligible samples citing an owned domain / eligible samples.
 - **Competitor appearances**: eligible samples with an exact-name detection per named competitor. Not reviewed; not market share.

@@ -12,6 +12,7 @@ import {
 import { decodeRouteId } from "@openrecord/contracts"
 import { RecordSurfaceConfig } from "@openrecord/config"
 import { Text, decode, json, operatorSessionFor, readJson, recordFixtureAllowed, type WithSession } from "./record-routes.js"
+import { compareAgentBatches } from "./agent-acquisition-tools.js"
 
 const Brand = Schema.Struct({
   name: Text(120),
@@ -85,6 +86,15 @@ export const acquisitionApi = (withSession: WithSession) => {
 
   return HttpRouter.empty.pipe(
     HttpRouter.get("/api/acquisition/clients/:id", client((_, businessId) => view(businessId))),
+    HttpRouter.get("/api/acquisition/clients/:id/comparison/:beforeId/:afterId", client((_, businessId) => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const beforeId = params["beforeId"] ?? "", afterId = params["afterId"] ?? ""
+      if (decodeRouteId(beforeId)._tag === "Left" || decodeRouteId(afterId)._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" })
+      const s = yield* snapshot(businessId)
+      const comparison = s && compareAgentBatches(acquisitionView(s), beforeId, afterId)
+      if (!comparison) return yield* json(404, { _tag: "MeasurementNotFound" })
+      return yield* json(200, { comparison }, { "cache-control": "no-store" })
+    }))),
     HttpRouter.get("/api/acquisition/clients/:id/report", client((_, businessId) => Effect.gen(function*() {
       const s = yield* snapshot(businessId)
       if (s === null) return yield* json(404, { _tag: "ClientNotFound" })

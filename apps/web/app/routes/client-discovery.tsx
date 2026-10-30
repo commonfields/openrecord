@@ -25,7 +25,7 @@ import { errorMessage, formatDateTime, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import {
   BASIS_LABELS, BATCH_STATUS_LABELS, Discovery, GROUP_LABELS, HINT_LABELS, INTENT_GROUPS, MENTION_LABELS, RECOMMENDATION_LABELS,
-  acquisitionSuggestion, discoveryReportPath, formatCompetitors, fraction, parseCompetitors, suggestedCompetitorLines,
+  acquisitionSuggestion, citationSourceCsv, discoveryReportPath, formatCompetitors, fraction, parseCompetitors, suggestedCompetitorLines,
   type Basis, type Batch, type Candidate, type Check, type DiscoveryResponse, type IntentGroup, type Mention, type QuestionSet, type Recommendation,
 } from "@/lib/acquisition"
 
@@ -62,6 +62,66 @@ function useBusy(reload: () => Promise<void>) {
     try { await fn(); toast.success(success); await reload(); return true } catch (e) { toast.error(failure(e)); return false } finally { setBusy(false) }
   }
   return { busy, run }
+}
+
+function BatchComparison({ clientId, before, after }: { clientId: string; before: Batch; after: Batch }) {
+  const result = useApi(`acquisition-comparison:${clientId}:${before.id}:${after.id}:${before.status}:${after.status}:${before.metrics.reviewed.n}:${after.metrics.reviewed.n}`, () => Discovery.compare(clientId, before.id, after.id))
+  const comparison = result.data?.comparison
+  const mentionText = (value: { n: number; d: number }) => value.d ? `${fraction(value)} clear reviews confirmed a mention` : "no clear mention reviews"
+  const pages = new Map<string, { before: number; after: number }>()
+  for (const page of before.citationSources?.pages ?? []) pages.set(page.url, { before: page.answers, after: 0 })
+  for (const page of after.citationSources?.pages ?? []) pages.set(page.url, { before: pages.get(page.url)?.before ?? 0, after: page.answers })
+  const pageRows = [...pages.entries()].sort((a, b) => (b[1].before + b[1].after) - (a[1].before + a[1].after) || a[0].localeCompare(b[0]))
+  return (
+    <Panel>
+      <PanelHeader title="Compare with previous batch" description="The same questions and measurement settings are needed for a meaningful comparison." />
+      <div className="space-y-2 px-4 pb-4 text-xs">
+        {result.loading ? <p>Checking the measurement settings…</p> : null}
+        {result.error ? <p role="alert">Comparison unavailable. Try again later.</p> : null}
+        {comparison ? <>
+          <p className="font-medium">{comparison.state === "COMPARABLE" ? "Comparable samples" : "Not comparable"}</p>
+          {comparison.reasons.length ? <p>Different or incomplete: {comparison.reasons.join(", ")}.</p> : null}
+          {comparison.state === "COMPARABLE" ? <>
+            <p>{formatDateTime(comparison.before.createdAt)}: {fraction(comparison.before.ownedCitations)} answers cited an owned domain; {mentionText(comparison.before.mention)}.</p>
+            <p>{formatDateTime(comparison.after.createdAt)}: {fraction(comparison.after.ownedCitations)} answers cited an owned domain; {mentionText(comparison.after.mention)}.</p>
+            <p>Reviewed: {fraction(comparison.before.reviewed)} before, {fraction(comparison.after.reviewed)} after. Failed: {comparison.before.failed} before, {comparison.after.failed} after.</p>
+            {pageRows.length > 0 && before.citationSources && after.citationSources ? <details><summary className="cursor-pointer">Reported pages across these batches</summary><ul className="mt-2 space-y-1">{pageRows.slice(0, 10).map(([url, count]) => <li key={url} className="break-all">{url}: reported in {count.before} of {before.citationSources.eligibleAnswers} answers before, {count.after} of {after.citationSources.eligibleAnswers} after</li>)}</ul>{pageRows.length > 10 ? <p>Showing 10 of {pageRows.length} pages.</p> : null}</details> : null}
+          </> : null}
+          <p className="text-muted-foreground">{comparison.limitation}</p>
+        </> : null}
+      </div>
+    </Panel>
+  )
+}
+
+export function CitationSources({ batch }: { batch: Batch }) {
+  const sources = batch.citationSources
+  if (!sources) return null
+  const label = (owner: string, competitor: string | null) => owner === "OWNED" ? "Owned" : owner === "COMPETITOR" ? `Competitor${competitor ? `: ${competitor}` : ""}` : "Other"
+  const download = (format: "csv" | "json") => {
+    const contents = format === "csv" ? citationSourceCsv(sources, batch) : JSON.stringify({ batchId: batch.id, createdAt: batch.createdAt, surface: batch.surface, sources }, null, 2)
+    const blob = new Blob([contents], { type: format === "csv" ? "text/csv;charset=utf-8" : "application/json" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `citation-sources-${batch.id}.${format}`
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  return <Panel>
+    <PanelHeader title="Cited sources" description="Provider-reported sources for this batch. Select another batch to inspect a different period.">
+      <div className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => download("csv")}>CSV</Button><Button size="sm" variant="ghost" onClick={() => download("json")}>JSON</Button></div>
+    </PanelHeader>
+    <div className="space-y-3 px-4 pb-4 text-xs">
+      <p>{sources.answersWithSources} of {sources.eligibleAnswers} collected answers reported sources; web retrieval was observed in {sources.groundingObserved}. {sources.unresolvedAnswers} answers included an unresolved source.</p>
+      {sources.domains.length ? <ul className="space-y-1">{sources.domains.slice(0, 10).map(d => <li key={`${d.domain}:${d.owner}:${d.basis}`} className="break-all">
+        {d.domain} · {label(d.owner, d.competitor)} · {d.answers} of {sources.eligibleAnswers} answers{d.basis === "PROVIDER_TITLE" ? " · domain reported in title" : ""}
+      </li>)}</ul> : <p>No sources were reported in these answers. This does not establish that a source was absent from other answers or providers.</p>}
+      {sources.domains.length > 10 ? <p>Showing 10 of {sources.domains.length} domains.</p> : null}
+      {sources.pages.length ? <details><summary className="cursor-pointer">Reported page URLs ({sources.pages.length})</summary><ul className="mt-2 space-y-1">{sources.pages.slice(0, 10).map(p => <li key={p.url} className="break-all">{p.url} · {p.answers} of {sources.eligibleAnswers} answers</li>)}</ul>{sources.pages.length > 10 ? <p>Showing 10 of {sources.pages.length} URLs.</p> : null}</details> : null}
+      <p className="text-muted-foreground">Categories other than owned and configured competitors are not classified. Redirect destinations and support for the answer are not verified.</p>
+    </div>
+  </Panel>
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +511,8 @@ export function ClientDiscoveryPage() {
   const surfaceLabel = `${surface.provider === "gemini" ? "Gemini API with Google Search grounding" : surface.provider} (${surface.model})`
   const batch: Batch | null = batchId ? view.batches.find(b => b.id === batchId) ?? null : view.batches.at(-1) ?? null
   const batchSet = batch ? view.sets.find(s => s.id === batch.setId) ?? null : null
+  const batchIndex = batch ? view.batches.findIndex(b => b.id === batch.id) : -1
+  const previousBatch = batchIndex > 0 ? view.batches[batchIndex - 1] ?? null : null
   const checks = batch ? view.checks.filter(c => c.batchId === batch.id) : []
   const m = batch?.metrics
   const byQuestion = new Map<string, Check[]>()
@@ -492,7 +554,7 @@ export function ClientDiscoveryPage() {
         <StatStrip stats={[
           { key: "answers", label: "Answers collected", value: fraction({ n: m.eligible, d: m.planned }), hint: `${m.failed} failed · ${m.providerAttempts} provider attempts` },
           { key: "reviewed", label: "Reviewed", value: fraction(m.reviewed), hint: `${m.candidateSamples.n} with a ${set?.target.name ?? "brand"} candidate`, ...(m.reviewed.n < m.reviewed.d ? { tone: "review" as const } : {}) },
-          { key: "mentioned", label: "Mentioned (confirmed)", value: fraction(m.mentionRate), hint: "of collected answers" },
+          { key: "mentioned", label: "Mentioned (confirmed)", value: fraction(m.mentionRate), hint: "of clear mention reviews" },
           { key: "recommended", label: "Recommended (confirmed)", value: fraction(m.recommendationRate), hint: "of reviewed answers", tone: "supported" },
           { key: "owned", label: "Owned domain cited", value: fraction(m.ownedCitationRate), hint: "of collected answers" },
         ]} />
@@ -519,6 +581,8 @@ export function ClientDiscoveryPage() {
           </Panel>
 
           <div className="space-y-4">
+            {batch && previousBatch ? <BatchComparison clientId={id} before={previousBatch} after={batch} /> : null}
+            {batch ? <CitationSources batch={batch} /> : null}
             <Panel>
               <PanelHeader title="Batches" />
               <ul className="p-2 pt-1">

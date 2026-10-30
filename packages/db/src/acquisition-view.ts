@@ -4,7 +4,7 @@
 //
 // Measurement contract (every rate carries its numerator and denominator):
 // - eligible sample      a SUCCEEDED check with a non-synthetic observation.
-// - mention rate         confirmed MENTIONED reviews / eligible samples.
+// - mention rate         confirmed MENTIONED / determinate mention reviews.
 // - recommendation rate  reviewed RECOMMENDED / reviewed eligible samples.
 // - owned citation rate  eligible samples citing an owned domain / eligible.
 // - competitor counts    eligible samples with an exact-name detection of a
@@ -196,7 +196,8 @@ export const batchMetrics = (batch: AcqBatch, set: AcqQuestionSet, all: Readonly
     groundingObserved: frac(eligible.filter(c => c.observation!.retrievalObserved).length, eligible.length),
     reviewed: frac(reviewed.length, eligible.length),
     candidateSamples: frac(eligible.filter(c => c.candidates.some(m => m.role === "TARGET")).length, eligible.length),
-    mentionRate: frac(reviewed.filter(c => c.judgment!.mention === "MENTIONED").length, eligible.length),
+    mentionRate: frac(reviewed.filter(c => c.judgment!.mention === "MENTIONED").length,
+      reviewed.filter(c => c.judgment!.mention !== "UNCLEAR").length),
     recommendationRate: frac(reviewed.filter(c => is(c, "RECOMMENDED")).length, reviewed.length),
     breakdown: {
       recommended: reviewed.filter(c => is(c, "RECOMMENDED")).length,
@@ -216,6 +217,42 @@ export const batchMetrics = (batch: AcqBatch, set: AcqQuestionSet, all: Readonly
       return { group: g, questions: qs.length, reviewed: qs.reduce((n, q) => n + q.reviewed, 0), recommended: qs.reduce((n, q) => n + q.recommended, 0) }
     }),
   }
+}
+
+/** Counts answers containing each provider-reported source, not citation occurrences. */
+export const citationSources = (checks: ReadonlyArray<DerivedCheck>) => {
+  const eligible = checks.filter(c => c.eligible && c.observation !== null)
+  const domains = new Map<string, { domain: string; owner: ClassifiedCitation["owner"]; competitor: string | null; basis: ClassifiedCitation["domainBasis"]; answers: number }>()
+  const pages = new Map<string, { url: string; domain: string; owner: ClassifiedCitation["owner"]; competitor: string | null; answers: number }>()
+  let answersWithSources = 0
+  let unresolvedAnswers = 0
+  for (const check of eligible) {
+    const citations = check.observation!.citations
+    if (citations.length) answersWithSources++
+    if (citations.some(c => c.domain === null)) unresolvedAnswers++
+    const seenDomains = new Set<string>(), seenPages = new Set<string>()
+    for (const c of citations) {
+      if (!c.domain) continue
+      const key = JSON.stringify([c.domain, c.owner, c.competitor, c.domainBasis])
+      if (!seenDomains.has(key)) {
+        seenDomains.add(key)
+        const entry = domains.get(key) ?? { domain: c.domain, owner: c.owner, competitor: c.competitor, basis: c.domainBasis, answers: 0 }
+        entry.answers++
+        domains.set(key, entry)
+      }
+      // Redirect URLs are not the destination page; do not present them as watched pages.
+      if (c.domainBasis !== "URI_HOST" || !c.uri || seenPages.has(c.uri)) continue
+      seenPages.add(c.uri)
+      const entry = pages.get(c.uri) ?? { url: c.uri, domain: c.domain, owner: c.owner, competitor: c.competitor, answers: 0 }
+      entry.answers++
+      pages.set(c.uri, entry)
+    }
+  }
+  const byCount = <T extends { answers: number }>(a: T, b: T) => b.answers - a.answers
+  return { eligibleAnswers: eligible.length, answersWithSources, unresolvedAnswers,
+    groundingObserved: eligible.filter(c => c.observation!.retrievalObserved).length,
+    domains: [...domains.values()].sort((a, b) => byCount(a, b) || a.domain.localeCompare(b.domain) || a.basis.localeCompare(b.basis)),
+    pages: [...pages.values()].sort((a, b) => byCount(a, b) || a.url.localeCompare(b.url)) }
 }
 
 /** Why two batches are not like-for-like. Empty means comparable. Periods are
@@ -287,7 +324,7 @@ export const acquisitionView = (s: AcqSnapshot) => {
   const batches = s.batches.map(b => {
     const own = checks.filter(c => c.batchId === b.id)
     return { ...b, setVersion: batchSet.get(b.id)!.version, status: batchStatus(own), surface: surfaceText(b.provider, b.requestedModel),
-      collectedFrom: minMax(own).from, collectedTo: minMax(own).to, metrics: batchMetrics(b, batchSet.get(b.id)!, checks) }
+      collectedFrom: minMax(own).from, collectedTo: minMax(own).to, metrics: batchMetrics(b, batchSet.get(b.id)!, checks), citationSources: citationSources(own) }
   })
   return {
     profile: s.profile,
