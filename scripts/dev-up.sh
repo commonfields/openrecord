@@ -48,6 +48,16 @@ until pg_isready -h localhost -p 5432 -U openrecord >/dev/null 2>&1; do sleep 1;
 # Migrations replay idempotently, so this is safe on every run.
 DATABASE_URL="$DATABASE_URL" pnpm db:migrate >/dev/null
 
+# Website setup has its own local worker so it can make progress without
+# consuming queued provider calls or dispatching unrelated work.
+setup_pid_file="/tmp/openrecord-setup-worker.pid"
+setup_pid="$(cat "$setup_pid_file" 2>/dev/null || true)"
+if [ -z "$setup_pid" ] || ! ps -p "$setup_pid" -o command= 2>/dev/null | grep -q '[s]rc/setup-only.ts'; then
+  echo "starting setup worker (logs: /tmp/opencode-setup-worker.log)"
+  DATABASE_URL="$DATABASE_URL" nohup pnpm --filter @openrecord/worker exec tsx src/setup-only.ts > /tmp/opencode-setup-worker.log 2>&1 &
+  echo "$!" > "$setup_pid_file"
+fi
+
 # 2. API on :3001 (no watcher). Restart it when it serves an older commit.
 head_sha="$(git rev-parse --short=12 HEAD)"
 if lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then

@@ -14,6 +14,9 @@ Practical notes for running this checkout locally. Architecture lives in
   printing the API's commit next to the checkout's and `origin/main`'s.
   It is idempotent but NOT a watcher: if OpenCode's server restarts it kills
   background tasks, so re-run the script to restore the stack.
+- The script starts a setup-only worker for website discovery. It does not
+  consume AI-check, publishing, or other worker queues; start the full worker
+  separately when those queues are intended to run.
 - Before testing or reviewing anything locally, confirm you are looking at
   current code. Work merges on GitHub through PRs, and this checkout does not
   pull by itself: on 2026-10-30 it sat at PR #85 while `origin/main` had #86

@@ -16,6 +16,12 @@ import { Setup, normalizeWebsite, setupError } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 
+export function selectSetup<T extends { businessId: string; revision: number }>(businessId: string, latest: T | null, override: T | null): T | null {
+  const current = latest?.businessId === businessId ? latest : null
+  const local = override?.businessId === businessId ? override : null
+  return local && (!current || local.revision > current.revision) ? local : current
+}
+
 /** The business's setup, polled only while its homepage is being read. */
 export function useSetup(businessId: string) {
   const [override, setOverride] = useState<SetupView | null>(null)
@@ -23,12 +29,12 @@ export function useSetup(businessId: string) {
   const q = useApi(businessId ? `setup:${businessId}` : null, () => Setup.get(businessId), { pollMs: polling ? 1500 : null })
   const latest = q.data?.setup ?? null
   // A server response always wins over an older local copy.
-  const setup = override && (!latest || override.revision >= latest.revision) ? override : latest
+  const setup = selectSetup(businessId, latest, override)
   // Poll while the homepage is read and while the agent drafts the brief from it.
   const discovering = setup?.step === "DISCOVER" || (setup?.step === "CONFIRM" && setup.draft?.status === "RUNNING")
   const settled = !q.loading
   useEffect(() => { if (settled) setPolling(discovering) }, [settled, discovering])
-  return { setup, loading: q.loading && !q.data, set: setOverride, reload: q.reload }
+  return { setup, loading: q.loading && !q.data, error: q.error, set: setOverride, reload: q.reload }
 }
 
 const STEPS = [
@@ -178,6 +184,8 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
         <p role="status" className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
           <ThinkingGlyph /><span className="thinking">Your agent is reading your website and filling this in for you</span>
         </p>
+      ) : setup.draft?.status === "FAILED" ? (
+        <p role="status" className="rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">The agent could not finish the draft. You can fill in the details below and continue.</p>
       ) : draft ? (
         <div className="space-y-1.5 rounded-xl bg-muted/60 px-3 py-2.5 text-xs">
           <p className="font-medium">Drafted by your agent from your website. <span className="font-normal text-muted-foreground">Check it, change anything, then confirm.</span></p>

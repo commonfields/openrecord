@@ -88,7 +88,7 @@ export class GrowthExecutionRepository extends Context.Tag("GrowthExecutionRepos
   readonly get: (accountId: string, businessId: string, operationId: string) => GrowthExecutionEffect<ExecutionOperation>
   /** Replays by request key when the request is identical; a different request under the key is refused. */
   readonly findPrepared: (session: Session, businessId: string, opportunityId: string, fingerprint: string, idempotencyKey: string) => GrowthExecutionEffect<ExecutionOperation | null>
-  readonly prepare: (session: Session, businessId: string, opportunityId: string, fingerprint: string, plan: PreparedExecution) => GrowthExecutionEffect<ExecutionOperation>
+  readonly prepare: (session: Session, businessId: string, opportunityId: string, fingerprint: string, plan: PreparedExecution, actor?: "OPERATOR" | "ASSISTANT") => GrowthExecutionEffect<ExecutionOperation>
   readonly authorize: (session: Session, businessId: string, operationId: string, input: AuthorizeExecution) => GrowthExecutionEffect<ExecutionOperation>
   readonly dispatch: (session: Session, businessId: string, operationId: string, input: DispatchExecution) => GrowthExecutionEffect<ExecutionOperation>
   readonly cancel: (session: Session, businessId: string, operationId: string, input: CancelExecution) => GrowthExecutionEffect<ExecutionOperation>
@@ -209,7 +209,7 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       if (rows[0]["request_fingerprint"] !== fingerprint || rows[0]["opportunity_id"] !== opportunityId || rows[0]["created_by_user_id"] !== session.userId) return yield* refuse("IdempotencyConflict")
       return yield* read(businessId, String(rows[0]["id"]))
     }),
-    prepare: (session, businessId, opportunityId, fingerprint, plan) => sql.withTransaction(Effect.gen(function*() {
+    prepare: (session, businessId, opportunityId, fingerprint, plan, actor = "OPERATOR") => sql.withTransaction(Effect.gen(function*() {
       yield* ids(businessId, opportunityId, plan.targetId)
       yield* member(session, businessId)
       const locked = yield* sql`SELECT id FROM growth_opportunities WHERE id=${opportunityId} AND business_id=${businessId} FOR UPDATE`
@@ -217,10 +217,10 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       const inserted = yield* guard(sql`INSERT INTO growth_execution_operations(business_id,opportunity_id,target_id,action_kind,file_path,live_url,site_finding_id,base_branch,
           base_commit_sha,base_blob_sha,after_blob_sha,before_sha256,after_sha256,patch_sha256,after_content,diff,rationale,proposed_by,created_by_user_id,request_key,request_fingerprint)
         VALUES(${businessId},${opportunityId},${plan.targetId},${plan.actionKind},${plan.filePath},${plan.liveUrl},${plan.siteFindingId},${plan.baseBranch},${plan.baseCommitSha},${plan.baseBlobSha},
-          ${plan.afterBlobSha},${plan.beforeSha256},${plan.afterSha256},${plan.patchSha256},${plan.afterContent},${plan.diff},${plan.rationale},'OPERATOR',${session.userId},${plan.idempotencyKey},${fingerprint})
+          ${plan.afterBlobSha},${plan.beforeSha256},${plan.afterSha256},${plan.patchSha256},${plan.afterContent},${plan.diff},${plan.rationale},${actor},${session.userId},${plan.idempotencyKey},${fingerprint})
         RETURNING id`).pipe(Effect.catchIf((e): e is SqlError => (e as { cause?: { code?: string } }).cause?.code === "23505", () => refuse("IdempotencyConflict")))
       const id = String(inserted[0]!["id"])
-      yield* append(id, businessId, 1, "PREPARED", "OPERATOR", session.userId, "Exact change prepared for review", {}, null)
+      yield* append(id, businessId, 1, "PREPARED", actor, session.userId, "Exact change prepared for review", {}, null)
       return yield* read(businessId, id)
     })),
     authorize: (session, businessId, operationId, raw) => Effect.gen(function*() {

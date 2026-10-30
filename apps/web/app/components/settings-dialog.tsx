@@ -246,8 +246,8 @@ function GeneralSection() {
                 aria-pressed={selected}
                 onClick={() => setPreference("theme", t.id)}
                 className={cn(
-                  "group rounded-[10px] bg-card p-2 text-left shadow-(--card-shadow) outline-none transition-[box-shadow,background-color] focus-visible:ring-[3px] focus-visible:ring-ring",
-                  selected ? "bg-accent shadow-[0_0_0_1.5px_var(--primary-ink)]" : "hover:bg-accent",
+                  "group rounded-[10px] bg-control p-2 text-left shadow-(--control-shadow) outline-none transition-[box-shadow,background-color] focus-visible:ring-[3px] focus-visible:ring-ring",
+                  selected ? "bg-accent ring-1 ring-primary-ink/60" : "hover:bg-control-hover",
                 )}
               >
                 {t.id === "system" ? (

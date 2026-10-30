@@ -18,6 +18,7 @@ import { AgentModelError } from "./agent-model.js"
 import { diagnoseMarketingProblems, firstImprovementDeclarations, proposeFirstImprovement, type AgentOrigin } from "./agent-first-improvement.js"
 import { STARTS_WORK } from "./agent-session-tools.js"
 import { dispatchInvestigation, investigationDeclarations } from "./agent-investigation-tools.js"
+import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-tools.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -48,6 +49,10 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
+  ...executionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
+    effect: declaration.name === "prepare_noindex_change" ? "propose" : "read",
+    replay: declaration.name === "prepare_noindex_change" ? "deduplicated" : "safe", scope: "general",
+    run: (ctx, args) => dispatchExecutionTool(ctx, declaration.name, args) })),
   ...investigationDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
@@ -104,6 +109,18 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
   if (tag === "AgentInvestigationConflict") return { ...toolFailure("REFUSED"), guidance: "The investigation state changed. Read read_investigation for its current state_note_id before deciding whether a new state change is still appropriate. Do not blindly retry." }
+  if (tag === "GrowthExecutionRefused") {
+    const reason = (e as { readonly reason?: string }).reason
+    const guidance: Readonly<Record<string, string>> = {
+      ExecutionNotConfigured: "Connected execution is not configured. Ask the operator to configure the repository connection; do not claim a change was prepared.",
+      RepositoryNotPermitted: "The connected repository is not allowed by the server. Ask an administrator to review the connection.",
+      InitiativeNotApproved: "The initiative must be approved by a person before preparing a connected change.",
+      PathNotPermitted: "The page is outside the connected repository's allowed paths. Ask the operator to review the connection.",
+      NotApplicable: "The supported noindex change cannot be safely applied to this file. Do not guess another change.",
+      ExecutionAlreadyOpen: "A connected change is already open. Read its current state before proposing another.",
+    }
+    return { ...toolFailure("REFUSED"), guidance: guidance[reason ?? ""] ?? toolFailure("REFUSED").guidance }
+  }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")
   return toolFailure("TOOL_FAILED")
 }

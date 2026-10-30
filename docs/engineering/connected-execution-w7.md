@@ -94,6 +94,15 @@ Credentials come only from server configuration:
 | `EXECUTION_RECONCILE_POLL_SECONDS` | default 120 |
 | `EXECUTION_LIVE_CHECK_DELAY_SECONDS` | default 300 |
 
+For local development, `pnpm --filter @openrecord/worker dev:execution` runs
+only the connected-execution queue. Set `DATABASE_URL` and the GitHub execution
+variables in its environment. The API needs the same GitHub configuration.
+The worker refuses to start when the token, endpoint, or allowlist is missing
+or invalid, before it claims a job. This command can process every due approved
+execution job in that database; check the queue and destination configuration
+before starting it. It does not process AI checks or setup jobs. The default
+`scripts/dev-up.sh` does not start this worker.
+
 Destination safety: an operator connects a repository to a registered website;
 the API and the worker both require it on the allowlist; `commonfields/openrecord`
 is refused in the contract, the API, the worker and the database whatever any
