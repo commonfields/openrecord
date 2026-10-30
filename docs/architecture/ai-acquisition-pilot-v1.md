@@ -55,7 +55,7 @@ domain, never a lookalike. Citation support is always `NOT_VERIFIED` in V1: cite
 ## Measurement contract (`packages/db/src/acquisition-view.ts`)
 
 - **Eligible sample**: a `SUCCEEDED` check with a non-synthetic observation. Failed checks stay in planned and attempt counts.
-- **Mention rate**: confirmed `MENTIONED` reviews / eligible samples. Unreviewed candidates are shown separately and never counted.
+- **Mention rate**: confirmed `MENTIONED` reviews / determinate mention reviews (`MENTIONED` or `NOT_MENTIONED`). Unreviewed and unclear answers are excluded rather than treated as absent; review coverage is shown separately.
 - **Recommendation rate**: reviewed `RECOMMENDED` / reviewed eligible samples.
 - **Owned-domain citation rate**: eligible samples citing an owned domain / eligible samples.
 - **Competitor appearances**: eligible samples with an exact-name detection per named competitor. Not reviewed; not market share.

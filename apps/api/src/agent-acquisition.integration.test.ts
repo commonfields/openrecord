@@ -58,11 +58,18 @@ suite("acquisition-aware agent (TEST evidence, no provider network)", () => {
     expect(JSON.stringify(questions)).not.toContain("PRIVATE_ACQ_REVIEW_SENTINEL")
     expect((await read(f, "read_competitor_appearances")).data).toMatchObject({ basis: "EXACT_NAME_CANDIDATE_NOT_HUMAN_REVIEWED", counts: [{ samples: { n: 5, d: 5 } }] })
     expect((await read(f, "read_acquisition_citations")).citations).toHaveLength(5)
+    const firstPage = await read(f, "read_acquisition_citations", { limit: 2 })
+    const lastPage = await read(f, "read_acquisition_citations", { limit: 2, offset: 4 })
+    expect(firstPage.data).toMatchObject({ totalAnswers: 5, offset: 0, nextOffset: 2 })
+    expect(lastPage.data).toMatchObject({ totalAnswers: 5, offset: 4, nextOffset: null })
+    expect(lastPage.citations).toHaveLength(1)
     const foreign = await fixture()
     await expect(run(runAgentTool(foreign.session.accountId, f.businessId, "read_acquisition_overview", {}))).rejects.toThrow()
     const view = acquisitionView((await run(Effect.flatMap(AcquisitionRepository, r => r.snapshot(f.businessId))))!)
     expect(compareAgentBatches(view, batch.id, batch.id)?.state).toBe("NOT_COMPARABLE")
     const after = { ...view.batches[0]!, id: randomUUID(), createdAt: new Date(Date.now() + 1000).toISOString() }
+    const comparable = { ...view, batches: [...view.batches, after], checks: [...view.checks, ...view.checks.map(c => ({ ...c, batchId: after.id }))] }
+    expect(compareAgentBatches(comparable, batch.id, after.id)).toMatchObject({ state: "COMPARABLE", before: { ownedCitations: { n: 5, d: 5 }, mention: { n: 5, d: 5 } }, after: { ownedCitations: { n: 5, d: 5 } } })
     const changed = { ...view, batches: [...view.batches, after], checks: [...view.checks, ...view.checks.map(c => ({ ...c, batchId: after.id, observation: c.observation ? { ...c.observation, observedModel: "different-observed-model" } : null }))] }
     expect(compareAgentBatches(changed, batch.id, after.id)?.reasons).toContain("observed model identity differs, is mixed, or is unknown")
   })

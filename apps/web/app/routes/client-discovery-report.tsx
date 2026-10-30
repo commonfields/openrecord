@@ -61,7 +61,7 @@ export function DiscoveryReportView({ report }: { report: Report }) {
                 note={[p.metrics.failed ? `${p.metrics.failed} failed` : "", p.metrics.syntheticExcluded ? `${p.metrics.syntheticExcluded} synthetic excluded` : ""].filter(Boolean).join(" · ")} />
               <Row label="Live web retrieval observed" value={f(p.metrics.groundingObserved)} note="of successful samples" />
               <Row label="Human-reviewed" value={f(p.metrics.reviewed)} note="of successful samples" />
-              <Row label="Mentioned (confirmed)" value={f(p.metrics.mentionRate)} note="of successful samples; unreviewed samples are not counted" />
+              <Row label="Mentioned (confirmed)" value={f(p.metrics.mentionRate)} note="of clear mention reviews; unreviewed and unclear samples are excluded" />
               <Row label="Recommended (confirmed)" value={f(p.metrics.recommendationRate)} note="of reviewed samples" />
               <Row label="Mentioned, not recommended" value={String(p.metrics.breakdown.mentionedNotRecommended)} />
               <Row label="Advised against" value={String(p.metrics.breakdown.advisedAgainst)} />

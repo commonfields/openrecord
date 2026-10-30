@@ -60,7 +60,7 @@ describe("batch metrics", () => {
   it("derives every rate from its own numerator and denominator", () => {
     expect(m.reviewed).toEqual({ n: 3, d: 4 })
     expect(m.candidateSamples).toEqual({ n: 3, d: 4 })
-    expect(m.mentionRate).toEqual({ n: 2, d: 4 })
+    expect(m.mentionRate).toEqual({ n: 2, d: 3 })
     expect(m.recommendationRate).toEqual({ n: 1, d: 3 })
     expect(m.ownedCitationRate).toEqual({ n: 1, d: 4 })
     expect(m.groundingObserved).toEqual({ n: 4, d: 4 })
@@ -70,8 +70,12 @@ describe("batch metrics", () => {
   it("never counts an unreviewed candidate as confirmed", () => {
     const none = batchMetrics(BATCH, SET, [check("q1", 1), check("q1", 2)].map(c => deriveCheck(c, SET)))
     expect(none.candidateSamples).toEqual({ n: 2, d: 2 })
-    expect(none.mentionRate).toEqual({ n: 0, d: 2 })
+    expect(none.mentionRate).toEqual({ n: 0, d: 0 })
     expect(none.recommendationRate).toEqual({ n: 0, d: 0 })
+  })
+  it("excludes unclear mention judgments from the confirmed mention denominator", () => {
+    const unclear = { ...check("q1", 1), judgments: [judgment({ mention: "UNCLEAR", recommendation: "UNCLEAR" })] }
+    expect(batchMetrics(BATCH, SET, [deriveCheck(unclear, SET)]).mentionRate).toEqual({ n: 0, d: 0 })
   })
   it("reports repeatability per question as counts, with unreviewed and failed samples named", () => {
     expect(m.questions.map(q => [q.key, q.statement])).toEqual([

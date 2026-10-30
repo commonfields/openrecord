@@ -85,7 +85,16 @@ suite("AI Discovery HTTP (TEST fixtures only)", () => {
     const refused = await call("POST", `${base(businessId)}/batches`, a.session, { setId: set.id, scope: "FULL", samples: 2, acknowledgedMaxProviderCalls: 2 })
     expect(refused.status).toBe(409)
     expect(await refused.json()).toMatchObject({ reason: "SpendPlanNotAcknowledged" })
-    await ok(call("POST", `${base(businessId)}/batches`, a.session, { setId: set.id, scope: "FULL", samples: 2, acknowledgedMaxProviderCalls: 8 }))
+    const { batch } = await ok<{ batch: { id: string } }>(call("POST", `${base(businessId)}/batches`, a.session, { setId: set.id, scope: "FULL", samples: 2, acknowledgedMaxProviderCalls: 8 }))
+    const comparisonPath = `${base(businessId)}/comparison/${batch.id}/${batch.id}`
+    expect((await call("GET", comparisonPath)).status).toBe(401)
+    const other = await agency()
+    expect((await call("GET", comparisonPath, other.session)).status).toBe(404)
+    expect((await call("GET", `${base(businessId)}/comparison/invalid/${batch.id}`, a.session)).status).toBe(422)
+    expect((await call("GET", `${base(businessId)}/comparison/${batch.id}/${randomUUID()}`, a.session)).status).toBe(404)
+    const comparison = await call("GET", comparisonPath, a.session)
+    expect(comparison.headers.get("cache-control")).toBe("no-store")
+    expect(await comparison.json()).toMatchObject({ comparison: { state: "NOT_COMPARABLE" } })
     view = await ok<View>(call("GET", base(businessId), a.session))
     const [first] = view.view.checks
     // Simulated worker: persist one Gemini-shaped answer for the first check.

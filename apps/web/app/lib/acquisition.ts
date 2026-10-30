@@ -86,6 +86,8 @@ export type DiscoveryView = {
   sets: QuestionSet[]; batches: Batch[]; checks: Check[]; referrals: Referral[]; activeBatch: boolean; detectorVersion: string; aiSourcesVersion: string
 }
 export type DiscoveryResponse = { view: DiscoveryView; surface: { provider: string; model: string }; maxAttemptsPerCheck: number }
+export type ComparisonPeriod = { batchId: string; createdAt: string; provider: string; questionSetVersion: number; requestedModel: string | null; observedModels: string[]; recommendation: Fraction; mention: Fraction; ownedCitations: Fraction; reviewed: Fraction; failed: number }
+export type BatchComparison = { state: "COMPARABLE" | "NOT_COMPARABLE"; reasons: string[]; before: ComparisonPeriod; after: ComparisonPeriod; limitation: string }
 
 export type Representative = {
   questionKey: string; prompt: string; sample: number; collectedAt: string; answerText: string; mention: Mention; recommendation: Recommendation | null
@@ -118,6 +120,7 @@ const base = (id: string) => `/api/acquisition/clients/${encodeURIComponent(id)}
 
 export const Discovery = {
   get: (id: string) => api<DiscoveryResponse>(base(id)),
+  compare: (id: string, beforeId: string, afterId: string) => api<{ comparison: BatchComparison }>(`${base(id)}/comparison/${encodeURIComponent(beforeId)}/${encodeURIComponent(afterId)}`),
   report: (id: string) => api<{ report: Report }>(`${base(id)}/report`),
   createSet: (id: string, input: CreateSetInput) => api<{ set: QuestionSet }>(`${base(id)}/question-sets`, { method: "POST", ...json(input) }),
   startBatch: (id: string, input: { setId: string; scope: "SMOKE" | "FULL"; questionKeys?: string[]; samples: number; acknowledgedMaxProviderCalls: number }) =>

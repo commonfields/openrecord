@@ -64,6 +64,31 @@ function useBusy(reload: () => Promise<void>) {
   return { busy, run }
 }
 
+function BatchComparison({ clientId, before, after }: { clientId: string; before: Batch; after: Batch }) {
+  const result = useApi(`acquisition-comparison:${clientId}:${before.id}:${after.id}:${before.status}:${after.status}:${before.metrics.reviewed.n}:${after.metrics.reviewed.n}`, () => Discovery.compare(clientId, before.id, after.id))
+  const comparison = result.data?.comparison
+  const mentionText = (value: { n: number; d: number }) => value.d ? `${fraction(value)} clear reviews confirmed a mention` : "no clear mention reviews"
+  return (
+    <Panel>
+      <PanelHeader title="Compare with previous batch" description="The same questions and measurement settings are needed for a meaningful comparison." />
+      <div className="space-y-2 px-4 pb-4 text-xs">
+        {result.loading ? <p>Checking the measurement settings…</p> : null}
+        {result.error ? <p role="alert">Comparison unavailable. Try again later.</p> : null}
+        {comparison ? <>
+          <p className="font-medium">{comparison.state === "COMPARABLE" ? "Comparable samples" : "Not comparable"}</p>
+          {comparison.reasons.length ? <p>Different or incomplete: {comparison.reasons.join(", ")}.</p> : null}
+          {comparison.state === "COMPARABLE" ? <>
+            <p>{formatDateTime(comparison.before.createdAt)}: {fraction(comparison.before.ownedCitations)} answers cited an owned domain; {mentionText(comparison.before.mention)}.</p>
+            <p>{formatDateTime(comparison.after.createdAt)}: {fraction(comparison.after.ownedCitations)} answers cited an owned domain; {mentionText(comparison.after.mention)}.</p>
+            <p>Reviewed: {fraction(comparison.before.reviewed)} before, {fraction(comparison.after.reviewed)} after. Failed: {comparison.before.failed} before, {comparison.after.failed} after.</p>
+          </> : null}
+          <p className="text-muted-foreground">{comparison.limitation}</p>
+        </> : null}
+      </div>
+    </Panel>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Question set
 // ---------------------------------------------------------------------------
@@ -451,6 +476,8 @@ export function ClientDiscoveryPage() {
   const surfaceLabel = `${surface.provider === "gemini" ? "Gemini API with Google Search grounding" : surface.provider} (${surface.model})`
   const batch: Batch | null = batchId ? view.batches.find(b => b.id === batchId) ?? null : view.batches.at(-1) ?? null
   const batchSet = batch ? view.sets.find(s => s.id === batch.setId) ?? null : null
+  const batchIndex = batch ? view.batches.findIndex(b => b.id === batch.id) : -1
+  const previousBatch = batchIndex > 0 ? view.batches[batchIndex - 1] ?? null : null
   const checks = batch ? view.checks.filter(c => c.batchId === batch.id) : []
   const m = batch?.metrics
   const byQuestion = new Map<string, Check[]>()
@@ -492,7 +519,7 @@ export function ClientDiscoveryPage() {
         <StatStrip stats={[
           { key: "answers", label: "Answers collected", value: fraction({ n: m.eligible, d: m.planned }), hint: `${m.failed} failed · ${m.providerAttempts} provider attempts` },
           { key: "reviewed", label: "Reviewed", value: fraction(m.reviewed), hint: `${m.candidateSamples.n} with a ${set?.target.name ?? "brand"} candidate`, ...(m.reviewed.n < m.reviewed.d ? { tone: "review" as const } : {}) },
-          { key: "mentioned", label: "Mentioned (confirmed)", value: fraction(m.mentionRate), hint: "of collected answers" },
+          { key: "mentioned", label: "Mentioned (confirmed)", value: fraction(m.mentionRate), hint: "of clear mention reviews" },
           { key: "recommended", label: "Recommended (confirmed)", value: fraction(m.recommendationRate), hint: "of reviewed answers", tone: "supported" },
           { key: "owned", label: "Owned domain cited", value: fraction(m.ownedCitationRate), hint: "of collected answers" },
         ]} />
@@ -519,6 +546,7 @@ export function ClientDiscoveryPage() {
           </Panel>
 
           <div className="space-y-4">
+            {batch && previousBatch ? <BatchComparison clientId={id} before={previousBatch} after={batch} /> : null}
             <Panel>
               <PanelHeader title="Batches" />
               <ul className="p-2 pt-1">

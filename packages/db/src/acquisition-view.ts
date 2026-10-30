@@ -4,7 +4,7 @@
 //
 // Measurement contract (every rate carries its numerator and denominator):
 // - eligible sample      a SUCCEEDED check with a non-synthetic observation.
-// - mention rate         confirmed MENTIONED reviews / eligible samples.
+// - mention rate         confirmed MENTIONED / determinate mention reviews.
 // - recommendation rate  reviewed RECOMMENDED / reviewed eligible samples.
 // - owned citation rate  eligible samples citing an owned domain / eligible.
 // - competitor counts    eligible samples with an exact-name detection of a
@@ -196,7 +196,8 @@ export const batchMetrics = (batch: AcqBatch, set: AcqQuestionSet, all: Readonly
     groundingObserved: frac(eligible.filter(c => c.observation!.retrievalObserved).length, eligible.length),
     reviewed: frac(reviewed.length, eligible.length),
     candidateSamples: frac(eligible.filter(c => c.candidates.some(m => m.role === "TARGET")).length, eligible.length),
-    mentionRate: frac(reviewed.filter(c => c.judgment!.mention === "MENTIONED").length, eligible.length),
+    mentionRate: frac(reviewed.filter(c => c.judgment!.mention === "MENTIONED").length,
+      reviewed.filter(c => c.judgment!.mention !== "UNCLEAR").length),
     recommendationRate: frac(reviewed.filter(c => is(c, "RECOMMENDED")).length, reviewed.length),
     breakdown: {
       recommended: reviewed.filter(c => is(c, "RECOMMENDED")).length,
