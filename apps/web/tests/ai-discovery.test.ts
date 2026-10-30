@@ -3,7 +3,8 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router"
 import { DiscoveryReportView } from "../app/routes/client-discovery-report"
-import { parseCompetitors, type Metrics, type Report } from "../app/lib/acquisition"
+import { CitationSources } from "../app/routes/client-discovery"
+import { citationSourceCsv, parseCompetitors, type Batch, type Metrics, type Report } from "../app/lib/acquisition"
 
 // The AI Discovery agency report, rendered without a browser from a TEST
 // projection: denominators on every count, the measured surface named, each
@@ -75,5 +76,25 @@ describe("competitor field", () => {
       { name: "HelpHub", aliases: ["HelpHub Agent"], domains: ["helphub.test"], matchCase: false, ambiguity: null },
       { name: "Ada", aliases: [], domains: ["ada.test", "ada.io"], matchCase: true, ambiguity: null },
     ])
+  })
+})
+
+describe("citation export", () => {
+  it("escapes spreadsheet formulas and quotes while preserving sample denominators", () => {
+    const csv = citationSourceCsv({ eligibleAnswers: 4, answersWithSources: 2, unresolvedAnswers: 0, groundingObserved: 4,
+      domains: [{ domain: "example.test", owner: "COMPETITOR", competitor: '=HYPERLINK("x")', basis: "URI_HOST", answers: 2 }], pages: [] }, { id: "test-batch", createdAt: "2026-10-01", surface: "test" })
+    expect(csv).toContain('"domain","example.test","COMPETITOR","\'=HYPERLINK(""x"")","URI_HOST","2","4"')
+  })
+  it("shows source attribution, coverage and limitations without executing source text", () => {
+    const batch: Batch = { id: "batch", setId: "set", setVersion: 1, scope: "FULL", questionCount: 1, sampleCount: 1, provider: "test", requestedModel: "test",
+      retrievalRequested: true, maxProviderCalls: 4, createdAt: "2026-10-01T00:00:00.000Z", status: "SUCCEEDED", surface: "test", collectedFrom: null, collectedTo: null, metrics,
+      citationSources: { eligibleAnswers: 1, answersWithSources: 1, unresolvedAnswers: 0, groundingObserved: 1,
+        domains: [{ domain: "example.test", owner: "COMPETITOR", competitor: "<script>", basis: "PROVIDER_TITLE", answers: 1 }], pages: [] } }
+    const html = renderToStaticMarkup(createElement(CitationSources, { batch }))
+    expect(html).toContain("example.test")
+    expect(html).toContain("domain reported in title")
+    expect(html).toContain("support for the answer are not verified")
+    expect(html).not.toContain("<script>")
+    expect(html).toContain("&lt;script&gt;")
   })
 })

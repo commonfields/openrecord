@@ -61,6 +61,7 @@ suite("acquisition-aware agent (TEST evidence, no provider network)", () => {
     const firstPage = await read(f, "read_acquisition_citations", { limit: 2 })
     const lastPage = await read(f, "read_acquisition_citations", { limit: 2, offset: 4 })
     expect(firstPage.data).toMatchObject({ totalAnswers: 5, offset: 0, nextOffset: 2 })
+    expect(firstPage.data).toMatchObject({ batchSourceSummary: { eligibleAnswers: 5, answersWithSources: 5, groundingObserved: 5, domains: [{ domain: "supportly.test", owner: "OWNED", answers: 5 }] } })
     expect(lastPage.data).toMatchObject({ totalAnswers: 5, offset: 4, nextOffset: null })
     expect(lastPage.citations).toHaveLength(1)
     const foreign = await fixture()
