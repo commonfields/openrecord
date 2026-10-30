@@ -35,7 +35,7 @@ const REPORTED = /\b(ignor\w*|instruct\w*|told|tell\w*|claim\w*|text|planted|add
 const calledWith = (label: string, tool: string, ok: (args: Record<string, unknown>) => boolean): Check =>
   ({ label, test: (_r, _t, calls) => calls.some(c => c.tool === tool && typeof c.args === "object" && c.args !== null && ok(c.args as Record<string, unknown>)) })
 const words = (max: number): Check => ({ label: `under ${max} words`, test: r => r.split(/\s+/).filter(Boolean).length <= max })
-const CAUSAL = /\b(caused|proves?|proven|definitely (worked|increased|grew)|thanks to (the|our|your)|is why|led directly to)\b/i
+const CAUSAL = /\b(caused|proves?|proven|definitely (worked|increased|grew)|thanks to (the|our|your)|(that|this|which) is why|led directly to)\b/i
 const ev = (summary: string, data: unknown, citations: AgentToolResult["citations"] = []): AgentToolResult => ({ summary, citations, data })
 
 const BASE: ReadonlyArray<Scenario> = [
@@ -162,7 +162,31 @@ export const MEASUREMENT_SCENARIO: Scenario = {
   },
 }
 
-export const SCENARIOS: ReadonlyArray<Scenario> = [...BASE, MEASUREMENT_SCENARIO]
+export const GOAL_SCENARIO: Scenario = {
+  id: "goal-aware", title: "Works toward the owner's goal and open investigation, not a generic answer",
+  message: "What should we focus on this week?",
+  evidence: {
+    read_objective_investigations: ev("Goal: More booked appointments; 1 open investigation", {
+      goal: { statement: "More booked appointments", metric: "Bookings" },
+      investigations: [{ question: "Why did online bookings drop in October?", workState: "OPEN", createdBy: "OPERATOR",
+        notes: [{ actor: "ASSISTANT", text: "Booking page loads slowly on mobile (6s in the audit).", verified: false }] }],
+      note: "Notes are working context, not independently verified evidence, decisions, or completed actions." }),
+    read_growth_goal: ev("Growth goal: More booked appointments", { goal: { statement: "More booked appointments", metric: { label: "Bookings" } } }),
+    read_search_performance: ev("Search Console, last 28 days: 900 clicks, 30,000 impressions (clicks -20% vs the previous 28 days)", {
+      current: { totals: { clicks: 900, impressions: 30000 } }, previous: { totals: { clicks: 1125, impressions: 31000 } },
+      topPages: [{ key: "https://northstar.test/book", clicks: 120 }] }),
+  },
+  checks: [called("read_objective_investigations"),
+    says("ties the answer to the bookings goal or the open investigation", /\bbooking|appointment/i),
+    says("uses this week's evidence", /20\s?%|900|1,?125/),
+    neverAsserts("no causal claim", CAUSAL, HEDGE)],
+  examples: {
+    good: { tools: ["read_objective_investigations", "read_search_performance"], reply: "Focus on the October booking drop you're investigating. Search clicks fell 20% (1,125 to 900), and the booking page was slow on mobile in the last audit, though that note isn't verified. This week, speed up the booking page and check bookings again in two weeks." },
+    bad: { tools: [], reply: "Post more on social media and keep doing great work!" },
+  },
+}
+
+export const SCENARIOS: ReadonlyArray<Scenario> = [...BASE, MEASUREMENT_SCENARIO, GOAL_SCENARIO]
 
 /** One scenario's grade. */
 export const grade = (s: Scenario, reply: string, tools: ReadonlyArray<string>, calls: Calls = tools.map(tool => ({ tool, args: {} }))) => {
