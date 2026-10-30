@@ -433,7 +433,9 @@ describe("settings → agent connection surface", () => {
     expect(dialog).toContain("Harness.revokeBridge")
     expect(dialog).toContain("pairCommand")
     expect(dialog).toContain("<ProviderLogo")
-    expect(dialog).toContain("onClick={connect}>Connect")
+    expect(dialog).toContain("onClick={connect}>")
+    // A copy-paste prompt for this computer's coding agent, always there in local mode.
+    expect(dialog).toContain("{catalog?.local ? <LocalSetupGroup /> : null}")
     // An offline computer folds to one line; no restart command under each provider.
     expect(dialog).not.toContain('value="node openrecord-bridge.mjs run"')
     expect(dialog).toContain("Prompt for your coding agent")
@@ -520,5 +522,17 @@ describe("composer model selector and stop control", () => {
     expect(chat).toContain("!session.sendable")
     expect(chat).toContain('session.selection.status === "unavailable"')
     expect(read("../app/components/agent-model-picker.tsx")).toContain("The model you used is unavailable now")
+  })
+})
+
+describe("this computer's setup prompt", () => {
+  it("checks providers without signing in, keeps CLIProxyAPI on loopback and warns about API keys", async () => {
+    const { localProvidersPrompt } = await import("../app/lib/harness")
+    const p = localProvidersPrompt()
+    expect(p).toContain("Don't sign in for me")
+    expect(p).toContain("127.0.0.1 port 8317, never on all interfaces")
+    expect(p).toMatch(/ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY/)
+    expect(p).toContain("Never print or share API keys")
+    expect(p).not.toMatch(/--code|pairing code:/)
   })
 })

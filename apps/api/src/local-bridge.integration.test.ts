@@ -116,6 +116,19 @@ suite("local bridge (disposable PostgreSQL, stand-in bridge program)", () => {
     process.env["OPENRECORD_LOCAL_BRIDGE"] = "1"
   })
 
+  it("pairs again when the saved bridge was replaced by an attempt that never finished, instead of staying off", async () => {
+    // A paired bridge on disk…
+    expect(await run(ensureLocalBridge(session, 3999, true))).toBe("STARTED")
+    const first = await run(registerBridge((await started()).args[4]!))
+    writeFileSync(join(home(), "bridge.json"), JSON.stringify({ bridgeId: first.bridgeId }))
+    // …replaced by a newer pairing that never registered (the bridge failed to start).
+    await pool.query("UPDATE agent_bridges SET revoked_at = now(), token_hash = NULL WHERE id = $1", [first.bridgeId])
+    await pool.query("INSERT INTO agent_bridges(account_id,user_id,name,pair_hash,managed,created_at) VALUES($1,$2,'This computer',$3,true,now() + interval '1 second')",
+      [session.accountId, session.userId, "a".repeat(64)])
+    expect(await run(ensureLocalBridge(session, 3999))).toBe("STARTED")
+    expect((await started()).args[0]).toBe("pair")
+  })
+
   it("starts again after an unexpected exit, and when the server starts", async () => {
     const { bridgeId } = await (async () => {
       expect(await run(ensureLocalBridge(session, 3999, true))).toBe("STARTED")
