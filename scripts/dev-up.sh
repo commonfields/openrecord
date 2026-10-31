@@ -64,7 +64,7 @@ fi
 # 2. API on :3001 (no watcher). Restart it when it serves an older commit.
 head_sha="$(git rev-parse --short=12 HEAD)"
 if lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
-  running="$(curl -s http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
   if [ "$running" != "$head_sha" ]; then
     echo "API serves ${running:-unknown}, checkout is $head_sha; restarting API"
     kill $(lsof -tiTCP:3001 -sTCP:LISTEN)
@@ -88,12 +88,12 @@ if ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 for _ in $(seq 1 60); do
-  curl -s -o /dev/null http://localhost:3001/api/health && curl -s -o /dev/null http://localhost:3000/ && break
+  curl -sf -m 5 -o /dev/null http://localhost:3001/api/health && curl -sf -m 5 -o /dev/null http://localhost:3000/ && break
   sleep 1
 done
-curl -s -o /dev/null -w "api:    %{http_code}\n" -X POST http://localhost:3001/api/auth/signin \
+curl -s -m 5 -o /dev/null -w "api:    %{http_code}\n" -X POST http://localhost:3001/api/auth/signin \
   -H "Content-Type: application/json" -d '{"email":"demo@northstar.test","password":"password123"}'
-curl -s -o /dev/null -w "web:    %{http_code}\n" http://localhost:3000/
-running="$(curl -s http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+curl -s -m 5 -o /dev/null -w "web:    %{http_code}\n" http://localhost:3000/
+running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 echo "commit: API $running, checkout $head_sha ($(git rev-parse --abbrev-ref HEAD)), origin/main $(git rev-parse --short=12 origin/main)"
 echo "ready → http://localhost:3000 (demo@northstar.test / password123)"
