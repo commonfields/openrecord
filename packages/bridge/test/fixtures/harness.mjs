@@ -26,6 +26,19 @@ if (args[0] === "exec") {
     writeFileSync(file, JSON.stringify({ kind: "text", text: effort ? "TEST Codex reply (high)" : "TEST Codex reply", calls: [] }))
     process.stdout.write('{"type":"thread.completed"}\n')
   })
+} else if (args.includes("--print") && args.includes("--input-format")) {
+  // Warm Claude session: one process, one reply per streamed user message.
+  // The first message is the full prompt; later ones carry only new entries.
+  if (args[args.indexOf("--tools") + 1] !== "" || !args.includes("--strict-mcp-config") || !args.includes("--no-session-persistence")) process.exit(2)
+  let turn = 0
+  createInterface({ input: process.stdin }).on("line", (line) => {
+    const text = JSON.parse(line).message.content[0].text
+    turn++
+    if (turn === 1 ? !text.includes("TEST message") : text.includes("Tool declarations:") || !text.includes("TEST tool result")) process.exit(2)
+    const reply = turn === 1 ? "TEST Claude reply" : `TEST Claude continued ${turn}`
+    process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking", thinking: `TEST thinking ${turn}` }] } }) + "\n")
+    process.stdout.write(JSON.stringify({ type: "result", is_error: false, structured_output: { kind: "text", text: reply, calls: [] } }) + "\n")
+  })
 } else if (args.includes("--print")) {
   if (args[args.indexOf("--tools") + 1] !== "" || !args.includes("--strict-mcp-config")) process.exit(2)
   process.stdin.resume()
@@ -34,7 +47,7 @@ if (args[0] === "exec") {
   )
 } else {
   const lines = createInterface({ input: process.stdin })
-  let waitingPrompt
+  let waitingPrompt, prompts = 0, promptText = ""
   let model = "fixture-model", effort
   const configOptions = () => [
     { id: "model", category: "model", options: [{ value: "fixture-model", name: "TEST model" }, { value: "fixture-thinking", name: "TEST thinking model" }] },
@@ -67,6 +80,9 @@ if (args[0] === "exec") {
     }
     else if (request.method === "session/prompt") {
       waitingPrompt = request.id
+      prompts++
+      promptText = request.params.prompt[0].text
+      if (prompts === 1 ? !promptText.includes("TEST message") : promptText.includes("Tool declarations:") || !promptText.includes("TEST tool result")) process.exit(2)
       send({
         id: "permission-test",
         method: "session/request_permission",
@@ -83,7 +99,7 @@ if (args[0] === "exec") {
           sessionId: "fixture-session",
           update: {
             sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: JSON.stringify({ kind: "text", text: effort ? `TEST ACP reply (${effort})` : "TEST ACP reply", calls: [] }) }
+            content: { type: "text", text: JSON.stringify({ kind: "text", text: prompts > 1 ? `TEST ACP continued ${prompts}` : effort ? `TEST ACP reply (${effort})` : "TEST ACP reply", calls: [] }) }
           }
         }
       })

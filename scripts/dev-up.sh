@@ -6,6 +6,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Local secrets and settings (hosted agent model, provider keys) live in the
+# git-ignored .env; nothing else loads it, so the API and workers get it here.
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
 DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord_dev"
 # The dev database container. Since 2026-10-30 this is the restored copy; the
 # original volume openrecord_openrecord-pg is damaged and must not be started.

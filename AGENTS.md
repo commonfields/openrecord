@@ -14,6 +14,9 @@ Practical notes for running this checkout locally. Architecture lives in
   printing the API's commit next to the checkout's and `origin/main`'s.
   It is idempotent but NOT a watcher: if OpenCode's server restarts it kills
   background tasks, so re-run the script to restore the stack.
+- The script loads the git-ignored `.env` before starting anything; that is
+  where the hosted agent model (`AGENT_EXTERNAL_PROCESSING_ENABLED`,
+  `AGENT_MODEL`, `AGENT_API_KEY`) and provider keys go. Nothing else loads it.
 - The script starts a setup-only worker for website discovery. It does not
   consume AI-check, publishing, or other worker queues; start the full worker
   separately when those queues are intended to run.

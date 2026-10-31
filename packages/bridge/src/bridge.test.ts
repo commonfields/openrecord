@@ -8,6 +8,7 @@ import { type HarnessDriver, type HarnessJob, type HarnessReport } from "@openre
 import { execute, parseAnswer, probe, type LocalInstance } from "./adapters.js"
 import { capture, driverEnvironment, failureReason } from "./process.js"
 import { reportBatch, serverOrigin } from "./client.js"
+import { sessions } from "./sessions.js"
 
 describe("local harness protocol boundary (fixture binaries; no provider calls)", () => {
   let directory: string, binary: string
@@ -18,6 +19,7 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
     await chmod(binary, 0o700)
   })
   afterAll(async () => {
+    sessions.closeAll()
     await rm(directory, { recursive: true, force: true })
   })
   const instance = (driver: HarnessDriver): LocalInstance => ({
@@ -72,6 +74,35 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
     await expect(execute(i, { ...request, model: "fixture-thinking", input: { ...request.input, reasoningEffort: "high" } }, AbortSignal.timeout(10000))).rejects.toMatchObject({ reason: "UNAVAILABLE" })
   }, 20000)
 
+  for (const driver of ["claude", "opencode"] as const) {
+    it(`continues a ${driver} turn on its warm session, sending only the new entries`, async () => {
+      const i = instance(driver), first = job(i)
+      await probe(i)
+      const thoughts: string[] = []
+      expect(await execute(i, first, AbortSignal.timeout(10000), t => thoughts.push(t))).toMatchObject({ kind: "text" })
+      const next: HarnessJob = { ...first, id: randomUUID(), lease: randomUUID(), input: { ...first.input, contents: [
+        ...first.input.contents,
+        { role: "model", parts: [{ functionCall: { name: "read_open_issues", args: {} } }] },
+        { role: "user", parts: [{ functionResponse: { name: "read_open_issues", response: { text: "TEST tool result" } } }] },
+      ] } }
+      // The fixture exits if a continuation repeats the full prompt or lacks the new entry.
+      expect(await execute(i, next, AbortSignal.timeout(10000))).toMatchObject({ kind: "text", text: driver === "claude" ? "TEST Claude continued 2" : "TEST ACP continued 2" })
+      if (driver === "claude") expect(thoughts.at(-1)).toBe("TEST thinking 1")
+      sessions.closeAll()
+    }, 20000)
+  }
+  it("closes a warm session whose step is cancelled, and starts fresh next time", async () => {
+    const i = instance("claude"), first = job(i)
+    await probe(i)
+    await execute(i, first, AbortSignal.timeout(10000))
+    const controller = new AbortController()
+    controller.abort()
+    const next: HarnessJob = { ...first, input: { ...first.input, contents: [...first.input.contents, { role: "model", parts: [{ text: "x" }] }, { role: "user", parts: [{ text: "TEST tool result" }] }] } }
+    await expect(execute(i, next, controller.signal)).rejects.toMatchObject({ reason: "CANCELLED" })
+    expect(sessions.size).toBe(0)
+    expect(await execute(i, first, AbortSignal.timeout(10000))).toMatchObject({ text: "TEST Claude reply" })
+    sessions.closeAll()
+  }, 20000)
   it("does not inherit application or unrelated provider secrets", () => {
     const source = {
       PATH: "/bin",

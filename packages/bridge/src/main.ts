@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url"
 import { Schema } from "effect"
 import { HARNESS_NAMES, HarnessDriver, type HarnessJobResult, type HarnessReport } from "@openrecord/contracts"
 import { LocalInstance, executableFor, execute, probe } from "./adapters.js"
+import { sessions } from "./sessions.js"
 import { BridgeClient, serverOrigin } from "./client.js"
 import { BridgeFailure, driverEnvironment } from "./process.js"
 import { CLIPROXY_DEFAULT_KEY_ENV, CLIPROXY_DEFAULT_URL, cliProxyOrigin } from "./cliproxy.js"
@@ -279,6 +280,7 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
     await Promise.allSettled([...jobs.values()].map((j) => j.promise))
     process.removeListener("SIGINT", stop)
     process.removeListener("SIGTERM", stop)
+    sessions.closeAll()
     await release()
   }
 }

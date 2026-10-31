@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentConnectionSection } from "@/components/harness-settings"
+import { BusinessMemorySection } from "@/components/business-memory-settings"
 import { Kbd } from "@/components/ui/kbd"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -378,6 +379,7 @@ function AgentSection() {
           <PrefSwitch id="pref-voice" k="voiceInput" />
         </Row>
       </Group>
+      <BusinessMemorySection />
       <AgentConnectionSection />
     </>
   )

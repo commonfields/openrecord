@@ -12,7 +12,9 @@ import {
   type HarnessModel,
   type HarnessReport
 } from "@openrecord/contracts"
-import { BridgeFailure, RpcProcess, capture, driverEnvironment, failureReason } from "./process.js"
+import { createInterface } from "node:readline"
+import { BridgeFailure, RpcProcess, capture, driverEnvironment, failureReason, launch, stopProcess } from "./process.js"
+import { sessions, type WarmProcess } from "./sessions.js"
 import { executeCliProxy, probeCliProxy } from "./cliproxy.js"
 
 export const LocalInstance = Schema.Struct({
@@ -145,10 +147,11 @@ async function discoverAcpModels(rpc: RpcProcess, session: typeof MODELS.Type): 
   return found
 }
 
-export async function withWorkspace<A>(act: (cwd: string) => Promise<A>) {
+/** A fresh, empty working folder whose local project policy denies every file,
+ * shell and MCP permission; local policy has priority over broad user defaults. */
+async function lockedWorkspace() {
   const cwd = await mkdtemp(join(tmpdir(), "openrecord-harness-"))
   try {
-    // Local project policy has priority over broad user defaults.
     await mkdir(join(cwd, ".cursor"))
     await writeFile(
       join(cwd, ".cursor", "cli.json"),
@@ -160,6 +163,16 @@ export async function withWorkspace<A>(act: (cwd: string) => Promise<A>) {
       JSON.stringify({ permission: { "*": "deny" }, mcp: {}, tools: { "*": false } }),
       { mode: 0o600 }
     )
+    return cwd
+  } catch (error) {
+    await rm(cwd, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export async function withWorkspace<A>(act: (cwd: string) => Promise<A>) {
+  const cwd = await lockedWorkspace()
+  try {
     return await act(cwd)
   } finally {
     await rm(cwd, { recursive: true, force: true })
@@ -331,50 +344,20 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
   if (instance.driver === "cliproxy") return executeCliProxy(instance, job, signal, process.env, onThought)
   if (job.input.reasoningEffort && instance.driver !== "codex" && instance.driver !== "opencode") throw new BridgeFailure("UNAVAILABLE")
   const driver = instance.driver
+  // Claude Code and the ACP agents keep one warm session across the steps of
+  // a turn; Codex runs each step as its own process.
+  if (driver !== "codex") {
+    const binary = resolvedBinaries.get(instance.id) ?? instance.binary ?? BINARY[driver], env = environment(instance)
+    let thought = ""
+    const relay = (t: string) => { thought = t; onThought?.(t) }
+    const start = () => driver === "claude" ? claudeProcess(binary, env, job.model, signal) : acpProcess(instance, binary, env, job, signal)
+    const { answer } = await sessions.run(instance.id, job, start, prompt(job), signal, relay)
+    if (answer.length > 64000) throw new BridgeFailure("MALFORMED")
+    return withThought(parseAnswer(answer), thought)
+  }
   return withWorkspace(async (cwd) => {
     const binary = resolvedBinaries.get(instance.id) ?? instance.binary ?? BINARY[driver],
       env = environment(instance)
-    if (instance.driver === "claude") {
-      const raw = await capture(
-        binary,
-        [
-          "--print",
-          "--safe-mode",
-          "--output-format",
-          "json",
-          "--model",
-          job.model,
-          "--tools",
-          "",
-          "--strict-mcp-config",
-          "--mcp-config",
-          '{"mcpServers":{}}',
-          "--setting-sources",
-          "",
-          "--settings",
-          '{"disableAllHooks":true}',
-          "--disable-slash-commands",
-          "--no-session-persistence",
-          "--json-schema",
-          JSON.stringify(ANSWER_SCHEMA)
-        ],
-        cwd,
-        env,
-        prompt(job),
-        signal
-      )
-      const result = Schema.decodeUnknownSync(
-        Schema.Struct({
-          is_error: Schema.optional(Schema.Boolean),
-          result: Schema.optional(Schema.String),
-          structured_output: Schema.optional(Schema.Unknown)
-        })
-      )(JSON.parse(raw))
-      if (result.is_error) throw new BridgeFailure(failureReason(result.result ?? ""))
-      return result.structured_output
-        ? parseAnswer(JSON.stringify(result.structured_output))
-        : parseAnswer(result.result ?? "")
-    }
     if (instance.driver === "codex") {
       const schemaFile = join(cwd, "answer-schema.json"),
         answerFile = join(cwd, "answer.json")
@@ -438,56 +421,155 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
       if (answer.length > 64000) throw new BridgeFailure("MALFORMED")
       return withThought(parseAnswer(answer), codexReasoning(events))
     }
-    let text = "", thought = ""
-    const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, signal, (method, params) => {
-      if (method === "session/update") {
-        const update = Schema.decodeUnknownEither(
-          Schema.Struct({
-            update: Schema.Struct({
-              sessionUpdate: Schema.String,
-              content: Schema.optional(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }))
-            })
-          })
-        )(params)
-        if (update._tag === "Right" && update.right.update.sessionUpdate === "agent_message_chunk")
-          text += update.right.update.content?.text ?? ""
-        // ACP streams the model's reasoning as thought chunks.
-        if (update._tag === "Right" && update.right.update.sessionUpdate === "agent_thought_chunk" && update.right.update.content?.text) {
-          thought += update.right.update.content.text
-          onThought?.(thought.trim().slice(-8000))
-        }
-      }
-    })
-    try {
+    throw new BridgeFailure("UNAVAILABLE")
+  })
+}
+
+// ---- warm sessions ----
+
+const ANSWER_SCHEMA_ARG = () => JSON.stringify(ANSWER_SCHEMA)
+const stepFailure = (signal: AbortSignal) => new BridgeFailure(signal.reason?.name === "TimeoutError" ? "TIMEOUT" : "CANCELLED")
+const MAX_STEP_OUTPUT = 512000
+
+/** Claude Code as one process for a whole turn: stream-json in and out, with
+ * the same lockdown as a single run (no tools, MCP, hooks, settings, slash
+ * commands or saved sessions) and the answer schema on every reply. */
+async function claudeProcess(binary: string, env: NodeJS.ProcessEnv, model: string, startSignal: AbortSignal): Promise<WarmProcess> {
+  startSignal.throwIfAborted()
+  const cwd = await lockedWorkspace()
+  const life = new AbortController()
+  const child = launch(binary, [
+    "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    "--safe-mode", "--model", model, "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+    "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--disable-slash-commands",
+    "--no-session-persistence", "--json-schema", ANSWER_SCHEMA_ARG(),
+  ], cwd, env, life.signal)
+  const lines = createInterface({ input: child.stdout })
+  let current: { resolve: (answer: string) => void; reject: (error: BridgeFailure) => void; onThought?: ((t: string) => void) | undefined; bytes: number; thought: string } | null = null
+  let closed = false
+  const settle = (error: BridgeFailure | null, answer = "") => {
+    const step = current
+    current = null
+    if (!step) return
+    if (error) step.reject(error)
+    else step.resolve(answer)
+  }
+  const close = () => {
+    if (closed) return
+    closed = true
+    life.abort()
+    lines.close()
+    stopProcess(child)
+    settle(new BridgeFailure("UNAVAILABLE"))
+    void rm(cwd, { recursive: true, force: true })
+  }
+  child.once("error", close)
+  child.once("close", close)
+  lines.on("line", line => {
+    if (!current) return
+    current.bytes += Buffer.byteLength(line)
+    if (current.bytes > MAX_STEP_OUTPUT) { settle(new BridgeFailure("MALFORMED")); close(); return }
+    let event: { type?: string; is_error?: boolean; result?: unknown; structured_output?: unknown; message?: { content?: Array<{ type?: string; thinking?: unknown }> } }
+    try { event = JSON.parse(line) } catch { return }
+    if (event.type === "assistant") {
+      const thinking = (event.message?.content ?? []).flatMap(c => c.type === "thinking" && typeof c.thinking === "string" ? [c.thinking] : [])
+      if (thinking.length) { current.thought = [current.thought, ...thinking].filter(Boolean).join("\n\n"); current.onThought?.(current.thought.trim().slice(-8000)) }
+    } else if (event.type === "result") {
+      if (event.is_error) settle(new BridgeFailure(failureReason(String(event.result ?? ""))))
+      else settle(null, event.structured_output !== undefined ? JSON.stringify(event.structured_output) : String(event.result ?? ""))
+    }
+  })
+  return {
+    close,
+    step: (text, signal, onThought) => new Promise<string>((resolve, reject) => {
+      if (closed) return reject(new BridgeFailure("UNAVAILABLE"))
+      if (signal.aborted) return reject(stepFailure(signal))
+      const abort = () => { const error = stepFailure(signal); settle(error); close() }
+      signal.addEventListener("abort", abort, { once: true })
+      const done = () => signal.removeEventListener("abort", abort)
+      current = { resolve: a => { done(); resolve(a) }, reject: e => { done(); reject(e) }, onThought, bytes: 0, thought: "" }
+      child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } }) + "\n")
+    }),
+  }
+}
+
+/** An ACP agent (OpenCode, Cursor) as one session for a whole turn: the model
+ * and reasoning level are chosen once, then each step is one more prompt. */
+async function acpProcess(instance: LocalInstance, binary: string, env: NodeJS.ProcessEnv, job: HarnessJob, startSignal: AbortSignal): Promise<WarmProcess> {
+  startSignal.throwIfAborted()
+  const cwd = await lockedWorkspace()
+  const life = new AbortController()
+  let collector: { text: string; thought: string; onThought?: ((t: string) => void) | undefined } | null = null
+  const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, life.signal, (method, params) => {
+    if (method !== "session/update" || !collector) return
+    const update = Schema.decodeUnknownEither(
+      Schema.Struct({
+        update: Schema.Struct({
+          sessionUpdate: Schema.String,
+          content: Schema.optional(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }))
+        })
+      })
+    )(params)
+    if (update._tag !== "Right") return
+    if (update.right.update.sessionUpdate === "agent_message_chunk") collector.text += update.right.update.content?.text ?? ""
+    // ACP streams the model's reasoning as thought chunks.
+    if (update.right.update.sessionUpdate === "agent_thought_chunk" && update.right.update.content?.text) {
+      collector.thought += update.right.update.content.text
+      collector.onThought?.(collector.thought.trim().slice(-8000))
+    }
+  }, 8000000)
+  let closed = false
+  const close = () => {
+    if (closed) return
+    closed = true
+    life.abort()
+    rpc.close(new BridgeFailure("UNAVAILABLE"))
+    void rm(cwd, { recursive: true, force: true })
+  }
+  // Start-up is bounded by the first step's own deadline.
+  const guard = <A>(work: Promise<A>, signal: AbortSignal) => new Promise<A>((resolve, reject) => {
+    if (signal.aborted) { close(); return reject(stepFailure(signal)) }
+    const abort = () => { close(); reject(stepFailure(signal)) }
+    signal.addEventListener("abort", abort, { once: true })
+    work.then(v => { signal.removeEventListener("abort", abort); resolve(v) }, e => { signal.removeEventListener("abort", abort); reject(e instanceof BridgeFailure ? e : new BridgeFailure("UNAVAILABLE")) })
+  })
+  let sessionId: string
+  try {
+    sessionId = await guard((async () => {
       const session = await initializeAcp(rpc, cwd)
-      const choices = acpModels(session)
+      if (!acpModels(session).some((m) => m.id === job.model)) throw new BridgeFailure("UNAVAILABLE")
       let configOptions = session.configOptions
-      if (!choices.some((m) => m.id === job.model)) throw new BridgeFailure("UNAVAILABLE")
       const option = session.configOptions?.find((o) => o.category === "model" || o.id === "model")
       if (option) {
-        const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", {
-          sessionId: session.sessionId,
-          configId: option.id,
-          value: job.model
-        }))
+        const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: option.id, value: job.model }))
         configOptions = changed.configOptions
       } else if (session.models) await rpc.request("session/set_model", { sessionId: session.sessionId, modelId: job.model })
       else throw new BridgeFailure("UNAVAILABLE")
       if (job.input.reasoningEffort) {
         const effort = reasoningOption(configOptions)
-        if (!effort?.options?.some(option => option.value === job.input.reasoningEffort)) throw new BridgeFailure("UNAVAILABLE")
+        if (!effort?.options?.some(o => o.value === job.input.reasoningEffort)) throw new BridgeFailure("UNAVAILABLE")
         await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: effort.id, value: job.input.reasoningEffort })
       }
-      const result = Schema.decodeUnknownSync(Schema.Struct({ stopReason: Schema.String }))(
-        await rpc.request("session/prompt", {
-          sessionId: session.sessionId,
-          prompt: [{ type: "text", text: prompt(job) }]
-        })
-      )
-      if (result.stopReason !== "end_turn") throw new BridgeFailure("UNAVAILABLE")
-      return withThought(parseAnswer(text), thought)
-    } finally {
-      rpc.close()
-    }
-  })
+      return session.sessionId
+    })(), startSignal)
+  } catch (error) {
+    close()
+    throw error
+  }
+  return {
+    close,
+    step: async (text, signal, onThought) => {
+      if (closed) throw new BridgeFailure("UNAVAILABLE")
+      collector = { text: "", thought: "", onThought }
+      try {
+        const result = Schema.decodeUnknownSync(Schema.Struct({ stopReason: Schema.String }))(
+          await guard(rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] }), signal))
+        if (result.stopReason !== "end_turn") throw new BridgeFailure("UNAVAILABLE")
+        return collector.text
+      } finally {
+        collector = null
+      }
+    },
+  }
 }
+

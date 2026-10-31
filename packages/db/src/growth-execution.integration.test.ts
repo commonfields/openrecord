@@ -59,7 +59,7 @@ suite("connected execution persistence and guards (disposable TEST fixtures)", (
     return o.id
   }
   const planFor = (f: F, over: Partial<PreparedExecution> = {}): PreparedExecution => ({
-    targetId: f.target.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: "https://salon.test/pricing.html", siteFindingId: null, baseBranch: "main",
+    targetId: f.target.id, actionKind: "REMOVE_NOINDEX_META", actionValue: null, filePath: PAGE, liveUrl: "https://salon.test/pricing.html", siteFindingId: null, baseBranch: "main",
     baseCommitSha: sha1("base"), baseBlobSha: sha1(`blob-before-${randomUUID()}`), afterBlobSha: sha1("blob-after"), beforeSha256: sha(BEFORE), afterSha256: sha(AFTER),
     patchSha256: sha(`patch-${randomUUID()}`), afterContent: AFTER, diff: "--- a/pricing.html\n+++ b/pricing.html", rationale: "TEST remove an accidental noindex", idempotencyKey: randomUUID(), ...over,
   })

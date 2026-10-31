@@ -46,8 +46,10 @@ export interface BuiltContext {
   readonly budgetChars: number
 }
 
+/** The resume brief (6,000 characters) plus the business memory (3,000) and their separator. */
+const RESUME_CHARS = 9100
 export const buildContext = (history: ReadonlyArray<ContextMessage>, message: string, budget: ContextBudget = DEFAULT_CONTEXT_BUDGET, resumeContext?: string): BuiltContext => {
-  const resume = resumeContext?.slice(0, Math.min(6000, Math.max(0, budget.historyChars))) ?? ""
+  const resume = resumeContext?.slice(0, Math.min(RESUME_CHARS, Math.max(0, budget.historyChars))) ?? ""
   const historyBudget = Math.max(0, budget.historyChars - resume.length)
   // Verbatim window: newest first, within three quarters of the budget, so the
   // memory of older turns always has room.

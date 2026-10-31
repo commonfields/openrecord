@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest"
 import type { HttpTransport } from "@openrecord/representation"
 import { auditSite, mapSite } from "./site-audit.js"
-import { contextDev, makeSafeFetcher, makeWebAccess, readRobots, type WebAccessService, type WebDocument, type WebKind } from "./web-access.js"
+import { contextDev, geminiSearch, geminiSearchFromEnv, makeSafeFetcher, makeWebAccess, readRobots, type WebAccessService, type WebDocument, type WebKind } from "./web-access.js"
 
 type Route = { status: number; type?: string; body?: string; ms?: number; location?: string }
 const site = (routes: Record<string, Route>) => {
@@ -149,6 +149,43 @@ describe("web access", () => {
     expect(calls[0]).toEqual({ url: "https://api.context.dev/v1/web/search", body: { query: "clinic booking", numResults: 5, descriptionMaxCharacters: 300 }, auth: "Bearer k" })
     expect(calls[1]?.body).toEqual({ url: "https://a.test/", formats: { markdown: true }, sharedParams: { mainContentOnly: true } })
     expect(() => contextDev({ apiKey: "k", baseUrl: "http://api.context.dev/v1" })).toThrow()
+  })
+
+  it("searches through Gemini's Google Search grounding, resolving each source to its page with the text attributed to it", async () => {
+    const redirect = (n: number) => `https://vertexaisearch.cloud.google.com/grounding-api-redirect/R${n}`
+    const calls: Array<{ url: string; key: string | null; body: unknown; redirect: RequestInit["redirect"] }> = []
+    const fake = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, key: new Headers(init?.headers).get("x-goog-api-key"), body: init?.body ? JSON.parse(String(init.body)) : null, redirect: init?.redirect })
+      if (url.includes(":generateContent")) return new Response(JSON.stringify({ candidates: [{ groundingMetadata: {
+        groundingChunks: [{ web: { uri: redirect(1), title: "a.test" } }, { web: { uri: redirect(2), title: "b.test" } }, { web: { uri: redirect(3), title: "a.test" } }, { web: { uri: "https://evil.test/redirect", title: "evil" } }],
+        groundingSupports: [{ segment: { text: "A says **one**" }, groundingChunkIndices: [0] }, { segment: { text: "and two" }, groundingChunkIndices: [0, 1] }],
+      } }] }), { status: 200 })
+      const target = { R1: "https://a.test/x", R2: "https://b.test/y", R3: "https://a.test/x" }[url.split("/").pop() as "R1"]
+      return new Response(null, { status: 302, headers: { location: target } })
+    }) as typeof fetch
+    const results = await geminiSearch({ apiKey: "k", model: "gemini-3.8-flash", fetch: fake }).search("clinic booking", 5)
+    expect(results).toEqual([
+      { url: "https://a.test/x", title: "a.test", description: "A says one and two" },
+      { url: "https://b.test/y", title: "b.test", description: "and two" },
+      { url: "https://evil.test/redirect", title: "evil", description: "" },
+    ])
+    expect(calls[0]).toMatchObject({ key: "k", redirect: "error", body: { tools: [{ google_search: {} }] } })
+    expect(JSON.stringify(calls[0]?.body)).toContain("clinic booking")
+    // Only Google's grounding links are resolved, one hop and never followed.
+    expect(calls.filter(c => c.url.startsWith("https://vertexaisearch")).every(c => c.redirect === "manual")).toBe(true)
+    expect(calls.some(c => c.url.startsWith("https://evil.test"))).toBe(false)
+    expect(() => geminiSearch({ apiKey: "k", model: "../x" })).toThrow()
+  })
+
+  it("uses Gemini search only with its own key or a consented hosted Gemini model, and prefers context.dev", () => {
+    expect(geminiSearchFromEnv({})).toBeNull()
+    expect(geminiSearchFromEnv({ AGENT_API_KEY: "k", AGENT_MODEL: "gemini-3.8-flash" })).toBeNull()
+    expect(geminiSearchFromEnv({ AGENT_API_KEY: "k", AGENT_MODEL: "gemini-3.8-flash", AGENT_EXTERNAL_PROCESSING_ENABLED: "true" })).toEqual({ apiKey: "k", model: "gemini-3.5-flash-lite" })
+    expect(geminiSearchFromEnv({ AGENT_PROVIDER: "cliproxy", AGENT_API_KEY: "k", AGENT_EXTERNAL_PROCESSING_ENABLED: "true" })).toBeNull()
+    expect(geminiSearchFromEnv({ GEMINI_SEARCH_API_KEY: "s", GEMINI_SEARCH_MODEL: "gemini-3.8-flash" })).toEqual({ apiKey: "s", model: "gemini-3.8-flash" })
+    expect(makeWebAccess({ geminiSearch: { apiKey: "k", model: "gemini-3.8-flash" } }).provider).toBe("Google Search through Gemini")
+    expect(makeWebAccess({ contextDev: { apiKey: "c" }, geminiSearch: { apiKey: "k", model: "gemini-3.8-flash" } }).provider).toBe("context.dev")
   })
 
   it("maps a site's pages by section from its sitemap and home links, without reading them or disallowed pages", async () => {

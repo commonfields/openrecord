@@ -19,6 +19,7 @@ import { diagnoseMarketingProblems, firstImprovementDeclarations, proposeFirstIm
 import { STARTS_WORK } from "./agent-session-tools.js"
 import { dispatchInvestigation, investigationDeclarations } from "./agent-investigation-tools.js"
 import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-tools.js"
+import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -50,11 +51,13 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
   ...executionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
-    effect: declaration.name === "prepare_noindex_change" ? "propose" : "read",
-    replay: declaration.name === "prepare_noindex_change" ? "deduplicated" : "safe", scope: "general",
+    effect: declaration.name === "prepare_page_change" ? "propose" : "read",
+    replay: declaration.name === "prepare_page_change" ? "deduplicated" : "safe", scope: "general",
     run: (ctx, args) => dispatchExecutionTool(ctx, declaration.name, args) })),
   ...investigationDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),
+  ...memoryDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
+    run: (ctx, args) => dispatchMemory(ctx, declaration.name, args) })),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchGrowthProposal(ctx.accountId, ctx.userId, ctx.businessId, args) })),
   ...draftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
@@ -121,6 +124,7 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
     }
     return { ...toolFailure("REFUSED"), guidance: guidance[reason ?? ""] ?? toolFailure("REFUSED").guidance }
   }
+  if (tag === "MemoryFull") return { ...toolFailure("REFUSED"), guidance: "Business memory is full. Forget an outdated or less useful note with forget_memory first, then save this one." }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")
   return toolFailure("TOOL_FAILED")
 }

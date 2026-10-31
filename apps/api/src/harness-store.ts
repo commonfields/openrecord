@@ -237,6 +237,12 @@ export const completeHarnessJob = (bridge: BridgeIdentity, id: string, result: H
 const withoutThoughts = (contents: HarnessModelInput["contents"]) => contents.map(c => ({ ...c,
   parts: c.parts.filter(p => !(typeof p === "object" && p !== null && (p as { thought?: unknown }).thought === true)) }))
 
+/** The largest model input a bridge job may carry. Instructions and tool
+ * declarations alone are about 55 KB and the run keeps the conversation under
+ * 64,000 characters, so this leaves room for a full turn; the bridge reads
+ * job responses up to 500 KB. */
+export const HARNESS_INPUT_LIMIT = 300_000
+
 export const invokeHarness = (
   scope: Session & { businessId: string | null },
   selection: HarnessSelection,
@@ -247,7 +253,7 @@ export const invokeHarness = (
     const sql = yield* SqlClient.SqlClient
     const instance = yield* resolveHarness(scope, selection)
     const jobInput = { system: input.system, tools: input.tools, contents: withoutThoughts(input.contents), ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
-    if (Buffer.byteLength(JSON.stringify(jobInput), "utf8") > 100000) return yield* fail("CONTEXT_LIMIT")
+    if (Buffer.byteLength(JSON.stringify(jobInput), "utf8") > HARNESS_INPUT_LIMIT) return yield* fail("CONTEXT_LIMIT")
     const id = randomUUID()
     yield* sql`INSERT INTO agent_harness_jobs(id,instance_id,bridge_id,account_id,user_id,business_id,model,input)
     VALUES(${id},${instance.id},${instance.bridgeId},${scope.accountId},${scope.userId},${scope.businessId},${selection.model},${JSON.stringify(jobInput)}::jsonb)`

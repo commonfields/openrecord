@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { formatDateTime } from "@/lib/format"
-import { EXECUTION_STATE_COPY, GrowthExecutions, executionError, executionFactLines, executionStopCopy, type SiteChoice } from "@/lib/growth-execution"
+import { EXECUTION_ACTION_COPY, EXECUTION_STATE_COPY, GrowthExecutions, executionError, executionFactLines, executionStopCopy, type SiteChoice } from "@/lib/growth-execution"
 
 const TONE = { ok: "supported", wait: "outline", no: "review" } as const
 
@@ -38,7 +38,7 @@ export function ExecutionCard({ businessId, operation: o, reload }: { businessId
   const pr = o.evidence.find(e => e.kind === "PR_OPENED")
   const run = async (work: () => Promise<unknown>) => { setBusy(true); setError(null); try { await work(); await reload() } catch (err) { setError(executionError(err)); await reload().catch(() => undefined) } finally { setBusy(false) } }
   return <article className="space-y-3 rounded-md border p-3" aria-label={`Connected change ${o.filePath}`}>
-    <div className="flex flex-wrap items-center gap-2"><span className="font-medium">Remove noindex from {o.filePath}</span><Badge variant={o.state === "VERIFIED" ? "supported" : o.state === "FAILED" || o.state === "BLOCKED" ? "review" : "outline"}>{copy.title}</Badge></div>
+    <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{(EXECUTION_ACTION_COPY[o.actionKind] ?? EXECUTION_ACTION_COPY["REMOVE_NOINDEX_META"]!).title} {o.filePath}</span><Badge variant={o.state === "VERIFIED" ? "supported" : o.state === "FAILED" || o.state === "BLOCKED" ? "review" : "outline"}>{copy.title}</Badge></div>
     <p className="text-muted-foreground">{stop ?? copy.detail}</p>
     <dl className="grid gap-2 sm:grid-cols-2">
       <div><dt className="text-muted-foreground">Repository</dt><dd className="break-all">{o.owner}/{o.repository}, branch {o.baseBranch}</dd></div>
@@ -47,7 +47,7 @@ export function ExecutionCard({ businessId, operation: o, reload }: { businessId
       <div><dt className="text-muted-foreground">Change identity</dt><dd className="break-all font-mono">{o.patchSha256.slice(0, 16)}…</dd></div>
     </dl>
     <ExecutionDiff diff={o.diff} />
-    <p className="text-muted-foreground">Risk: if the page was meant to stay out of search, removing noindex makes it indexable. Boundary: OpenRecord only opens a pull request with exactly this change. It will not merge it, deploy it or edit anything else.</p>
+    <p className="text-muted-foreground">Risk: {(EXECUTION_ACTION_COPY[o.actionKind] ?? EXECUTION_ACTION_COPY["REMOVE_NOINDEX_META"]!).risk} Boundary: OpenRecord only opens a pull request with exactly this change. It will not merge it, deploy it or edit anything else.</p>
     {pr ? <p>Pull request: <a className="underline" href={String(pr.detail["prUrl"])} target="_blank" rel="noreferrer noopener">#{String(pr.detail["prNumber"])} on GitHub</a></p> : null}
     {o.receipt ? <p>GitHub merge confirmed {formatDateTime(o.receipt.mergedAt)}, merge commit <span className="font-mono">{o.receipt.mergeCommitSha.slice(0, 12)}</span>. This is recorded on the initiative as a verified merge, not as the website being live.</p> : null}
     <ExecutionFacts operation={o} />

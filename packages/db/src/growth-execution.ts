@@ -14,7 +14,7 @@ import { Context, Data, Effect, Layer, Schema } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlError } from "@effect/sql/SqlError"
 import {
-  AuthorizeExecution, CancelExecution, ConnectExecutionTarget, DispatchExecution, EXECUTION_AUTHORIZATION_HOURS, EXECUTION_TERMINAL, ExecutionActionKind,
+  AuthorizeExecution, CancelExecution, ConnectExecutionTarget, DispatchExecution, EXECUTION_AUTHORIZATION_HOURS, EXECUTION_TERMINAL, ExecutionActionKind, type ExecutionActionValue,
   ExecutionEvidenceKind, ExecutionLiveResult, ExecutionState, RequestExecutionCheck, canTransitionExecution, decodeRouteId,
   type ExecutionOperation, type ExecutionTarget,
 } from "@openrecord/contracts"
@@ -53,7 +53,7 @@ const TargetDoc = Schema.Struct({ id: Schema.UUID, businessId: Schema.UUID, prov
   baseBranch: Schema.String, siteTargetId: Schema.UUID, allowedPaths: Schema.Array(Schema.String), createdByUserId: Schema.UUID, createdAt: Schema.String })
 const OperationDoc = Schema.Struct({
   id: Schema.UUID, businessId: Schema.UUID, opportunityId: Schema.UUID, targetId: Schema.UUID, owner: Schema.String, repository: Schema.String, baseBranch: Schema.String,
-  actionKind: ExecutionActionKind, filePath: Schema.String, liveUrl: Schema.String, siteFindingId: Schema.NullOr(Schema.UUID),
+  actionKind: ExecutionActionKind, actionValue: Schema.NullOr(Json), filePath: Schema.String, liveUrl: Schema.String, siteFindingId: Schema.NullOr(Schema.UUID),
   baseCommitSha: Schema.String, baseBlobSha: Schema.String, beforeSha256: Schema.String, afterSha256: Schema.String, patchSha256: Schema.String,
   diff: Schema.String, rationale: Schema.String, proposedBy: Schema.Literal("OPERATOR", "ASSISTANT"), createdByUserId: Schema.UUID, createdAt: Schema.String,
   state: ExecutionState, revision: Schema.Int,
@@ -67,7 +67,8 @@ const OperationDoc = Schema.Struct({
 
 /** Everything computed from the provider before an operation is stored. The API builds it; the guards verify it. */
 export interface PreparedExecution {
-  readonly targetId: string; readonly actionKind: "REMOVE_NOINDEX_META"; readonly filePath: string; readonly liveUrl: string; readonly siteFindingId: string | null
+  readonly targetId: string; readonly actionKind: ExecutionActionKind; readonly actionValue: ExecutionActionValue | null
+  readonly filePath: string; readonly liveUrl: string; readonly siteFindingId: string | null
   readonly baseBranch: string; readonly baseCommitSha: string; readonly baseBlobSha: string; readonly afterBlobSha: string
   readonly beforeSha256: string; readonly afterSha256: string; readonly patchSha256: string; readonly afterContent: string; readonly diff: string
   readonly rationale: string; readonly idempotencyKey: string
@@ -214,9 +215,9 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       yield* member(session, businessId)
       const locked = yield* sql`SELECT id FROM growth_opportunities WHERE id=${opportunityId} AND business_id=${businessId} FOR UPDATE`
       if (!locked.length) return yield* refuse("OpportunityNotFound")
-      const inserted = yield* guard(sql`INSERT INTO growth_execution_operations(business_id,opportunity_id,target_id,action_kind,file_path,live_url,site_finding_id,base_branch,
+      const inserted = yield* guard(sql`INSERT INTO growth_execution_operations(business_id,opportunity_id,target_id,action_kind,action_value,file_path,live_url,site_finding_id,base_branch,
           base_commit_sha,base_blob_sha,after_blob_sha,before_sha256,after_sha256,patch_sha256,after_content,diff,rationale,proposed_by,created_by_user_id,request_key,request_fingerprint)
-        VALUES(${businessId},${opportunityId},${plan.targetId},${plan.actionKind},${plan.filePath},${plan.liveUrl},${plan.siteFindingId},${plan.baseBranch},${plan.baseCommitSha},${plan.baseBlobSha},
+        VALUES(${businessId},${opportunityId},${plan.targetId},${plan.actionKind},${plan.actionValue === null ? null : JSON.stringify(plan.actionValue)}::jsonb,${plan.filePath},${plan.liveUrl},${plan.siteFindingId},${plan.baseBranch},${plan.baseCommitSha},${plan.baseBlobSha},
           ${plan.afterBlobSha},${plan.beforeSha256},${plan.afterSha256},${plan.patchSha256},${plan.afterContent},${plan.diff},${plan.rationale},${actor},${session.userId},${plan.idempotencyKey},${fingerprint})
         RETURNING id`).pipe(Effect.catchIf((e): e is SqlError => (e as { cause?: { code?: string } }).cause?.code === "23505", () => refuse("IdempotencyConflict")))
       const id = String(inserted[0]!["id"])
@@ -348,6 +349,7 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
   } satisfies Context.Tag.Service<GrowthExecutionRepository>
 }))
 
-export const executionRequestFingerprint = (p: { opportunityId: string; targetId: string; actionKind: string; filePath: string; liveUrl: string; rationale: string; siteFindingId: string | null }): string =>
-  sha256(JSON.stringify([p.opportunityId, p.targetId, p.actionKind, p.filePath, p.liveUrl, p.rationale.trim(), p.siteFindingId]))
+export const executionRequestFingerprint = (p: { opportunityId: string; targetId: string; actionKind: string; value?: unknown; filePath: string; liveUrl: string; rationale: string; siteFindingId: string | null }): string =>
+  // The noindex fingerprint is unchanged, so requests prepared before page edits still replay.
+  sha256(JSON.stringify([p.opportunityId, p.targetId, p.actionKind, p.filePath, p.liveUrl, p.rationale.trim(), p.siteFindingId, ...(p.value === undefined || p.value === null ? [] : [p.value])]))
 export const isTerminalExecutionState = (s: ExecutionState): boolean => (EXECUTION_TERMINAL as ReadonlyArray<string>).includes(s)
