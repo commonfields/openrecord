@@ -9,6 +9,7 @@ import { Schema } from "effect"
 import { HARNESS_NAMES, HarnessDriver, type HarnessJobResult, type HarnessReport } from "@openrecord/contracts"
 import { LocalInstance, executableFor, execute, probe } from "./adapters.js"
 import { sessions } from "./sessions.js"
+import { UsageLimits } from "./limits.js"
 import { BridgeClient, serverOrigin } from "./client.js"
 import { BridgeFailure, driverEnvironment } from "./process.js"
 import { CLIPROXY_DEFAULT_KEY_ENV, CLIPROXY_DEFAULT_URL, cliProxyOrigin } from "./cliproxy.js"
@@ -186,6 +187,7 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
   process.once("SIGINT", stop)
   process.once("SIGTERM", stop)
   const client = new BridgeClient(config.server, config.token)
+  const limits = new UsageLimits()
   let reports: HarnessReport[] = [],
     checkedAt = 0,
     failures = 0,
@@ -199,7 +201,7 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
         // are being checked starts at once instead of after the check.
         if (Date.now() - checkedAt > 30000 && !jobs.size && !discovering) {
           checkedAt = Date.now()
-          discovering = Promise.all(config.instances.map(probe)).then(found => { reports = found; checkedAt = Date.now() }, () => {}).finally(() => { discovering = null })
+          discovering = Promise.all(config.instances.map(probe)).then(found => { reports = limits.apply(found); checkedAt = Date.now() }, () => {}).finally(() => { discovering = null })
           if (!reports.length) await discovering
         }
         const asked = Date.now()
@@ -231,9 +233,11 @@ async function run(config: Config, releaseLock?: () => Promise<void>) {
             try {
               if (!instance) throw new BridgeFailure("UNAVAILABLE")
               result = { lease: job.lease, kind: "completed", answer: await execute(instance, job, signal, onThought) }
+              limits.clear(job.localId)
             } catch (e) {
               const reason = e instanceof BridgeFailure ? e.reason : "UNAVAILABLE"
               result = { lease: job.lease, kind: "failed", reason }
+              if (reason === "RATE_LIMITED") limits.hit(job.localId)
               if (reason === "RATE_LIMITED" || reason === "UNAUTHENTICATED")
                 reports = reports.map((report) =>
                   report.localId === job.localId

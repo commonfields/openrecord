@@ -24,6 +24,8 @@ export const HarnessReport = Schema.Struct({
   auth: Schema.Literal("authenticated", "unauthenticated", "unknown"),
   accountLabel: Schema.optional(Schema.NullOr(Text(200))),
   state: Schema.Literal("ready", "unavailable", "usage_limited", "error"),
+  /** When a usage limit lifts, if the provider says (ISO time). */
+  limitResetsAt: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(40)))),
   models: Schema.Array(HarnessModel).pipe(Schema.maxItems(500)),
   modelsTruncated: Schema.optional(Schema.Boolean)
 })
@@ -40,6 +42,7 @@ export const HarnessInstance = Schema.Struct({
   auth: Schema.Literal("authenticated", "unauthenticated", "unknown"),
   accountLabel: Schema.optional(Schema.NullOr(Text(200))),
   state: Schema.Literal("ready", "unavailable", "usage_limited", "error", "offline"),
+  limitResetsAt: Schema.optional(Schema.NullOr(Schema.String)),
   models: Schema.Array(HarnessModel),
   modelsTruncated: Schema.optional(Schema.Boolean),
   checkedAt: Schema.String

@@ -59,6 +59,8 @@ if (args[0] === "exec") {
     if (request.method === "initialize") send({ id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } })
     else if (request.method === "account/read")
       send({ id: request.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } })
+    else if (request.method === "account/rateLimits/read")
+      send({ id: request.id, result: { ordinaryUsageAllowed: true, rateLimits: { primary: { usedPercent: 5, resetsAt: 1793454769 } } } })
     else if (request.method === "model/list")
       send({ id: request.id, result: { data: [{ id: "fixture-model", displayName: "TEST model", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "future-option" }] }] } })
     else if (request.method === "session/new")

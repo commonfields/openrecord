@@ -112,6 +112,17 @@ Never print or share API keys, tokens, or anything under ~/.openrecord.`
 
 // ---- model selection ----
 
+/** "Usage limit reached, resets Nov 4, 2:36 PM", or without a time when the provider did not say. */
+export function usageLimitLabel(resetsAt: string | null | undefined, now = new Date()): string {
+  const at = resetsAt ? new Date(resetsAt) : null
+  if (!at || Number.isNaN(at.getTime()) || at <= now) return "Usage limit reached"
+  const sameDay = at.toDateString() === now.toDateString()
+  const when = sameDay
+    ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : at.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+  return `Usage limit reached, resets ${sameDay ? "at " : ""}${when}`
+}
+
 export function harnessStatusLabel(instance: HarnessInstance, checking: boolean): string | null {
   if (!instance.enabled) return null
   if (instance.state === "offline") return "Bridge offline"
@@ -119,7 +130,7 @@ export function harnessStatusLabel(instance: HarnessInstance, checking: boolean)
   if (checking) return "Checking authentication…"
   if (instance.auth === "unauthenticated") return "Authentication failed"
   if (instance.state === "error" || instance.state === "unavailable") return "Connection failed"
-  if (instance.state === "usage_limited") return "Usage limited"
+  if (instance.state === "usage_limited") return usageLimitLabel(instance.limitResetsAt)
   if (instance.auth === "unknown") return "Authentication status unavailable"
   return "Connected"
 }
