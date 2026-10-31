@@ -79,7 +79,7 @@ export const harnessCatalog = (session: Session) =>
     const bridges = yield* sql`SELECT id,name,(last_seen_at > now()-interval '90 seconds') AS online,managed
     FROM agent_bridges WHERE account_id=${session.accountId} AND user_id=${session.userId} AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at`
     const rows = yield* sql`SELECT i.id,i.bridge_id AS "bridgeId",i.local_id AS "localId",i.driver,i.name,i.enabled,
-    i.report->'installed' AS installed,i.report->'version' AS version,i.report->'auth' AS auth,i.report->'accountLabel' AS "accountLabel",coalesce(i.report->'modelsTruncated','false'::jsonb) AS "modelsTruncated",
+    i.report->'installed' AS installed,i.report->'version' AS version,i.report->'auth' AS auth,i.report->'accountLabel' AS "accountLabel",coalesce(i.report->'modelsTruncated','false'::jsonb) AS "modelsTruncated",i.report->>'limitResetsAt' AS "limitResetsAt",
     CASE WHEN b.last_seen_at>now()-interval '90 seconds' THEN i.report->>'state' ELSE 'offline' END AS state,
     i.report->'models' AS models,to_char(i.checked_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "checkedAt"
     FROM agent_harness_instances i JOIN agent_bridges b ON b.id=i.bridge_id AND b.revoked_at IS NULL

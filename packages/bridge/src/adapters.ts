@@ -15,6 +15,7 @@ import {
 import { createInterface } from "node:readline"
 import { BridgeFailure, RpcProcess, capture, driverEnvironment, failureReason, launch, stopProcess } from "./process.js"
 import { sessions, type WarmProcess } from "./sessions.js"
+import { prepareSearchPath, searchPath } from "./discovery.js"
 import { executeCliProxy, probeCliProxy } from "./cliproxy.js"
 
 export const LocalInstance = Schema.Struct({
@@ -58,6 +59,9 @@ const CodexModels = Schema.Struct({
 
 function environment(instance: LocalInstance) {
   const env = driverEnvironment(instance.driver)
+  // Found through the effective PATH, a CLI also runs with it (an nvm-installed
+  // CLI needs its node, a Homebrew one its libraries).
+  env["PATH"] = searchPath()
   if (instance.home) {
     if (instance.driver === "codex") env["CODEX_HOME"] = instance.home
     else if (instance.driver === "claude") env["CLAUDE_CONFIG_DIR"] = instance.home
@@ -75,7 +79,6 @@ async function resolveBinary(instance: LocalInstance, cwd: string, env: NodeJS.P
   const names = instance.driver === "cursor" ? ["cursor-agent", "agent"] : [BINARY[instance.driver]]
   const directories = [
     ...(instance.driver === "opencode" ? [join(homedir(), ".opencode", "bin")] : []),
-    join(homedir(), ".local", "bin"),
     ...(env["PATH"] ?? "").split(delimiter).filter((p) => p && !p.includes("node_modules"))
   ]
   const candidates = instance.binary
@@ -180,11 +183,13 @@ export async function withWorkspace<A>(act: (cwd: string) => Promise<A>) {
 }
 
 export async function executableFor(instance: LocalInstance) {
+  await prepareSearchPath()
   return withWorkspace(async (cwd) => (await resolveBinary(instance, cwd, environment(instance))).binary)
 }
 
 export async function probe(instance: LocalInstance): Promise<HarnessReport> {
   if (instance.driver === "cliproxy") return probeCliProxy(instance)
+  await prepareSearchPath()
   const base: HarnessReport = {
     localId: instance.id,
     driver: instance.driver,
@@ -216,8 +221,13 @@ export async function probe(instance: LocalInstance): Promise<HarnessReport> {
               })
             )(await rpc.request("account/read", { refreshToken: false }))
             const catalog = Schema.decodeUnknownSync(CodexModels)(await rpc.request("model/list", { limit: 100 }))
+            // The plan's usage windows; a reached limit is reported with when it lifts.
+            // Older Codex versions may not answer; that only leaves the limit unknown.
+            const limitAnswer = await Promise.race([rpc.request("account/rateLimits/read", {}), new Promise(resolve => setTimeout(resolve, 5000, null))]).catch(() => null)
+            const limit = codexLimit(limitAnswer)
             return {
               ...installed,
+              ...(limit ? { state: "usage_limited" as const, limitResetsAt: limit.resetsAt } : {}),
               accountLabel: account.account?.email ?? account.account?.type ?? null,
               auth:
                 account.account !== null
@@ -225,7 +235,7 @@ export async function probe(instance: LocalInstance): Promise<HarnessReport> {
                   : account.requiresOpenaiAuth === false
                     ? "unknown"
                     : "unauthenticated",
-              state: catalog.data.length ? "ready" : "unavailable",
+              ...(limit ? {} : { state: catalog.data.length ? "ready" as const : "unavailable" as const }),
               models: catalog.data.map(m => {
                 const reasoningEfforts = [...new Set((m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).filter(Schema.is(HarnessReasoningEffort)))]
                 return { id: m.model ?? m.id, name: m.displayName, ...(reasoningEfforts.length ? { reasoningEfforts } : {}) }
@@ -340,6 +350,7 @@ export function codexReasoning(jsonl: string): string {
 const withThought = (answer: HarnessAnswer, thought: string): HarnessAnswer => thought.trim() ? { ...answer, thought: thought.trim().slice(-8000) } : answer
 
 export async function execute(instance: LocalInstance, job: HarnessJob, signal: AbortSignal, onThought?: (thought: string) => void): Promise<HarnessAnswer> {
+  await prepareSearchPath()
   if (instance.id !== job.localId || instance.driver !== job.driver) throw new BridgeFailure("UNAVAILABLE")
   if (instance.driver === "cliproxy") return executeCliProxy(instance, job, signal, process.env, onThought)
   if (job.input.reasoningEffort && instance.driver !== "codex" && instance.driver !== "opencode") throw new BridgeFailure("UNAVAILABLE")
@@ -571,5 +582,18 @@ async function acpProcess(instance: LocalInstance, binary: string, env: NodeJS.P
       }
     },
   }
+}
+
+/** Whether Codex's plan has reached a usage limit, and when it lifts, from
+ * account/rateLimits/read. Null when usage is allowed or the answer is unknown. */
+export function codexLimit(raw: unknown): { resetsAt: string | null } | null {
+  const r = (raw ?? {}) as { ordinaryUsageAllowed?: unknown; rateLimits?: { primary?: unknown; secondary?: unknown; rateLimitReachedType?: unknown } | null }
+  const windows = [r.rateLimits?.primary, r.rateLimits?.secondary]
+    .flatMap(w => w && typeof w === "object" ? [w as { usedPercent?: unknown; resetsAt?: unknown }] : [])
+  const full = windows.filter(w => typeof w.usedPercent === "number" && w.usedPercent >= 100)
+  const reached = r.ordinaryUsageAllowed === false || full.length > 0 || typeof r.rateLimits?.rateLimitReachedType === "string"
+  if (!reached) return null
+  const resets = (full.length ? full : windows).map(w => w.resetsAt).filter((t): t is number => typeof t === "number" && t > 0)
+  return { resetsAt: resets.length ? new Date(Math.max(...resets) * 1000).toISOString() : null }
 }
 
