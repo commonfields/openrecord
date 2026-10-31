@@ -329,6 +329,22 @@ html[data-reduce-motion] *::after {
 .dark .name-shimmer {
   --shimmer-light: white;
 }
+/* Colored identity marks (business marks): the flat hue keeps its color but
+   gains a lit top and a shaded bottom inside the same hue, plus the lit top
+   edge, crisp ring and contact shadow the active control carries. The
+   gradient is a transparency overlay, so any mark hue picks it up. */
+.mark-shine {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.3),
+    rgb(255 255 255 / 0.05) 50%,
+    rgb(0 0 0 / 0.16)
+  );
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.14);
+}
+.dark .mark-shine {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 0 0 1px rgb(0 0 0 / 0.55), 0 1px 2px rgb(0 0 0 / 0.4);
+}
 /* A working chat's dot: two steady beats a second. */
 @keyframes status-pulse {
   0%,

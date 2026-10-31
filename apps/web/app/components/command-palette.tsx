@@ -149,7 +149,7 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
         id: `business:${b.id}`,
         group: "Switch business",
         label: b.name,
-        icon: <span className={`flex size-4 items-center justify-center rounded text-[0.5625rem] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
+        icon: <span className={`mark-shine flex size-4 items-center justify-center rounded text-[0.5625rem] font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>,
         run: go(`/businesses/${b.id}/agent`),
       })
     }

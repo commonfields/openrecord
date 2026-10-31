@@ -685,7 +685,7 @@ function BusinessMark({ name, className }: { name: string | null; className?: st
   return (
     <span
       className={cn(
-        "flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
+        "mark-shine flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
         color.bg,
         color.text,
         className,

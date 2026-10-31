@@ -167,7 +167,7 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
         aria-label={`${c.name}, open growth workspace`}
       >
         <span className="flex min-w-0 items-center gap-3">
-          <span className={`flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(c.name).bg} ${markColor(c.name).text}`}>{initial(c.name)}</span>
+          <span className={`mark-shine flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(c.name).bg} ${markColor(c.name).text}`}>{initial(c.name)}</span>
           <span className="min-w-0">
             <span className="flex items-center gap-2">
               <span className="truncate font-medium">{c.name}</span>

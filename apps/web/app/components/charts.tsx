@@ -503,3 +503,31 @@ export function Sparkline({ values, cssVar = "--muted-foreground", className }: 
     </svg>
   )
 }
+
+/** Inline trend for stat tiles as a bar column per value. Every value gets a
+    slot: zero days show a faint track stub, live days show a solid bar
+    scaled to the largest value, so a sparse window still reads as a chart.
+    `labels` (same length) attach date tooltips to each slot. Tracks are
+    placeholders, not data: column height only means magnitude for live
+    days. */
+export function SparkBars({ values, labels, cssVar = "--muted-foreground", className }: { values: readonly number[]; labels?: readonly string[]; cssVar?: string; className?: string }) {
+  const max = Math.max(...values) || 1
+  return (
+    <span
+      className={cn("reveal-x flex h-5 w-full items-end gap-px overflow-visible", className)}
+      style={{ color: `var(${cssVar})` }}
+      aria-hidden
+    >
+      {values.map((v, i) => (
+        <span
+          key={i}
+          title={labels?.[i] !== undefined ? `${labels[i]} · ${v}` : undefined}
+          className="relative flex min-w-0 flex-1 items-end self-stretch"
+        >
+          <span className="absolute inset-0 rounded-t-[2px] bg-current opacity-[0.1]" aria-hidden />
+          {v ? <span className="relative w-full rounded-t-[2px] bg-current" style={{ height: `${Math.max((v / max) * 100, 8)}%` }} /> : null}
+        </span>
+      ))}
+    </span>
+  )
+}
