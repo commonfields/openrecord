@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Sparkline } from "@/components/charts"
+import { SparkBars } from "@/components/charts"
 import { CreateBusinessDialog } from "@/components/create-business-dialog"
 import { EmptyState, PageHeader, Panel, StatStrip } from "@/components/page"
 import { AnalyticsApi, Issues, type Analytics, type Business, type Overview, type VerdictCounts } from "@/lib/api"
-import { initial, markColor, relativeTime } from "@/lib/format"
+import { formatDate, initial, markColor, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -173,7 +173,19 @@ function PortfolioRow({ row }: { row: Row }) {
     if (!a) return []
     const byDate = new Map<string, number>()
     for (const d of a.providerDaily) byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.answers)
-    return [...byDate.entries()].sort((x, y) => x[0].localeCompare(y[0])).slice(1).map(([, v]) => v)
+    // Fixed trailing 7-day window anchored on the newest data, so quiet
+    // days stay visible as empty slots instead of collapsing the chart to
+    // a lone bar. The first present day is dropped as a partial aggregate,
+    // matching the older trend-line behavior.
+    const days = [...byDate.entries()].sort((x, y) => x[0].localeCompare(y[0])).slice(1)
+    const last = days[days.length - 1]
+    if (days.length === 0 || !last) return null
+    const anchor = new Date(`${last[0]}T00:00:00Z`)
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(anchor.getTime() - (6 - i) * 86400000)
+      const key = date.toISOString().slice(0, 10)
+      return { date: key, value: byDate.get(key) ?? 0 }
+    })
   }, [a])
   const attention = o ? Number(o.needs_attention) : 0
   const unreviewed = o ? Number(o.unreviewed) : 0
@@ -184,7 +196,7 @@ function PortfolioRow({ row }: { row: Row }) {
         className="grid items-center gap-x-4 gap-y-2 px-4 py-2.5 text-xs transition-colors hover:bg-muted/40 md:grid-cols-[minmax(0,1.4fr)_7rem_minmax(0,1fr)_6rem_6rem_7rem_1rem]"
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <span className={`flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>
+          <span className={`mark-shine flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(b.name).bg} ${markColor(b.name).text}`}>{initial(b.name)}</span>
           <span className="min-w-0">
             <span className="block truncate font-medium">{b.name}</span>
             <span className="block text-[0.6875rem] text-muted-foreground">{loading ? "Loading…" : o ? `${Number(o.completed).toLocaleString()} checks done` : "No data"}</span>
@@ -205,7 +217,7 @@ function PortfolioRow({ row }: { row: Row }) {
             </>
           )}
         </span>
-        <span>{loading ? <Skeleton className="h-4 w-full" /> : answers.length > 1 ? <Sparkline values={answers} cssVar="--chart-primary" className="h-6" /> : <span className="text-[0.6875rem] text-muted-foreground">No answers collected yet</span>}</span>
+        <span>{loading ? <Skeleton className="h-4 w-full" /> : answers !== null ? <SparkBars values={answers.map((d) => d.value)} labels={answers.map((d) => formatDate(d.date))} cssVar="--chart-primary" className="h-6" /> : <span className="text-[0.6875rem] text-muted-foreground">No answers collected yet</span>}</span>
         <span className={cn("text-right font-medium tabular-nums", attention > 0 && "text-wrong")}>{loading ? "" : attention.toLocaleString()}</span>
         <span className={cn("text-right font-medium tabular-nums", unreviewed > 0 && "text-review")}>{loading ? "" : unreviewed.toLocaleString()}</span>
         <span className="text-right text-muted-foreground">{loading ? "" : o?.last_checked ? relativeTime(o.last_checked) : "Never"}</span>
