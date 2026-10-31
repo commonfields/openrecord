@@ -121,5 +121,5 @@ and renewal evidence. Do not describe fixtures or dogfood as paid validation.
 Keep expansion frozen until five agencies genuinely pay.
 
 Legacy domain redirects are an external infrastructure task if the owner still
-controls Ghostping domains. Repository branding cleanup does not prove that
-DNS or redirects were configured.
+controls the pre-rebrand domains. Repository branding cleanup does not prove
+that DNS or redirects were configured.
