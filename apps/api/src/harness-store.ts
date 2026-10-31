@@ -135,7 +135,7 @@ export const resolveHarness = (session: Session, selection: HarnessSelection) =>
     if (!instance.enabled || !instance.installed || instance.state !== "ready" || instance.auth === "unauthenticated")
       return yield* fail("UNAVAILABLE")
     if (!instance.models.some((m) => m.id === selection.model)) return yield* fail("MODEL_UNAVAILABLE")
-    if (selection.reasoningEffort && ((instance.driver !== "codex" && instance.driver !== "opencode") || !instance.models.find(m => m.id === selection.model)?.reasoningEfforts?.includes(selection.reasoningEffort)))
+    if (selection.reasoningEffort && ((instance.driver !== "codex" && instance.driver !== "opencode" && instance.driver !== "claude") || !instance.models.find(m => m.id === selection.model)?.reasoningEfforts?.includes(selection.reasoningEffort)))
       return yield* fail("MODEL_UNAVAILABLE")
     return instance
   })
