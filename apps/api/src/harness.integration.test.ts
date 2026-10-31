@@ -188,7 +188,7 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
           { instanceId: c.instance.id, model: "fixture-model" },
           {
             system: "TEST",
-            contents: [{ role: "user", parts: [{ text: "界".repeat(40000) }] }],
+            contents: [{ role: "user", parts: [{ text: "界".repeat(120000) }] }],
             tools: []
           }
         )

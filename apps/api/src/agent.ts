@@ -68,7 +68,10 @@ export const turnPlan = (workflow: AgentSkill | null) => {
 /** Per-run limits. When either runs out, the model gets one last step without
  * further tools to answer from what it has, instead of losing the work. */
 export interface RunBudget { readonly modelSteps: number; readonly toolCalls: number }
-export const DEFAULT_RUN_BUDGET: RunBudget = { modelSteps: 8, toolCalls: 12 }
+// Room for real work in one turn (audit, research, compare, then propose).
+// Warm bridge sessions keep a step to a few seconds, so a full budget still
+// fits well inside TURN_LIMIT_MS; workflows and wake-ups set their own.
+export const DEFAULT_RUN_BUDGET: RunBudget = { modelSteps: 16, toolCalls: 32 }
 const MAX_CONTEXT_CHARS = 64000
 const MAX_RESULT_CHARS = 18000
 const FINAL_NOTICE = "OpenRecord runtime notice: the step or tool budget for this request is used up. Do not call more tools. Answer now from the evidence above and say plainly what was not checked."
