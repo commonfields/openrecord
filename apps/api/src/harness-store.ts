@@ -79,7 +79,7 @@ export const harnessCatalog = (session: Session) =>
     const bridges = yield* sql`SELECT id,name,(last_seen_at > now()-interval '90 seconds') AS online,managed
     FROM agent_bridges WHERE account_id=${session.accountId} AND user_id=${session.userId} AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at`
     const rows = yield* sql`SELECT i.id,i.bridge_id AS "bridgeId",i.local_id AS "localId",i.driver,i.name,i.enabled,
-    i.report->'installed' AS installed,i.report->'version' AS version,i.report->'auth' AS auth,i.report->'accountLabel' AS "accountLabel",coalesce(i.report->'modelsTruncated','false'::jsonb) AS "modelsTruncated",i.report->>'limitResetsAt' AS "limitResetsAt",
+    i.report->'installed' AS installed,i.report->'version' AS version,i.report->'auth' AS auth,i.report->'accountLabel' AS "accountLabel",coalesce(i.report->'modelsTruncated','false'::jsonb) AS "modelsTruncated",i.report->>'limitResetsAt' AS "limitResetsAt",to_jsonb(i.disabled_models) AS "disabledModels",
     CASE WHEN b.last_seen_at>now()-interval '90 seconds' THEN i.report->>'state' ELSE 'offline' END AS state,
     i.report->'models' AS models,to_char(i.checked_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "checkedAt"
     FROM agent_harness_instances i JOIN agent_bridges b ON b.id=i.bridge_id AND b.revoked_at IS NULL
@@ -90,6 +90,27 @@ export const harnessCatalog = (session: Session) =>
       )(bridges),
       instances: yield* Schema.decodeUnknown(Schema.Array(HarnessInstance))(rows)
     }
+  })
+
+/** Turns one model of the person's provider on or off. Turning a model off
+ * cancels queued or running jobs on it, as turning the provider off does. */
+export const chooseHarnessModel = (session: Session, id: string, model: string, enabled: boolean) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const updated = yield* sql`UPDATE agent_harness_instances i SET disabled_models = CASE WHEN ${enabled}
+            THEN array_remove(i.disabled_models, ${model}::text)
+            ELSE (SELECT coalesce(array_agg(DISTINCT m), '{}') FROM unnest(array_append(i.disabled_models, ${model}::text)) m) END
+          FROM agent_bridges b
+          WHERE i.id=${id} AND i.account_id=${session.accountId} AND i.user_id=${session.userId} AND b.id=i.bridge_id AND b.revoked_at IS NULL
+          RETURNING i.id`
+        if (!updated.length) return yield* fail("NOT_FOUND")
+        if (!enabled)
+          yield* sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()
+            WHERE instance_id=${id} AND model=${model} AND status IN ('QUEUED','RUNNING')`
+      })
+    )
   })
 
 export const activateHarness = (session: Session, id: string, enabled: boolean) =>
@@ -134,7 +155,7 @@ export const resolveHarness = (session: Session, selection: HarnessSelection) =>
     if (!instance) return yield* fail("NOT_FOUND")
     if (!instance.enabled || !instance.installed || instance.state !== "ready" || instance.auth === "unauthenticated")
       return yield* fail("UNAVAILABLE")
-    if (!instance.models.some((m) => m.id === selection.model)) return yield* fail("MODEL_UNAVAILABLE")
+    if (!instance.models.some((m) => m.id === selection.model) || instance.disabledModels?.includes(selection.model)) return yield* fail("MODEL_UNAVAILABLE")
     if (selection.reasoningEffort && ((instance.driver !== "codex" && instance.driver !== "opencode" && instance.driver !== "claude") || !instance.models.find(m => m.id === selection.model)?.reasoningEfforts?.includes(selection.reasoningEffort)))
       return yield* fail("MODEL_UNAVAILABLE")
     return instance

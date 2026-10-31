@@ -44,6 +44,8 @@ export const HarnessInstance = Schema.Struct({
   state: Schema.Literal("ready", "unavailable", "usage_limited", "error", "offline"),
   limitResetsAt: Schema.optional(Schema.NullOr(Schema.String)),
   models: Schema.Array(HarnessModel),
+  /** Models the person turned off; every other listed model is available. */
+  disabledModels: Schema.optional(Schema.Array(Schema.String)),
   modelsTruncated: Schema.optional(Schema.Boolean),
   checkedAt: Schema.String
 })
@@ -59,6 +61,8 @@ export const HarnessCatalog = Schema.Struct({
 })
 export type HarnessCatalog = typeof HarnessCatalog.Type
 export const HarnessActivation = Schema.Struct({ enabled: Schema.Boolean })
+/** Turns one of a provider's models on or off. */
+export const HarnessModelChoice = Schema.Struct({ model: ModelId, enabled: Schema.Boolean })
 export const HarnessPairRequest = Schema.Struct({ name: Text(100) })
 export const HarnessRegister = Schema.Struct({ code: Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{43}$/)) })
 export const HarnessPoll = Schema.Struct({

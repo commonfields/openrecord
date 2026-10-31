@@ -24,6 +24,9 @@ export const HARNESS_DRIVERS = ["codex", "claude", "opencode", "cursor", "clipro
 
 export const Harness = {
   catalog: () => api<HarnessCatalog>("/api/agent/providers"),
+  /** Turns one of a provider's models on or off for the chat's model picker. */
+  chooseModel: (instanceId: string, model: string, enabled: boolean) =>
+    api<{ updated: boolean }>(`/api/agent/providers/${encodeURIComponent(instanceId)}/models`, { method: "PATCH", body: JSON.stringify({ model, enabled }) }),
   pair: (name: string) =>
     api<{ code: string; expiresAt: string }>("/api/agent/bridges/pairs", {
       method: "POST",
@@ -145,8 +148,14 @@ export function instanceReady(instance: HarnessInstance): boolean {
     instance.installed &&
     instance.auth !== "unauthenticated" &&
     instance.state === "ready" &&
-    instance.models.length > 0
+    enabledModels(instance).length > 0
   )
+}
+
+/** The provider's models the person left on; these are the ones the chat offers. */
+export function enabledModels(instance: HarnessInstance): HarnessModel[] {
+  const off = new Set(instance.disabledModels ?? [])
+  return off.size ? instance.models.filter(m => !off.has(m.id)) : [...instance.models]
 }
 
 export type ModelOption =
@@ -161,7 +170,7 @@ export function modelOptions(catalog: HarnessCatalog): ModelOption[] {
   }
   for (const driver of HARNESS_DRIVERS) {
     for (const instance of catalog.instances.filter(i => i.driver === driver && instanceReady(i))) {
-      for (const model of instance.models) {
+      for (const model of enabledModels(instance)) {
         options.push({ kind: "instance", value: `${instance.id}:${model.id}`, instance, model })
       }
     }
@@ -224,7 +233,7 @@ export function resolveSelection(catalog: HarnessCatalog | null, stored: StoredS
   if (!catalog) return { status: "unknown", stored }
   if (stored && stored.target === "instance") {
     const instance = catalog.instances.find(i => i.id === stored.instanceId)
-    const model = instance && instanceReady(instance) ? instance.models.find(m => m.id === stored.model) : undefined
+    const model = instance && instanceReady(instance) ? enabledModels(instance).find(m => m.id === stored.model) : undefined
     if (instance && model) return { status: "instance", instance, model }
     return { status: "unavailable", stored }
   }
