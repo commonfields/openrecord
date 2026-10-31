@@ -15,6 +15,7 @@ import { growthReportApi } from "./growth-report-routes.js"
 import { growthExecutionApi } from "./growth-execution-routes.js"
 import { growthGa4Api } from "./growth-ga4-routes.js"
 import { agentOriginAllowed } from "./agent-origin.js"
+import { MAX_ACTIVE, Remember, forgetNote, listMemories, rememberNote } from "./business-memory.js"
 import { readStartupGit, runtimeDiagnostic } from "./runtime.js"
 // Effect API server: HttpRouter + HttpServer over Node.
 // One typed contract (packages/contracts) shared with apps/web.
@@ -1388,6 +1389,39 @@ export const makeRouter = () => {
       return yield* json(200, { deleted: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
   )
+  // Business memory in its own chain, for the same HttpRouter arity reason.
+  const memoryApi = router.pipe(
+    // Business memory: the notes the agent keeps about this business, for the team to read, add and forget.
+    HttpRouter.get("/api/businesses/:id/memory", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? ""
+      if (!isRouteId(businessId)) return yield* json(422, malformed)
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
+      return yield* json(200, { memories: yield* listMemories(session.accountId, businessId), limit: MAX_ACTIVE }, { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "MemoryUnavailable" })))),
+    HttpRouter.post("/api/businesses/:id/memory", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? ""
+      if (!isRouteId(businessId)) return yield* json(422, malformed)
+      if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
+      const body = decodeRequest(Remember, yield* readJson)
+      if (!body) return yield* json(422, malformed)
+      const result = yield* rememberNote({ accountId: session.accountId, userId: session.userId, businessId }, body, "OPERATOR")
+      return yield* json(result.saved ? 201 : 200, result)
+    })).pipe(Effect.catchAll(e => {
+      const tag = typeof e === "object" && e !== null && "_tag" in e ? e._tag : null
+      return json(tag === "NotAuthenticated" ? 401 : tag === "MemoryFull" ? 409 : 500, { _tag: tag === "MemoryFull" ? "MemoryFull" : "MemoryUnavailable" })
+    }))),
+    HttpRouter.post("/api/businesses/:id/memory/:memoryId/forget", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const businessId = params["id"] ?? "", memoryId = params["memoryId"] ?? ""
+      if (!isRouteId(businessId) || !isRouteId(memoryId)) return yield* json(422, malformed)
+      if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
+      if (!(yield* forgetNote({ accountId: session.accountId, userId: session.userId, businessId }, memoryId))) return yield* json(404, { _tag: "MemoryNotFound" })
+      return yield* json(200, { forgotten: true })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "MemoryUnavailable" }))))
+  )
   // Discovery V1 lives in a third chain for the same HttpRouter arity
   // reason: scopes, runs (QUEUED immediately, 409 on duplicate active),
   // and candidate summaries grouped per page + lineage.
@@ -1566,7 +1600,7 @@ export const makeRouter = () => {
     ),
   )
   return HttpRouter.concat(HttpRouter.concat(objectivesApi(withSession), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
-    HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi),
+    HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi), memoryApi),
     HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   )))
 }

@@ -280,6 +280,16 @@ export type AgentChatSummary = { id: string; businessId: string | null; business
   // Set while the person has the chat archived.
   archivedAt?: string | null }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
+/** A note the agent keeps about one business across chats. */
+export type BusinessMemoryNote = { id: string; kind: "PREFERENCE" | "DECISION" | "LESSON" | "AVOID" | "CONTEXT"; text: string; source: "ASSISTANT" | "OPERATOR"; createdAt: string }
+export const BusinessMemory = {
+  list: (businessId: string) => api<{ memories: BusinessMemoryNote[]; limit: number }>(`/api/businesses/${encodeURIComponent(businessId)}/memory`),
+  add: (businessId: string, kind: BusinessMemoryNote["kind"], text: string) =>
+    api<{ memory: BusinessMemoryNote; saved: boolean }>(`/api/businesses/${encodeURIComponent(businessId)}/memory`, { method: "POST", body: JSON.stringify({ kind, text }) }),
+  forget: (businessId: string, memoryId: string) =>
+    api<{ forgotten: boolean }>(`/api/businesses/${encodeURIComponent(businessId)}/memory/${encodeURIComponent(memoryId)}/forget`, { method: "POST", body: "{}" }),
+}
+
 export const Agent = {
   conversations: (archived = false) => api<{ conversations: AgentChatSummary[] }>(`/api/agent/conversations${archived ? "?archived=1" : ""}`),
   archive: (conversationId: string, archived: boolean) =>
