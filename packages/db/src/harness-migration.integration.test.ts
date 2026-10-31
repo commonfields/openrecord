@@ -17,7 +17,7 @@ suite("harness migration rehearsal (new disposable databases only)", () => {
       await admin.connect()
       let created = false
       let client: pg.Client | undefined
-      const ADDED = ["last_request_digest", "archived_at", "parent_conversation_id", "depth", "task_title", "task_role", "user_revision"].map(c => `'${c}'`).join("-")
+      const ADDED = ["last_request_digest", "archived_at", "parent_conversation_id", "depth", "task_title", "task_role", "user_revision", "user_archived_at"].map(c => `'${c}'`).join("-")
       const fingerprint = async () => {
         if (!client) throw new Error("TEST database missing")
         const tables = await client.query<{ tablename: string }>(
