@@ -50,3 +50,30 @@ describe("usage limits", () => {
     expect(limits.apply([ready])[0]?.state).toBe("ready")
   })
 })
+
+describe("OpenCode reasoning levels", () => {
+  const models = [{ id: "a", name: "A" }, { id: "b", name: "B" }, { id: "c", name: "C" }]
+  it("asks about each model once, remembers the answer, and stays within its time budget", async () => {
+    const { withReasoningLevels } = await import("./adapters.js")
+    let now = 0
+    const asked: string[] = []
+    const lookup = async (id: string) => { asked.push(id); now += 5; return id === "a" ? ["low", "high"] as const : [] }
+    const first = await withReasoningLevels("budget-test", models, lookup, 8, () => now)
+    expect(asked).toEqual(["a", "b"])
+    expect(first).toEqual([{ id: "a", name: "A", reasoningEfforts: ["low", "high"] }, { id: "b", name: "B" }, { id: "c", name: "C" }])
+    await withReasoningLevels("budget-test", models, lookup, 8, () => now)
+    expect(asked).toEqual(["a", "b", "c"])
+    await withReasoningLevels("budget-test", models, lookup, 8, () => now)
+    expect(asked).toEqual(["a", "b", "c"])
+  })
+  it("stops asking after a failure and keeps instances apart", async () => {
+    const { withReasoningLevels } = await import("./adapters.js")
+    const asked: string[] = []
+    const failing = async (id: string) => { asked.push(id); throw new Error("TEST") }
+    expect(await withReasoningLevels("fail-test", models, failing)).toEqual(models)
+    expect(asked).toEqual(["a"])
+    const other: string[] = []
+    await withReasoningLevels("other-test", models, async id => { other.push(id); return [] })
+    expect(other).toEqual(["a", "b", "c"])
+  })
+})

@@ -131,23 +131,45 @@ function reasoningOption(options: typeof AcpConfigResponse.Type["configOptions"]
   return options?.find(option => option.category === "thought_level" || option.id === "effort")
 }
 
-async function discoverAcpModels(rpc: RpcProcess, session: typeof MODELS.Type): Promise<HarnessModel[]> {
+// The reasoning levels an ACP agent offers for each model, learned by
+// switching one session to that model. OpenCode lists over a hundred models,
+// so asking about all of them on every 30-second probe took up to 45 s. A
+// model's levels do not change between probes, so they are remembered per
+// instance, and each probe asks only about models it has not seen, within
+// DISCOVERY_BUDGET_MS; later probes fill in the rest.
+const knownEfforts = new Map<string, ReadonlyArray<HarnessReasoningEffort>>()
+export const DISCOVERY_BUDGET_MS = 8000
+
+/** Models with their reasoning levels: remembered ones at once, new ones looked up until the budget runs out. */
+export async function withReasoningLevels(
+  instanceId: string,
+  models: ReadonlyArray<HarnessModel>,
+  lookup: (modelId: string) => Promise<ReadonlyArray<HarnessReasoningEffort>>,
+  budgetMs = DISCOVERY_BUDGET_MS,
+  now: () => number = Date.now,
+): Promise<HarnessModel[]> {
+  const deadline = now() + budgetMs
+  let asking = true
+  const out: HarnessModel[] = []
+  for (const model of models) {
+    const key = `${instanceId}\u0000${model.id}`
+    if (!knownEfforts.has(key) && asking && now() < deadline) {
+      try { knownEfforts.set(key, await lookup(model.id)) } catch { asking = false }
+    }
+    const efforts = knownEfforts.get(key) ?? []
+    out.push(efforts.length ? { ...model, reasoningEfforts: [...efforts] } : model)
+  }
+  return out
+}
+
+async function discoverAcpModels(rpc: RpcProcess, session: typeof MODELS.Type, instanceId: string): Promise<HarnessModel[]> {
   const models = acpModels(session)
   const modelOption = session.configOptions?.find(option => option.category === "model" || option.id === "model")
   if (!modelOption) return models
-  const found: HarnessModel[] = []
-  const deadline = Date.now() + 45000
-  for (const model of models) {
-    if (Date.now() >= deadline) { found.push(model); continue }
-    try {
-      const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: modelOption.id, value: model.id }))
-      const reasoningEfforts = [...new Set((reasoningOption(changed.configOptions)?.options ?? []).map(option => option.value).filter(Schema.is(HarnessReasoningEffort)))]
-      found.push({ ...model, ...(reasoningEfforts.length ? { reasoningEfforts } : {}) })
-    } catch {
-      return [...found, ...models.slice(found.length)]
-    }
-  }
-  return found
+  return withReasoningLevels(instanceId, models, async modelId => {
+    const changed = Schema.decodeUnknownSync(AcpConfigResponse)(await rpc.request("session/set_config_option", { sessionId: session.sessionId, configId: modelOption.id, value: modelId }))
+    return [...new Set((reasoningOption(changed.configOptions)?.options ?? []).map(option => option.value).filter(Schema.is(HarnessReasoningEffort)))]
+  })
 }
 
 /** A fresh, empty working folder whose local project policy denies every file,
@@ -274,7 +296,7 @@ export async function probe(instance: LocalInstance): Promise<HarnessReport> {
         const rpc = new RpcProcess(binary, acpArgs(instance), cwd, env, AbortSignal.timeout(instance.driver === "opencode" ? 60000 : 25000), undefined, instance.driver === "opencode" ? 8000000 : 1000000)
         try {
           const session = await initializeAcp(rpc, cwd),
-            models = instance.driver === "opencode" ? await discoverAcpModels(rpc, session) : acpModels(session)
+            models = instance.driver === "opencode" ? await discoverAcpModels(rpc, session, instance.id) : acpModels(session)
           return { ...installed, auth: "unknown", state: models.length ? "ready" : "unavailable", models }
         } finally {
           rpc.close()
