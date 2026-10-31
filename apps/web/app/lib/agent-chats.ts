@@ -67,6 +67,26 @@ export const notifyAgentChats = () => window.dispatchEvent(new Event(EVENT))
 // Every saved conversation opens in its business's agent workspace; it is the
 // same conversation the client record's side panel shows.
 export const chatPath = (c: Pick<AgentChatSummary, "businessId" | "id">) => `${c.businessId === null ? "/agent" : `/businesses/${encodeURIComponent(c.businessId)}/agent`}?chat=${encodeURIComponent(c.id)}`
+/** The address that opens a helper session beside the current conversation, keeping which chat is open. */
+export const helperSearch = (search: string, helperId: string) => {
+  const next = new URLSearchParams(search)
+  next.set("helper", helperId)
+  return `?${next.toString()}`
+}
+
+/** The chats the person archived, newest first; null until loaded. */
+export function useArchivedChats(enabled: boolean) {
+  const [chats, setChats] = useState<AgentChatSummary[] | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    let live = true
+    const load = () => { void Agent.conversations(true).then(r => { if (live) setChats(r.conversations.filter(c => !c.parentSessionId)) }).catch(() => { if (live) setChats(c => c ?? []) }) }
+    load()
+    window.addEventListener(EVENT, load)
+    return () => { live = false; window.removeEventListener(EVENT, load) }
+  }, [enabled])
+  return chats
+}
 
 export function useAgentChats() {
   const [chats, setChats] = useState<AgentChatSummary[] | null>(null)

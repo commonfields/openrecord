@@ -8,6 +8,7 @@ import type { SearchPerformanceDays, SearchPerformanceRow, SearchTotals } from "
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PeriodSelect } from "@/components/period-select"
 import { Panel, PanelHeader, StatStrip, pathOf } from "@/components/page"
 import { GA4_CALLBACK_COPY } from "@/lib/growth-ga4"
 import { GOOGLE_CALLBACK_COPY, SearchConsole, searchConsoleError, siteLabel, type SearchConsoleSiteChoice } from "@/lib/search-console"
@@ -155,13 +156,8 @@ export function SearchPerformancePanel({ businessId }: { businessId: string }) {
   const c = totals(p?.current.totals), b = totals(p?.previous.totals)
   return (
     <Panel id="search-console">
-      <PanelHeader icon={<SearchIcon />} title="Google Search" description={p ? `${siteLabel(p.siteUrl)} · ${p.current.start} to ${p.current.end}, compared with the ${days} days before` : siteLabel(bound.siteUrl)}>
-        <div className="flex rounded-md border border-border/70 p-0.5" role="group" aria-label="Period">
-          {([7, 28, 90] as const).map(d => (
-            <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d}
-              className={cn("rounded px-2 py-0.5 text-[0.6875rem]", days === d ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground")}>{d}d</button>
-          ))}
-        </div>
+      <PanelHeader icon={<SearchIcon />} title="Google Search" description={p ? `${siteLabel(p.siteUrl)}, ${p.current.start} to ${p.current.end}, compared with the ${days} days before` : siteLabel(bound.siteUrl)}>
+        <PeriodSelect value={days} options={[7, 28, 90] as const} onChange={setDays} />
       </PanelHeader>
       {perf.error && !p ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{searchConsoleError(perf.error)}</p> : !p ? <Skeleton className="m-4 h-24 rounded-lg" /> : (
         <div className="space-y-4 px-4 pb-4">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { chatPath, mergeAgentChats, type ChatActivity } from "../app/lib/agent-chats"
+import { chatPath, helperSearch, mergeAgentChats, type ChatActivity } from "../app/lib/agent-chats"
 import type { AgentChatSummary } from "../app/lib/api"
 
 const activity = (overrides: Partial<ChatActivity> = {}): ChatActivity => ({ businessId: "b1", conversationId: "c1", requestId: "r1", title: "New question", working: true, saved: false, updatedAt: "2026-10-26T10:00:00Z", ...overrides })
@@ -38,5 +38,11 @@ describe("chat history while a reply is pending", () => {
     expect(mergeAgentChats([], new Map([["b1", activity({ working: false, saved: false })]]), [])[0]).toMatchObject({ working: false, draft: true })
     expect(mergeAgentChats([saved], new Map([["b1", activity({ working: false, saved: true })]]), [])[0]).toMatchObject({ working: false, draft: false, title: "Original question" })
     expect(mergeAgentChats([], new Map(), [])).toEqual([])
+  })
+
+  it("opens a helper beside the open chat without losing which chat it is", () => {
+    expect(helperSearch("chat=c1", "h1")).toBe("?chat=c1&helper=h1")
+    expect(helperSearch("chat=c1&helper=h1", "h2")).toBe("?chat=c1&helper=h2")
+    expect(helperSearch("", "h1")).toBe("?helper=h1")
   })
 })

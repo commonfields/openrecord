@@ -8,11 +8,11 @@ import type { AdPerformanceDays, RevenueTotals } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PeriodSelect } from "@/components/period-select"
 import { Panel, PanelHeader, StatStrip } from "@/components/page"
 import { Revenue, revenueError } from "@/lib/revenue"
 import { relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
-import { cn } from "@/lib/utils"
 
 /** Connect Stripe with a restricted read-only key. */
 export function RevenueSetup({ businessId }: { businessId: string }) {
@@ -89,13 +89,8 @@ export function RevenuePanel({ businessId }: { businessId: string }) {
   const c = main(r?.current.totals), b = r ? r.previous.totals.byCurrency.find(x => x.currency === c?.currency) ?? null : null
   return (
     <Panel id="revenue">
-      <PanelHeader icon={<BanknoteIcon />} title="Revenue" description={r ? `${r.accountName}${r.livemode ? "" : " (test mode)"} · ${r.current.start} to ${r.current.end}, compared with the ${days} days before` : "Stripe"}>
-        <div className="flex rounded-md border border-border/70 p-0.5" role="group" aria-label="Period">
-          {([7, 28, 90] as const).map(d => (
-            <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d}
-              className={cn("rounded px-2 py-0.5 text-[0.6875rem]", days === d ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground")}>{d}d</button>
-          ))}
-        </div>
+      <PanelHeader icon={<BanknoteIcon />} title="Revenue" description={r ? `${r.accountName}${r.livemode ? "" : " (test mode)"}, ${r.current.start} to ${r.current.end}, compared with the ${days} days before` : "Stripe"}>
+        <PeriodSelect value={days} options={[7, 28, 90] as const} onChange={setDays} />
       </PanelHeader>
       {perf.error && !r ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{revenueError(perf.error)}</p> : !r ? <Skeleton className="m-4 h-24 rounded-lg" /> : (
         <div className="space-y-3 px-4 pb-4">

@@ -106,7 +106,7 @@ import {
   loadRepresentations,
 } from "./reads.js"
 import { loadInterventions, recordIntervention } from "./interventions.js"
-import { deleteConversation, listConversations, loadConversation } from "./agent-conversations.js"
+import { archiveConversation, deleteConversation, listConversations, loadConversation } from "./agent-conversations.js"
 import { sendSessionTurn } from "./agent-sessions.js"
 import { createBinding, createTarget } from "./tracking.js"
 import { loadIssueLoop } from "./issue-loop.js"
@@ -1348,9 +1348,22 @@ export const makeRouter = () => {
         return json(500, { _tag: "AgentRequestFailed" })
       })),
     ),
-    // Chat history: every saved conversation of the signed-in user in this account.
+    // Chat history: every saved conversation of the signed-in user in this
+    // account; ?archived=1 lists the ones they archived instead.
     HttpRouter.get("/api/agent/conversations", withSession(session => Effect.gen(function*() {
-      return yield* json(200, { conversations: yield* listConversations({ accountId: session.accountId, userId: session.userId }) })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const archived = new URL(req.url, "http://localhost").searchParams.get("archived") === "1"
+      return yield* json(200, { conversations: yield* listConversations({ accountId: session.accountId, userId: session.userId }, archived) })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
+    HttpRouter.post("/api/agent/conversations/:id/archive", withSession(session => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const id = params["id"] ?? ""
+      if (!isRouteId(id)) return yield* json(422, malformed)
+      if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
+      const body = decodeRequest(Schema.Struct({ archived: Schema.Boolean }), yield* readJson)
+      if (!body) return yield* json(422, malformed)
+      if (!(yield* archiveConversation({ accountId: session.accountId, userId: session.userId }, id, body.archived))) return yield* json(404, { _tag: "ConversationUnavailable" })
+      return yield* json(200, { archived: body.archived })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
     HttpRouter.get("/api/businesses/:id/agent/conversation", withSession(session => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext

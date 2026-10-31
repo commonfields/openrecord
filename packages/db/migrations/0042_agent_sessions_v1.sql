@@ -21,11 +21,16 @@ ALTER TABLE agent_conversations ADD COLUMN IF NOT EXISTS task_role TEXT NULL;
 -- The revision after the operator's own last turn. Turns and results another
 -- session adds do not move it, so an operator who has not seen them can still send.
 ALTER TABLE agent_conversations ADD COLUMN IF NOT EXISTS user_revision INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE agent_conversations DROP CONSTRAINT IF EXISTS agent_conversations_session_check;
-ALTER TABLE agent_conversations ADD CONSTRAINT agent_conversations_session_check CHECK (
-  depth BETWEEN 0 AND 3 AND (parent_conversation_id IS NULL OR parent_conversation_id <> id)
-  AND (task_title IS NULL OR length(task_title) BETWEEN 1 AND 120)
-  AND (task_role IS NULL OR task_role IN ('general','researcher','seo','aeo','content','analyst')));
+-- Added only when missing: migrations replay on every run, and 0045 widens
+-- this check to more roles. Re-adding this narrower one would reject them.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_conversations_session_check') THEN
+    ALTER TABLE agent_conversations ADD CONSTRAINT agent_conversations_session_check CHECK (
+      depth BETWEEN 0 AND 3 AND (parent_conversation_id IS NULL OR parent_conversation_id <> id)
+      AND (task_title IS NULL OR length(task_title) BETWEEN 1 AND 120)
+      AND (task_role IS NULL OR task_role IN ('general','researcher','seo','aeo','content','analyst')));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS agent_conversations_parent ON agent_conversations(parent_conversation_id) WHERE parent_conversation_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS agent_tasks (

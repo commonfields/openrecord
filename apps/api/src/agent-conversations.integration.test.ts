@@ -4,7 +4,7 @@ import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { AcquisitionRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive, DiscoveryScopeRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive, QuestionRepositoryLive, RecordRepositoryLive, SetupRepositoryLive } from "@openrecord/db"
 import pg from "pg"
-import { createConversation, deleteConversation, listConversations, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
+import { archiveConversation, createConversation, deleteConversation, listConversations, loadConversation, sendConversation, type ConversationScope } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { activateHarness, authenticateBridge, cancelHarnessConversation, completeHarnessJob, createPair, harnessCatalog, pollHarnessJobs, registerBridge } from "./harness-store.js"
@@ -59,6 +59,23 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [expect.objectContaining({ id, businessId: null, businessName: "General chat" })] })
     expect(await run(loadConversation(f, id))).toMatchObject({ _tag: "Right", right: null })
     expect(await run(loadConversation({ ...general, ...(await fixture()), businessId: null }, id))).toMatchObject({ _tag: "Right", right: null })
+  })
+  it("archives a finished chat out of the history, lists it under archived, and brings it back on reply", async () => {
+    const f = await fixture(), id = randomUUID()
+    await run(createConversation(f, id))
+    await run(sendConversation(f, { message: "Done with this", requestId: randomUUID(), revision: 0, conversationId: id }, respond))
+    const ids = async (archived: boolean) => { const r = await run(listConversations(f, archived)); return r._tag === "Right" ? r.right.map(c => c.id) : null }
+    expect(await run(archiveConversation(f, id, true))).toMatchObject({ _tag: "Right", right: true })
+    expect(await ids(false)).toEqual([])
+    expect(await ids(true)).toEqual([id])
+    // Another user in the same account cannot archive or restore it.
+    const other = await fixture()
+    await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [f.accountId, other.userId])
+    expect(await run(archiveConversation({ accountId: f.accountId, userId: other.userId }, id, false))).toMatchObject({ _tag: "Right", right: false })
+    // Replying in it brings it back to the history.
+    await run(sendConversation(f, { message: "One more thing", requestId: randomUUID(), revision: 1, conversationId: id }, respond))
+    expect(await ids(false)).toEqual([id])
+    expect(await ids(true)).toEqual([])
   })
   it("stops only the selected conversation, leaving another thread's lease intact", async () => {
     const f = await fixture(), firstId = randomUUID(), secondId = randomUUID()

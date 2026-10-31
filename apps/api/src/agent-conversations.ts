@@ -110,11 +110,13 @@ export type ConversationSummary = {
   readonly provider: string | null
   /** Every provider that answered here, in order of first use. */
   readonly providers: ReadonlyArray<string>
+  /** When the person archived it, or null while it is in the history. */
+  readonly archivedAt: string | null
 }
-export const listConversations = (scope: { readonly accountId: string; readonly userId: string }) => Effect.gen(function*() {
+export const listConversations = (scope: { readonly accountId: string; readonly userId: string }, archived = false) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT c.id, c.business_id, b.name, (rp.business_id IS NOT NULL) AS is_client, c.updated_at, c.last_reply->>'title' AS generated_title, c.last_reply ? 'title' AS has_title_metadata,
-      c.parent_conversation_id, c.task_title, c.task_role, (c.lease_until > now()) AS working,
+      c.parent_conversation_id, c.task_title, c.task_role, (c.lease_until > now()) AS working, c.user_archived_at,
       jsonb_array_length(c.messages) AS message_count,
       (SELECT m->>'text' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i) WHERE m->>'role' = 'user' ORDER BY i LIMIT 1) AS first_message,
       (SELECT m->'inference'->>'provider' FROM jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
@@ -127,7 +129,8 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
     LEFT JOIN record_profiles rp ON rp.business_id = c.business_id
     WHERE c.account_id = ${scope.accountId} AND c.user_id = ${scope.userId}
       AND c.expires_at > now() AND jsonb_array_length(c.messages) > 0
-    ORDER BY c.updated_at DESC LIMIT 30`
+      AND (c.user_archived_at IS NOT NULL) = ${archived}
+    ORDER BY c.updated_at DESC LIMIT ${archived ? 100 : 30}`
   return rows.map((r): ConversationSummary => ({
     id: String(r["id"]),
     businessId: r["business_id"] === null ? null : String(r["business_id"]), businessName: r["business_id"] === null ? "General chat" : String(r["name"]), isClient: r["is_client"] === true,
@@ -138,7 +141,16 @@ export const listConversations = (scope: { readonly accountId: string; readonly 
     role: r["task_role"] === null ? null : String(r["task_role"]), working: r["working"] === true,
     provider: r["last_provider"] === null || r["last_provider"] === undefined ? null : String(r["last_provider"]),
     providers: Array.isArray(r["providers"]) ? (r["providers"] as unknown[]).map(String).slice(0, 8) : [],
+    archivedAt: r["user_archived_at"] === null || r["user_archived_at"] === undefined ? null : new Date(r["user_archived_at"] as string | Date).toISOString(),
   }))
+})
+// Archives a chat the person is done with, or brings it back. Only their own
+// chats; messages and when the chat last moved are left as they were.
+export const archiveConversation = (scope: { readonly accountId: string; readonly userId: string }, id: string, archived: boolean) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const rows = yield* sql`UPDATE agent_conversations SET user_archived_at = CASE WHEN ${archived} THEN coalesce(user_archived_at, now()) ELSE NULL END
+    WHERE id = ${id} AND account_id = ${scope.accountId} AND user_id = ${scope.userId} AND expires_at > now() RETURNING id`
+  return rows.length > 0
 })
 export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -279,6 +291,8 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
       yield* commitGuard
       const rows = yield* sql`UPDATE agent_conversations SET messages = ${JSON.stringify(messages)}::jsonb, revision = revision + 1,
       user_revision = CASE WHEN ${body.origin === undefined} THEN revision + 1 ELSE user_revision END,
+      -- Writing in an archived chat brings it back to the history; background turns don't.
+      user_archived_at = CASE WHEN ${body.origin === undefined} THEN NULL ELSE user_archived_at END,
       last_request_id = ${body.requestId}, last_request_digest=${digest}, last_reply = ${JSON.stringify(response)}::jsonb, lease_id = NULL, lease_until = NULL,
       updated_at = now(), expires_at = now() + interval '30 days'
       WHERE id = ${current.id} AND lease_id = ${lease} AND lease_until > now()

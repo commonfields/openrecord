@@ -55,7 +55,7 @@ describe("agent workspace presentation", () => {
   it("separates chat history from Work navigation and keeps header tabs compact", () => {
     const shell = read("../app/components/app-shell.tsx")
     const sidebar = shell.slice(shell.indexOf("function SidebarBody()"), shell.indexOf("const CHATS_SHOWN"))
-    expect(sidebar.includes("{agent ? <ChatHistory /> : <>")).toBe(true)
+    expect(sidebar.includes("{agent ? <ChatHistory archived={archived} onLeaveArchive={() => setArchived(false)} /> : <>")).toBe(true)
     expect(sidebar.includes('label="Agent"')).toBe(false)
     for (const label of ["Channels", "Work", "Results"]) {
       expect(sidebar.includes(`label="${label}"`)).toBe(true)
