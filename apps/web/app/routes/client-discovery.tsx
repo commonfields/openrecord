@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, PageHeader, Panel, PanelHeader, StatStrip } from "@/components/page"
+import { TrackingSchedulePanel } from "@/components/tracking-schedule"
 import { Spinner } from "@/components/spinner"
 import { SearchSuggestions } from "@/components/search-suggestions"
 import { useApi } from "@/lib/use-api"
@@ -581,6 +582,7 @@ export function ClientDiscoveryPage() {
           </Panel>
 
           <div className="space-y-4">
+            {set ? <TrackingSchedulePanel clientId={id} set={set} maxAttempts={maxAttemptsPerCheck} /> : null}
             {batch && previousBatch ? <BatchComparison clientId={id} before={previousBatch} after={batch} /> : null}
             {batch ? <CitationSources batch={batch} /> : null}
             <Panel>

@@ -133,6 +133,7 @@ import { agentProposalApi } from "./agent-proposals.js"
 import { siteApi } from "./site-routes.js"
 import { recordApi, recordFixtureAllowed } from "./record-routes.js"
 import { acquisitionApi } from "./acquisition-routes.js"
+import { trackingScheduleApi } from "./acquisition-schedule.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 
 const json = (status: number, body: unknown, headers?: Record<string, string>) =>
@@ -1601,7 +1602,7 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(HttpRouter.concat(objectivesApi(withSession), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi), memoryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), acquisitionApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(acquisitionApi(withSession), trackingScheduleApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   )))
 }
 
