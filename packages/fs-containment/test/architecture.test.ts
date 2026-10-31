@@ -37,6 +37,8 @@ const LOCAL_BRIDGE_FS = new Map([
   ["packages/bridge/src/cliproxy.ts", new Set(["accessSync", "constants", "readFileSync", "statSync"])],
   ["packages/bridge/src/adapters.ts", new Set(["access", "mkdtemp", "mkdir", "readFile", "writeFile", "rm", "constants"])],
   ["packages/bridge/src/main.ts", new Set(["chmod", "lstat", "mkdir", "open", "readFile", "rename", "unlink", "writeFile", "realpathSync"])],
+  // Lists ~/.nvm/versions/node to find nvm-installed CLIs; reads nothing else.
+  ["packages/bridge/src/discovery.ts", new Set(["readdirSync"])],
 ])
 const NO_FS_AT_ALL = ["packages/site-operator/src/", "apps/api/src/", "apps/worker/src/"]
 
