@@ -276,10 +276,14 @@ export type AgentRunProgress = { run: { id: string; status: string; modelSteps: 
 export type AgentProposal = { id: string; questionId: string | null; message: string; kind: "REQUEST_CHECK" | "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET" | "REQUEST_ACQUISITION_BATCH"; status: "PROPOSED" | "APPROVED" | "EXECUTED" | "REJECTED"; payload: { text: string; generatedAt: string; evidenceDigest: string; references: AgentCitation[]; measurementPlan?: { provider: string; requestedModel: string | null; samples: number; questions: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null; missingRequirements: string[] } } | null }
 export type AgentChatSummary = { id: string; businessId: string | null; businessName: string; isClient: boolean; title: string; messages: number; updatedAt: string; provider?: string | null; providers?: string[]
   // Helper sessions: the session that started them, their role and whether a turn runs now.
-  parentSessionId?: string | null; role?: string | null; working?: boolean }
+  parentSessionId?: string | null; role?: string | null; working?: boolean
+  // Set while the person has the chat archived.
+  archivedAt?: string | null }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
 export const Agent = {
-  conversations: () => api<{ conversations: AgentChatSummary[] }>("/api/agent/conversations"),
+  conversations: (archived = false) => api<{ conversations: AgentChatSummary[] }>(`/api/agent/conversations${archived ? "?archived=1" : ""}`),
+  archive: (conversationId: string, archived: boolean) =>
+    api<{ archived: boolean }>(`/api/agent/conversations/${encodeURIComponent(conversationId)}/archive`, { method: "POST", body: JSON.stringify({ archived }) }),
   load: (businessId: string | null, conversationId?: string) => api<{ conversation: AgentConversation | null }>(`${agentBase(businessId)}/conversation${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`),
   create: (businessId: string | null, conversationId: string) => api<{ conversation: AgentConversation }>(`${agentBase(businessId)}/conversation`, { method: "POST", body: JSON.stringify({ conversationId }) }),
   clear: (businessId: string | null, conversationId?: string) => api(`${agentBase(businessId)}/conversation${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`, { method: "DELETE" }),

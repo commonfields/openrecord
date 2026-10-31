@@ -5,7 +5,7 @@ import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, Fo
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
-import { useChrome, usePaneSlot } from "@/components/app-shell"
+import { useChrome, useOverlaySlot, usePaneSlot } from "@/components/app-shell"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
@@ -18,7 +18,7 @@ import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { Growth } from "@/lib/growth"
 import { agentEvidencePath, webSourceUrl } from "@/lib/agent-evidence"
-import { chatPath, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
+import { chatPath, helperSearch, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -96,10 +96,11 @@ type AgentSession = ReturnType<typeof useAgentSession>
 // One business's private conversation and the proposals it produced. Loads
 // when enabled (a closed side panel costs nothing) and stays scoped to the
 // business it was opened for.
-export function useAgentSession(businessId: string | null, enabled = true) {
+export function useAgentSession(businessId: string | null, enabled = true, conversation?: string, fresh = false) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const requestedConversationId = searchParams.get("chat") ?? undefined
+  // The page's chat, unless a pane asks for a specific conversation.
+  const requestedConversationId = conversation ?? searchParams.get("chat") ?? undefined
   const activity = useChatActivity()
   const { responseStyle } = usePreferences().preferences
   const [messages, setMessages] = useState<Message[]>([])
@@ -132,7 +133,10 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     if (!enabled || businessId === "") return () => { mounted.current = false }
     let live = true
     setMessages([]); setConversationId(undefined); setRevision(0); setReady(false); setFailed(null); setUnavailable(null); setProposals([]); setSessionInfo(null)
-    void Agent.load(businessId, requestedConversationId).then(async r => {
+    // A fresh session (the agent tab) starts a new chat unless one is named;
+    // empty chats stay out of the history until something is sent.
+    const opened = !requestedConversationId && fresh ? Agent.create(businessId, crypto.randomUUID()) : Agent.load(businessId, requestedConversationId)
+    void opened.then(async r => {
       if (!r.conversation && !requestedConversationId && live) r = await Agent.create(businessId, crypto.randomUUID())
       if (!live) return
       if (!r.conversation) { setUnavailable("This conversation is no longer available"); return }
@@ -145,7 +149,7 @@ export function useAgentSession(businessId: string | null, enabled = true) {
     }).catch(e => { if (live) setUnavailable(unavailableText(e)) })
     if (businessId !== null) void Agent.proposals(businessId).then(r => { if (live) setProposals(r.proposals) }).catch(() => {})
     return () => { live = false; mounted.current = false }
-  }, [businessId, enabled, requestedConversationId])
+  }, [businessId, enabled, requestedConversationId, fresh])
 
   // A turn can settle while its chat is not on screen — it was left mid-turn
   // and the reply is written by the mount that sent it. A mount that opened
@@ -380,6 +384,8 @@ function taskStatuses(messages: ReadonlyArray<{ tasks?: AgentTaskRef[] | undefin
 
 /** The helper sessions one reply started, each linking to its own conversation. */
 function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tasks: AgentTaskRef[]; statuses: Map<string, AgentTaskStatus> }) {
+  // Opens the helper beside this conversation; the address keeps it, so Back closes it.
+  const [searchParams] = useSearchParams()
   return (
     <ul className="w-full space-y-1.5 pt-1" aria-label="Helper sessions">
       {tasks.map(t => {
@@ -393,7 +399,7 @@ function MessageTasks({ session, tasks, statuses }: { session: AgentSession; tas
               <span className="block truncate text-sm font-medium">{t.title}</span>
               <span className="block text-[0.6875rem] text-muted-foreground">{roleLabel(t.role)}{t.model ? ` · ${t.model}` : ""} · {TASK_STATUS[status]}</span>
             </span>
-            {session.businessId !== null ? <Link className="shrink-0 text-xs font-medium underline-offset-2 hover:underline" to={chatPath({ businessId: session.businessId, id: t.sessionId })}>Open</Link> : null}
+            {session.businessId !== null ? <Link className="shrink-0 text-xs font-medium underline-offset-2 hover:underline" to={{ search: helperSearch(searchParams.toString(), t.sessionId) }}>Open</Link> : null}
           </li>
         )
       })}
@@ -475,8 +481,10 @@ function SourceChip({ businessId, citation: c }: { businessId: string | null; ci
   ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
 }
 
-function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context }: {
-  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null
+function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context, banner = true, composer = true }: {
+  session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null; banner?: boolean
+  // Off for a read-only view (a helper reviewed beside the conversation).
+  composer?: boolean
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
@@ -490,7 +498,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn("mx-auto w-full max-w-(--chat-max-width)", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
-          <HelperBanner session={session} />
+          {banner ? <HelperBanner session={session} /> : null}
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
               {session.messages.map((m, i) => m.origin?.kind === "wake" ? (
@@ -553,7 +561,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           {work ? <div className="pt-6">{work}</div> : null}
         </div>
       </div>
-      <div className={cn("mx-auto w-full max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
+      {composer ? <div className={cn("mx-auto w-full max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6")}>
         <Composer
           onSend={session.send}
           onCommand={onCommand}
@@ -564,7 +572,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           session={session}
           context={context ?? null}
         />
-      </div>
+      </div> : null}
     </div>
   )
 }
@@ -689,10 +697,14 @@ export function AgentChat(props: { businessId: string | null; businessName: stri
 }
 
 function OverviewAgent({ businessId, businessName, onConversationChange = () => undefined }: { businessId: string | null; businessName: string; onConversationChange?: (active: boolean) => void }) {
-  const session = useAgentSession(businessId)
+  const session = useAgentSession(businessId, true, undefined, true)
   const runCommand = (command: AgentCommand) => session.send(`/${command}`)
   const { setMinimal, setWorkspace } = useChrome()
   const active = session.active
+  // A helper session opened beside the conversation (?helper=<id>).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const helper = searchParams.get("helper")
+  const closeHelper = () => setSearchParams(p => { const next = new URLSearchParams(p); next.delete("helper"); return next })
 
   useEffect(() => onConversationChange(active), [active, onConversationChange])
   useEffect(() => {
@@ -729,11 +741,76 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
   }
 
   return (
-    <section aria-label="Conversation" className="flex h-full min-h-0 flex-col">
-      <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
-        context={chatContext(businessId, businessName)}
-        work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
-    </section>
+    <div className="relative flex h-full min-h-0">
+      {/* With a helper open, the conversation moves left so the card over the
+          right half never covers it. */}
+      <section aria-label="Conversation" className={cn("flex min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]", helper && "lg:pr-[50%]")}>
+        <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+          context={chatContext(businessId, businessName)}
+          work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
+      </section>
+      {helper ? <HelperPane key={helper} businessId={businessId} businessName={businessName} conversationId={helper} onClose={closeHelper} /> : null}
+    </div>
+  )
+}
+
+// A helper session opened from the conversation, to review: its own card
+// floating over the right half of the content panel (all of it on narrow
+// screens), sliding in from the right. Read-only; "Open as main chat" is
+// where to reply. Escape or X slides it away.
+function HelperPane({ businessId, businessName, conversationId, onClose }: {
+  businessId: string | null; businessName: string; conversationId: string; onClose: () => void
+}) {
+  const session = useAgentSession(businessId, true, conversationId)
+  const info = session.sessionInfo
+  const slot = useOverlaySlot()
+  const [leaving, setLeaving] = useState(false)
+  const close = () => setLeaving(true)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLeaving(true) }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+  if (!slot) return null
+  return createPortal(
+    <aside
+      aria-label="Helper session"
+      onAnimationEnd={e => { if (leaving && e.target === e.currentTarget) onClose() }}
+      className={cn(
+        "flex h-full w-full flex-col p-1.5 lg:w-1/2",
+        leaving
+          ? "animate-out fade-out slide-out-to-right-16 fill-mode-forwards duration-300 ease-in"
+          : "animate-in fade-in slide-in-from-right-16 duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+      )}
+    >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
+        <div className="flex h-12 shrink-0 items-center gap-2 px-4">
+          <span className="flex size-6 items-center justify-center rounded-md bg-muted text-muted-foreground"><UsersIcon className="size-3.5" /></span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+            {roleLabel(info?.role)} helper{info?.title ? <span className="font-normal text-muted-foreground"> {info.title}</span> : null}
+          </span>
+          {businessId !== null ? (
+            <Button asChild variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground">
+              <Link to={chatPath({ businessId, id: conversationId })}>Open as main chat</Link>
+            </Button>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground" onClick={close} aria-label="Close the helper">
+                <XIcon className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Close the helper (Esc)</TooltipContent>
+          </Tooltip>
+        </div>
+        {session.unavailable && !session.ready ? (
+          <p className="p-4 text-xs text-muted-foreground">{session.unavailable}</p>
+        ) : (
+          <Thread session={session} businessName={businessName} compact banner={false} composer={false} placeholder="" onCommand={() => undefined} />
+        )}
+      </div>
+    </aside>,
+    slot,
   )
 }
 

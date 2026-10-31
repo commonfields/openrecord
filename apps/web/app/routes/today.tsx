@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useParams, useSearchParams } from "react-router"
 import { ArrowRightIcon, BarChart3Icon, CalendarIcon, DownloadIcon, RadarIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing,
 import { SearchPerformancePanel } from "@/components/search-console"
 import { AdPerformancePanel, LocalProfilePanel } from "@/components/ad-accounts"
 import { WeeklyBrief } from "@/components/weekly-brief"
+import { useChrome } from "@/components/app-shell"
 import { RevenuePanel } from "@/components/revenue"
 import { SetupCard } from "@/components/setup-card"
 import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
@@ -109,6 +110,12 @@ export function Today() {
   const { id = "" } = useParams()
   const { activeBusiness } = useWorkspace()
   const [params, setParams] = useSearchParams()
+  // Results uses the whole screen, so laptops and wide desktops lay it out alike.
+  const { setWide } = useChrome()
+  useEffect(() => {
+    setWide(true)
+    return () => setWide(false)
+  }, [setWide])
   const days: Period = periods.includes(Number(params.get("days")) as Period) ? (Number(params.get("days")) as Period) : 30
   const requested = params.get("metric")
   const { data, loading, error } = useApi(`analytics:${id}:${days}`, () => AnalyticsApi.get(id, days))
@@ -173,7 +180,7 @@ export function Today() {
         }
       />
 
-      <WeeklyBrief businessId={id} />
+      <WeeklyBrief businessId={id} overview={overview} />
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
       <RevenuePanel businessId={id} />
       <SearchPerformancePanel businessId={id} />

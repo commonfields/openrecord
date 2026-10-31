@@ -8,6 +8,7 @@ import { AD_PROVIDER_NAME, AD_PROVIDERS, CHANNEL_PROVIDERS, type AdCampaignRow, 
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PeriodSelect } from "@/components/period-select"
 import { Panel, PanelHeader, StatStrip } from "@/components/page"
 import { ADS_CALLBACK_COPY, Ads, SETUP_NEEDED, adsError, type AdAccountChoice } from "@/lib/ads"
 import { useApi } from "@/lib/use-api"
@@ -184,12 +185,7 @@ export function AdPerformancePanel({ businessId }: { businessId: string }) {
   return (
     <Panel id="ads">
       <PanelHeader icon={<MegaphoneIcon />} title="Ads" description={r?.accounts[0] ? `${r.accounts[0].current.start} to ${r.accounts[0].current.end}, compared with the ${days} days before` : "Meta and Google Ads"}>
-        <div className="flex rounded-md border border-border/70 p-0.5" role="group" aria-label="Period">
-          {([7, 28, 90] as const).map(d => (
-            <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d}
-              className={cn("rounded px-2 py-0.5 text-[0.6875rem]", days === d ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground")}>{d}d</button>
-          ))}
-        </div>
+        <PeriodSelect value={days} options={[7, 28, 90] as const} onChange={setDays} />
       </PanelHeader>
       {perf.error && !r ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{adsError(perf.error)}</p> : !r ? <Skeleton className="m-4 h-24 rounded-lg" /> : (
         <div className="space-y-5 px-4 pb-4">
@@ -197,7 +193,7 @@ export function AdPerformancePanel({ businessId }: { businessId: string }) {
             const c = a.current.totals, b = a.previous.totals
             return (
               <section key={`${a.provider}:${a.externalId}`} className="space-y-3" aria-label={`${AD_PROVIDER_NAME[a.provider]}: ${a.accountName}`}>
-                <h3 className="text-xs font-medium">{AD_PROVIDER_NAME[a.provider]} <span className="font-normal text-muted-foreground">· {a.accountName}</span></h3>
+                <h3 className="text-xs font-medium">{AD_PROVIDER_NAME[a.provider]} <span className="font-normal text-muted-foreground">{a.accountName}</span></h3>
                 <StatStrip stats={[
                   { key: "spend", label: "Spend", value: money(c.spend, a.currency), delta: delta(c.spend, b.spend) },
                   { key: "clicks", label: "Clicks", value: count(c.clicks), delta: delta(c.clicks, b.clicks) },
@@ -255,12 +251,7 @@ export function LocalProfilePanel({ businessId }: { businessId: string }) {
   return (
     <Panel id="local">
       <PanelHeader icon={<MapPinIcon />} title="Google listing" description={r?.locations[0] ? `${r.locations[0].current.start} to ${r.locations[0].current.end}, compared with the ${days} days before` : "Google Business Profile"}>
-        <div className="flex rounded-md border border-border/70 p-0.5" role="group" aria-label="Period">
-          {([7, 28, 90] as const).map(d => (
-            <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d}
-              className={cn("rounded px-2 py-0.5 text-[0.6875rem]", days === d ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground")}>{d}d</button>
-          ))}
-        </div>
+        <PeriodSelect value={days} options={[7, 28, 90] as const} onChange={setDays} />
       </PanelHeader>
       {perf.error && !r ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{adsError(perf.error)}</p> : !r ? <Skeleton className="m-4 h-24 rounded-lg" /> : (
         <div className="space-y-5 px-4 pb-4">
