@@ -122,7 +122,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
   const { selection, choose, request: selectionField, sendable } = useAgentSelection(catalog)
   const [reasoningChoice, setReasoningChoice] = useState<{ key: string; effort: HarnessReasoningEffort } | null>(null)
   const reasoningKey = selection.status === "instance" ? `${selection.instance.id}:${selection.model.id}` : ""
-  const reasoningEfforts = selection.status === "instance" && (selection.instance.driver === "codex" || selection.instance.driver === "opencode") ? selection.model.reasoningEfforts ?? [] : []
+  const reasoningEfforts = selection.status === "instance" && (selection.instance.driver === "codex" || selection.instance.driver === "opencode" || selection.instance.driver === "claude") ? selection.model.reasoningEfforts ?? [] : []
   const reasoningEffort = reasoningChoice && reasoningChoice.key === reasoningKey && reasoningEfforts.includes(reasoningChoice.effort) ? reasoningChoice.effort : undefined
   const chooseReasoning = (effort: HarnessReasoningEffort | undefined) => setReasoningChoice(effort && reasoningKey ? { key: reasoningKey, effort } : null)
 

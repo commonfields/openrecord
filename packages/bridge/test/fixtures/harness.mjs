@@ -26,18 +26,36 @@ if (args[0] === "exec") {
     writeFileSync(file, JSON.stringify({ kind: "text", text: effort ? "TEST Codex reply (high)" : "TEST Codex reply", calls: [] }))
     process.stdout.write('{"type":"thread.completed"}\n')
   })
-} else if (args.includes("--print") && args.includes("--input-format")) {
-  // Warm Claude session: one process, one reply per streamed user message.
-  // The first message is the full prompt; later ones carry only new entries.
-  if (args[args.indexOf("--tools") + 1] !== "" || !args.includes("--strict-mcp-config") || !args.includes("--no-session-persistence")) process.exit(2)
+} else if (args.includes("--input-format")) {
+  // Claude Code driven by the Claude Agent SDK: one control handshake, then one
+  // result per streamed user message. OpenRecord's instructions arrive as the
+  // system prompt; the first message is the conversation, later ones only new entries.
+  const lockdown = ["--tools=", "--setting-sources=", "--no-session-persistence", "--disable-slash-commands"]
+  if (!lockdown.every(flag => args.includes(flag))) process.exit(2)
   let turn = 0
+  const out = (message) => process.stdout.write(JSON.stringify(message) + "\n")
   createInterface({ input: process.stdin }).on("line", (line) => {
-    const text = JSON.parse(line).message.content[0].text
+    const message = JSON.parse(line)
+    if (message.type === "control_request") {
+      const request = message.request
+      // A model session (it sets the answer schema) must carry OpenRecord's instructions as its system prompt.
+      if (request.subtype === "initialize" && request.jsonSchema !== undefined && !JSON.stringify(request.systemPrompt ?? "").includes("You are the model transport for OpenRecord")) process.exit(2)
+      out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: request.subtype === "initialize" ? {
+        commands: [], agents: [], output_style: "default", available_output_styles: [],
+        models: [{ value: "fixture-model", displayName: "TEST model", description: "", supportedEffortLevels: ["low", "high", "future-level"] }, { value: "fixture-fast", displayName: "TEST fast" }],
+        account: { email: "fixture@example.test", subscriptionType: "TEST plan" },
+      } : {} } })
+      return
+    }
+    if (message.type !== "user") return
+    const text = message.message.content[0].text
     turn++
-    if (turn === 1 ? !text.includes("TEST message") : text.includes("Tool declarations:") || !text.includes("TEST tool result")) process.exit(2)
+    if (text.includes("Tool declarations:")) process.exit(2)
+    if (turn === 1 ? !text.includes("TEST message") : !text.includes("TEST tool result")) process.exit(2)
     const reply = turn === 1 ? "TEST Claude reply" : `TEST Claude continued ${turn}`
-    process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking", thinking: `TEST thinking ${turn}` }] } }) + "\n")
-    process.stdout.write(JSON.stringify({ type: "result", is_error: false, structured_output: { kind: "text", text: reply, calls: [] } }) + "\n")
+    out({ type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: `TEST thinking ${turn}` }] }, parent_tool_use_id: null, session_id: "fixture" })
+    out({ type: "result", subtype: "success", is_error: false, result: "", structured_output: { kind: "text", text: reply, calls: [] }, session_id: "fixture",
+      duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0, usage: {} })
   })
 } else if (args.includes("--print")) {
   if (args[args.indexOf("--tools") + 1] !== "" || !args.includes("--strict-mcp-config")) process.exit(2)

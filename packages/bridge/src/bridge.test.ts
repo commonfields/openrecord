@@ -91,6 +91,15 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
       sessions.closeAll()
     }, 20000)
   }
+  it("lists Claude's real models and plan through the Agent SDK, and passes a reasoning level", async () => {
+    const i = instance("claude")
+    const status = await probe(i)
+    expect(status).toMatchObject({ state: "ready", auth: "authenticated", accountLabel: "fixture@example.test" })
+    expect(status.models).toEqual([{ id: "fixture-model", name: "TEST model", reasoningEfforts: ["low", "high"] }, { id: "fixture-fast", name: "TEST fast" }])
+    const request = job(i)
+    expect(await execute(i, { ...request, input: { ...request.input, reasoningEffort: "high" } }, AbortSignal.timeout(10000))).toMatchObject({ kind: "text", text: "TEST Claude reply" })
+    sessions.closeAll()
+  }, 20000)
   it("closes a warm session whose step is cancelled, and starts fresh next time", async () => {
     const i = instance("claude"), first = job(i)
     await probe(i)

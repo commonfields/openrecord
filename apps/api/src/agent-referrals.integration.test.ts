@@ -66,7 +66,8 @@ suite("AI referral evidence tool (TEST fixtures, no provider calls)", () => {
     expect(read.data).toMatchObject({ realImports: 1, syntheticImportsExcluded: 1 })
     expect(read.citations).toEqual([{ kind: "referral_import", id: real.importId, text: "GA4 export 2026-10-01 to 2026-10-07" }])
     const serialized = JSON.stringify(read)
-    expect(serialized).not.toContain("777")
+    // The synthetic import's 777 sessions never appear as a number; random IDs may contain the digits.
+    expect(serialized).not.toMatch(/(?<![\w-])777(?![\w-])/)
     expect(serialized).not.toContain("20261001")
     expect(serialized).not.toMatch(/raw_text|rawText|"rows"/)
   })
