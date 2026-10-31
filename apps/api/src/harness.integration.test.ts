@@ -9,7 +9,7 @@ import { HarnessCatalog, type HarnessReport } from "@openrecord/contracts"
 import { harnessApi } from "./harness-routes.js"
 import { requireSession } from "./router.js"
 import {
-  activateHarness,
+  activateHarness, chooseHarnessModel,
   authenticateBridge,
   cancelHarnessConversation,
   completeHarnessJob,
@@ -198,6 +198,20 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
       reason: "MODEL_UNAVAILABLE"
     })
     await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model", reasoningEffort: "medium" }))).rejects.toMatchObject({ reason: "MODEL_UNAVAILABLE" })
+  })
+  it("offers only the models the person left on, and only the owner can turn them off", async () => {
+    const a = await fixture(), other = await fixture()
+    const c = await connect(a, { ...report(), models: [{ id: "fixture-model", name: "TEST model" }, { id: "fixture-fast", name: "TEST fast" }] })
+    await run(activateHarness(a, c.instance.id, true))
+    await run(chooseHarnessModel(a, c.instance.id, "fixture-fast", false))
+    await run(chooseHarnessModel(a, c.instance.id, "fixture-fast", false))
+    expect((await run(harnessCatalog(a))).instances[0]).toMatchObject({ disabledModels: ["fixture-fast"], models: [{ id: "fixture-model" }, { id: "fixture-fast" }] })
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-fast" }))).rejects.toMatchObject({ reason: "MODEL_UNAVAILABLE" })
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model" }))).resolves.toMatchObject({ id: c.instance.id })
+    await expect(run(chooseHarnessModel(other, c.instance.id, "fixture-model", false))).rejects.toMatchObject({ reason: "NOT_FOUND" })
+    await run(chooseHarnessModel(a, c.instance.id, "fixture-fast", true))
+    expect((await run(harnessCatalog(a))).instances[0]?.disabledModels).toEqual([])
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-fast" }))).resolves.toMatchObject({ id: c.instance.id })
   })
   it("allows only the native reasoning levels advertised by an enabled OpenCode model", async () => {
     const a = await fixture()

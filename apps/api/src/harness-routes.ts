@@ -3,6 +3,7 @@ import { Effect, Option, Schema } from "effect"
 import { BusinessRepository } from "@openrecord/db"
 import {
   HarnessActivation,
+  HarnessModelChoice,
   HarnessPairRequest,
   HarnessPoll,
   HarnessRegister,
@@ -19,7 +20,7 @@ import { readRunProgress } from "./agent-run.js"
 import { decode, json, operatorSessionFor, readJson as readRequestJson, type WithSession } from "./record-routes.js"
 import {
   HarnessRefused,
-  activateHarness,
+  activateHarness, chooseHarnessModel,
   authenticateBridge,
   cancelHarnessConversation,
   completeHarnessJob,
@@ -166,6 +167,18 @@ export const harnessApi = (withSession: WithSession) => {
           if (!id) return yield* invalid()
           yield* revokeBridge(session, id)
           return yield* json(200, { revoked: true })
+        })
+      ).pipe(Effect.catchAll(failure))
+    ),
+    HttpRouter.patch(
+      "/api/agent/providers/:id/models",
+      operator((session) =>
+        Effect.gen(function* () {
+          const id = yield* routeId,
+            body = decode(HarnessModelChoice, yield* readJson)
+          if (!id || !body) return yield* invalid()
+          yield* chooseHarnessModel(session, id, body.model, body.enabled)
+          return yield* json(200, { updated: true })
         })
       ).pipe(Effect.catchAll(failure))
     ),

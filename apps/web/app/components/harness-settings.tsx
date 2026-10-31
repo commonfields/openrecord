@@ -5,7 +5,7 @@
 // writes secrets to persistent browser storage.
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { CheckIcon, CopyIcon, LaptopIcon, MonitorIcon, RefreshCwIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, CopyIcon, LaptopIcon, MonitorIcon, RefreshCwIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -18,6 +18,7 @@ import {
   HARNESS_DRIVERS,
   HARNESS_NAMES,
   Harness,
+  enabledModels,
   harnessStatusLabel,
   agentSetupPrompt,
   localProvidersPrompt,
@@ -123,7 +124,7 @@ function InstanceRow({ instance, managed, reload }: { instance: HarnessInstance;
           {instance.enabled ? <>
             <p role="status" className={cn("text-[0.8125rem] text-muted-foreground", status === "Authentication failed" && "text-destructive")}>
               {status}
-              {status !== "Checking authentication…" ? <span> · {instance.version ? `${HARNESS_NAMES[instance.driver]} ${instance.version}` : "version unknown"} · {instance.models.length} model{instance.models.length === 1 ? "" : "s"}</span> : null}
+              {status !== "Checking authentication…" ? <span> · {instance.version ? `${HARNESS_NAMES[instance.driver]} ${instance.version}` : "version unknown"} · {modelCount(instance)}</span> : null}
             </p>
             {status !== "Checking authentication…" && instance.installed && instance.auth !== "authenticated" && instance.driver !== "cliproxy" ? <LoginHint instance={instance} managed={managed} /> : null}
           </> : <p className="text-[0.8125rem] text-muted-foreground">Off · {instance.models.length} model{instance.models.length === 1 ? "" : "s"} available</p>}
@@ -153,6 +154,68 @@ function InstanceRow({ instance, managed, reload }: { instance: HarnessInstance;
         </div>
       </div>
       {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
+      {instance.enabled && instance.models.length > 0 ? <ModelChoices instance={instance} reload={reload} /> : null}
+    </div>
+  )
+}
+
+const modelCount = (instance: HarnessInstance) => {
+  const on = enabledModels(instance).length, all = instance.models.length
+  return on === all ? `${all} model${all === 1 ? "" : "s"}` : `${on} of ${all} models on`
+}
+
+// Which of a provider's models the chat offers. Every model is on until the
+// person turns it off; a model the provider adds later starts on.
+function ModelChoices({ instance, reload }: { instance: HarnessInstance; reload: () => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [filter, setFilter] = useState("")
+  // Switches answer at once; the next catalog load confirms them.
+  const [pending, setPending] = useState<ReadonlyMap<string, boolean>>(new Map())
+  const off = new Set(instance.disabledModels ?? [])
+  const isOn = (id: string) => pending.get(id) ?? !off.has(id)
+  const onCount = instance.models.filter(m => isOn(m.id)).length
+  const choose = (model: string, enabled: boolean) =>
+    void (async () => {
+      setPending(p => new Map(p).set(model, enabled))
+      try {
+        await Harness.chooseModel(instance.id, model, enabled)
+        await reload()
+      } catch {
+        toast.error("Couldn't change that model. Try again.")
+      } finally {
+        setPending(p => { const next = new Map(p); next.delete(model); return next })
+      }
+    })()
+  const query = filter.trim().toLowerCase()
+  const shown = query ? instance.models.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(query)) : instance.models
+  return (
+    <div className="mt-2">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <ChevronDownIcon className={cn("size-3.5 transition-transform", open ? "rotate-0" : "-rotate-90")} />
+        Choose models ({onCount} of {instance.models.length} on)
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          {instance.models.length > 12 ? (
+            <Input value={filter} onChange={e => setFilter(e.currentTarget.value)} placeholder="Search models" aria-label={`Search ${instance.name} models`} className="h-8 text-xs" />
+          ) : null}
+          <ul className="max-h-72 divide-y divide-border overflow-y-auto rounded-lg bg-muted/30">
+            {shown.map(m => (
+              <li key={m.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate text-[0.8125rem]">{m.name}</span>
+                  {m.name !== m.id ? <span className="block truncate text-[0.6875rem] text-muted-foreground">{m.id}</span> : null}
+                </span>
+                <Switch aria-label={`${isOn(m.id) ? "Turn off" : "Turn on"} ${m.name}`} checked={isOn(m.id)} disabled={pending.has(m.id)}
+                  onCheckedChange={v => choose(m.id, v)} />
+              </li>
+            ))}
+            {!shown.length ? <li className="px-3 py-2 text-xs text-muted-foreground">No model matches "{filter}".</li> : null}
+          </ul>
+          {onCount === 0 ? <p className="text-xs text-muted-foreground">Every model is off, so the chat won't offer {instance.name}.</p> : null}
+        </div>
+      ) : null}
     </div>
   )
 }
