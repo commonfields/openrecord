@@ -83,18 +83,41 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
   const prepareBody = (t: ExecutionTarget, over: Record<string, unknown> = {}) => ({ targetId: t.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: LIVE, rationale: "TEST remove an accidental noindex", siteFindingId: null, idempotencyKey: randomUUID(), ...over })
   const prepare = (s: S, oid: string, body: unknown) => s.call(s.a, "POST", `${s.base}/opportunities/${oid}/connected-executions`, body)
 
+  it("lets the agent prepare page edits it wrote, refusing values that do not fit and canonicals on another site", async () => {
+    const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
+    const provider = fixtureGitHubLayer(s.provider.fixture, (owner, repo, account) => account === s.a.accountId && owner === s.provider.owner && repo === s.provider.repo)
+    const layer = Layer.provideMerge(provider, repos)
+    const ctx = { accountId: s.a.accountId, userId: s.a.userId, businessId: s.businessId }
+    const run = (name: string, args: unknown) => Effect.runPromise(Effect.either(dispatchToolSpec(ctx, name, args).pipe(Effect.provide(layer))))
+    const base = { opportunityId: oid, targetId: t.id, filePath: PAGE, liveUrl: LIVE, siteFindingId: null }
+    const reason = (r: Awaited<ReturnType<typeof run>>) => r._tag === "Left" ? (r.left as { reason?: string }).reason : "accepted"
+    expect(reason(await run("prepare_page_change", { ...base, actionKind: "SET_TITLE", value: { description: "wrong field" }, rationale: "TEST" }))).toBe("InvalidRequest")
+    expect(reason(await run("prepare_page_change", { ...base, actionKind: "SET_CANONICAL", value: { canonicalUrl: "https://elsewhere.test/pricing.html" }, rationale: "TEST" }))).toBe("InvalidRequest")
+    expect(reason(await run("prepare_page_change", { ...base, actionKind: "SET_TITLE", value: { title: "Pricing" }, rationale: "TEST same title" }))).toBe("NotApplicable")
+    const title = await run("prepare_page_change", { ...base, actionKind: "SET_TITLE", value: { title: "Salon prices & packages | Salon" }, rationale: "TEST clearer title" })
+    expect(title._tag).toBe("Right")
+    if (title._tag !== "Right") throw new Error("Title preparation failed")
+    const data = title.right.data as { operationId: string; actionKind: string; diff: string }
+    expect(data.actionKind).toBe("SET_TITLE")
+    expect(data.diff).toContain("+<title>Salon prices &amp; packages | Salon</title>")
+    expect(data.diff).toContain("-<title>Pricing</title>")
+    const operation = (await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "GET", `${s.base}/connected-executions/${data.operationId}`))).operation
+    expect(operation).toMatchObject({ state: "PREPARED", actionKind: "SET_TITLE", actionValue: { title: "Salon prices & packages | Salon" } })
+    expect(s.provider.fixture.writes).toEqual([])
+  })
+
   it("lets the agent prepare and read a scoped change without approving or writing to GitHub", async () => {
     const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
     const provider = fixtureGitHubLayer(s.provider.fixture, (owner, repo, account) => account === s.a.accountId && owner === s.provider.owner && repo === s.provider.repo)
     const layer = Layer.provideMerge(provider, repos)
     const ctx = { accountId: s.a.accountId, userId: s.a.userId, businessId: s.businessId }
     const run = (name: string, args: unknown, who = ctx) => Effect.runPromise(Effect.either(dispatchToolSpec(who, name, args).pipe(Effect.provide(layer))))
-    const args = { opportunityId: oid, targetId: t.id, filePath: PAGE, liveUrl: LIVE, rationale: "TEST accidental noindex", siteFindingId: null }
-    const first = await run("prepare_noindex_change", args)
+    const args = { opportunityId: oid, targetId: t.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: LIVE, rationale: "TEST accidental noindex", siteFindingId: null }
+    const first = await run("prepare_page_change", args)
     expect(first._tag).toBe("Right")
     if (first._tag !== "Right") throw new Error("Agent preparation failed")
     const operationId = (first.right.data as { operationId: string }).operationId
-    const replay = await run("prepare_noindex_change", args)
+    const replay = await run("prepare_page_change", args)
     expect(replay._tag === "Right" && (replay.right.data as { operationId: string }).operationId).toBe(operationId)
     const operation = (await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "GET", `${s.base}/connected-executions/${operationId}`))).operation
     expect(operation).toMatchObject({ state: "PREPARED", proposedBy: "ASSISTANT", createdByUserId: s.a.userId })
@@ -102,7 +125,7 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
     expect(s.provider.fixture.writes).toEqual([])
     expect((await run("read_connected_executions", { opportunityId: oid }))._tag).toBe("Right")
     expect((await run("read_connected_executions", { opportunityId: oid }, { ...ctx, accountId: s.b.accountId, userId: s.b.userId }))._tag).toBe("Left")
-    expect((await run("prepare_noindex_change", args, { ...ctx, accountId: s.b.accountId, userId: s.b.userId }))._tag).toBe("Left")
+    expect((await run("prepare_page_change", args, { ...ctx, accountId: s.b.accountId, userId: s.b.userId }))._tag).toBe("Left")
     expect((await run("authorize_connected_execution", { operationId }))._tag).toBe("Left")
     const approved = await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", `${s.base}/connected-executions/${operationId}/authorize`, {
       reviewedPatchSha256: operation.patchSha256, expectedRevision: operation.revision, reason: "TEST human reviewed exact change", idempotencyKey: randomUUID(),

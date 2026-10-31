@@ -18,9 +18,60 @@ const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.f
 
 // ---- what may be changed ----
 
-/** The only action in W7: take a robots "noindex" directive out of one HTML page. */
-export const ExecutionActionKind = Schema.Literal("REMOVE_NOINDEX_META")
+/**
+ * What one connected change may do to one HTML page. Each is a deterministic
+ * edit (site-operator page-edits): take out an accidental noindex, or set the
+ * page's title, meta description or canonical address, add schema.org JSON-LD,
+ * or set one image's alt text. The words are proposed by the agent or a person
+ * and reach the site only through the reviewed, authorized pull request.
+ */
+export const ExecutionActionKind = Schema.Literal("REMOVE_NOINDEX_META", "SET_TITLE", "SET_META_DESCRIPTION", "SET_CANONICAL", "ADD_JSON_LD", "SET_IMAGE_ALT")
 export type ExecutionActionKind = typeof ExecutionActionKind.Type
+
+const OneLine = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.filter(s => s.trim().length > 0 && !/[\r\n]/.test(s)))
+/** The content an edit writes; which fields it needs depends on the kind. */
+export const ExecutionActionValue = Schema.Struct({
+  title: Schema.optional(OneLine(120)),
+  description: Schema.optional(OneLine(320)),
+  canonicalUrl: Schema.optional(Schema.String.pipe(Schema.maxLength(2000))),
+  jsonLd: Schema.optional(Schema.String.pipe(Schema.maxLength(8000))),
+  imageSrc: Schema.optional(OneLine(2000)),
+  alt: Schema.optional(OneLine(250)),
+})
+export type ExecutionActionValue = typeof ExecutionActionValue.Type
+
+export type ExecutionEdit =
+  | { readonly kind: "REMOVE_NOINDEX_META" }
+  | { readonly kind: "SET_TITLE"; readonly title: string }
+  | { readonly kind: "SET_META_DESCRIPTION"; readonly description: string }
+  | { readonly kind: "SET_CANONICAL"; readonly url: string }
+  | { readonly kind: "ADD_JSON_LD"; readonly json: string }
+  | { readonly kind: "SET_IMAGE_ALT"; readonly src: string; readonly alt: string }
+
+/**
+ * The edit a request asks for, or null when its value does not fit the kind:
+ * a missing field, a field another kind uses, or a canonical address on a
+ * different site than the page.
+ */
+export const executionEdit = (kind: ExecutionActionKind, value: ExecutionActionValue | null | undefined, liveUrl: string): ExecutionEdit | null => {
+  const v = value ?? {}
+  const used = Object.entries(v).filter(([, x]) => x !== undefined).map(([k]) => k).sort().join(",")
+  const only = (fields: string) => used === fields
+  switch (kind) {
+    case "REMOVE_NOINDEX_META": return only("") ? { kind } : null
+    case "SET_TITLE": return only("title") ? { kind, title: v.title!.trim() } : null
+    case "SET_META_DESCRIPTION": return only("description") ? { kind, description: v.description!.trim() } : null
+    case "ADD_JSON_LD": return only("jsonLd") ? { kind, json: v.jsonLd! } : null
+    case "SET_IMAGE_ALT": return only("alt,imageSrc") ? { kind, src: v.imageSrc!, alt: v.alt!.trim() } : null
+    case "SET_CANONICAL": {
+      if (!only("canonicalUrl")) return null
+      try {
+        const url = new URL(v.canonicalUrl!), page = new URL(liveUrl)
+        return (url.protocol === "https:" || url.protocol === "http:") && url.origin === page.origin && !url.username && !url.password ? { kind, url: url.toString() } : null
+      } catch { return null }
+    }
+  }
+}
 
 export const EXECUTION_EXTENSIONS = [".html", ".htm"] as const
 export const EXECUTION_MAX_FILE_BYTES = 256_000
@@ -220,6 +271,8 @@ export type ConnectExecutionTarget = typeof ConnectExecutionTarget.Type
 export const PrepareExecution = Schema.Struct({
   targetId: Schema.UUID,
   actionKind: ExecutionActionKind,
+  /** What the edit writes; absent for REMOVE_NOINDEX_META. Checked by executionEdit. */
+  value: Schema.optional(ExecutionActionValue),
   filePath: Schema.String.pipe(Schema.filter(p => executionPathProblem(p) === null)),
   /** The public page this file serves. Re-observed after the merge; fetched only inside the registered site. */
   liveUrl: Schema.String.pipe(Schema.maxLength(2000), Schema.filter(s => { try { const u = new URL(s); return u.protocol === "https:" || u.protocol === "http:" } catch { return false } })),
@@ -278,6 +331,8 @@ export interface ExecutionReceipt {
 export interface ExecutionOperation {
   readonly id: string; readonly businessId: string; readonly opportunityId: string; readonly targetId: string
   readonly owner: string; readonly repository: string; readonly baseBranch: string; readonly actionKind: ExecutionActionKind
+  /** What the edit writes; null for REMOVE_NOINDEX_META. */
+  readonly actionValue: ExecutionActionValue | null
   readonly filePath: string; readonly liveUrl: string; readonly siteFindingId: string | null
   readonly baseCommitSha: string; readonly baseBlobSha: string; readonly beforeSha256: string; readonly afterSha256: string
   readonly patchSha256: string; readonly diff: string; readonly rationale: string

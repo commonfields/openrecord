@@ -75,12 +75,23 @@ export const executionFactLines = (f: ExecutionFacts): ReadonlyArray<{ label: st
       : f.liveChange === "PENDING" ? "Website change not yet observed" : "Not checked until the merge is confirmed" },
 ]
 
+/** What a connected change does, and what a reviewer should weigh before approving it. */
+export const EXECUTION_ACTION_COPY: Readonly<Record<string, { readonly title: string; readonly risk: string }>> = {
+  REMOVE_NOINDEX_META: { title: "Remove noindex from", risk: "If the page was meant to stay out of search, removing noindex makes it indexable." },
+  SET_TITLE: { title: "New page title for", risk: "The title is what search results and AI answers show first. Check it is accurate and reads well." },
+  SET_META_DESCRIPTION: { title: "New meta description for", risk: "Search engines may show this as the snippet under the title. Check it is accurate and promises only what the page offers." },
+  SET_CANONICAL: { title: "New canonical address for", risk: "A wrong canonical can tell search engines to ignore this page. Check it points at the page that should rank." },
+  ADD_JSON_LD: { title: "Add structured data to", risk: "Structured data must match what the page shows. Check every fact, price and answer in it is true." },
+  SET_IMAGE_ALT: { title: "New image alt text on", risk: "Alt text is read aloud to people using screen readers. Check it describes the image plainly." },
+}
+
 export const executionError = (e: unknown): string => {
   const reason = e instanceof ApiError && typeof e.body["reason"] === "string" ? e.body["reason"] : ""
   const reasons: Record<string, string> = {
     RepositoryNotPermitted: "This repository is not permitted for your account. Ask your administrator to allow it.",
     ExecutionNotConfigured: "Repository access is not configured on this server.",
-    NotApplicable: "This page has no robots noindex directive that OpenRecord can remove safely.",
+    NotApplicable: "OpenRecord can't make this change to the page safely: it is already done, or the page is ambiguous (for example two titles or two canonical links).",
+    InvalidRequest: "The change does not fit what was asked for. Check the value, and that a canonical address is on the same website.",
     PageNotFound: "The page was not found on the base branch.", PageNotSupported: "That page is not a plain HTML file OpenRecord can change.",
     PathNotPermitted: "That page is outside the paths connected for this repository.", LivePageOutsideSite: "The live address is outside the registered website.",
     PatchMismatch: "The change you reviewed is not the change on record. Reload and review again.", StaleExecution: "This changed since you opened it. Reload and review again.",

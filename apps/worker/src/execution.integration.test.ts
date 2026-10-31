@@ -76,7 +76,7 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
   const plan = async (f: F, over: Partial<PreparedExecution> = {}): Promise<PreparedExecution> => {
     const baseCommitSha = (await f.gh.transport.branchHead(f.owner, f.repo, "main"))!
     const diff = unifiedDiff(PAGE, diffLines(BEFORE, AFTER))
-    return { targetId: f.target.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: LIVE, siteFindingId: null, baseBranch: "main", baseCommitSha, baseBlobSha: gitBlobSha(BEFORE), afterBlobSha: gitBlobSha(AFTER),
+    return { targetId: f.target.id, actionKind: "REMOVE_NOINDEX_META", actionValue: null, filePath: PAGE, liveUrl: LIVE, siteFindingId: null, baseBranch: "main", baseCommitSha, baseBlobSha: gitBlobSha(BEFORE), afterBlobSha: gitBlobSha(AFTER),
       beforeSha256: sha256Text(BEFORE), afterSha256: sha256Text(AFTER),
       patchSha256: executionPatchSha256({ actionKind: "REMOVE_NOINDEX_META", owner: f.owner, repository: f.repo, baseBranch: "main", baseCommitSha, filePath: PAGE, liveUrl: LIVE, beforeSha256: sha256Text(BEFORE), afterSha256: sha256Text(AFTER) }),
       afterContent: AFTER, diff, rationale: "TEST remove an accidental noindex", idempotencyKey: randomUUID(), ...over }

@@ -73,7 +73,7 @@ describe("connected change panel", () => {
     expect(stopped("PROVIDER_AUTH", "FAILED")).not.toMatch(/token|secret|credential/i)
     expect(executionStopCopy(op("AWAITING_MERGE"))).toBeNull()
     expect(executionError(new ApiError(409, { reason: "ExecutionUnresolved" }))).toContain("still in progress")
-    expect(executionError(new ApiError(409, { reason: "NotApplicable" }))).toContain("noindex")
+    expect(executionError(new ApiError(409, { reason: "NotApplicable" }))).toContain("can't make this change to the page safely")
     const facts = renderToStaticMarkup(createElement(ExecutionFacts, { operation: op("PREPARED") }))
     expect(facts).toContain("What is confirmed")
   })

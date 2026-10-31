@@ -10,10 +10,10 @@ import {
 } from "@openrecord/db"
 import {
   AuthorizeExecution, CancelExecution, ConnectExecutionTarget, DispatchExecution, EXECUTION_MAX_FILE_BYTES, PrepareExecution, RequestExecutionCheck,
-  decodeRouteId, diffLines, executionPathAllowed, executionRepositoryDenied, unifiedDiff,
+  decodeRouteId, diffLines, executionEdit, executionPathAllowed, executionRepositoryDenied, unifiedDiff,
 } from "@openrecord/contracts"
 import {
-  GitHubError, GitHubExecution, executionPatchSha256, gitBlobSha, githubEffect, removeNoindexFromHtml, sha256Text,
+  GitHubError, GitHubExecution, applyPageEdit, executionPatchSha256, gitBlobSha, githubEffect, sha256Text,
 } from "@openrecord/site-operator"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
@@ -51,9 +51,12 @@ export const executionRepositoryPermitted = (allowed: (o: string, r: string, a: 
 export const prepareConnectedExecution = (session: Session, businessId: string, opportunityId: string, input: PrepareExecution, actor: "OPERATOR" | "ASSISTANT" = "OPERATOR") => Effect.gen(function*() {
     const repo = yield* GrowthExecutionRepository
     const gh = yield* gitHubConfig
-    const fingerprint = executionRequestFingerprint({ opportunityId, targetId: input.targetId, actionKind: input.actionKind, filePath: input.filePath, liveUrl: input.liveUrl, rationale: input.rationale, siteFindingId: input.siteFindingId })
+    const fingerprint = executionRequestFingerprint({ opportunityId, targetId: input.targetId, actionKind: input.actionKind, value: input.value, filePath: input.filePath, liveUrl: input.liveUrl, rationale: input.rationale, siteFindingId: input.siteFindingId })
     const replay = yield* repo.findPrepared(session, businessId, opportunityId, fingerprint, input.idempotencyKey)
     if (replay) return replay
+    // The value must fit the kind (and a canonical address stay on the page's site) before any provider call.
+    const edit = executionEdit(input.actionKind, input.value, input.liveUrl)
+    if (!edit) return yield* refuse("InvalidRequest")
     const target = (yield* repo.targets(session.accountId, businessId)).find(t => t.id === input.targetId)
     if (!target) return yield* refuse("ExecutionTargetNotFound")
     if (!executionRepositoryPermitted(gh.allowed, target.owner, target.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
@@ -68,13 +71,13 @@ export const prepareConnectedExecution = (session: Session, businessId: string, 
     const file = yield* mapped(() => transport.file(target.owner, target.repository, input.filePath, baseCommitSha))
     if (file.kind !== "file") return yield* refuse(file.kind === "missing" ? "PageNotFound" : "PageNotSupported")
     if (Buffer.byteLength(file.content, "utf8") > EXECUTION_MAX_FILE_BYTES) return yield* refuse("PageNotSupported")
-    // The only supported change: the existing deterministic transform. Anything it cannot do safely is refused, never guessed.
-    const after = removeNoindexFromHtml(file.content)
-    if (after === null || after === file.content || robotsNoindex.test(after)) return yield* refuse("NotApplicable")
+    // A deterministic page edit. Anything it cannot do safely (an ambiguous page, a change that changes nothing) is refused, never guessed.
+    const after = applyPageEdit(file.content, edit)
+    if (after === null || (edit.kind === "REMOVE_NOINDEX_META" && robotsNoindex.test(after))) return yield* refuse("NotApplicable")
     const beforeSha256 = sha256Text(file.content), afterSha256 = sha256Text(after)
     const patchSha256 = executionPatchSha256({ actionKind: input.actionKind, owner: target.owner, repository: target.repository, baseBranch: target.baseBranch, baseCommitSha, filePath: input.filePath, liveUrl: input.liveUrl, beforeSha256, afterSha256 })
     const diff = unifiedDiff(input.filePath, diffLines(file.content, after))
-    const plan = { targetId: target.id, actionKind: input.actionKind, filePath: input.filePath, liveUrl: input.liveUrl, siteFindingId: input.siteFindingId, baseBranch: target.baseBranch, baseCommitSha,
+    const plan = { targetId: target.id, actionKind: input.actionKind, actionValue: edit.kind === "REMOVE_NOINDEX_META" ? null : input.value ?? null, filePath: input.filePath, liveUrl: input.liveUrl, siteFindingId: input.siteFindingId, baseBranch: target.baseBranch, baseCommitSha,
       baseBlobSha: file.blobSha, afterBlobSha: gitBlobSha(after), beforeSha256, afterSha256, patchSha256, afterContent: after, diff, rationale: input.rationale.trim(), idempotencyKey: input.idempotencyKey } as const
     return yield* repo.prepare(session, businessId, opportunityId, fingerprint, plan, actor).pipe(
       // Two identical requests racing: the loser returns the winner's operation.

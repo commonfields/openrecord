@@ -9,6 +9,8 @@ import type { AgentToolResult } from "./agent-tools.js"
 const Prepare = Schema.Struct({
   opportunityId: Schema.UUID,
   targetId: PrepareExecution.fields.targetId,
+  actionKind: PrepareExecution.fields.actionKind,
+  value: PrepareExecution.fields.value,
   filePath: PrepareExecution.fields.filePath,
   liveUrl: PrepareExecution.fields.liveUrl,
   rationale: PrepareExecution.fields.rationale,
@@ -20,13 +22,13 @@ const Empty = Schema.Struct({})
 /** The model cannot choose the request key: identical proposals from the same user replay safely. */
 const requestKey = (ctx: ToolContext, input: typeof Prepare.Type) => {
   const hash = createHash("sha256").update(JSON.stringify(["agent-connected-execution-v1", ctx.accountId, ctx.businessId, ctx.userId,
-    input.opportunityId, input.targetId, input.filePath, input.liveUrl, input.rationale, input.siteFindingId])).digest("hex")
+    input.opportunityId, input.targetId, input.actionKind, input.value ?? null, input.filePath, input.liveUrl, input.rationale, input.siteFindingId])).digest("hex")
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`
 }
 
 export const executionDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "read_connected_execution_targets", description: "List this business's connected website repositories and allowed paths. A repository must be connected by an operator first.", parametersJsonSchema: JSONSchema.make(Empty) },
-  { name: "prepare_noindex_change", description: "Prepare a reviewable exact removal of an accidental noindex directive from one HTML file in a connected repository, for an already approved initiative. This does not approve, dispatch, publish or merge. The human must review and approve the exact change in the initiative's Connected change section, and authorize opening the pull request. Use IDs and paths from evidence; never guess.", parametersJsonSchema: JSONSchema.make(Prepare) },
+  { name: "prepare_page_change", description: "Prepare one exact, reviewable change to one HTML file in a connected repository, for an already approved initiative. actionKind and value: REMOVE_NOINDEX_META (no value) takes out an accidental noindex; SET_TITLE {title} sets the page title (about 50 to 60 characters, the page's real topic and the business name); SET_META_DESCRIPTION {description} sets the search snippet (about 140 to 160 characters, what the page offers and why to click); SET_CANONICAL {canonicalUrl} points the canonical link at an address on the same site; ADD_JSON_LD {jsonLd} adds schema.org structured data as a JSON string (FAQPage, LocalBusiness, Product, Organization...), using only facts from approved business truth or the page itself; SET_IMAGE_ALT {imageSrc, alt} sets alt text on the one image whose src attribute is exactly imageSrc. You write the words; they reach the site only after a person reviews the exact diff in the initiative's Connected change section and authorizes the pull request. This does not approve, dispatch, publish or merge. A page that is ambiguous for the change is refused, not guessed. Read the page first and use paths and addresses from evidence.", parametersJsonSchema: JSONSchema.make(Prepare) },
   { name: "read_connected_executions", description: "Read connected changes for an initiative, including current state, verified merge and live website observations. A prepared or approved change is not a completed change; a merge is not proof of a live change or business impact.", parametersJsonSchema: JSONSchema.make(Read) },
 ]
 
@@ -49,10 +51,11 @@ export const dispatchExecutionTool = (ctx: ToolContext, name: string, raw: unkno
   }
   const input = yield* Schema.decodeUnknown(Prepare, { onExcessProperty: "error" })(raw)
   const operation = yield* prepareConnectedExecution({ accountId: ctx.accountId, userId: ctx.userId }, ctx.businessId, input.opportunityId,
-    { ...input, actionKind: "REMOVE_NOINDEX_META", idempotencyKey: requestKey(ctx, input) }, "ASSISTANT").pipe(
+    { targetId: input.targetId, actionKind: input.actionKind, ...(input.value ? { value: input.value } : {}), filePath: input.filePath, liveUrl: input.liveUrl,
+      rationale: input.rationale, siteFindingId: input.siteFindingId, idempotencyKey: requestKey(ctx, input) }, "ASSISTANT").pipe(
       Effect.provideService(GrowthExecutionRepository, repo))
-  return { summary: "Exact noindex change prepared; human review and approval required", citations: [], data: {
-    operationId: operation.id, opportunityId: input.opportunityId, state: operation.state, filePath: operation.filePath,
+  return { summary: "Exact page change prepared; human review and approval required", citations: [], data: {
+    operationId: operation.id, opportunityId: input.opportunityId, state: operation.state, actionKind: operation.actionKind, filePath: operation.filePath, diff: operation.diff.slice(0, 4000),
     liveUrl: operation.liveUrl, owner: operation.owner, repository: operation.repository, patchSha256: operation.patchSha256,
     instruction: "Open the initiative's Connected change section to review the exact diff and approve opening the pull request. Nothing has been published.",
   } } satisfies AgentToolResult

@@ -50,8 +50,8 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
   ...executionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
-    effect: declaration.name === "prepare_noindex_change" ? "propose" : "read",
-    replay: declaration.name === "prepare_noindex_change" ? "deduplicated" : "safe", scope: "general",
+    effect: declaration.name === "prepare_page_change" ? "propose" : "read",
+    replay: declaration.name === "prepare_page_change" ? "deduplicated" : "safe", scope: "general",
     run: (ctx, args) => dispatchExecutionTool(ctx, declaration.name, args) })),
   ...investigationDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),

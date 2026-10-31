@@ -23,11 +23,11 @@ import type { SqlError } from "@effect/sql/SqlError"
 import {
   GrowthExecutionRepository, GrowthExecutionRefused, type ExecutionJob, type ExecutionWork, type RowDecodeError,
 } from "@openrecord/db"
-import { EXECUTION_MERGE_WINDOW_DAYS, executionPathAllowed, executionRepositoryDenied, type ExecutionOperation, type ExecutionStopCode } from "@openrecord/contracts"
+import { EXECUTION_MERGE_WINDOW_DAYS, executionEdit, executionPathAllowed, executionRepositoryDenied, type ExecutionOperation, type ExecutionStopCode } from "@openrecord/contracts"
 import { safeFetch, type HttpTransport } from "@openrecord/representation"
 import { isInScope } from "@openrecord/discovery"
 import {
-  GitHubError, GitHubExecution, executionHeadBranch, executionPullRequestText, githubEffect, githubOutcomeUncertain, inspectPage, sha256Text, type GitHubExecutionConfig, type GitHubPullRequest,
+  GitHubError, GitHubExecution, executionHeadBranch, executionPullRequestText, githubEffect, githubOutcomeUncertain, inspectPage, pageEditLabel, pageEditObserved, sha256Text, type GitHubExecutionConfig, type GitHubPullRequest,
 } from "@openrecord/site-operator"
 
 export class ExecutionRunner extends Context.Tag("ExecutionRunner")<
@@ -290,10 +290,20 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
     if (ev.failure !== null) { yield* record("INCONCLUSIVE", `The page could not be observed (${ev.failure.toLowerCase().replaceAll("_", " ")})`, ev.status, null); return DONE }
     if (ev.outOfScopeRedirect) { yield* record("INCONCLUSIVE", "The page redirected outside the registered website", ev.status, null); return DONE }
     if (ev.status !== 200 || !ev.body) { yield* record("INCONCLUSIVE", `The page answered with status ${ev.status ?? "none"}`, ev.status, ev.bodyDigest); return DONE }
-    const page = inspectPage({ url: op.liveUrl, finalUrl: ev.finalUrl, status: ev.status, contentType: ev.contentType, redirectChain: ev.redirectChain, headers: ev.headers, html: Buffer.from(ev.body).toString("utf8"), failure: null })
-    const blocked = page.indexability === "BLOCKED_BY_META" || page.indexability === "BLOCKED_BY_HEADER"
-    yield* record(blocked ? "CHANGE_NOT_OBSERVED" : "CHANGE_OBSERVED",
-      blocked ? "The live page still carries a noindex directive" : "The live page no longer carries a noindex directive", ev.status, ev.bodyDigest)
+    const html = Buffer.from(ev.body).toString("utf8")
+    if (op.actionKind === "REMOVE_NOINDEX_META") {
+      const page = inspectPage({ url: op.liveUrl, finalUrl: ev.finalUrl, status: ev.status, contentType: ev.contentType, redirectChain: ev.redirectChain, headers: ev.headers, html, failure: null })
+      const blocked = page.indexability === "BLOCKED_BY_META" || page.indexability === "BLOCKED_BY_HEADER"
+      yield* record(blocked ? "CHANGE_NOT_OBSERVED" : "CHANGE_OBSERVED",
+        blocked ? "The live page still carries a noindex directive" : "The live page no longer carries a noindex directive", ev.status, ev.bodyDigest)
+      return DONE
+    }
+    // Page edits: the live page must show exactly what was written.
+    const edit = executionEdit(op.actionKind, op.actionValue, op.liveUrl)
+    if (!edit || edit.kind === "REMOVE_NOINDEX_META") { yield* record("INCONCLUSIVE", "The stored change could not be read back", ev.status, ev.bodyDigest); return DONE }
+    const seen = pageEditObserved(html, edit)
+    yield* record(seen ? "CHANGE_OBSERVED" : "CHANGE_NOT_OBSERVED",
+      seen ? `The live page shows ${pageEditLabel(edit)}` : `The live page does not show ${pageEditLabel(edit)} yet`, ev.status, ev.bodyDigest)
     return DONE
   })
 
