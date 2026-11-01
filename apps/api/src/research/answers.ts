@@ -29,8 +29,10 @@ import { refuse, type AnyCapability, type Observed, type RunContext } from "./ty
 export interface Engine { readonly instanceId: string; readonly driver: string; readonly model: string; readonly label: string }
 export interface AnswerEnginesService {
   readonly list: (ctx: { accountId: string; userId: string; businessId: string }) => Effect.Effect<ReadonlyArray<Engine>, unknown, SqlClient.SqlClient>
-  readonly ask: (ctx: { accountId: string; userId: string; businessId: string }, engine: Engine, prompt: string) => Effect.Effect<{ readonly text: string } | { readonly failed: string }, unknown, SqlClient.SqlClient>
+  readonly ask: (ctx: { accountId: string; userId: string; businessId: string }, engine: Engine, prompt: string) => Effect.Effect<Asked | { readonly failed: string }, unknown, SqlClient.SqlClient>
 }
+/** An answer, with the web searches the model ran and the pages they returned when the subscription searched. */
+export interface Asked { readonly text: string; readonly searches?: ReadonlyArray<string> | undefined; readonly sources?: ReadonlyArray<{ readonly url: string; readonly title?: string | undefined }> | undefined }
 export class AnswerEngines extends Context.Tag("AnswerEngines")<AnswerEngines, AnswerEnginesService>() {}
 
 /** Neutral: never names the business, so the answer is what any asker would get. */
@@ -43,8 +45,9 @@ export const liveEngines: AnswerEnginesService = {
       .flatMap(i => i.models.filter(m => !i.disabledModels?.includes(m.id)).slice(0, 4).map(m => ({ instanceId: i.id, driver: i.driver, model: m.id, label: `${i.driver} ${m.name || m.id}` })))
   }),
   ask: (ctx, engine, prompt) => invokeHarness({ accountId: ctx.accountId, userId: ctx.userId, businessId: ctx.businessId } as never, { instanceId: engine.instanceId, model: engine.model },
-    { system: ANSWER_SYSTEM, tools: [], contents: [{ role: "user", parts: [{ text: prompt }] }] }).pipe(
-    Effect.map(r => r.kind === "failed" ? { failed: r.reason } : r.answer.kind === "text" ? { text: r.answer.text } : { failed: "MALFORMED" }),
+    // The subscription's own web search, when its bridge supports it; older bridges answer from the model alone.
+    { system: ANSWER_SYSTEM, tools: [], contents: [{ role: "user", parts: [{ text: prompt }] }], webSearch: true }).pipe(
+    Effect.map((r): Asked | { failed: string } => r.kind === "failed" ? { failed: r.reason } : r.answer.kind === "text" ? { text: r.answer.text, searches: r.answer.searches, sources: r.answer.sources } : { failed: "MALFORMED" }),
     Effect.catchAll(e => Effect.succeed({ failed: (e as { reason?: string }).reason ?? "UNAVAILABLE" }))),
 }
 const engines = Effect.map(Effect.serviceOption(AnswerEngines), o => Option.getOrElse(o, () => liveEngines))
@@ -94,10 +97,13 @@ export const citedUrls = (answer: string) => [...new Set([...answer.matchAll(/\]
 export interface AnalysedAnswer {
   readonly engine: string; readonly model: string; readonly prompt: string; readonly answeredAt: string
   readonly text: string; readonly brandMentioned: boolean; readonly brandPosition: number | null
+  /** WEB_SEARCH when the model searched the web for this answer; MODEL_ONLY when it answered from what it knows. */
+  readonly retrieval?: "WEB_SEARCH" | "MODEL_ONLY"
+  readonly searches?: ReadonlyArray<string>
   readonly mentions: ReadonlyArray<{ readonly brand: string; readonly role: "TARGET" | "COMPETITOR"; readonly position: number; readonly negativeCue: boolean; readonly sentence: string }>
   readonly citations: ReadonlyArray<{ readonly url: string; readonly domain: string | null; readonly owner: string; readonly competitor: string | null; readonly sourceType: string }>
 }
-export const analyse = (answer: string, brands: Brands, meta: { engine: string; model: string; prompt: string; answeredAt: string }): AnalysedAnswer => {
+export const analyse = (answer: string, brands: Brands, meta: { engine: string; model: string; prompt: string; answeredAt: string }, searched?: { searches?: ReadonlyArray<string> | undefined; sources?: ReadonlyArray<{ url: string }> | undefined }): AnalysedAnswer => {
   const found = detectMentions(answer, brands.target, brands.competitors)
   const firstByBrand = new Map<string, (typeof found)[number]>()
   for (const m of [...found].sort((a, b) => a.start - b.start)) if (!firstByBrand.has(m.brand)) firstByBrand.set(m.brand, m)
@@ -106,7 +112,10 @@ export const analyse = (answer: string, brands: Brands, meta: { engine: string; 
   const target = mentions.find(m => m.role === "TARGET")
   return {
     ...meta, text: answer.slice(0, 8000), brandMentioned: !!target, brandPosition: target?.position ?? null, mentions,
-    citations: citedUrls(answer).map((url, i) => { const c = classifyCitation({ uri: url, title: null, position: i + 1 }, brands.owned, brands.competitors); return { url, domain: c.domain, owner: c.owner, competitor: c.competitor, sourceType: c.owner === "OWNED" ? "OWNED_SITE" : sourceType(url) } }),
+    retrieval: searched?.searches?.length || searched?.sources?.length ? "WEB_SEARCH" : "MODEL_ONLY",
+    ...(searched?.searches?.length ? { searches: searched.searches.map(q => clean(q, 300) ?? "").filter(Boolean).slice(0, 30) } : {}),
+    // Pages the answer cites, then pages its searches returned that the text did not name.
+    citations: [...new Set([...citedUrls(answer), ...(searched?.sources ?? []).map(x => x.url).filter(u => /^https?:\/\//.test(u))])].slice(0, 40).map((url, i) => { const c = classifyCitation({ uri: url, title: null, position: i + 1 }, brands.owned, brands.competitors); return { url, domain: c.domain, owner: c.owner, competitor: c.competitor, sourceType: c.owner === "OWNED" ? "OWNED_SITE" : sourceType(url) } }),
   }
 }
 
@@ -149,7 +158,7 @@ const trackRun = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*() {
   const asks = prompts.flatMap(p => chosen.map(engine => ({ p, engine }))).slice(0, MAX_ASKS)
   const brands = yield* brandsFor(ctx.businessId, { competitors: input.competitors })
   const results = yield* Effect.forEach(asks, a => e.ask(ctx, a.engine, a.p).pipe(Effect.map(r => ({ ...a, r, at: new Date().toISOString() }))), { concurrency: 3 })
-  const answers = results.flatMap(x => "text" in x.r ? [analyse(x.r.text, brands, { engine: x.engine.label, model: x.engine.model, prompt: x.p, answeredAt: x.at })] : [])
+  const answers = results.flatMap(x => "text" in x.r ? [analyse(x.r.text, brands, { engine: x.engine.label, model: x.engine.model, prompt: x.p, answeredAt: x.at }, x.r)] : [])
   const failures = results.flatMap(x => "failed" in x.r ? [{ engine: x.engine.label, prompt: x.p, reason: x.r.failed }] : [])
   if (!answers.length) return refuse("UNAVAILABLE", `No model answered (${failures.map(f => f.reason).join(", ")}). Say AI answers are unknown for now.`)
   const mentioned = answers.filter(a => a.brandMentioned).length
@@ -160,7 +169,7 @@ const trackRun = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*() {
     findings: { label: "SEEN", brand: brands.target.name, competitors: brands.competitors.map(c => c.name), brandsFrom: brands.source,
       summary: { answers: answers.length, brandMentioned: { n: mentioned, d: answers.length }, failures: failures.length }, answers, failures },
     coverage: { prompts: prompts.length, engines: chosen.map(c => c.label), asked: asks.length, notAsked: prompts.length * chosen.length - asks.length,
-      method: "Each question asked once per model through the team's own connected subscription, with a neutral instruction that never names the business. Answers vary between runs; repeat over days before drawing conclusions.",
+      method: "Each question asked once per model through the team's own connected subscription, with a neutral instruction that never names the business, and with the subscription's own web search when its bridge supports it (each answer says whether it searched). Answers vary between runs; repeat over days before drawing conclusions.",
       note: "What these models answered, not what every assistant user sees. A mention is not a recommendation, and visibility is not customer acquisition." },
   } satisfies Observed
 })
@@ -218,6 +227,10 @@ export const visibilityReport = (answers: ReadonlyArray<AnalysedAnswer>, brand: 
       bySourceType, topDomains: [...domains.entries()].sort((a, b) => b[1].citations - a[1].citations).slice(0, 15).map(([domain, d]) => ({ domain, ...d })),
       topPages: [...urls.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([url, n]) => ({ url, citations: n })) },
     trend: [...days.entries()].sort().map(([day, list]) => ({ day, answers: list.length, brandMentioned: list.filter(a => a.brandMentioned).length })),
+    retrieval: { webSearch: frac(answers.filter(a => a.retrieval === "WEB_SEARCH").length, answers.length), modelOnly: frac(answers.filter(a => a.retrieval !== "WEB_SEARCH").length, answers.length) },
+    // The searches models ran while answering (query fan-out), most frequent first.
+    fanOut: (() => { const m = new Map<string, number>(); for (const a of answers) for (const q of a.searches ?? []) m.set(q.toLowerCase(), (m.get(q.toLowerCase()) ?? 0) + 1)
+      return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([query, answers]) => ({ query, answers })) })(),
     contentGaps: gaps,
   }
 }

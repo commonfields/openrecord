@@ -222,6 +222,15 @@ describe("AI visibility analysis", () => {
     expect(citedUrls("see https://a.example.org/x.")).toEqual(["https://a.example.org/x"])
     expect(sourceType("https://www.g2.com/products/x")).toBe("REVIEW_SITE")
   })
+  it("records the searches a model ran and the pages they returned, and labels how it answered", () => {
+    const searched = analyse("Bright Smiles is the usual pick.", brands, meta, { searches: ["best dentist downtown", "dentist reviews downtown"], sources: [{ url: "https://www.yelp.com/biz/x" }, { url: "https://northstar.test/" }] })
+    expect(searched).toMatchObject({ retrieval: "WEB_SEARCH", searches: ["best dentist downtown", "dentist reviews downtown"] })
+    expect(searched.citations.map(c => [c.url, c.owner])).toEqual([["https://www.yelp.com/biz/x", "OTHER"], ["https://northstar.test/", "OWNED"]])
+    expect(analyse("Bright Smiles.", brands, meta)).toMatchObject({ retrieval: "MODEL_ONLY" })
+    const r = visibilityReport([searched, analyse("x", brands, meta, { searches: ["best dentist downtown"] }), analyse("y", brands, meta)], "Northstar Dental")
+    expect(r.fanOut).toEqual([{ query: "best dentist downtown", answers: 2 }, { query: "dentist reviews downtown", answers: 1 }])
+    expect(r.retrieval).toMatchObject({ webSearch: { n: 2, d: 3 }, modelOnly: { n: 1, d: 3 } })
+  })
   it("reports visibility, share of voice, citations and content gaps from saved answers", () => {
     const answers = [
       analyse("Bright Smiles and Northstar Dental. https://www.yelp.com/biz/x", brands, meta),

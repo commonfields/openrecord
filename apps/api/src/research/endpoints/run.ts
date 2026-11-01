@@ -14,11 +14,12 @@ import { refuse, type AnyCapability, type Observed, type Refused, type RunContex
 import { ACCOUNT_ENDPOINTS } from "./defs-accounts.js"
 import { PUBLIC_ENDPOINTS } from "./defs-public.js"
 import { SEO_ENDPOINTS } from "./defs-seo.js"
+import { GENERATED_ENDPOINTS } from "./generated.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
-export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...SEO_ENDPOINTS]
+export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...SEO_ENDPOINTS, ...GENERATED_ENDPOINTS]
 const context = (businessId: string, providerId: string) => `research:${businessId}:${providerId}`
 const transport = Effect.map(Effect.serviceOption(ResearchHttp), Option.getOrUndefined)
 

@@ -11,6 +11,9 @@ import { SITE_CAPABILITIES } from "./site.js"
 import { SOCIAL_CAPABILITIES } from "./social.js"
 import { TRAFFIC_CAPABILITIES } from "./traffic.js"
 import { ENDPOINT_CAPABILITIES } from "./endpoints/run.js"
+import { GENERATED_ENDPOINTS } from "./endpoints/generated.js"
+
+const GENERATED_IDS = new Set(GENERATED_ENDPOINTS.map(e => e.id))
 import type { AnyCapability } from "./types.js"
 
 export const CAPABILITIES: ReadonlyArray<AnyCapability> = [
@@ -26,6 +29,7 @@ const SYNONYMS: Readonly<Record<string, string>> = {
   ai: "ai answers visibility citations", llm: "ai answers visibility", chatgpt: "ai answers visibility traffic", citation: "ai citations", citations: "ai citations",
   visibility: "ai visibility answers", crawler: "ai traffic crawler logs", bots: "ai traffic crawler", referral: "ai traffic referral affiliate", backlinks: "partners marketplace community mentions",
   partners: "partners integrations marketplace", integrations: "partners integrations", content: "content publishing blog", blog: "content publishing blog",
+  stripe: "revenue stripe charges customers subscriptions", subscriptions: "stripe subscriptions", customers: "stripe customers", invoices: "stripe invoices", repository: "github repos", contributors: "github contributors", stars: "github stargazers", issues: "github issues",
   plg: "growth signals signup free", growth: "growth signals loops content jobs", competitors: "ai visibility share search results", reviews: "reviews apps technologies marketplace",
   community: "hackernews community bluesky reddit", app: "apps store reviews", apps: "apps store reviews", podcast: "podcasts", github: "github developers", developers: "github npm pypi docker developers",
   downloads: "npm pypi downloads", wikipedia: "wiki pageviews", interest: "wiki pageviews", revenue: "sec revenue filings", filings: "sec filings", public: "sec filings", speed: "chrome pagespeed real users",
@@ -53,6 +57,9 @@ export const describe = (c: AnyCapability) => ({ id: c.id, platform: c.platform,
 export const INDEX = (() => {
   const native = CAPABILITIES.filter(c => !ENDPOINT_CAPABILITIES.includes(c)).map(c => `${c.id}: ${c.title}`).join("; ")
   const byPlatform = new Map<string, string[]>()
-  for (const c of ENDPOINT_CAPABILITIES) byPlatform.set(c.platform, [...(byPlatform.get(c.platform) ?? []), c.id])
-  return `${native}. Official and public APIs: ${[...byPlatform.entries()].map(([p, ids]) => `${p} (${ids.join(", ")})`).join("; ")}`
+  // Hand-written endpoints are listed by id; spec-generated ones only by count (find them with find_research_capabilities).
+  for (const c of ENDPOINT_CAPABILITIES) if (!GENERATED_IDS.has(c.id)) byPlatform.set(c.platform, [...(byPlatform.get(c.platform) ?? []), c.id])
+  const generated = new Map<string, number>()
+  for (const id of GENERATED_IDS) { const p = id.split(".").slice(0, 2).join("."); generated.set(p, (generated.get(p) ?? 0) + 1) }
+  return `${native}. Official and public APIs: ${[...byPlatform.entries()].map(([p, ids]) => `${p} (${ids.join(", ")})`).join("; ")}. Generated from official API specifications: ${[...generated.entries()].map(([p, n]) => `${p}.* (${n})`).join(", ")}`
 })()

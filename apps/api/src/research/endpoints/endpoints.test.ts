@@ -10,6 +10,8 @@ import { SEO_ENDPOINTS, taskResult } from "./defs-seo.js"
 import { prepare, scrub, send } from "./http.js"
 import { PROVIDERS, provider } from "./providers.js"
 import { ENDPOINTS } from "./run.js"
+import { GENERATED_ENDPOINTS, compactJson } from "./generated.js"
+import { Schema } from "effect"
 
 const fake = (respond: (u: URL, init: FetchInit) => { status: number; body: unknown; headers?: Record<string, string> }, ip = "93.184.216.34") => {
   const seen: Array<{ url: URL; init: FetchInit }> = []
@@ -125,5 +127,40 @@ describe("parsers", () => {
       .toMatchObject({ status: "OBSERVED", findings: { label: "ESTIMATED", total: 400, keywords: [{ keyword: "dentist downtown", volume: 2400, position: 2 }] } })
     expect(parse("seo.keyword_volume", { status_code: 20000, tasks: [{ status_code: 20000, result: [{ keyword: "dentist", search_volume: 9000, monthly_searches: [{ year: 2026, month: 9, search_volume: 8800 }] }] }] }))
       .toMatchObject({ findings: { keywords: [{ keyword: "dentist", volume: 9000, monthly: [{ month: 9, volume: 8800 }] }] } })
+  })
+})
+
+describe("endpoints generated from official API specifications", () => {
+  it("are read-only GET calls with unique ids on their provider's hosts", () => {
+    expect(GENERATED_ENDPOINTS.length).toBeGreaterThan(600)
+    expect(new Set(ENDPOINTS.map(e => e.id)).size).toBe(ENDPOINTS.length)
+    for (const e of GENERATED_ENDPOINTS) {
+      expect(e.id).toMatch(/^[a-z][a-z0-9_.]{1,59}$/)
+      const req = e.request(Object.fromEntries([...e.description.matchAll(/\{([^}+]+)\}/g)].map(m => [m[1], "x"])), now)
+      expect(req.method).toBe("GET")
+      expect(new URL(req.url).protocol).toBe("https:")
+    }
+  })
+  it("build the documented request from typed input and refuse unknown fields", () => {
+    const e = ENDPOINTS.find(x => x.id === "dev.github.repos.list_contributors")!
+    const input = Schema.decodeUnknownSync(e.input, { onExcessProperty: "error" })({ owner: "PostHog", repo: "posthog", per_page: 5 })
+    const req = e.request(input, now)
+    expect(req.url).toBe("https://api.github.com/repos/PostHog/posthog/contributors")
+    expect(req.query).toEqual({ per_page: 5 })
+    expect(() => Schema.decodeUnknownSync(e.input, { onExcessProperty: "error" })({ owner: "PostHog", repo: "posthog", token: "x" })).toThrow()
+    expect(() => Schema.decodeUnknownSync(e.input, { onExcessProperty: "error" })({ owner: "../admin", repo: "posthog" })).toThrow()
+    const yt = ENDPOINTS.find(x => x.id === "social.youtube_api.channels.list")!
+    expect(new URL(yt.request({ part: "statistics", forHandle: "@rival" }, now).url).hostname).toBe("youtube.googleapis.com")
+  })
+  it("keep answers compact and readable", () => {
+    expect(compactJson({ login: "a", avatar_url: "https://x", html_url: "https://github.com/a", node_id: "n", list: Array.from({ length: 40 }, (_, i) => i) }))
+      .toEqual({ login: "a", html_url: "https://github.com/a", list: Array.from({ length: 25 }, (_, i) => i) })
+    expect(ENDPOINTS.find(x => x.id === "dev.github.repos.list_tags")!.parse([], {})).toMatchObject({ status: "NO_DATA" })
+  })
+  it("need the business's own key for Stripe, and only a restricted one", () => {
+    const p = provider("stripe")!
+    expect(p.connect!.format.test("rk_live_" + "a".repeat(24))).toBe(true)
+    expect(p.connect!.format.test("sk_live_" + "a".repeat(24))).toBe(false)
+    expect(CAPABILITIES.find(c => c.id === "revenue.stripe.customers")).toMatchObject({ source: "CONNECTED_ACCOUNT" })
   })
 })
