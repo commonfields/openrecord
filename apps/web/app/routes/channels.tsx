@@ -7,6 +7,7 @@ import { SearchConsoleSetup } from "@/components/search-console"
 import { AdAccountsSetup } from "@/components/ad-accounts"
 import { RevenueSetup } from "@/components/revenue"
 import { AiTrafficUpload } from "@/components/ai-traffic"
+import { ResearchConnections } from "@/components/research-connections"
 import { AiAnswerTracking } from "@/components/ai-answer-tracking"
 import { errorMessage } from "@/lib/format"
 import { Channels } from "@/lib/setup"
@@ -31,6 +32,7 @@ export function ChannelsPage() {
           <RevenueSetup businessId={id} />
           <AiAnswerTracking businessId={id} />
           <AiTrafficUpload businessId={id} />
+          <ResearchConnections businessId={id} />
           <Panel className="p-4">
             <ChannelList inventory={q.data.inventory} />
           </Panel>

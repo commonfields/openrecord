@@ -32,6 +32,30 @@ OpenRecord's agent researches other companies and AI answers with its own code. 
 
 The catalog (`apps/api/src/research/catalog.ts`) is closed: `run_research` runs only these ids, and each capability decodes its own input with excess properties refused.
 
+## Endpoint catalog (official and public APIs)
+
+`apps/api/src/research/endpoints/` describes read-only calls to documented official and public APIs as data: a provider (hosts, authentication) and endpoints (typed input, request, parser). One executor runs every endpoint the same way:
+- a pinned SSRF-safe connection to the provider's own hosts only, with no redirects followed and a size cap;
+- the credential injected on the server and scrubbed from anything returned;
+- stable failure reasons;
+- a saved research observation.
+
+Endpoints join the same closed catalog as the native capabilities and run through `run_research`.
+
+| Access | Providers |
+|---|---|
+| Public | App Store and podcasts; GitHub; npm; PyPI; Docker Hub; Wikipedia pageviews and summaries; Wikidata facts; SEC EDGAR filings and reported revenue (needs `RESEARCH_CONTACT`) |
+| The business's own account, connected on Channels | Google Cloud key (YouTube Data, Chrome real-user metrics); PageSpeed (optional key); Reddit (its own app); Product Hunt (its own token); Bing Webmaster (its own site); GitHub token (optional) |
+| The business's own paid account, off until connected | SEO data: ranked keywords, search volume, keyword ideas, results pages, backlinks, referring domains, competing domains, estimated traffic history, domain overviews |
+
+Credentials live in `research_connections` (migration 0062):
+- encrypted with the deployment's token cipher and bound to the business and provider;
+- checked for format on save;
+- never returned;
+- cleared on revoke.
+
+Platforms with no official public API (private app interfaces of social networks, ad libraries without an API, consumer AI apps) are not wrapped.
+
 ## Scheduled tracking and uploads
 
 - `ai_answer_schedules` (migration 0061): a person approves the cadence (daily or weekly), up to three connected models, and the exact number of questions per run (at most 8). The questions come from the latest question set.
