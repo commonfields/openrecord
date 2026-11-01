@@ -20,6 +20,7 @@ import { STARTS_WORK } from "./agent-session-tools.js"
 import { dispatchInvestigation, investigationDeclarations } from "./agent-investigation-tools.js"
 import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-tools.js"
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
+import { dispatchResearch, researchDeclarations } from "./market-research.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -58,6 +59,13 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),
   ...memoryDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchMemory(ctx, declaration.name, args) })),
+  // External research saves what it observed (and what it cost) for the business;
+  // a repeat on the same day returns the saved observation instead of paying again.
+  ...researchDeclarations.map((declaration): AgentToolSpec => {
+    const saves = declaration.name === "research_competitor_growth" || declaration.name === "read_external_ai_visibility"
+    return { declaration, effect: saves ? "record" : "read", replay: saves ? "deduplicated" : "safe", scope: "general",
+      run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
+  }),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchGrowthProposal(ctx.accountId, ctx.userId, ctx.businessId, args) })),
   ...draftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",

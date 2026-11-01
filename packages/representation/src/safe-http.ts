@@ -46,6 +46,9 @@ export interface FetchInit {
   signal: AbortSignal
   connectIp: string
   servername: string
+  /** GET unless set: a server-side API read that takes a JSON query body uses the same pinned connection. */
+  method?: "GET" | "POST"
+  body?: string
 }
 
 export interface FetchResponse {
@@ -138,7 +141,7 @@ const pinnedFetch = (
         host: init.connectIp,
         port,
         path: `${u.pathname}${u.search}`,
-        method: "GET",
+        method: init.method ?? "GET",
         lookup: (_hostname: string, _options: unknown, callback: (err: null, address: string, family: number) => void) =>
           callback(null, init.connectIp, family),
         servername: isTls ? init.servername : undefined,
@@ -164,7 +167,7 @@ const pinnedFetch = (
       return
     }
     init.signal.addEventListener("abort", () => req.destroy(abortError()), { once: true })
-    req.end()
+    req.end(init.body)
   })
 
 export const defaultTransport = (timeoutMs: number): HttpTransport => ({
