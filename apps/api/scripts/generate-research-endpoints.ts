@@ -20,9 +20,27 @@ const SOURCES = {
   stripe: "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
   youtube: "https://youtube.googleapis.com/$discovery/rest?version=v3",
   kgsearch: "https://kgsearch.googleapis.com/$discovery/rest?version=v1",
+  analyticsadmin: "https://analyticsadmin.googleapis.com/$discovery/rest?version=v1beta",
+  analyticsdata: "https://analyticsdata.googleapis.com/$discovery/rest?version=v1beta",
+  searchconsole: "https://searchconsole.googleapis.com/$discovery/rest?version=v1",
+  mybusinessbusinessinformation: "https://mybusinessbusinessinformation.googleapis.com/$discovery/rest?version=v1",
+  mybusinessaccountmanagement: "https://mybusinessaccountmanagement.googleapis.com/$discovery/rest?version=v1",
+  businessprofileperformance: "https://businessprofileperformance.googleapis.com/$discovery/rest?version=v1",
+  mybusinessverifications: "https://mybusinessverifications.googleapis.com/$discovery/rest?version=v1",
 } as const
+/** Google APIs read through a connection the business already made, by output file. */
+const GOOGLE_CONNECTED: ReadonlyArray<{ readonly file: keyof typeof SOURCES; readonly provider: string; readonly platform: string; readonly prefix: string }> = [
+  { file: "analyticsadmin", provider: "google_analytics", platform: "analytics", prefix: "analytics.admin" },
+  { file: "analyticsdata", provider: "google_analytics", platform: "analytics", prefix: "analytics.data" },
+  { file: "searchconsole", provider: "google_search_console", platform: "search", prefix: "search.console" },
+  { file: "mybusinessbusinessinformation", provider: "google_business_profile", platform: "local", prefix: "local.profile" },
+  { file: "mybusinessaccountmanagement", provider: "google_business_profile", platform: "local", prefix: "local.accounts" },
+  { file: "businessprofileperformance", provider: "google_business_profile", platform: "local", prefix: "local.performance" },
+  { file: "mybusinessverifications", provider: "google_business_profile", platform: "local", prefix: "local.verifications" },
+]
 
-export interface GenParam { readonly n: string; readonly in: "path" | "query"; readonly r?: 1; readonly t: "s" | "i" | "b"; readonly e?: ReadonlyArray<string> }
+/** x: a reserved path parameter ({+name}) whose value keeps its slashes, such as properties/123. */
+export interface GenParam { readonly n: string; readonly in: "path" | "query"; readonly r?: 1; readonly t: "s" | "i" | "b"; readonly e?: ReadonlyArray<string>; readonly x?: 1 }
 export interface GenOp { readonly id: string; readonly title: string; readonly path: string; readonly params: ReadonlyArray<GenParam>; readonly docs: string }
 export interface GenFile { readonly provider: string; readonly platform: string; readonly base: string; readonly source: string; readonly ops: ReadonlyArray<GenOp> }
 
@@ -67,8 +85,8 @@ const fromDiscovery = (doc: Record<string, unknown>, prefix: string): GenOp[] =>
         if (m["httpMethod"] !== "GET") continue
         const params = Object.entries((m["parameters"] ?? {}) as Record<string, Record<string, unknown>>).filter(([n, p]) => (p["location"] === "query" || p["location"] === "path") && n !== "key" && n !== "onBehalfOfContentOwner" && n !== "onBehalfOfContentOwnerChannel")
         ops.push({ id: fit(`${prefix}.${[...trail, rname, mname].map(idPart).join(".")}`), title: short(m["description"] ?? `${rname} ${mname}`, 120), path: `${base}${m["path"]}`.replace(base, ""),
-          docs: String(doc["documentationLink"] ?? base),
-          params: params.slice(0, 20).map(([n, p]) => ({ n, in: p["location"] as "path" | "query", ...(p["required"] ? { r: 1 as const } : {}), t: p["type"] === "integer" || p["type"] === "number" ? "i" as const : p["type"] === "boolean" ? "b" as const : "s" as const,
+          docs: String(doc["documentationLink"] ?? base).replace(/^http:/, "https:"),
+          params: params.slice(0, 20).map(([n, p]) => ({ n, in: p["location"] as "path" | "query", ...(p["required"] ? { r: 1 as const } : {}), ...(String(m["path"]).includes(`{+${n}}`) ? { x: 1 as const } : {}), t: p["type"] === "integer" || p["type"] === "number" ? "i" as const : p["type"] === "boolean" ? "b" as const : "s" as const,
             ...(Array.isArray(p["enum"]) && (p["enum"] as unknown[]).length <= 30 ? { e: p["enum"] as string[] } : {}) })) })
       }
       walk(res["resources"] as Record<string, Record<string, unknown>> | undefined, [...trail, rname])
@@ -97,10 +115,15 @@ const main = async () => {
     { provider: "google_api", platform: "social", base: `${youtube["rootUrl"]}${youtube["servicePath"] ?? ""}`, source: SOURCES.youtube, ops: fromDiscovery(youtube, "social.youtube_api") },
     { provider: "google_api", platform: "reference", base: `${kg["rootUrl"]}${kg["servicePath"] ?? ""}`, source: SOURCES.kgsearch, ops: fromDiscovery(kg, "reference.knowledge_graph") },
   ]
+  for (const g of GOOGLE_CONNECTED) {
+    const doc = await load(dir, g.file)
+    files.push({ provider: g.provider, platform: g.platform, base: `${doc["rootUrl"]}${doc["servicePath"] ?? ""}`, source: SOURCES[g.file], ops: fromDiscovery(doc, g.prefix) })
+  }
   for (const f of files) {
     const ids = new Set<string>()
     const ops = f.ops.filter(o => !ids.has(o.id) && ids.add(o.id))
-    writeFileSync(join(out, `${f.provider === "google_api" ? f.source.includes("youtube") ? "youtube" : "kgsearch" : f.provider}.json`), JSON.stringify({ ...f, ops }))
+    const name = Object.entries(SOURCES).find(([, url]) => url === f.source)![0]
+    writeFileSync(join(out, `${name}.json`), JSON.stringify({ ...f, ops }))
     console.log(`${f.provider} ${f.platform}: ${ops.length} read operations`)
   }
 }

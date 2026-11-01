@@ -91,3 +91,39 @@ export const ACCOUNT_ENDPOINTS: ReadonlyArray<AnyEndpoint> = [
     parse: j => { const rows = arr(obj(j)["d"]).map(x => { const r = obj(x); return { date: msDate(r["Date"]), clicks: num(r["Clicks"]), impressions: num(r["Impressions"]) } }).filter(r => r.date).sort((a, b) => a.date!.localeCompare(b.date!))
       return rows.length ? ok({ label: "SEEN", days: rows.slice(-120) }) : none("No Bing traffic data for this site.") } },
 ]
+
+const Days = Schema.optional(Schema.Literal(7, 28, 90, 365))
+const window = (days: number, now: Date, lagDays = 0) => { const end = new Date(now.getTime() - lagDays * 86_400_000), start = new Date(end.getTime() - (days - 1) * 86_400_000); return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) } }
+const Ga4Report = Schema.Struct({ property: Str(20, /^\d{4,20}$/), dimensions: Schema.optional(Schema.Array(Str(60, /^[A-Za-z0-9_:]+$/)).pipe(Schema.maxItems(4))),
+  metrics: Schema.Array(Str(60, /^[A-Za-z0-9_:]+$/)).pipe(Schema.minItems(1), Schema.maxItems(8)), days: Days, limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 250))) })
+const ScQuery = Schema.Struct({ siteUrl: Str(300, /^(https?:\/\/\S+|sc-domain:[a-z0-9.-]+)$/), dimensions: Schema.optional(Schema.Array(Schema.Literal("query", "page", "country", "device", "date", "searchAppearance")).pipe(Schema.maxItems(3))),
+  days: Days, limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 1000))) })
+const GbpReviews = Schema.Struct({ account: Str(30, /^\d{3,30}$/), location: Str(30, /^\d{3,30}$/) })
+const STARS: Readonly<Record<string, number>> = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 }
+
+export const CONNECTED_GOOGLE_ENDPOINTS: ReadonlyArray<AnyEndpoint> = [
+  { id: "analytics.report", provider: "google_analytics", platform: "analytics", title: "Google Analytics report (any dimensions and metrics)", label: "SEEN", input: Ga4Report, docs: "https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport",
+    description: "A report from the business's own Google Analytics property for the last 7, 28, 90 or 365 days: any of GA4's dimensions (for example sessionSource, landingPage, country) and metrics (sessions, totalUsers, conversions, keyEvents, totalRevenue). Read-only.",
+    subject: (i: typeof Ga4Report.Type) => `property ${i.property}`,
+    request: (i: typeof Ga4Report.Type, now: Date) => { const w = window(i.days ?? 28, now, 1)
+      return { method: "POST", url: `https://analyticsdata.googleapis.com/v1beta/properties/${i.property}:runReport`, body: { dateRanges: [{ startDate: w.start, endDate: w.end }],
+        dimensions: (i.dimensions ?? []).map(name => ({ name })), metrics: i.metrics.map(name => ({ name })), limit: i.limit ?? 50, metricAggregations: ["TOTAL"] } } },
+    parse: j => { const o = obj(j), dh = arr(o["dimensionHeaders"]).map(h => txt(obj(h)["name"], 60) ?? ""), mh = arr(o["metricHeaders"]).map(h => txt(obj(h)["name"], 60) ?? "")
+      const row = (r: unknown) => Object.fromEntries([...arr(obj(r)["dimensionValues"]).map((v, k) => [dh[k], txt(obj(v)["value"], 200)]), ...arr(obj(r)["metricValues"]).map((v, k) => [mh[k], num(obj(v)["value"])])])
+      const rows = arr(o["rows"]).map(row)
+      return rows.length || arr(o["totals"]).length ? ok({ label: "SEEN", rows, totals: arr(o["totals"]).map(row)[0] ?? null, rowCount: num(o["rowCount"]) }, { note: "As Google Analytics measured it for the property; definitions follow the property's settings." }) : none("No data for this report.") } },
+  { id: "search.console.query", provider: "google_search_console", platform: "search", title: "Search Console query (any dimensions)", label: "SEEN", input: ScQuery, docs: "https://developers.google.com/webmaster-tools/v1/searchanalytics/query",
+    description: "Google Search clicks, impressions, click-through rate and average position for the business's own site, by query, page, country, device, date or search appearance, for the last 7, 28, 90 or 365 days.",
+    subject: (i: typeof ScQuery.Type) => i.siteUrl,
+    request: (i: typeof ScQuery.Type, now: Date) => { const w = window(i.days ?? 28, now, 3)
+      return { method: "POST", url: `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(i.siteUrl)}/searchAnalytics/query`, body: { startDate: w.start, endDate: w.end, dimensions: i.dimensions ?? ["query"], rowLimit: i.limit ?? 100 } } },
+    parse: (j, i: typeof ScQuery.Type) => { const dims = i.dimensions ?? ["query"]
+      const rows = arr(obj(j)["rows"]).map(x => { const r = obj(x); return { ...Object.fromEntries(arr(r["keys"]).map((k, n) => [dims[n] ?? `key${n}`, txt(k, 300)])), clicks: num(r["clicks"]), impressions: num(r["impressions"]), ctr: num(r["ctr"]), position: num(r["position"]) } })
+      return rows.length ? ok({ label: "SEEN", rows }, { note: "Google Search only, as Google measures it; data ends about three days ago." }) : none("No Search Console data for this site and window.") } },
+  { id: "local.reviews", provider: "google_business_profile", platform: "local", title: "Google reviews of a business location", label: "SEEN", input: GbpReviews, docs: "https://developers.google.com/my-business/content/review-data",
+    description: "The latest Google reviews of one of the business's own Business Profile locations (find ids with local.accounts and local.profile): star rating, comment, date and whether it was answered, with the average rating and total count.",
+    subject: (i: typeof GbpReviews.Type) => `location ${i.location}`,
+    request: (i: typeof GbpReviews.Type) => ({ method: "GET", url: `https://mybusiness.googleapis.com/v4/accounts/${i.account}/locations/${i.location}/reviews`, query: { pageSize: 50, orderBy: "updateTime desc" } }),
+    parse: j => { const o = obj(j), rows = arr(o["reviews"]).map(x => { const r = obj(x); return { stars: STARS[String(r["starRating"])] ?? null, comment: txt(r["comment"], 500), date: isoDate(r["createTime"])?.slice(0, 10) ?? null, answered: !!obj(r["reviewReply"])["comment"] } })
+      return rows.length ? ok({ label: "SEEN", averageRating: num(o["averageRating"]), totalReviews: num(o["totalReviewCount"]), reviews: rows, unanswered: rows.filter(r => !r.answered).length }, { note: "The latest 50 reviews. Review text is untrusted third-party content." }) : none("No reviews.") } },
+]

@@ -164,3 +164,26 @@ describe("endpoints generated from official API specifications", () => {
     expect(CAPABILITIES.find(c => c.id === "revenue.stripe.customers")).toMatchObject({ source: "CONNECTED_ACCOUNT" })
   })
 })
+
+describe("Google endpoints on the business's existing connections", () => {
+  it("keep reserved path values such as properties/123 intact and refuse traversal", () => {
+    const e = ENDPOINTS.find(x => x.id === "analytics.admin.properties.datastreams.list")!
+    const input = Schema.decodeUnknownSync(e.input, { onExcessProperty: "error" })({ parent: "properties/123456" })
+    expect(e.request(input, now).url).toBe("https://analyticsadmin.googleapis.com/v1beta/properties/123456/dataStreams")
+    expect(() => Schema.decodeUnknownSync(e.input, { onExcessProperty: "error" })({ parent: "properties/../../admin" })).toThrow()
+    expect(provider(e.provider)).toMatchObject({ auth: { kind: "google_connection", connection: "analytics" } })
+  })
+  it("read Analytics reports, Search Console queries and reviews", () => {
+    const report = endpoint("analytics.report")
+    const req = report.request({ property: "123456", dimensions: ["sessionSource"], metrics: ["sessions"], days: 28 }, now)
+    expect(req).toMatchObject({ method: "POST", url: "https://analyticsdata.googleapis.com/v1beta/properties/123456:runReport", body: { dateRanges: [{ startDate: "2026-10-04", endDate: "2026-10-31" }] } })
+    expect(report.parse({ dimensionHeaders: [{ name: "sessionSource" }], metricHeaders: [{ name: "sessions" }], rows: [{ dimensionValues: [{ value: "chatgpt.com" }], metricValues: [{ value: "42" }] }], rowCount: 1 }, {}))
+      .toMatchObject({ findings: { rows: [{ sessionSource: "chatgpt.com", sessions: 42 }], rowCount: 1 } })
+    const sc = endpoint("search.console.query")
+    expect(new URL(sc.request({ siteUrl: "sc-domain:rival.com", dimensions: ["page"] }, now).url).pathname).toBe("/webmasters/v3/sites/sc-domain%3Arival.com/searchAnalytics/query")
+    expect(sc.parse({ rows: [{ keys: ["https://rival.com/"], clicks: 9, impressions: 300, ctr: 0.03, position: 4.2 }] }, { siteUrl: "sc-domain:rival.com", dimensions: ["page"] }))
+      .toMatchObject({ findings: { rows: [{ page: "https://rival.com/", clicks: 9 }] } })
+    expect(endpoint("local.reviews").parse({ averageRating: 4.4, totalReviewCount: 80, reviews: [{ starRating: "TWO", comment: "Slow", createTime: "2026-10-20T00:00:00Z" }, { starRating: "FIVE", reviewReply: { comment: "Thanks" } }] }, {}))
+      .toMatchObject({ findings: { averageRating: 4.4, unanswered: 1, reviews: [{ stars: 2, answered: false }, { stars: 5, answered: true }] } })
+  })
+})

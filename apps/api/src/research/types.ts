@@ -47,6 +47,8 @@ export interface Capability<I = unknown> {
   /** Why it cannot run on this server for this business right now; null when it can. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly availability?: (ctx: Omit<RunContext, "net" | "now">) => Effect.Effect<string | null, unknown, SqlClient.SqlClient | any>
+  /** Capabilities sharing a key share one availability (for example every endpoint of one provider). */
+  readonly availabilityKey?: string
 }
 /** A capability with its input type erased, for lists of mixed capabilities. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

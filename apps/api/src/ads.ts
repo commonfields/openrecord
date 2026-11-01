@@ -108,6 +108,15 @@ const accessToken = (config: AdsConfig, c: ConnectionRow) => Effect.gen(function
   return fresh.right.accessToken
 })
 /** Runs a read with the connection's token; a refused token marks the connection for a new sign-in. */
+/** A read token from this account's own Google Business Profile connection. Null when none is usable. */
+export const googleBusinessAccess = (accountId: string) => Effect.gen(function*() {
+  const config = yield* adsConfig
+  if (!config.googleBusiness.configured) return null
+  const c = (yield* connections(accountId)).find(x => x.provider === "google_business" && x.status === "ACTIVE")
+  if (!c) return null
+  const token = yield* accessToken(config, c).pipe(Effect.either)
+  return token._tag === "Right" ? token.right : null
+})
 /** A read token from this account's own Meta connection, for the public ad library. Null when none is usable. */
 export const metaLibraryAccess = (accountId: string) => Effect.gen(function*() {
   const config = yield* adsConfig

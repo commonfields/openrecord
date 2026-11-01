@@ -19,6 +19,8 @@ export type Auth =
   | { readonly kind: "basic" }
   /** client_id:client_secret, exchanged for a short-lived token at tokenUrl (client credentials grant). */
   | { readonly kind: "client_credentials"; readonly tokenUrl: string }
+  /** A Google connection the business already made on the Channels page (Analytics, Search Console or Business Profile). */
+  | { readonly kind: "google_connection"; readonly connection: "analytics" | "search_console" | "business_profile" }
 
 export interface Provider {
   readonly id: string
