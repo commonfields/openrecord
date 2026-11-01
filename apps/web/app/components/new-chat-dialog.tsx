@@ -71,14 +71,14 @@ export function NewChatDialog({ trigger }: { trigger?: ReactNode } = {}) {
     if (next) { setQuery(""); setMode("chat"); setError(null) }
   }}>
     <DialogTrigger asChild>
-      {trigger ?? <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" title="New chat"><SquarePenIcon className="size-4" /></Button>}
+      {trigger ?? <Button type="button" variant="ghost" size="icon-sm" aria-label="New chat" title="New chat" className="hover:shadow-(--control-shadow)"><SquarePenIcon className="size-4" /></Button>}
     </DialogTrigger>
     <DialogContent className="gap-0 overflow-hidden rounded-[14px] p-0 sm:max-w-2xl">
       <DialogHeader className="px-6 pb-4 pt-5">
         <DialogTitle>{mode === "chat" ? "Start a new chat" : "Choose a workspace"}</DialogTitle>
         <DialogDescription>{mode === "chat" ? "Choose context for your conversation, or start without it." : "Open a business or client's work."}</DialogDescription>
       </DialogHeader>
-      <div className="mx-6 mb-4 inline-flex h-7 w-fit gap-0.5 rounded-[7px] bg-background p-0.5 shadow-[inset_0_0_0_1px_var(--border)]" aria-label="Choose an action">
+      <div className="mx-6 mb-4 inline-flex h-7 w-fit gap-0.5 rounded-[7px] bg-background p-0.5 shadow-(--track-inner)" aria-label="Choose an action">
         {(["chat", "work"] as const).map(value => <button key={value} type="button" disabled={busy} aria-pressed={mode === value} onClick={() => setMode(value)} className={cn("rounded-[5px] px-3 text-xs font-medium outline-none transition-[background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring", mode === value ? "bg-control text-foreground shadow-(--control-shadow)" : "text-muted-foreground hover:text-foreground")}>{value === "chat" ? "Chat" : "Work"}</button>)}
       </div>
       <div className="relative mx-6 mb-3">
