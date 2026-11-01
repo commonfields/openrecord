@@ -490,9 +490,7 @@ function AccountSection({ onDone }: { onDone: () => void }) {
   return (
     <>
       <div className="flex min-h-20 items-center gap-4 rounded-[10px] bg-card p-3.5 shadow-(--card-shadow)">
-        <span className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-          {email ? email.charAt(0).toUpperCase() : <UserRoundIcon className="size-5" />}
-        </span>
+        <span aria-hidden className="avatar-sphere flex size-10 items-center justify-center rounded-full" />
         <div className="min-w-0">
           <div className="truncate font-medium">{email ?? "Your account"}</div>
           <div className="text-xs text-muted-foreground">Signed in with email and password</div>

@@ -18,6 +18,7 @@ import {
   GlobeIcon,
   InboxIcon,
   KeyboardIcon,
+  ListFilterIcon,
   LogOutIcon,
   MessagesSquareIcon,
   PanelLeftIcon,
@@ -53,7 +54,6 @@ import { ChatActivityProvider, chatPath, notifyAgentChats, useAgentChats, useArc
 import { ProviderLogo } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
-import { Records, type ClientSummary } from "@/lib/record"
 
 type SidebarState = { collapsed: boolean; inSheet: boolean }
 const SidebarStateContext = createContext<SidebarState>({ collapsed: false, inSheet: false })
@@ -314,7 +314,7 @@ function useAgentView() {
 
 function SidebarBody() {
   const { collapsed } = useContext(SidebarStateContext)
-  const { activeBusiness, overview } = useWorkspace()
+  const { activeBusiness, overview, businesses } = useWorkspace()
   const { open } = useCommandPalette()
   const base = activeBusiness ? `/businesses/${activeBusiness.id}` : null
   const { preferences } = usePreferences()
@@ -323,8 +323,10 @@ function SidebarBody() {
   const pathname = useLocation().pathname
   const general = pathname === "/agent"
   const waiting = useWaitingCount(pathname)
-  // The chat history shows archived chats instead while this is on.
+  // The chat history shows archived chats instead while this is on, and the
+  // filter narrows both to one business.
   const [archived, setArchived] = useState(false)
+  const [chatFilter, setChatFilter] = useState<string | null>(null)
 
   return (
     <>
@@ -333,14 +335,19 @@ function SidebarBody() {
         <div className={cn("flex w-full items-center justify-between", collapsed && "flex-col gap-1")}>
           <SearchButton onOpen={open} />
           <div className={cn("flex items-center gap-0.5", collapsed && "flex-col gap-1")}>
-            {agent ? <ArchiveToggle on={archived} onToggle={() => setArchived(v => !v)} /> : null}
+            {agent ? (
+              <>
+                <ChatFilterButton businesses={businesses} filter={chatFilter} onChange={setChatFilter} />
+                <ArchiveToggle on={archived} onToggle={() => setArchived(v => !v)} />
+              </>
+            ) : null}
             <NewChatDialog />
           </div>
         </div>
       </div>
 
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
-        {agent ? <ChatHistory archived={archived} onLeaveArchive={() => setArchived(false)} /> : <>
+        {agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>
           <SidebarGroup label="Workspace">
             <SidebarLink to="/approvals" icon={<CheckCheckIcon />} label="Waiting on you" count={waiting} />
             {base ? <>
@@ -420,12 +427,54 @@ function ArchiveToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) 
     <Tooltip>
       <TooltipTrigger asChild>
         <Button type="button" variant="ghost" size="icon-sm" onClick={onToggle} aria-pressed={on} aria-label={label}
-          className={cn(on && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+          className={cn("hover:shadow-(--control-shadow)", on && "bg-sidebar-accent text-sidebar-accent-foreground shadow-(--control-shadow)")}>
           <ArchiveIcon className="size-4" />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+// Narrows the chat history to one business; the funnel is lit while a
+// filter is on. Businesses are read straight from the workspace, so the
+// menu mirrors the switcher.
+function ChatFilterButton({ businesses, filter, onChange }: {
+  businesses: ReadonlyArray<{ id: string; name: string }>
+  filter: string | null
+  onChange: (id: string | null) => void
+}) {
+  const active = businesses.find(b => b.id === filter)
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Filter chats"
+              className={cn("hover:shadow-(--control-shadow)", active && "bg-sidebar-accent text-sidebar-accent-foreground shadow-(--control-shadow)")}>
+              <ListFilterIcon className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">{active ? `Filtered to ${active.name}` : "Filter chats"}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-56 rounded-xl p-1.5 shadow-(--float-shadow-strong)">
+        <DropdownMenuLabel className="text-[0.625rem] font-medium text-muted-foreground">Filter chats</DropdownMenuLabel>
+        <DropdownMenuItem className="rounded-md" onSelect={() => onChange(null)}>
+          <span className="flex size-6 items-center justify-center"><MessagesSquareIcon className="size-3.5 text-muted-foreground" /></span>
+          All chats
+          {filter === null ? <CheckIcon className="ml-auto text-foreground" /> : null}
+        </DropdownMenuItem>
+        {businesses.length ? <DropdownMenuSeparator /> : null}
+        {businesses.map(b => (
+          <DropdownMenuItem key={b.id} className="rounded-md" onSelect={() => onChange(b.id)}>
+            <BusinessMark name={b.name} className="size-6 text-xs" />
+            <span className="min-w-0 truncate">{b.name}</span>
+            {filter === b.id ? <CheckIcon className="ml-auto text-foreground" /> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -469,13 +518,16 @@ function ChatRow({ c, active, archived }: { c: MergedChat; active: boolean; arch
   )
 }
 
-function ChatHistory({ archived, onLeaveArchive }: { archived: boolean; onLeaveArchive: () => void }) {
+function ChatHistory({ archived, filter, onLeaveArchive }: { archived: boolean; filter: string | null; onLeaveArchive: () => void }) {
   const { collapsed } = useContext(SidebarStateContext)
   // Helper sessions open from the chat that started them, so the history lists only the person's own chats.
   const live = useAgentChats()?.filter(c => !c.parentSessionId) ?? null
   const stored = useArchivedChats(archived)
   const old = useMemo(() => stored?.map((c): MergedChat => ({ ...c, working: false, draft: false })) ?? null, [stored])
   const chats = archived ? old : live
+  // With a business filter on, chats that don't belong to that business drop
+  // out of the list and every count the header shows.
+  const list = (filter != null ? (chats ?? []).filter(c => c.businessId === filter) : chats) ?? null
   const location = useLocation()
   const [all, setAll] = useState(false)
   const here = (path: string) => {
@@ -491,7 +543,7 @@ function ChatHistory({ archived, onLeaveArchive }: { archived: boolean; onLeaveA
           <TooltipTrigger asChild>
             <DropdownMenuTrigger
               aria-label={archived ? "Archived chats" : "Chats"}
-              className="flex h-7 w-9 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground data-[state=open]:bg-sidebar-accent [&_svg]:size-3.5"
+              className="flex h-7 w-9 items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent/70 hover:shadow-(--control-shadow) hover:text-sidebar-accent-foreground data-[state=open]:bg-sidebar-accent data-[state=open]:shadow-(--control-shadow) [&_svg]:size-3.5"
             >
               {archived ? <ArchiveIcon /> : <MessagesSquareIcon />}
             </DropdownMenuTrigger>
@@ -500,7 +552,7 @@ function ChatHistory({ archived, onLeaveArchive }: { archived: boolean; onLeaveA
         </Tooltip>
         <DropdownMenuContent side="right" align="start" className="w-72 rounded-xl p-1.5 shadow-(--float-shadow-strong)">
           <DropdownMenuLabel className="text-[0.625rem] font-medium text-muted-foreground">{archived ? "Archived" : "Chats"}</DropdownMenuLabel>
-          {chats?.length ? chats.map((c) => (
+          {list?.length ? list.map((c) => (
             <DropdownMenuItem key={c.id} asChild className="rounded-md">
               <Link to={chatPath(c)} className="flex items-center">
                 <ChatItem c={c} active={here(chatPath(c))} />
@@ -514,7 +566,7 @@ function ChatHistory({ archived, onLeaveArchive }: { archived: boolean; onLeaveA
     )
   }
 
-  const shown = all || archived ? chats ?? [] : (chats ?? []).slice(0, CHATS_SHOWN)
+  const shown = all || archived ? list ?? [] : (list ?? []).slice(0, CHATS_SHOWN)
   return (
     <div className="flex flex-col">
       <div className="flex items-center gap-1 px-2 pb-1.5">
@@ -524,17 +576,17 @@ function ChatHistory({ archived, onLeaveArchive }: { archived: boolean; onLeaveA
           </button>
         ) : null}
         <span className="text-sm font-medium text-muted-foreground">{archived ? "Archived" : "Chats"}</span>
-        {chats?.length ? <span className="ml-auto text-[0.6875rem] tabular-nums text-muted-foreground">{chats.length}</span> : null}
+        {list?.length ? <span className="ml-auto text-[0.6875rem] tabular-nums text-muted-foreground">{list.length}</span> : null}
       </div>
       <div className="flex flex-col gap-0.5">
-        {chats === null ? null : chats.length === 0 ? (
+        {list === null ? null : list.length === 0 ? (
           <p className="px-2 py-1 text-[0.8125rem] leading-relaxed text-muted-foreground">{empty}</p>
         ) : (
           <>
             {shown.map((c) => <ChatRow key={c.id} c={c} active={here(chatPath(c))} archived={archived} />)}
-            {!archived && chats.length > CHATS_SHOWN ? (
+            {!archived && list.length > CHATS_SHOWN ? (
               <button type="button" onClick={() => setAll((v) => !v)} className="rounded-md px-2 py-1 text-left text-[0.8125rem] text-muted-foreground hover:text-foreground">
-                {all ? "Show fewer" : `Show all ${chats.length}`}
+                {all ? "Show fewer" : `Show all ${list.length}`}
               </button>
             ) : null}
           </>
@@ -605,7 +657,8 @@ function SearchButton({ onOpen }: { onOpen: () => void }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" data-search-trigger onClick={onOpen} aria-label="Find in OpenRecord (F)">
+        <Button type="button" variant="ghost" size="icon-sm" data-search-trigger onClick={onOpen} aria-label="Find in OpenRecord (F)"
+          className="hover:shadow-(--control-shadow)">
           <SearchIcon className="size-4" />
         </Button>
       </TooltipTrigger>
@@ -633,7 +686,7 @@ function ViewTabs() {
         nav(v === "agent" ? `${base}/agent` : `${base}/results`)
       }}
     >
-      <TabsList aria-label="Workspace view" className="grid h-7 w-auto grid-cols-2 items-stretch gap-0.5 rounded-[7px] bg-sidebar p-0.5 shadow-[inset_0_0_0_1px_var(--border)]">
+      <TabsList aria-label="Workspace view" className="grid h-7 w-auto grid-cols-2 items-stretch gap-0.5 rounded-[7px] bg-sidebar p-0.5 shadow-(--track-inner)">
         <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
         <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
       </TabsList>
@@ -651,7 +704,7 @@ function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactN
       to={to}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "group/link relative flex h-9 items-center gap-2 rounded-md text-base outline-none transition-[background-color,box-shadow] hover:bg-sidebar-accent/70 hover:shadow-(--control-shadow) hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5 [&_svg]:shrink-0",
         collapsed ? "w-9 justify-center" : "px-2",
         isActive
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-(--control-shadow) [&_svg]:text-primary-ink"
@@ -707,7 +760,7 @@ function BusinessSwitcher() {
         <DropdownMenuTrigger asChild>
           <button
             className={cn(
-              "flex items-center gap-2 rounded-md text-left outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
+              "flex items-center gap-2 rounded-md text-left outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground data-[state=open]:shadow-(--control-shadow)",
               collapsed ? "size-9 justify-center" : "min-h-11 w-full px-1.5 py-1",
             )}
             aria-label="Switch business"
@@ -752,25 +805,19 @@ function AccountMenu() {
   const nav = useNavigate()
   const email = rememberedEmail()
   const name = email ? email.split("@")[0] ?? email : "Your account"
-  const [clients, setClients] = useState<ClientSummary[] | null>(null)
-  const [clientsError, setClientsError] = useState(false)
-  const loadClients = () => {
-    setClientsError(false)
-    void Records.list().then(r => setClients(r.clients)).catch(() => { setClients(null); setClientsError(true) })
-  }
 
+  // The account sphere: a fitted 3D ball per theme, no initials — the name
+  // sits beside it.
   const avatar = (size: string) => (
-    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-primary-ink/10 text-xs font-semibold text-primary-ink", size)}>
-      {email ? email.charAt(0).toUpperCase() : <UserRoundIcon className="size-4" />}
-    </span>
+    <span aria-hidden className={cn("avatar-sphere flex shrink-0 items-center justify-center rounded-full", size)} />
   )
 
   return (
-    <DropdownMenu onOpenChange={open => { if (open) loadClients() }}>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
+            "flex items-center gap-2 rounded-md text-left text-base outline-none transition-[background-color,box-shadow] hover:bg-accent hover:text-accent-foreground hover:shadow-(--control-shadow) focus-visible:ring-[3px] focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground data-[state=open]:shadow-(--control-shadow)",
             collapsed ? "h-14 w-9 justify-center" : "min-h-16 w-full px-2.5 py-4",
           )}
           aria-label="Account menu"
@@ -817,15 +864,10 @@ function AccountMenu() {
           <Building2Icon />
           All businesses
         </DropdownMenuItem>
-        <DropdownMenuSeparator className="my-1.5" />
-        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Clients</DropdownMenuLabel>
-        {clientsError ? <div className="px-3 py-2 text-xs text-destructive">Couldn’t load clients. <button type="button" className="underline" onClick={loadClients}>Try again</button></div>
-          : clients === null ? <p className="px-3 py-2 text-xs text-muted-foreground">Loading clients…</p>
-          : clients.length === 0 ? <p className="px-3 py-2 text-xs text-muted-foreground">No clients yet.</p>
-          : <div className="max-h-48 overflow-y-auto">{clients.map(client => <DropdownMenuItem key={client.businessId} className={SIDEBAR_MENU_ITEM} onSelect={() => nav(`/clients/${encodeURIComponent(client.businessId)}`)}>
-            <BusinessMark name={client.name} className="size-6 text-xs" /><span className="truncate">{client.name}</span>
-          </DropdownMenuItem>)}</div>}
-        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/clients")}><BriefcaseIcon />All clients</DropdownMenuItem>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/clients")}>
+          <BriefcaseIcon />
+          All clients
+        </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1.5" />
         <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => void Auth.signout().finally(() => nav("/signin"))}>
           <LogOutIcon />
