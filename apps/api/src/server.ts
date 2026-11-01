@@ -50,6 +50,7 @@ import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
 import { briefScheduler } from "./growth-brief.js"
 import { trackingScheduler } from "./acquisition-schedule.js"
+import { answerScheduler } from "./research/answer-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
 
 const Repos = Layer.mergeAll(
@@ -121,7 +122,9 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const Followups = Layer.scopedDiscard(Effect.forkScoped(followupScheduler.pipe(Effect.delay("30 seconds"))))
     // Scheduled AI-answer tracking runs that are due, and comparisons of finished runs.
     const Tracking = Layer.effectDiscard(Effect.forkDaemon(trackingScheduler.pipe(Effect.delay("45 seconds"))))
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking).pipe(
+    // Approved AI answer tracking on the team's own subscriptions.
+    const AnswerTracking = Layer.effectDiscard(Effect.forkDaemon(answerScheduler.pipe(Effect.delay("60 seconds"))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )
