@@ -6,6 +6,7 @@ import { ChannelList } from "@/components/setup-flow"
 import { SearchConsoleSetup } from "@/components/search-console"
 import { AdAccountsSetup } from "@/components/ad-accounts"
 import { RevenueSetup } from "@/components/revenue"
+import { AiVisibilitySetup } from "@/components/ai-visibility"
 import { errorMessage } from "@/lib/format"
 import { Channels } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
@@ -27,6 +28,7 @@ export function ChannelsPage() {
           <SearchConsoleSetup businessId={id} onChange={() => { void q.reload() }} />
           <AdAccountsSetup businessId={id} />
           <RevenueSetup businessId={id} />
+          <AiVisibilitySetup businessId={id} />
           <Panel className="p-4">
             <ChannelList inventory={q.data.inventory} />
           </Panel>
