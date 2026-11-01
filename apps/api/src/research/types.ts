@@ -5,7 +5,7 @@ import type { ResearchNetService } from "./net.js"
 
 /** SEEN: listed or published on a date. ESTIMATED: a model's or provider's number. INFERRED: OpenRecord's reading of seen evidence. */
 export type Label = "SEEN" | "ESTIMATED" | "INFERRED"
-export type Source = "PUBLIC_WEB" | "PUBLIC_ARCHIVE" | "PUBLIC_REGISTRY" | "PUBLIC_FEED" | "OPENRECORD_SNAPSHOT" | "CONNECTED_ACCOUNT" | "AI_SUBSCRIPTION" | "TEAM_UPLOAD" | "DERIVED"
+export type Source = "PUBLIC_WEB" | "PUBLIC_ARCHIVE" | "PUBLIC_REGISTRY" | "PUBLIC_FEED" | "PUBLIC_API" | "OPENRECORD_SNAPSHOT" | "CONNECTED_ACCOUNT" | "AI_SUBSCRIPTION" | "TEAM_UPLOAD" | "DERIVED"
 
 /** One dated event a capability saw, for the cross-source timeline. */
 export interface TimelineEvent { readonly date: string; readonly event: string; readonly label: Label; readonly url?: string | null }
@@ -47,6 +47,8 @@ export interface Capability<I = unknown> {
   /** Why it cannot run on this server for this business right now; null when it can. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly availability?: (ctx: Omit<RunContext, "net" | "now">) => Effect.Effect<string | null, unknown, SqlClient.SqlClient | any>
+  /** Capabilities sharing a key share one availability (for example every endpoint of one provider). */
+  readonly availabilityKey?: string
 }
 /** A capability with its input type erased, for lists of mixed capabilities. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

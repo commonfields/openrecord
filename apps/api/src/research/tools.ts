@@ -235,7 +235,9 @@ export const crossSourceInvestigation = (ctx: ToolContext, args: typeof FrameInp
   const website = yield* businessWebsite(ctx.businessId)
   const subjects = [...new Set((args.subjects ?? []).map(x => normalizeDomain(x)).filter((x): x is string => x !== null))]
   const saved = subjects.length ? (yield* Effect.forEach(subjects, d => listObservations(ctx.businessId, d, 10))).flat() : yield* listObservations(ctx.businessId, null, 10)
-  const availability = yield* Effect.forEach(CAPABILITIES.filter(c => c.availability), c => Effect.map(availabilityOf(c, ctx), a => ({ id: c.id, reason: a })))
+  // One check per provider: every endpoint of a provider shares its availability.
+  const keyed = [...new Map(CAPABILITIES.filter(c => c.availability).map(c => [c.availabilityKey ?? c.id, c])).entries()]
+  const availability = yield* Effect.forEach(keyed, ([key, c]) => Effect.map(availabilityOf(c, ctx), a => ({ id: key === c.id ? c.id : `${key} (${CAPABILITIES.filter(x => x.availabilityKey === key).length} capabilities)`, reason: a })))
   const counts = (yield* sql`SELECT
       (SELECT count(*) FROM growth_goals WHERE business_id = ${ctx.businessId})::int AS goals,
       (SELECT count(*) FROM growth_investigations WHERE business_id = ${ctx.businessId})::int AS investigations,
@@ -246,11 +248,11 @@ export const crossSourceInvestigation = (ctx: ToolContext, args: typeof FrameInp
   const byPlatform: Record<string, string[]> = {}
   for (const c of CAPABILITIES) (byPlatform[c.platform] ??= []).push(c.id)
   return {
-    summary: `Investigation frame: ${CAPABILITIES.length - unavailable.length} of ${CAPABILITIES.length} research capabilities available, ${saved.length} saved observation${saved.length === 1 ? "" : "s"}`,
+    summary: `Investigation frame: ${CAPABILITIES.length} research capabilities, ${unavailable.length} source${unavailable.length === 1 ? "" : "s"} not available here, ${saved.length} saved observation${saved.length === 1 ? "" : "s"}`,
     citations: [],
     data: {
       objective: args.objective, ownWebsite: website,
-      research: { capabilitiesByPlatform: byPlatform, unavailable: unavailable.map(a => ({ capability: a.id, because: a.reason })),
+      research: { capabilitiesByPlatform: Object.fromEntries(Object.entries(byPlatform).map(([p, ids]) => [p, ids.length > 12 ? `${ids.length} capabilities (find them with find_research_capabilities)` : ids])), unavailable: unavailable.map(a => ({ capability: a.id, because: a.reason })),
         runsToday: counts?.["runs_today"] ?? null, dailyLimit: dailyRuns() },
       internal: { growthGoals: counts?.["goals"] ?? null, investigations: counts?.["investigations"] ?? null, approvedFacts: counts?.["facts"] ?? null,
         tools: ["read_objective_investigations", "read_business_truth", "read_results", "read_search_performance", "read_ai_referral_evidence", "read_acquisition_overview", "read_ad_performance", "read_revenue"] },

@@ -78,7 +78,13 @@ export const HarnessPoll = Schema.Struct({
 // returns it. It is shown to the operator and never sent back to the model.
 const Thought = Schema.optional(Schema.String.pipe(Schema.maxLength(8000)))
 export const HarnessAnswer = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("text"), text: Text(16000), thought: Thought }),
+  Schema.Struct({
+    kind: Schema.Literal("text"), text: Text(16000), thought: Thought,
+    /** Web searches the model ran for this answer (only for jobs that allow the subscription's own web search). */
+    searches: Schema.optional(Schema.Array(Schema.String.pipe(Schema.maxLength(300))).pipe(Schema.maxItems(30))),
+    /** Pages those searches returned to the model. */
+    sources: Schema.optional(Schema.Array(Schema.Struct({ url: Schema.String.pipe(Schema.maxLength(2000)), title: Schema.optional(Schema.String.pipe(Schema.maxLength(300))) })).pipe(Schema.maxItems(60))),
+  }),
   Schema.Struct({
     kind: Schema.Literal("tools"),
     thought: Thought,
@@ -95,7 +101,9 @@ export const HarnessModelInput = Schema.Struct({
   reasoningEffort: Schema.optional(HarnessReasoningEffort),
   system: Schema.String.pipe(Schema.maxLength(16000)),
   contents: Schema.Array(Schema.Struct({ role: Schema.Literal("user", "model"), parts: Schema.Array(Schema.Unknown) })),
-  tools: Schema.Array(Schema.Unknown)
+  tools: Schema.Array(Schema.Unknown),
+  /** Allow only the subscription's own web search (run on the provider's side), for AI-answer measurement. */
+  webSearch: Schema.optional(Schema.Boolean)
 })
 export type HarnessModelInput = typeof HarnessModelInput.Type
 export const HarnessJob = Schema.Struct({

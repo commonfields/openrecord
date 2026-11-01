@@ -45,7 +45,7 @@ BEGIN
   ALTER TABLE research_observations DROP COLUMN IF EXISTS provider_call_id;
   ALTER TABLE research_observations DROP CONSTRAINT IF EXISTS research_observations_source_check;
   ALTER TABLE research_observations ADD CONSTRAINT research_observations_source_check CHECK (source IN (
-    'PUBLIC_WEB', 'PUBLIC_ARCHIVE', 'PUBLIC_REGISTRY', 'PUBLIC_FEED', 'OPENRECORD_SNAPSHOT',
+    'PUBLIC_WEB', 'PUBLIC_ARCHIVE', 'PUBLIC_REGISTRY', 'PUBLIC_FEED', 'PUBLIC_API', 'OPENRECORD_SNAPSHOT',
     'CONNECTED_ACCOUNT', 'AI_SUBSCRIPTION', 'TEAM_UPLOAD', 'DERIVED'));
   ALTER TABLE research_observations DROP CONSTRAINT IF EXISTS research_observations_operation_check;
   ALTER TABLE research_observations ADD CONSTRAINT research_observations_operation_check CHECK (operation ~ '^[a-z][a-z0-9_.]{1,59}$');

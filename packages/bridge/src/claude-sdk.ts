@@ -154,3 +154,55 @@ export async function claudeSdkProcess(opts: {
     },
   }
 }
+
+/** URLs and titles in a web search tool result, as the SDK returns it (text or blocks). */
+export const searchSources = (content: unknown): Array<{ url: string; title?: string }> => {
+  // Text blocks are read as text; anything else (an event item) as its JSON.
+  const text = typeof content === "string" ? content : Array.isArray(content)
+    ? content.map(b => typeof (b as { text?: unknown })?.text === "string" ? (b as { text: string }).text : JSON.stringify(b)).join("\n") : JSON.stringify(content ?? "")
+  const out = new Map<string, { url: string; title?: string }>()
+  for (const m of text.matchAll(/"title"\s*:\s*"((?:[^"\\]|\\.){0,300})"\s*,\s*"url"\s*:\s*"(https?:\/\/[^"\\]{4,1990})"/g)) out.set(m[2]!, { url: m[2]!, title: m[1]!.replace(/\\"/g, "\"") })
+  for (const m of text.matchAll(/https?:\/\/[^\s"'<>\\)\]]{4,1990}/g)) if (!out.has(m[0])) out.set(m[0], { url: m[0] })
+  return [...out.values()].slice(0, 60)
+}
+
+/**
+ * One answer with the subscription's own web search, for AI-answer measurement.
+ * The only tool is Claude's WebSearch, which runs on Anthropic's side; nothing
+ * on this computer is read or run. Returns the answer text, the searches the
+ * model ran and the pages they returned.
+ */
+export async function claudeSearchAnswer(opts: { binary: string; env: NodeJS.ProcessEnv; cwd: string; model: string; system: string; prompt: string; signal: AbortSignal }) {
+  const abort = new AbortController()
+  const onAbort = () => abort.abort()
+  opts.signal.addEventListener("abort", onAbort, { once: true })
+  const searches: string[] = [], sources = new Map<string, { url: string; title?: string }>()
+  try {
+    const q = query({ prompt: opts.prompt, options: {
+      ...lockdown(opts.cwd, opts.binary, opts.env, abort),
+      tools: ["WebSearch"], allowedTools: ["WebSearch"],
+      canUseTool: async (name: string, input: Record<string, unknown>) => name === "WebSearch" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: "Only web search is available." },
+      model: opts.model, systemPrompt: opts.system, maxTurns: 8,
+    } })
+    let bytes = 0
+    for await (const m of q) {
+      bytes += JSON.stringify(m).length
+      if (bytes > MAX_STEP_OUTPUT * 4) throw new BridgeFailure("MALFORMED")
+      if (m.type === "assistant") {
+        for (const c of m.message.content as Array<{ type?: string; name?: string; input?: { query?: unknown } }>)
+          if (c.type === "tool_use" && c.name === "WebSearch" && typeof c.input?.query === "string") searches.push(c.input.query.slice(0, 300))
+      } else if (m.type === "user") {
+        for (const c of (m.message.content as unknown as Array<{ type?: string; content?: unknown }>) ?? []) if (c?.type === "tool_result") for (const s of searchSources(c.content)) sources.set(s.url, s)
+      } else if (m.type === "result") {
+        if (m.subtype !== "success" || m.is_error) throw new BridgeFailure(failureReason(JSON.stringify(m)))
+        return { text: String(m.result ?? "").slice(0, 16000), searches: searches.slice(0, 30), sources: [...sources.values()].slice(0, 60) }
+      }
+    }
+    throw new BridgeFailure("UNAVAILABLE")
+  } catch (error) {
+    throw error instanceof BridgeFailure ? error : new BridgeFailure(opts.signal.aborted ? "CANCELLED" : "UNAVAILABLE")
+  } finally {
+    opts.signal.removeEventListener("abort", onAbort)
+    abort.abort()
+  }
+}

@@ -273,7 +273,8 @@ export const invokeHarness = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const instance = yield* resolveHarness(scope, selection)
-    const jobInput = { system: input.system, tools: input.tools, contents: withoutThoughts(input.contents), ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
+    const jobInput = { system: input.system, tools: input.tools, contents: withoutThoughts(input.contents), ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+      ...(input.webSearch ? { webSearch: true } : {}) }
     if (Buffer.byteLength(JSON.stringify(jobInput), "utf8") > HARNESS_INPUT_LIMIT) return yield* fail("CONTEXT_LIMIT")
     const id = randomUUID()
     yield* sql`INSERT INTO agent_harness_jobs(id,instance_id,bridge_id,account_id,user_id,business_id,model,input)
