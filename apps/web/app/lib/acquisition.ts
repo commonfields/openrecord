@@ -121,6 +121,19 @@ export type ImportInput = { dataOrigin: "GA4_EXPORT" | "SYNTHETIC_FIXTURE"; prop
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
 const base = (id: string) => `/api/acquisition/clients/${encodeURIComponent(id)}`
 
+/** Scheduled tracking: one approved schedule per client, and the alerts its runs raised. */
+export type TrackingSchedule = { setId: string; cadence: "DAILY" | "WEEKLY"; samples: number; maxProviderCalls: number; estimatedMaxCostUsd: number | null
+  alertDropPoints: number; enabled: boolean; pausedReason: string | null; nextRunAt: string | null; lastBatchId: string | null; approvedAt: string | null }
+export type TrackingAlert = { id: string; kind: "BRAND_MENTIONS_DROPPED" | "OWN_CITATIONS_DROPPED"; beforeBatchId: string; afterBatchId: string
+  before: { n: number; d: number }; after: { n: number; d: number }; investigationId: string | null; createdAt: string | null }
+export type TrackingResponse = { schedule: TrackingSchedule | null; costPerAttemptUsd: number | null; alerts: TrackingAlert[] }
+export const Tracking = {
+  get: (id: string) => api<TrackingResponse>(`${base(id)}/schedule`),
+  approve: (id: string, input: { setId: string; cadence: "DAILY" | "WEEKLY"; samples: number; acknowledgedMaxProviderCalls: number; alertDropPoints: number }) =>
+    api<TrackingResponse>(`${base(id)}/schedule`, { method: "PUT", ...json(input) }),
+  setEnabled: (id: string, enabled: boolean) => api<TrackingResponse>(`${base(id)}/schedule/enabled`, { method: "POST", ...json({ enabled }) }),
+}
+
 export const Discovery = {
   get: (id: string) => api<DiscoveryResponse>(base(id)),
   compare: (id: string, beforeId: string, afterId: string) => api<{ comparison: BatchComparison }>(`${base(id)}/comparison/${encodeURIComponent(beforeId)}/${encodeURIComponent(afterId)}`),

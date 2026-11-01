@@ -49,6 +49,7 @@ import { AdsProviderLive } from "@openrecord/ads"
 import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
 import { briefScheduler } from "./growth-brief.js"
+import { trackingScheduler } from "./acquisition-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
 
 const Repos = Layer.mergeAll(
@@ -118,7 +119,9 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     // Weekly growth briefs that are due, checked every five minutes once the server is up.
     const Briefs = Layer.effectDiscard(Effect.forkDaemon(briefScheduler.pipe(Effect.delay("30 seconds"))))
     const Followups = Layer.scopedDiscard(Effect.forkScoped(followupScheduler.pipe(Effect.delay("30 seconds"))))
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups).pipe(
+    // Scheduled AI-answer tracking runs that are due, and comparisons of finished runs.
+    const Tracking = Layer.effectDiscard(Effect.forkDaemon(trackingScheduler.pipe(Effect.delay("45 seconds"))))
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )
