@@ -8,10 +8,12 @@ import { HttpRouter } from "@effect/platform"
 import { AgentProposalRepository, BusinessRepository, GrowthRefused, GrowthRepository, type AgentProposal } from "@openrecord/db"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { json, operatorSessionFor, type WithSession } from "./record-routes.js"
+import { listChanges, type WordPressChange } from "./wordpress.js"
 
 export type DecisionItem =
   | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly proposal: AgentProposal }
   | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly opportunity: GrowthOpportunity }
+  | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly change: WordPressChange }
 
 export const pendingDecisions = (accountId: string) => Effect.gen(function*() {
   const businesses = yield* (yield* BusinessRepository).list(accountId)
@@ -22,9 +24,11 @@ export const pendingDecisions = (accountId: string) => Effect.gen(function*() {
     const open = yield* proposals.listByBusiness(accountId, b.id, "PROPOSED")
     // A business without a growth profile has no initiatives yet.
     const initiatives = yield* growth.list(accountId, b.id).pipe(Effect.catchIf(e => e instanceof GrowthRefused, () => Effect.succeed([])))
+    const changes = yield* listChanges(accountId, b.id, "PROPOSED")
     return [
       ...open.map((proposal): DecisionItem => ({ type: "AGENT_PROPOSAL", business, createdAt: proposal.createdAt, proposal })),
       ...initiatives.filter(o => o.status === "PROPOSED").map((opportunity): DecisionItem => ({ type: "GROWTH_OPPORTUNITY", business, createdAt: opportunity.createdAt, opportunity })),
+      ...changes.map((change): DecisionItem => ({ type: "WORDPRESS_CHANGE", business, createdAt: change.createdAt, change })),
     ]
   }), { concurrency: 4 })
   return perBusiness.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
