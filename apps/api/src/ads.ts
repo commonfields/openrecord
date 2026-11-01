@@ -108,6 +108,15 @@ const accessToken = (config: AdsConfig, c: ConnectionRow) => Effect.gen(function
   return fresh.right.accessToken
 })
 /** Runs a read with the connection's token; a refused token marks the connection for a new sign-in. */
+/** A read token from this account's own Meta connection, for the public ad library. Null when none is usable. */
+export const metaLibraryAccess = (accountId: string) => Effect.gen(function*() {
+  const config = yield* adsConfig
+  if (!config.meta.configured) return null
+  const c = (yield* connections(accountId)).find(x => x.provider === "meta" && x.status === "ACTIVE")
+  if (!c) return null
+  const token = yield* accessToken(config, c).pipe(Effect.either)
+  return token._tag === "Right" ? { token: token.right, graph: `${config.meta.config.endpoints.graph}/${config.meta.config.version}` } : null
+})
 const withToken = <A>(config: AdsConfig, c: ConnectionRow, f: (token: string) => Promise<A>) => Effect.gen(function*() {
   const token = yield* accessToken(config, c)
   const result = yield* call(() => f(token)).pipe(Effect.either)

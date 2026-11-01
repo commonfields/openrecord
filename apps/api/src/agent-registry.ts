@@ -20,7 +20,7 @@ import { STARTS_WORK } from "./agent-session-tools.js"
 import { dispatchInvestigation, investigationDeclarations } from "./agent-investigation-tools.js"
 import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-tools.js"
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
-import { dispatchResearch, researchDeclarations } from "./market-research.js"
+import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -59,10 +59,10 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     run: (ctx, args) => dispatchInvestigation(ctx, declaration.name, args) })),
   ...memoryDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchMemory(ctx, declaration.name, args) })),
-  // External research saves what it observed (and what it cost) for the business;
-  // a repeat on the same day returns the saved observation instead of paying again.
+  // Research saves what it observed for the business; a repeat on the same day
+  // returns the saved observation instead of reading the sources again.
   ...researchDeclarations.map((declaration): AgentToolSpec => {
-    const saves = declaration.name === "research_competitor_growth" || declaration.name === "read_external_ai_visibility"
+    const saves = RESEARCH_SAVES.has(declaration.name)
     return { declaration, effect: saves ? "record" : "read", replay: saves ? "deduplicated" : "safe", scope: "general",
       run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
   }),

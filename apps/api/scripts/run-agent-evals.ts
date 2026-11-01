@@ -86,7 +86,7 @@ const main = async () => {
     const started = Date.now()
     const tools: string[] = [], calls: Array<{ tool: string; args: unknown }> = []
     const run = await runtime.runPromise(runConversation({ message: s.message, history: [], model, ...(baseline ? { system: GENERIC_SYSTEM } : {}),
-      dispatch: (name, args) => Effect.sync(() => { tools.push(name); calls.push({ tool: name, args }); return s.evidence[name] ?? notConnected(name) }) }).pipe(Effect.either))
+      dispatch: (name, args) => Effect.sync(() => { tools.push(name); calls.push({ tool: name, args }); const e = s.evidence[name]; return typeof e === "function" ? e(args) : e ?? notConnected(name) }) }).pipe(Effect.either))
     const reply = run._tag === "Right" ? run.right.reply : ""
     const g = run._tag === "Right" ? grade(s, reply, tools, calls) : { id: s.id, passed: false, failed: ["model did not answer"], checks: s.checks.length }
     rows.push({ ...g, ms: Date.now() - started, reply, tools, calls, ...(run._tag === "Left" ? { error: String((run.left as { reason?: string }).reason ?? run.left) } : {}) })

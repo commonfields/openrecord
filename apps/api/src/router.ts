@@ -16,7 +16,7 @@ import { growthExecutionApi } from "./growth-execution-routes.js"
 import { growthGa4Api } from "./growth-ga4-routes.js"
 import { agentOriginAllowed } from "./agent-origin.js"
 import { MAX_ACTIVE, Remember, forgetNote, listMemories, rememberNote } from "./business-memory.js"
-import { ConnectVisibility, connectVisibility, disconnectVisibility, visibilityStatus } from "./market-research.js"
+import { MAX_LOG_BYTES, importTrafficLog } from "./research/traffic.js"
 import { readStartupGit, runtimeDiagnostic } from "./runtime.js"
 // Effect API server: HttpRouter + HttpServer over Node.
 // One typed contract (packages/contracts) shared with apps/web.
@@ -135,6 +135,7 @@ import { siteApi } from "./site-routes.js"
 import { recordApi, recordFixtureAllowed } from "./record-routes.js"
 import { acquisitionApi } from "./acquisition-routes.js"
 import { trackingScheduleApi } from "./acquisition-schedule.js"
+import { answerScheduleApi } from "./research/answer-schedule.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 
 const json = (status: number, body: unknown, headers?: Record<string, string>) =>
@@ -1391,17 +1392,6 @@ export const makeRouter = () => {
       return yield* json(200, { deleted: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConversationUnavailable" })))),
   )
-  // Connection refusals are stable reasons; the provider's own text never reaches the browser.
-  const visibilityError = (e: unknown) => {
-    const tag = typeof e === "object" && e !== null && "_tag" in e ? e._tag : null
-    if (tag === "NotAuthenticated") return json(401, { _tag: "NotAuthenticated" })
-    if (tag === "AgentNotInScope") return json(404, { _tag: "BusinessNotFound" })
-    if (tag === "ResearchRefused") {
-      const reason = (e as { reason: string }).reason
-      return json(reason === "NOT_CONFIGURED" ? 503 : reason === "UNAVAILABLE" || reason === "RATE_LIMITED" ? 502 : 422, { _tag: "AiVisibilityRefused", reason })
-    }
-    return json(500, { _tag: "AiVisibilityUnavailable" })
-  }
   // Business memory in its own chain, for the same HttpRouter arity reason.
   const memoryApi = router.pipe(
     // Business memory: the notes the agent keeps about this business, for the team to read, add and forget.
@@ -1434,29 +1424,21 @@ export const makeRouter = () => {
       if (!(yield* forgetNote({ accountId: session.accountId, userId: session.userId, businessId }, memoryId))) return yield* json(404, { _tag: "MemoryNotFound" })
       return yield* json(200, { forgotten: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "MemoryUnavailable" })))),
-    // External AI-visibility project: the read-only key the agent reads tracked AI answers with. The key is never returned.
-    HttpRouter.get("/api/businesses/:id/ai-visibility", withSession(session => Effect.gen(function*() {
-      const { params } = yield* HttpRouter.RouteContext
-      const businessId = params["id"] ?? ""
-      if (!isRouteId(businessId)) return yield* json(422, malformed)
-      return yield* json(200, yield* visibilityStatus(session.accountId, businessId), { "cache-control": "no-store" })
-    })).pipe(Effect.catchAll(e => visibilityError(e)))),
-    HttpRouter.put("/api/businesses/:id/ai-visibility", withSession(session => Effect.gen(function*() {
+    // A server access log, for AI crawler and AI referral traffic. Only aggregates are kept.
+    HttpRouter.post("/api/businesses/:id/ai-traffic-logs", withSession(session => Effect.gen(function*() {
       const { params } = yield* HttpRouter.RouteContext
       const businessId = params["id"] ?? ""
       if (!isRouteId(businessId)) return yield* json(422, malformed)
       if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
-      const body = decodeRequest(ConnectVisibility, yield* readJson)
-      if (!body) return yield* json(422, malformed)
-      return yield* json(200, yield* connectVisibility({ accountId: session.accountId, userId: session.userId, businessId }, body.apiKey), { "cache-control": "no-store" })
-    })).pipe(Effect.catchAll(e => visibilityError(e)))),
-    HttpRouter.del("/api/businesses/:id/ai-visibility", withSession(session => Effect.gen(function*() {
-      const { params } = yield* HttpRouter.RouteContext
-      const businessId = params["id"] ?? ""
-      if (!isRouteId(businessId)) return yield* json(422, malformed)
-      if (!(yield* agentOriginAllowed)) return yield* json(403, { _tag: "OriginRefused" })
-      return yield* json(200, yield* disconnectVisibility(session.accountId, businessId))
-    })).pipe(Effect.catchAll(e => visibilityError(e)))),
+      if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" })
+      const req = yield* HttpServerRequest.HttpServerRequest
+      if (Number(req.headers["content-length"] ?? 0) > MAX_LOG_BYTES) return yield* json(413, { _tag: "LogTooLarge", maxBytes: MAX_LOG_BYTES })
+      const text = yield* req.text
+      if (!text.trim() || Buffer.byteLength(text) > MAX_LOG_BYTES) return yield* json(text.trim() ? 413 : 422, { _tag: text.trim() ? "LogTooLarge" : "EmptyLog", maxBytes: MAX_LOG_BYTES })
+      const name = new URL(req.url, "http://localhost").searchParams.get("name")
+      const result = yield* importTrafficLog({ accountId: session.accountId, userId: session.userId, businessId }, text, name)
+      return yield* json(result.saved ? 201 : 422, result.saved ? result : { _tag: "UnrecognizedLog", lines: result.lines })
+    })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "LogUnavailable" }))))
   )
   // Discovery V1 lives in a third chain for the same HttpRouter arity
   // reason: scopes, runs (QUEUED immediately, 409 on duplicate active),
@@ -1637,7 +1619,7 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(HttpRouter.concat(objectivesApi(withSession), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi), memoryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(acquisitionApi(withSession), trackingScheduleApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(acquisitionApi(withSession), HttpRouter.concat(trackingScheduleApi(withSession), answerScheduleApi(withSession)))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   )))
 }
 
