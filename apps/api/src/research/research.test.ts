@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
 import { capability, findCapabilities, CAPABILITIES } from "./catalog.js"
-import { citedUrls, analyse, sourceType, visibilityReport, type Brands } from "./answers.js"
+import { citedUrls, analyse, framed, sourceType, visibilityReport, type Brands } from "./answers.js"
 import { parseLibrary, withoutToken } from "./ads.js"
 import { resetRdapBootstrap } from "./company.js"
 import { diffLines } from "./history.js"
@@ -221,6 +221,13 @@ describe("AI visibility analysis", () => {
     expect(a.citations.map(c => [c.owner, c.sourceType])).toEqual([["OTHER", "FORUM"], ["OWNED", "OWNED_SITE"], ["COMPETITOR", "WEBSITE"]])
     expect(citedUrls("see https://a.example.org/x.")).toEqual(["https://a.example.org/x"])
     expect(sourceType("https://www.g2.com/products/x")).toBe("REVIEW_SITE")
+  })
+  it("asks as a persona in a location without naming the business, and reports visibility by context", () => {
+    expect(framed("best dentist for a cleaning?", { persona: "a busy parent", location: "Austin, Texas" })).toBe("I'm a busy parent in Austin, Texas. best dentist for a cleaning?")
+    expect(framed("best dentist?", { location: "Jakarta" })).toBe("I'm in Jakarta. best dentist?")
+    expect(framed("best dentist?")).toBe("best dentist?")
+    const austin = analyse("Northstar Dental.", brands, { ...meta, context: { location: "Austin" } }), plain = analyse("Bright Smiles.", brands, meta)
+    expect(visibilityReport([austin, plain], "Northstar Dental").byContext).toEqual([{ context: "Austin", answers: 1, brandMentioned: { n: 1, d: 1, share: 100 } }, { context: "no persona or location", answers: 1, brandMentioned: { n: 0, d: 1, share: 0 } }])
   })
   it("records the searches a model ran and the pages they returned, and labels how it answered", () => {
     const searched = analyse("Bright Smiles is the usual pick.", brands, meta, { searches: ["best dentist downtown", "dentist reviews downtown"], sources: [{ url: "https://www.yelp.com/biz/x" }, { url: "https://northstar.test/" }] })

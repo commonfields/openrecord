@@ -96,6 +96,8 @@ export const citedUrls = (answer: string) => [...new Set([...answer.matchAll(/\]
 
 export interface AnalysedAnswer {
   readonly engine: string; readonly model: string; readonly prompt: string; readonly answeredAt: string
+  /** The asker framing used, when any. */
+  readonly context?: { readonly persona?: string | undefined; readonly location?: string | undefined } | undefined
   readonly text: string; readonly brandMentioned: boolean; readonly brandPosition: number | null
   /** WEB_SEARCH when the model searched the web for this answer; MODEL_ONLY when it answered from what it knows. */
   readonly retrieval?: "WEB_SEARCH" | "MODEL_ONLY"
@@ -103,7 +105,7 @@ export interface AnalysedAnswer {
   readonly mentions: ReadonlyArray<{ readonly brand: string; readonly role: "TARGET" | "COMPETITOR"; readonly position: number; readonly negativeCue: boolean; readonly sentence: string }>
   readonly citations: ReadonlyArray<{ readonly url: string; readonly domain: string | null; readonly owner: string; readonly competitor: string | null; readonly sourceType: string }>
 }
-export const analyse = (answer: string, brands: Brands, meta: { engine: string; model: string; prompt: string; answeredAt: string }, searched?: { searches?: ReadonlyArray<string> | undefined; sources?: ReadonlyArray<{ url: string }> | undefined }): AnalysedAnswer => {
+export const analyse = (answer: string, brands: Brands, meta: { engine: string; model: string; prompt: string; answeredAt: string; context?: { persona?: string | undefined; location?: string | undefined } | undefined }, searched?: { searches?: ReadonlyArray<string> | undefined; sources?: ReadonlyArray<{ url: string }> | undefined }): AnalysedAnswer => {
   const found = detectMentions(answer, brands.target, brands.competitors)
   const firstByBrand = new Map<string, (typeof found)[number]>()
   for (const m of [...found].sort((a, b) => a.start - b.start)) if (!firstByBrand.has(m.brand)) firstByBrand.set(m.brand, m)
@@ -128,6 +130,10 @@ const TrackInput = Schema.Struct({
   offset: Schema.optional(Schema.Int.pipe(Schema.between(0, 59))),
   engines: Schema.optional(Schema.Array(EngineRef).pipe(Schema.minItems(1), Schema.maxItems(3))),
   competitors: Schema.optional(Schema.Array(Schema.String.pipe(Schema.minLength(2), Schema.maxLength(80))).pipe(Schema.maxItems(10))),
+  /** Who is asking, as the asker would say it (for example "a dentist's office manager"). */
+  persona: Schema.optional(Schema.String.pipe(Schema.minLength(3), Schema.maxLength(160), Schema.pattern(/^[^\n]+$/))),
+  /** Where the asker is (for example "Austin, Texas"); models answer local questions for that place. */
+  location: Schema.optional(Schema.String.pipe(Schema.minLength(2), Schema.maxLength(80), Schema.pattern(/^[^\n]+$/))),
   /** A new value asks again instead of reusing today's saved answers (each scheduled run sets one). */
   runAt: Schema.optional(Schema.String.pipe(Schema.pattern(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/))),
 })
@@ -145,6 +151,12 @@ const promptsFor = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*()
   return rows.map(r => String(r["prompt"]))
 })
 
+/** The question as that person would ask it; the business is never named. */
+export const framed = (prompt: string, context?: { persona?: string | undefined; location?: string | undefined }) => {
+  if (!context?.persona && !context?.location) return prompt
+  const who = [context.persona ? `I'm ${context.persona.replace(/^(i'?m|i am)\s+/i, "")}` : null, context.location ? `${context.persona ? "in" : "I'm in"} ${context.location}` : null].filter(Boolean).join(" ")
+  return `${who}. ${prompt}`
+}
 const trackRun = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*() {
   const e = yield* engines
   const available = yield* e.list(ctx)
@@ -157,8 +169,9 @@ const trackRun = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*() {
   if (!prompts.length) return refuse("NO_PROMPTS", "Give the questions to ask, or save a question set first (propose_question_set).")
   const asks = prompts.flatMap(p => chosen.map(engine => ({ p, engine }))).slice(0, MAX_ASKS)
   const brands = yield* brandsFor(ctx.businessId, { competitors: input.competitors })
-  const results = yield* Effect.forEach(asks, a => e.ask(ctx, a.engine, a.p).pipe(Effect.map(r => ({ ...a, r, at: new Date().toISOString() }))), { concurrency: 3 })
-  const answers = results.flatMap(x => "text" in x.r ? [analyse(x.r.text, brands, { engine: x.engine.label, model: x.engine.model, prompt: x.p, answeredAt: x.at }, x.r)] : [])
+  const context = input.persona || input.location ? { persona: input.persona, location: input.location } : undefined
+  const results = yield* Effect.forEach(asks, a => e.ask(ctx, a.engine, framed(a.p, context)).pipe(Effect.map(r => ({ ...a, r, at: new Date().toISOString() }))), { concurrency: 3 })
+  const answers = results.flatMap(x => "text" in x.r ? [analyse(x.r.text, brands, { engine: x.engine.label, model: x.engine.model, prompt: x.p, answeredAt: x.at, context }, x.r)] : [])
   const failures = results.flatMap(x => "failed" in x.r ? [{ engine: x.engine.label, prompt: x.p, reason: x.r.failed }] : [])
   if (!answers.length) return refuse("UNAVAILABLE", `No model answered (${failures.map(f => f.reason).join(", ")}). Say AI answers are unknown for now.`)
   const mentioned = answers.filter(a => a.brandMentioned).length
@@ -227,6 +240,9 @@ export const visibilityReport = (answers: ReadonlyArray<AnalysedAnswer>, brand: 
       bySourceType, topDomains: [...domains.entries()].sort((a, b) => b[1].citations - a[1].citations).slice(0, 15).map(([domain, d]) => ({ domain, ...d })),
       topPages: [...urls.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([url, n]) => ({ url, citations: n })) },
     trend: [...days.entries()].sort().map(([day, list]) => ({ day, answers: list.length, brandMentioned: list.filter(a => a.brandMentioned).length })),
+    byContext: (() => { const m = new Map<string, AnalysedAnswer[]>()
+      for (const a of answers) { const k = [a.context?.persona, a.context?.location].filter(Boolean).join(", ") || "no persona or location"; m.set(k, [...(m.get(k) ?? []), a]) }
+      return [...m.entries()].map(([context, list]) => ({ context, answers: list.length, brandMentioned: frac(list.filter(a => a.brandMentioned).length, list.length) })) })(),
     retrieval: { webSearch: frac(answers.filter(a => a.retrieval === "WEB_SEARCH").length, answers.length), modelOnly: frac(answers.filter(a => a.retrieval !== "WEB_SEARCH").length, answers.length) },
     // The searches models ran while answering (query fan-out), most frequent first.
     fanOut: (() => { const m = new Map<string, number>(); for (const a of answers) for (const q of a.searches ?? []) m.set(q.toLowerCase(), (m.get(q.toLowerCase()) ?? 0) + 1)
@@ -303,8 +319,8 @@ const factsRun = (ctx: RunContext, input: { days?: 7 | 28 | 90 | 365 | undefined
 
 export const AI_CAPABILITIES: ReadonlyArray<AnyCapability> = [
   { id: "ai.answers", platform: "ai-visibility", title: "Ask AI models the tracked questions", source: "AI_SUBSCRIPTION", label: "SEEN", cache: "day",
-    description: "Asks up to 8 buyer questions (given, or from the latest question set) on up to 3 of the team's connected AI subscriptions, saves every answer and analyses it: whether the business is named and in what position, competitors named, negative wording near a mention, and cited pages by owner (own site, competitor, other) and source type (review site, forum, video, news, wiki, documentation, blog, comparison).",
-    input: TrackInput, subject: (i: TrackArgs) => `ai answers ${createHash("sha256").update(JSON.stringify([i.prompts ?? null, i.questionSetId ?? null, i.offset ?? 0, i.engines ?? null])).digest("hex").slice(0, 12)}`,
+    description: "Asks up to 8 buyer questions (given, or from the latest question set) on up to 3 of the team's connected AI subscriptions, optionally as a given persona and location, with the subscription's own web search when available, saves every answer and analyses it: whether the business is named and in what position, competitors named, negative wording near a mention, and cited pages by owner (own site, competitor, other) and source type (review site, forum, video, news, wiki, documentation, blog, comparison).",
+    input: TrackInput, subject: (i: TrackArgs) => `ai answers ${createHash("sha256").update(JSON.stringify([i.prompts ?? null, i.questionSetId ?? null, i.offset ?? 0, i.engines ?? null, i.persona ?? null, i.location ?? null])).digest("hex").slice(0, 12)}`,
     run: (ctx, i: TrackArgs) => trackRun(ctx, i),
     availability: ctx => Effect.gen(function*() { const e = yield* engines; const list = yield* e.list(ctx).pipe(Effect.orElseSucceed(() => [])); return list.length ? null : "No AI subscription is connected and ready on the bridge" }) },
   { id: "ai.visibility", platform: "ai-visibility", title: "AI visibility report", source: "DERIVED", label: "SEEN", cache: "none",
