@@ -134,8 +134,8 @@ suite("research connections and endpoints (disposable PostgreSQL)", () => {
   it("keeps Google endpoints unavailable until the business connects Google on Channels", async () => {
     const f = await fixture()
     const before = seen.length
-    for (const capability of ["analytics.report", "search.console.query", "local.reviews"]) {
-      const input = capability === "analytics.report" ? { property: "123456", metrics: ["sessions"] } : capability === "search.console.query" ? { siteUrl: "sc-domain:rival.com" } : { account: "123", location: "456" }
+    for (const capability of ["analytics.report", "search.console.query", "local.reviews", "ads.meta.campaigns"]) {
+      const input = capability === "analytics.report" ? { property: "123456", metrics: ["sessions"] } : capability === "search.console.query" ? { siteUrl: "sc-domain:rival.com" } : capability === "ads.meta.campaigns" ? { account: "1234567" } : { account: "123", location: "456" }
       expect((await tool(f.ctx, "run_research", { capability, question: "What does our own Google data say?", input })).right.data).toMatchObject({ status: "NOT_AVAILABLE" })
     }
     expect(seen.length).toBe(before)

@@ -36,7 +36,7 @@ export const prepare = (provider: Provider, req: Request, creds: Credentials, en
   if (a.kind === "api_key" && creds.secret) { if (a.in === "query") url.searchParams.set(a.name, creds.secret); else headers[a.name.toLowerCase()] = creds.secret }
   if (a.kind === "bearer" && creds.secret) headers["authorization"] = `Bearer ${creds.secret}`
   if (a.kind === "basic" && creds.secret) headers["authorization"] = `Basic ${Buffer.from(creds.secret).toString("base64")}`
-  if ((a.kind === "client_credentials" || a.kind === "google_connection") && creds.bearer) headers["authorization"] = `Bearer ${creds.bearer}`
+  if ((a.kind === "client_credentials" || a.kind === "google_connection" || a.kind === "meta_connection") && creds.bearer) headers["authorization"] = `Bearer ${creds.bearer}`
   const body = req.body === undefined ? undefined : typeof req.body === "string" ? req.body : JSON.stringify(req.body)
   if (body !== undefined && !headers["content-type"]) headers["content-type"] = "application/json"
   return { url: url.toString(), method: req.method, headers, ...(body !== undefined ? { body } : {}) }

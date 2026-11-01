@@ -187,3 +187,24 @@ describe("Google endpoints on the business's existing connections", () => {
       .toMatchObject({ findings: { averageRating: 4.4, unanswered: 1, reviews: [{ stars: 2, answered: false }, { stars: 5, answered: true }] } })
   })
 })
+
+describe("Meta ads, Bluesky and Wikimedia endpoints", () => {
+  it("read the business's own Meta ad results with breakdowns", () => {
+    const e = endpoint("ads.meta.insights")
+    const req = e.request({ account: "1234567", level: "ad", period: "last_90d", breakdown: "age" }, now)
+    expect(new URL(req.url).pathname).toMatch(/^\/v\d+\.\d+\/act_1234567\/insights$/)
+    expect(req.query).toMatchObject({ level: "ad", date_preset: "last_90d", breakdowns: "age" })
+    expect(e.parse({ data: [{ ad_name: "Same-day", age: "25-34", spend: "12.50", clicks: "40", actions: [{ action_type: "lead", value: "3" }] }] }, {}))
+      .toMatchObject({ findings: { rows: [{ ad_name: "Same-day", age: "25-34", spend: 12.5, clicks: 40, actions: { lead: 3 } }] } })
+    expect(provider("meta_ads")).toMatchObject({ auth: { kind: "meta_connection" }, hosts: ["graph.facebook.com"] })
+  })
+  it("read public Bluesky profiles and lists without mistaking empty labels for no data", () => {
+    expect(endpoint("social.bluesky.profile").parse({ did: "did:plc:x", handle: "rival.com", followersCount: 900, labels: [] }, {})).toMatchObject({ status: "OBSERVED", findings: { result: { handle: "rival.com", followersCount: 900 } } })
+    expect(endpoint("social.bluesky.followers").parse({ subject: {}, followers: [{ handle: "a.bsky.social" }] }, {})).toMatchObject({ findings: { count: 1 } })
+    expect(endpoint("social.bluesky.followers").parse({ followers: [] }, {})).toMatchObject({ status: "NO_DATA" })
+  })
+  it("read Wikipedia search and edit activity", () => {
+    expect(endpoint("wiki.edits").parse({ items: [{ results: [{ timestamp: "2026-09-01T00:00:00.000Z", edits: 4 }] }] }, {})).toMatchObject({ findings: { months: [{ month: "2026-09", edits: 4 }] } })
+    expect(endpoint("wiki.search").parse({ query: { search: [{ title: "Rival", wordcount: 900, snippet: "<span>Rival</span> is" }] } }, {})).toMatchObject({ findings: { articles: [{ title: "Rival", snippet: "Rival is" }] } })
+  })
+})

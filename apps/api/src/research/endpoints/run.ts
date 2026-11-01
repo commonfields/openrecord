@@ -7,7 +7,7 @@ import { SqlClient } from "@effect/sql"
 import { HttpRouter, type HttpServerResponse } from "@effect/platform"
 import { Effect, Option, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
-import { adsConfig, googleBusinessAccess } from "../../ads.js"
+import { adsConfig, googleBusinessAccess, metaLibraryAccess } from "../../ads.js"
 import { configured as ga4Configured, read as ga4Read } from "../../growth-ga4-routes.js"
 import { GrowthGa4Repository, SearchConsoleRepository } from "@openrecord/db"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "../../record-routes.js"
@@ -17,11 +17,12 @@ import { ACCOUNT_ENDPOINTS, CONNECTED_GOOGLE_ENDPOINTS } from "./defs-accounts.j
 import { PUBLIC_ENDPOINTS } from "./defs-public.js"
 import { SEO_ENDPOINTS } from "./defs-seo.js"
 import { GENERATED_ENDPOINTS } from "./generated.js"
+import { BLUESKY_ENDPOINTS, META_ENDPOINTS, WIKI_MORE } from "./defs-more.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
-export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...SEO_ENDPOINTS, ...GENERATED_ENDPOINTS]
+export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...META_ENDPOINTS, ...BLUESKY_ENDPOINTS, ...WIKI_MORE, ...SEO_ENDPOINTS, ...GENERATED_ENDPOINTS]
 const context = (businessId: string, providerId: string) => `research:${businessId}:${providerId}`
 const transport = Effect.map(Effect.serviceOption(ResearchHttp), Option.getOrUndefined)
 
@@ -72,6 +73,11 @@ const FAILURES: Readonly<Record<CallFailure, string>> = {
 }
 
 const runEndpoint = (e: AnyEndpoint, p: Provider) => (ctx: RunContext, input: unknown) => Effect.gen(function*() {
+  if (p.auth.kind === "meta_connection") {
+    const access = yield* metaLibraryAccess(ctx.accountId).pipe(Effect.orElseSucceed(() => null))
+    if (!access) return refuse("NOT_CONNECTED", "Meta is not connected for this business. Connect it on the Channels page; until then this is unknown, not zero.")
+    return yield* finish(e, p, ctx, input, { secret: null, bearer: access.token })
+  }
   if (p.auth.kind === "google_connection") {
     const token = yield* googleToken(ctx.accountId, ctx.businessId, p.auth.connection)
     if (!token) return refuse("NOT_CONNECTED", `${p.name}: not connected for this business. Connect Google on the Channels page; until then this is unknown, not zero.`)
@@ -116,7 +122,8 @@ export const ENDPOINT_CAPABILITIES: ReadonlyArray<AnyCapability> = ENDPOINTS.fla
   return [{
     id: e.id, platform: e.platform, title: e.title, description: `${e.description} ${access}`, label: e.label, cache: e.cache ?? "day",
     source: p.auth.kind === "none" ? "PUBLIC_API" : "CONNECTED_ACCOUNT", input: e.input, subject: e.subject, run: runEndpoint(e, p),
-    ...(p.auth.kind === "google_connection" ? { availabilityKey: p.id, availability: (ctx: { accountId: string; businessId: string }) => Effect.map(googleConnected(ctx.accountId, ctx.businessId, (p.auth as { connection: GoogleConnection }).connection), on => on ? null : `Needs ${p.name.replace(" (connected on Channels)", "")} connected on the Channels page`) }
+    ...(p.auth.kind === "meta_connection" ? { availabilityKey: p.id, availability: (ctx: { accountId: string }) => Effect.map(Effect.flatMap(SqlClient.SqlClient, sql => sql`SELECT 1 FROM ad_connections WHERE account_id = ${ctx.accountId} AND provider = 'meta' AND status = 'ACTIVE' LIMIT 1`).pipe(Effect.orElseSucceed(() => [])), r => r.length ? null : "Needs Meta connected on the Channels page") }
+      : p.auth.kind === "google_connection" ? { availabilityKey: p.id, availability: (ctx: { accountId: string; businessId: string }) => Effect.map(googleConnected(ctx.accountId, ctx.businessId, (p.auth as { connection: GoogleConnection }).connection), on => on ? null : `Needs ${p.name.replace(" (connected on Channels)", "")} connected on the Channels page`) }
       : needsCredential(p) ? { availabilityKey: p.id, availability: (ctx: { businessId: string }) => Effect.map(credentialFor(ctx.businessId, p.id).pipe(Effect.orElseSucceed(() => null)), c => c ? null : `Needs the business's own ${p.name} connection on the Channels page`) } : {}),
     ...(p.headers && p.headers(process.env) === null ? { availability: () => Effect.succeed(`Needs the server setting RESEARCH_CONTACT (a declared contact ${p.name} requires)`) } : {}),
   } satisfies AnyCapability]

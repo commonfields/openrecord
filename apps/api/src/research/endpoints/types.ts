@@ -21,6 +21,8 @@ export type Auth =
   | { readonly kind: "client_credentials"; readonly tokenUrl: string }
   /** A Google connection the business already made on the Channels page (Analytics, Search Console or Business Profile). */
   | { readonly kind: "google_connection"; readonly connection: "analytics" | "search_console" | "business_profile" }
+  /** The business's existing Meta connection (read-only ads scope). */
+  | { readonly kind: "meta_connection" }
 
 export interface Provider {
   readonly id: string
