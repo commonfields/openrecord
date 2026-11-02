@@ -24,6 +24,8 @@ export const send = async (fetchImpl: FetchLike, url: string, init: RequestInit 
     throw new AdsError({ kind: "UNAVAILABLE", status: response.status, providerCode: null })
   }
   if (response.status >= 300) throw errorFromResponse(response.status, text)
+  // A delete can answer with an empty body.
+  if (text.trim() === "") return {}
   try { return JSON.parse(text) } catch { throw unexpected() }
 }
 
