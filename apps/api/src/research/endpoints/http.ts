@@ -33,7 +33,12 @@ export const prepare = (provider: Provider, req: Request, creds: Credentials, en
   if (required === null) return { refused: "NOT_CONFIGURED" as const }
   Object.assign(headers, required)
   const a = provider.auth
-  if (a.kind === "api_key" && creds.secret) { if (a.in === "query") url.searchParams.set(a.name, creds.secret); else headers[a.name.toLowerCase()] = creds.secret }
+  if (a.kind === "api_key" && creds.secret) { if (a.in === "query") url.searchParams.set(a.name, creds.secret); else headers[a.name.toLowerCase()] = `${a.prefix ?? ""}${creds.secret}` }
+  if (a.kind === "api_key_pair" && creds.secret) {
+    const at = creds.secret.indexOf(":")
+    if (at <= 0) return { refused: "NOT_CONFIGURED" as const }
+    url.searchParams.set(a.names[0], creds.secret.slice(0, at)); url.searchParams.set(a.names[1], creds.secret.slice(at + 1))
+  }
   if (a.kind === "bearer" && creds.secret) headers["authorization"] = `Bearer ${creds.secret}`
   if (a.kind === "basic" && creds.secret) headers["authorization"] = `Basic ${Buffer.from(creds.secret).toString("base64")}`
   if ((a.kind === "client_credentials" || a.kind === "google_connection" || a.kind === "meta_connection") && creds.bearer) headers["authorization"] = `Bearer ${creds.bearer}`

@@ -12,7 +12,9 @@ import type { Label } from "../types.js"
 export type Auth =
   | { readonly kind: "none" }
   /** An API key the business adds; sent as a query parameter or header. */
-  | { readonly kind: "api_key"; readonly in: "query" | "header"; readonly name: string; readonly optional?: boolean }
+  | { readonly kind: "api_key"; readonly in: "query" | "header"; readonly name: string; readonly optional?: boolean; readonly prefix?: string }
+  /** Two values the business adds as "first:second", sent as two query parameters (for example key and token). */
+  | { readonly kind: "api_key_pair"; readonly in: "query"; readonly names: readonly [string, string] }
   /** A bearer token the business adds. */
   | { readonly kind: "bearer"; readonly optional?: boolean }
   /** login:password, sent as HTTP Basic. */

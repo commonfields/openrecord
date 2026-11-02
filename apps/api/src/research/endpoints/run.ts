@@ -16,6 +16,7 @@ import { isRefused, refuse, type AnyCapability, type Observed, type Refused, typ
 import { ACCOUNT_ENDPOINTS, CONNECTED_GOOGLE_ENDPOINTS } from "./defs-accounts.js"
 import { PUBLIC_ENDPOINTS } from "./defs-public.js"
 import { SEO_ENDPOINTS } from "./defs-seo.js"
+import { CRM_ENDPOINTS } from "./defs-crm.js"
 import { GENERATED_ENDPOINTS } from "./generated.js"
 import { BLUESKY_ENDPOINTS, META_ENDPOINTS, WIKI_MORE } from "./defs-more.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
@@ -23,7 +24,7 @@ import { balanceOf, finishCall, platformServes, priceOf, recentCalls, route, spe
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
-export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...META_ENDPOINTS, ...BLUESKY_ENDPOINTS, ...WIKI_MORE, ...SEO_ENDPOINTS, ...GENERATED_ENDPOINTS]
+export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...META_ENDPOINTS, ...BLUESKY_ENDPOINTS, ...WIKI_MORE, ...SEO_ENDPOINTS, ...CRM_ENDPOINTS, ...GENERATED_ENDPOINTS]
 const context = (businessId: string, providerId: string) => `research:${businessId}:${providerId}`
 const transport = Effect.map(Effect.serviceOption(ResearchHttp), Option.getOrUndefined)
 
@@ -137,7 +138,7 @@ const finish = (e: AnyEndpoint, p: Provider, ctx: RunContext, input: unknown, cr
   }
   const parsed = e.parse(r.json, input)
   if ("failed" in parsed) return refuse(parsed.failed, parsed.failed === "BALANCE_EXHAUSTED" ? "The business's provider account has no balance left." : parsed.failed === "AUTH" ? FAILURES.AUTH : "The provider reported that this request failed. Say it is unknown.")
-  const { timeline, ...findings } = scrub(parsed.findings, [secret ?? "", bearer ?? ""]) as Record<string, unknown> & { timeline?: TimelineEvent[] }
+  const { timeline, ...findings } = scrub(parsed.findings, [secret ?? "", bearer ?? "", ...(secret?.includes(":") ? secret.split(":") : [])]) as Record<string, unknown> & { timeline?: TimelineEvent[] }
   return { status: parsed.status, findings, ...(Array.isArray(timeline) ? { timeline } : {}),
     coverage: { provider: p.name, ...(parsed.coverage ?? {}), terms: p.note, docs: e.docs } } satisfies Observed
 }) as Effect.Effect<Observed | Refused, unknown, SqlClient.SqlClient>

@@ -46,11 +46,21 @@ export const findCapabilities = (query: string, platform?: string, limit = 8) =>
   // The asker's own words count twice as much as the synonyms they expand to.
   const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1 && !STOP.has(t))
   const q = words.flatMap(t => [{ t: stem(t), w: 2 }, ...tokens(SYNONYMS[t] ?? "").map(x => ({ t: x, w: 1 }))])
-  return CAPABILITIES.filter(c => !platform || c.platform === platform).map(c => {
+  const ranked = CAPABILITIES.filter(c => !platform || c.platform === platform).map(c => {
     const hay = { id: tokens(c.id), title: tokens(c.title), text: tokens(`${c.description} ${c.platform}`) }
     const score = q.reduce((s, { t, w }) => s + w * ((hay.id.includes(t) ? 4 : 0) + (hay.title.includes(t) ? 3 : 0) + (hay.text.includes(t) ? 1 : 0)), 0)
-    return { c, score }
-  }).filter(x => x.score > 0 || !q.length).sort((a, b) => b.score - a.score).slice(0, limit).map(x => x.c)
+    // Spec-generated operations name their parameters in their ids, so they match words easily; purpose-built capabilities come first on a tie.
+    return { c, score: GENERATED_IDS.has(c.id) ? score * 0.6 : score }
+  }).filter(x => x.score > 0 || !q.length).sort((a, b) => b.score - a.score)
+  // At most three operations from one generated API family, so one large API cannot fill the list.
+  const perFamily = new Map<string, number>()
+  return ranked.filter(({ c }) => {
+    if (!GENERATED_IDS.has(c.id)) return true
+    const family = c.id.split(".").slice(0, 2).join(".")
+    const n = (perFamily.get(family) ?? 0) + 1
+    perFamily.set(family, n)
+    return n <= 3
+  }).slice(0, limit).map(x => x.c)
 }
 export const describe = (c: AnyCapability) => ({ id: c.id, platform: c.platform, title: c.title, what: c.description, source: c.source, label: c.label,
   reuse: c.cache === "day" ? "same input on the same day reuses the saved result" : "runs every time", input: JSONSchema.make(c.input) })
