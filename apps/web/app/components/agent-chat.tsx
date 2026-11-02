@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, BookOpenIcon, BookmarkPlusIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -24,12 +24,16 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
+import { SavePlaybookDialog, playbookMatches, playbookText, usePlaybooks, type Playbook } from "@/components/playbooks"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
 import { NewChatDialog } from "@/components/new-chat-dialog"
 import { WordPressChangeById } from "@/components/wordpress"
 import { AgentFollowups } from "@/components/agent-followups"
 import { followupChatEvent, followupModel } from "@/lib/agent-followups"
+
+/** An entry in the composer's "/" menu: an OpenRecord command or a playbook. */
+type MenuItem = ({ kind: "command" } & (typeof COMMANDS)[number]) | { kind: "playbook"; playbook: Playbook }
 
 type Message = { id: string; role: "user" | "agent"; text: string; attachments?: AgentAttachment[]; context?: AgentContextUse; tools?: Array<{ tool: string; summary: string }>; citations?: AgentCitation[]; pending?: boolean; provider?: string; model?: string | null
   // Steps the run finished so far (pending messages) and how a finished run ended.
@@ -1072,8 +1076,13 @@ function Composer({
   useEffect(() => () => recognitionRef.current?.stop(), [])
 
   const command = onCommand ? parseCommand(text) : null
-  const matches = onCommand ? commandMatches(text) : []
+  // The "/" menu: OpenRecord's commands, then playbooks (built-in SEO/AEO/GEO and the account's own).
+  const playbooks = usePlaybooks(!!onCommand)
+  const matches: ReadonlyArray<MenuItem> = onCommand
+    ? [...commandMatches(text).map(c => ({ kind: "command" as const, ...c })), ...playbookMatches(text, playbooks).map(p => ({ kind: "playbook" as const, playbook: p }))]
+    : []
   const [menuIndex, setMenuIndex] = useState(0)
+  const [saving, setSaving] = useState(false)
   const menuOpen = matches.length > 0
   // While the agent works, a message is queued for when it finishes instead.
   const queueing = inFlight && session !== undefined
@@ -1104,8 +1113,15 @@ function Composer({
     setMenuIndex(0)
     textRef.current?.focus()
   }
+  // A playbook types its prompt for this business; the person reads it, then sends.
+  const applyPlaybook = (p: Playbook) => {
+    setText(playbookText(p, context?.name ?? null))
+    setMenuIndex(0)
+    requestAnimationFrame(() => textRef.current?.focus())
+  }
+  const choose = (item: MenuItem) => item.kind === "command" ? run(item.key) : applyPlaybook(item.playbook)
   const submit = () => {
-    if (menuOpen && !command) return run(matches[Math.min(menuIndex, matches.length - 1)]!.key)
+    if (menuOpen && !command) return choose(matches[Math.min(menuIndex, matches.length - 1)]!)
     if (!canSend) return
     if (command) return run(command)
     recognitionRef.current?.stop()
@@ -1179,17 +1195,18 @@ function Composer({
         {menuOpen ? (
           <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) bg-popover p-1 text-left shadow-(--float-shadow-strong)">
             {matches.map((c, i) => (
-              <li key={c.key} role="option" aria-selected={i === menuIndex}>
+              <li key={c.kind === "command" ? c.key : `p:${c.playbook.name}`} role="option" aria-selected={i === menuIndex}>
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => run(c.key)}
+                  onClick={() => choose(c)}
                   onMouseEnter={() => setMenuIndex(i)}
                   className={cn("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs [&_svg]:size-3.5 [&_svg]:text-muted-foreground", i === menuIndex && "bg-accent")}
                 >
-                  {c.icon}
-                  <span className="font-medium">/{c.key}</span>
-                  <span className="truncate text-muted-foreground">{c.description}</span>
+                  {c.kind === "command" ? c.icon : <BookOpenIcon />}
+                  <span className="font-medium">/{c.kind === "command" ? c.key : c.playbook.name}</span>
+                  <span className="truncate text-muted-foreground">{c.kind === "command" ? c.description : c.playbook.title}</span>
+                  {c.kind === "playbook" ? <span className="ml-auto shrink-0 rounded bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">{c.playbook.area}</span> : null}
                 </button>
               </li>
             ))}
@@ -1205,6 +1222,8 @@ function Composer({
             {onCommand ? COMMANDS.map(c => (
               <DropdownMenuItem key={c.key} onSelect={() => run(c.key)}>{c.icon}<span>/{c.key}</span><span className="ml-2 text-muted-foreground">{c.description}</span></DropdownMenuItem>
             )) : null}
+            {onCommand ? <DropdownMenuItem onSelect={() => { setText("/"); requestAnimationFrame(() => textRef.current?.focus()) }}><BookOpenIcon /><span>Playbooks</span><span className="ml-2 text-muted-foreground">SEO, AEO, GEO and your own</span></DropdownMenuItem> : null}
+            {onCommand ? <DropdownMenuItem disabled={!text.trim() || text.trim().startsWith("/")} onSelect={() => setSaving(true)}><BookmarkPlusIcon /><span>Save as playbook</span></DropdownMenuItem> : null}
             {onCommand ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem onSelect={() => fileRef.current?.click()}><PaperclipIcon />Attach files</DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -1213,6 +1232,7 @@ function Composer({
         </DropdownMenu>
         <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" aria-label="Attach files"
           onChange={e => { if (e.currentTarget.files?.length) void attach(e.currentTarget.files); e.currentTarget.value = "" }} />
+        {onCommand ? <SavePlaybookDialog open={saving} onOpenChange={setSaving} draft={text} businessName={context?.name ?? null} /> : null}
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
         </label>
@@ -1236,7 +1256,7 @@ function Composer({
             }
             if (menuOpen && e.key === "Tab") {
               e.preventDefault()
-              setText(`/${matches[Math.min(menuIndex, matches.length - 1)]!.key}`)
+              { const m = matches[Math.min(menuIndex, matches.length - 1)]!; setText(`/${m.kind === "command" ? m.key : m.playbook.name}`) }
               return
             }
             if (menuOpen && e.key === "Escape") {
