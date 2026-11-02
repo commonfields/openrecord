@@ -55,11 +55,12 @@ describe("agent workspace presentation", () => {
   it("separates chat history from Work navigation and keeps header tabs compact", () => {
     const shell = read("../app/components/app-shell.tsx")
     const sidebar = shell.slice(shell.indexOf("function SidebarBody()"), shell.indexOf("const CHATS_SHOWN"))
-    expect(sidebar.includes("{agent ? <ChatHistory archived={archived} onLeaveArchive={() => setArchived(false)} /> : <>")).toBe(true)
+    expect(sidebar.includes("{agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>")).toBe(true)
     expect(sidebar.includes('label="Agent"')).toBe(false)
-    for (const label of ["Channels", "Work", "Results"]) {
+    for (const label of ["Channels", "Results"]) {
       expect(sidebar.includes(`label="${label}"`)).toBe(true)
     }
+    expect(sidebar).not.toContain('label="Work"')
     for (const label of ["Clients", "All businesses"]) expect(sidebar.includes(`label="${label}"`)).toBe(false)
     const tabs = shell.slice(shell.indexOf("function ViewTabs("), shell.indexOf("function SidebarLink("))
     // Compact 28px tabs; the active one is a raised control, like Settings.
@@ -105,8 +106,9 @@ describe("agent workspace presentation", () => {
     const chat = agentChat()
     expect(chat.includes("max-w-6xl")).toBe(false)
     expect(chat.includes("max-w-(--chat-max-width) shrink-0 pb-2")).toBe(true)
-    // The chat box is a raised card: #212121 in dark, with the card shadow.
-    expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--card-shadow)")).toBe(true)
+    // The chat box is a raised card: #212121 in dark, control shadow that
+    // deepens to the card shadow while you type.
+    expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)")).toBe(true)
     expect(chat.includes("relative flex min-h-12 cursor-text")).toBe(true)
     expect(chat.includes("cursor-text items-end")).toBe(true)
     expect(chat.includes("items-end gap-3 rounded-[10px]")).toBe(true)
@@ -129,12 +131,14 @@ describe("agent workspace presentation", () => {
     expect(chat.includes("Approval required")).toBe(false)
   })
 
-  it("keeps Results measurement-focused without the Work action queue", () => {
+  it("keeps Results measurement-focused and Work a plain record, with decisions in Needs you", () => {
     const results = read("../app/routes/today.tsx")
     expect(results.includes("NextActions"), "Results must not render Do next").toBe(false)
     expect(results).toContain("<HealthStrip")
     expect(results).toContain("<SourcesPanel")
-    expect(read("../app/routes/work.tsx")).toContain("<NextActions")
+    const work = read("../app/routes/work.tsx")
+    expect(work.includes("NextActions"), "Work must not render Do next").toBe(false)
+    expect(work).toContain("/approvals")
   })
 
   it("places chat actions and voice inside the input, with the model in a separate toolbar", () => {

@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
-import { ArrowRightIcon, CheckIcon, GlobeIcon, LoaderCircleIcon, RotateCwIcon, SparklesIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, LoaderCircleIcon, RotateCwIcon, SparklesIcon } from "lucide-react"
 import type { ChannelCapability, ChannelEntry, ChannelInventory, GrowthOpportunity, SetupView } from "@openrecord/contracts"
 import { ThinkingGlyph } from "@/components/agent-trace"
+import { ChannelMark } from "@/components/channel-mark"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -37,69 +38,82 @@ export function useSetup(businessId: string) {
   return { setup, loading: q.loading && !q.data, error: q.error, set: setOverride, reload: q.reload }
 }
 
-const STEPS = [
-  { key: "DISCOVER", label: "Read website" },
-  { key: "CONFIRM", label: "Confirm brief" },
-  { key: "CONNECT", label: "Channels" },
-  { key: "PROPOSE", label: "First initiative" },
-] as const
-
-function Stepper({ step }: { step: SetupView["step"] }) {
-  const at = step === "DONE" ? STEPS.length : STEPS.findIndex(s => s.key === step)
-  return (
-    <ol className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[0.6875rem]" aria-label="Setup progress">
-      {STEPS.map((s, i) => (
-        <li key={s.key} className="flex items-center gap-1">
-          <span
-            aria-current={i === at ? "step" : undefined}
-            className={cn("flex items-center gap-1 rounded-full px-2 py-0.5", i < at ? "text-primary-ink" : i === at ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
-          >
-            {i < at ? <CheckIcon className="size-3" /> : <span className="tabular-nums">{i + 1}</span>}
-            {s.label}
-            <span className="sr-only">{i < at ? " (done)" : i === at ? " (current)" : ""}</span>
-          </span>
-          {i < STEPS.length - 1 ? <span aria-hidden className="h-px w-3 bg-border" /> : null}
-        </li>
-      ))}
-    </ol>
-  )
-}
-
-/** One card in the agent thread that walks a business through setup. */
-export function SetupFlow({ setup, onChange }: { setup: SetupView; onChange: (s: SetupView) => void }) {
-  const host = new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
-  return (
-    <section aria-label="Business setup" className="space-y-4 rounded-2xl bg-card p-5 text-left shadow-(--card-shadow)">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />Setting up {setup.brief?.businessName ?? host}</p>
-        <Stepper step={setup.step} />
-      </div>
-      {setup.step === "DISCOVER" ? <DiscoverStep host={host} />
-        : setup.step === "CONFIRM" ? <ConfirmStep setup={setup} onChange={onChange} />
-          : setup.step === "CONNECT" ? <ConnectStep setup={setup} onChange={onChange} />
-            : setup.step === "PROPOSE" ? <ProposeStep setup={setup} onChange={onChange} />
-              : setup.opportunity ? <InitiativeDecision businessId={setup.businessId} opportunity={setup.opportunity} measurement={setup.assessment?.measurement ?? "NONE"} /> : null}
-    </section>
-  )
-}
-
-function DiscoverStep({ host }: { host: string }) {
-  return (
-    <div className="flex items-start gap-3" role="status">
-      <LoaderCircleIcon className="mt-0.5 size-4 shrink-0 animate-spin text-primary-ink" />
-      <div className="space-y-1">
-        <p className="text-sm font-medium">Reading {host}</p>
-        <p className="text-xs text-muted-foreground">Only the public homepage, once. Nothing on your site is changed.</p>
-      </div>
-    </div>
-  )
-}
 
 const KIND_METRIC = { LEAD: "Leads", SIGNUP: "Signups", PURCHASE: "Purchases", BOOKING: "Bookings" } as const
 type Kind = keyof typeof KIND_METRIC
 
-// The business's current name unless the page names it more precisely; a new
-// business starts out named after its website.
+/** Takes setup forward on the person's behalf once it can: the agent's draft
+ * becomes the brief (no facts are approved without the person), then setup
+ * moves past channels and asks for a first initiative. Setup only stops for
+ * the person when the website couldn't be read or the draft failed. */
+function useSetupAutopilot(setup: SetupView, onChange: (s: SetupView) => void, reload: () => Promise<void>) {
+  const attempted = useRef<string | null>(null)
+  const [stuck, setStuck] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const key = `${setup.step}:${setup.revision}:${setup.draft?.status ?? ""}`
+    if (attempted.current === key) return
+    const draft = setup.draft?.status === "READY" ? setup.draft.value : null
+    const run = setup.step === "CONFIRM" && draft && !setup.brief
+      ? () => Setup.confirm(setup.businessId, {
+          expectedRevision: setup.revision,
+          businessName: draft.businessName, category: draft.category, audience: draft.audience,
+          valueProposition: draft.valueProposition, goalStatement: setup.goalStatement?.trim() || draft.goalStatement,
+          conversionKind: draft.conversionKind, metricLabel: draft.metricLabel.trim() || KIND_METRIC[draft.conversionKind],
+          reportingTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", facts: [],
+        })
+      : setup.step === "CONNECT" ? () => Setup.reviewChannels(setup.businessId, setup.revision)
+      : setup.step === "PROPOSE" ? () => Setup.propose(setup.businessId, setup.revision)
+      : null
+    if (!run) return
+    attempted.current = key
+    setStuck(false)
+    run().then(r => onChange(r.setup)).catch(() => setStuck(true))
+  }, [setup, onChange, attempt])
+  const retry = async () => {
+    await reload()
+    attempted.current = null
+    setStuck(false)
+    setAttempt(value => value + 1)
+  }
+  return { stuck, retry }
+}
+
+/** Setup as the agent works through it: one status line, then the first
+ * initiative to decide on. */
+export function SetupFlow({ setup, onChange, reload }: { setup: SetupView; onChange: (s: SetupView) => void; reload: () => Promise<void> }) {
+  const host = new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
+  const { stuck, retry } = useSetupAutopilot(setup, onChange, reload)
+  const needsPerson = setup.step === "CONFIRM" && (stuck || setup.discovery.status === "FAILED" || setup.draft?.status === "FAILED" || (!setup.draft && setup.discovery.status === "DONE"))
+  const working = setup.step === "DISCOVER" ? `Your agent is reading ${host}`
+    : setup.step === "CONFIRM" ? "Your agent is writing a brief from your website"
+    : setup.step === "CONNECT" || setup.step === "PROPOSE" ? "Your agent is looking for a first step"
+    : null
+  return (
+    <section aria-label="Business setup" className="space-y-4 rounded-2xl bg-card p-5 text-left shadow-(--card-shadow)">
+      <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />Setting up {setup.brief?.businessName ?? host}</p>
+      {stuck && setup.step !== "CONFIRM" ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p role="alert" className="flex-1 text-sm text-destructive">Setup could not continue. Your progress is saved.</p>
+          <Button size="sm" variant="outline" onClick={() => void retry()}>Try again</Button>
+        </div>
+      ) : needsPerson ? <>{stuck ? <p role="alert" className="text-sm text-destructive">The brief could not be saved automatically. Review it and try confirming it below.</p> : null}<ConfirmStep setup={setup} onChange={onChange} /></>
+        : setup.step === "DONE" ? (
+          <div className="space-y-4">
+            {setup.brief ? <p className="text-xs text-muted-foreground">Your agent saved a brief: {setup.brief.category} for {setup.brief.audience}. Tell it in the chat if anything is wrong.</p> : null}
+            {setup.opportunity ? <InitiativeDecision businessId={setup.businessId} opportunity={setup.opportunity} measurement={setup.assessment?.measurement ?? "NONE"} /> : null}
+          </div>
+        ) : working ? (
+          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircleIcon aria-hidden className="size-4 shrink-0 animate-spin text-primary-ink" />
+            <span className="thinking">{working}</span>
+          </p>
+        ) : null}
+      {working && !stuck ? <p className="text-xs text-muted-foreground">Keep this page open while setup advances. You can return to the agent to continue later.</p> : null}
+    </section>
+  )
+}
+
 function guessName(setup: SetupView) {
   const host = new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
   const existing = setup.businessName !== host ? setup.businessName : null
@@ -129,6 +143,9 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
   const [facts, setFacts] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const complete = [form.businessName, form.category, form.audience, form.valueProposition, form.goalStatement].every(value => value.trim().length > 0)
+  const showEditor = editing || !complete || (setup.draft?.status !== "READY" && !setup.brief)
   const set = (k: keyof typeof form) => (v: string) => setForm(f => ({ ...f, [k]: v }))
   // The agent's draft fills whatever the person hasn't typed yet; their own words always win.
   const draft = setup.draft?.status === "READY" ? setup.draft.value : null
@@ -202,7 +219,7 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {showEditor ? <div className="grid gap-3 sm:grid-cols-2">
         <Text id={`${id}-name`} label="Business name" value={form.businessName} onChange={set("businessName")} required />
         <Text id={`${id}-category`} label="What you sell" placeholder="Family dentistry, CRM software…" value={form.category} onChange={set("category")} required />
         <Text id={`${id}-audience`} label="Who buys it" placeholder="Families within 10 miles" value={form.audience} onChange={set("audience")} required className="sm:col-span-2" />
@@ -218,7 +235,19 @@ function ConfirmStep({ setup, onChange }: { setup: SetupView; onChange: (s: Setu
           </Select>
         </div>
         <Text id={`${id}-metric`} label="Metric name" placeholder={KIND_METRIC[form.conversionKind]} value={form.metricLabel} onChange={set("metricLabel")} />
-      </div>
+      </div> : (
+        <div className="space-y-3 rounded-xl bg-muted/60 p-3 text-xs">
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <Detail label="Business">{form.businessName}</Detail>
+            <Detail label="What you sell">{form.category}</Detail>
+            <Detail label="Who buys it">{form.audience}</Detail>
+            <Detail label="Why they choose you">{form.valueProposition}</Detail>
+            <Detail label="Goal">{form.goalStatement}</Detail>
+            <Detail label="Measure">{form.metricLabel.trim() || KIND_METRIC[form.conversionKind]}</Detail>
+          </dl>
+          <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>Edit details</Button>
+        </div>
+      )}
 
       {candidates.length ? (
         <fieldset className="space-y-2">
@@ -249,55 +278,6 @@ function Text({ id, label, value, onChange, placeholder, required, long, classNa
       {long
         ? <Textarea id={id} value={value} onChange={e => onChange(e.currentTarget.value)} placeholder={placeholder} required={required} maxLength={2000} rows={2} />
         : <Input id={id} value={value} onChange={e => onChange(e.currentTarget.value)} placeholder={placeholder} required={required} maxLength={1000} />}
-    </div>
-  )
-}
-
-function ConnectStep({ setup, onChange }: { setup: SetupView; onChange: (s: SetupView) => void }) {
-  const [saving, setSaving] = useState(false)
-  const next = async () => {
-    setSaving(true)
-    try { onChange((await Setup.reviewChannels(setup.businessId, setup.revision)).setup) } catch (err) { toast.error(setupError(err)) } finally { setSaving(false) }
-  }
-  return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-sm font-medium">Your channels</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">What OpenRecord can actually do with each one today. None are required: you can continue now and connect later.</p>
-      </div>
-      <ChannelList inventory={setup.inventory} />
-      <div className="flex justify-end">
-        <Button onClick={next} disabled={saving}>{saving ? <LoaderCircleIcon className="animate-spin" /> : <ArrowRightIcon />}Continue</Button>
-      </div>
-    </div>
-  )
-}
-
-const TONE_DOT = { gap: "bg-wrong", ok: "bg-supported", unknown: "bg-unknown" } as const
-
-function ProposeStep({ setup, onChange }: { setup: SetupView; onChange: (s: SetupView) => void }) {
-  const [saving, setSaving] = useState(false)
-  const propose = async () => {
-    setSaving(true)
-    try { onChange((await Setup.propose(setup.businessId, setup.revision)).setup) } catch (err) { toast.error(setupError(err)) } finally { setSaving(false) }
-  }
-  return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-sm font-medium">What we know so far</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">From your homepage and connected channels. Unknowns stay unknown.</p>
-      </div>
-      <ul className="space-y-2">
-        {setup.assessment?.findings.map(f => (
-          <li key={f.key} className="flex items-start gap-2.5 text-xs">
-            <span aria-hidden className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", TONE_DOT[f.tone])} />
-            <span><span className="sr-only">{f.tone === "gap" ? "Gap: " : f.tone === "ok" ? "In place: " : "Unknown: "}</span>{f.text}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="flex justify-end">
-        <Button onClick={propose} disabled={saving}>{saving ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}Suggest a first initiative</Button>
-      </div>
     </div>
   )
 }
@@ -390,7 +370,7 @@ export function ChannelList({ inventory, showManual = true }: { inventory: Chann
       <ul className="divide-y divide-border/60 rounded-xl border border-border/70">
         {inventory.channels.map(c => (
           <li key={c.key} className="flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2.5">
-            <GlobeIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            <ChannelMark channelKey={c.key} className="mt-0.5" />
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium">{c.label}</span>
@@ -447,20 +427,32 @@ export function ChannelList({ inventory, showManual = true }: { inventory: Chann
 /* --------------------------------------------------------------- start */
 
 /** Website and goal: everything setup needs to begin. */
-export function SetupStartForm({ businessId, onStarted, autoFocus, website: known }: { businessId?: string; onStarted: (s: SetupView) => void; autoFocus?: boolean; website?: string | null }) {
+/** Splits what the person typed into their website and what they want: the
+ * first web address is the website, the rest is the goal in their words. */
+export function parseStart(text: string): { website: string | null; goal: string } {
+  const match = text.match(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s,]*)?/i)
+  const website = match ? normalizeWebsite(match[0]) : null
+  const goal = (match ? text.replace(match[0], " ") : text)
+    .replace(/\s+/g, " ").trim()
+    .replace(/^(?:[,.;:\-–]|and\b|to\b|we want to\b|i want to\b)\s*/i, "")
+    .replace(/^[,.;:\-–]\s*/, "").trim()
+  return { website, goal }
+}
+
+/** Website and goal in one message, the way you'd tell the agent. */
+export function SetupStartForm({ businessId, onStarted, autoFocus, website: known }: { businessId?: string; onStarted: (s: SetupView) => void | Promise<void>; autoFocus?: boolean; website?: string | null }) {
   const id = useId()
-  const [website, setWebsite] = useState(known ?? "")
-  const [goal, setGoal] = useState("")
+  const [text, setText] = useState(known ? `${known.replace(/^https?:\/\//, "").replace(/\/$/, "")} ` : "")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    const url = normalizeWebsite(website)
-    if (!url) { setError("Enter a website address, like acme.com"); return }
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault()
+    const { website, goal } = parseStart(text)
+    if (!website) { setError("Add your website address, like acme.com"); return }
     setBusy(true); setError(null)
     try {
-      const r = await Setup.start({ websiteUrl: url, goalStatement: goal.trim() || null, businessId: businessId ?? null })
-      onStarted(r.setup)
+      const r = await Setup.start({ websiteUrl: website, goalStatement: goal || null, businessId: businessId ?? null })
+      await onStarted(r.setup)
     } catch (err) {
       setError(setupError(err))
     } finally {
@@ -468,21 +460,22 @@ export function SetupStartForm({ businessId, onStarted, autoFocus, website: know
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-2xl bg-card p-5 text-left shadow-(--card-shadow)" noValidate>
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-site`}>Business website</Label>
-        <Input id={`${id}-site`} value={website} onChange={e => setWebsite(e.currentTarget.value)} placeholder="acme.com" inputMode="url" autoComplete="url" autoFocus={autoFocus}
-          aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} />
+    <form onSubmit={submit} className="text-left" noValidate>
+      <div className="rounded-[14px] bg-card p-2 shadow-(--card-shadow) focus-within:ring-[3px] focus-within:ring-ring">
+        <Label htmlFor={`${id}-start`} className="sr-only">Your website and what you want to achieve</Label>
+        <Textarea id={`${id}-start`} value={text} onChange={e => setText(e.currentTarget.value)} autoFocus={autoFocus} rows={2}
+          placeholder="acme.com, we want more booked appointments"
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
+          aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : `${id}-hint`}
+          className="min-h-14 resize-none border-0 bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0" />
+        <div className="flex items-center justify-between gap-3 px-2 pb-0.5">
+          <p id={`${id}-hint`} className="text-[0.6875rem] text-muted-foreground">Your agent reads your public website. Nothing is posted or changed.</p>
+          <Button type="submit" size="icon-sm" disabled={busy || !text.trim()} aria-label="Start">
+            {busy ? <LoaderCircleIcon className="animate-spin" /> : <ArrowUpIcon />}
+          </Button>
+        </div>
       </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-goal`}>What should marketing achieve? <span className="font-normal text-muted-foreground">(optional)</span></Label>
-        <Input id={`${id}-goal`} value={goal} onChange={e => setGoal(e.currentTarget.value)} placeholder="More booked appointments" maxLength={1000} />
-      </div>
-      {error ? <p id={`${id}-error`} role="alert" className="text-xs text-wrong">{error}</p> : null}
-      <div className="flex items-center justify-between gap-3 pt-1">
-        <p className="text-[0.6875rem] text-muted-foreground">OpenRecord reads your public homepage once. Nothing is posted or changed.</p>
-        <Button type="submit" disabled={busy}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <ArrowRightIcon />}Set up</Button>
-      </div>
+      {error ? <p id={`${id}-error`} role="alert" className="mt-2 text-xs text-wrong">{error}</p> : null}
     </form>
   )
 }

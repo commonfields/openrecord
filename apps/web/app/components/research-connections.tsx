@@ -25,7 +25,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true); setError(null)
     try { await f(); setValue(""); setOpen(null); await q.reload() } catch (e) {
-      setError(e instanceof ApiError && e.tag === "CredentialFormat" ? `That doesn't look right. It should look like ${String(e.body["example"] ?? "")}` : e instanceof ApiError && e.tag === "NotConfigured" ? "Connections need a token encryption key on this server." : "That did not work. Try again.")
+      setError(e instanceof ApiError && e.tag === "CredentialFormat" ? `That doesn't look right. It should look like ${String(e.body["example"] ?? "")}` : e instanceof ApiError && e.tag === "NotConfigured" ? "Connections are not available yet. Contact your workspace administrator for help." : "That did not work. Try again.")
     } finally { setBusy(false) }
   }
   return (
@@ -37,7 +37,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
           <p className="text-[0.6875rem] text-muted-foreground">Your own accounts with data providers, so the agent can research with them. Public sources work without any of these. Read-only: keys are stored encrypted and never shown again.</p>
         </div>
       </div>
-      {!q.data.available ? <p className="text-[0.6875rem] text-muted-foreground">Not switched on for this server yet (it needs a token encryption key).</p> : (
+      {!q.data.available ? <p className="text-[0.6875rem] text-muted-foreground">Connections are not available yet. Contact your workspace administrator for help.</p> : (
         <ul className="divide-y">
           {q.data.providers.map(p => (
             <li key={p.id} className="space-y-2 py-2">
@@ -53,7 +53,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
                 <form className="space-y-2" onSubmit={e => { e.preventDefault(); if (value.trim()) void act(() => api(`${base(businessId)}/${p.id}`, { method: "PUT", body: JSON.stringify({ credential: value.trim() }) })) }}>
                   <p className="text-[0.6875rem] text-muted-foreground">{p.how} <a className="underline" href={p.url} target="_blank" rel="noopener noreferrer">Open</a></p>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Input value={value} onChange={e => setValue(e.currentTarget.value)} placeholder={p.example} autoComplete="off" spellCheck={false} aria-label={`${p.name} credential`} className="w-80 font-mono text-xs" />
+                    <Input type="password" value={value} onChange={e => setValue(e.currentTarget.value)} placeholder={p.example} autoComplete="off" spellCheck={false} aria-label={`${p.name} credential`} className="w-80 font-mono text-xs" />
                     <Button size="sm" type="submit" disabled={busy || !value.trim()}>Save</Button>
                   </div>
                 </form>

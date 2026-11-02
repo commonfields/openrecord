@@ -68,7 +68,8 @@ describe("Do next ranking", () => {
   it("adds website fixes awaiting approval and initiatives waiting for a decision", () => {
     const opportunity = { id: "opp", title: "TEST initiative", status: "PROPOSED", progress: "NOT_STARTED" } as GrowthOpportunity
     const actions = buildActions(biz, { representations: [rep("ok", "IN_SYNC", "false")], issues: [], search: search({ awaitingApproval: 2 }), opportunities: [opportunity] })
-    expect(actions.map((a) => a.title)).toEqual(["2 website fixes are ready for your approval", "Approve the initiative “TEST initiative”"])
+    expect(actions.map((a) => a.title)).toEqual(["2 website fixes are ready for your approval", "Review the initiative “TEST initiative”"])
+    expect(actions[1]?.to).toBe("/approvals")
   })
 })
 

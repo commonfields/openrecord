@@ -5,6 +5,9 @@
 import { useState } from "react"
 import { MessagesSquareIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Panel } from "@/components/page"
 import { api, ApiError } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -58,17 +61,21 @@ export function AiAnswerTracking({ businessId }: { businessId: string }) {
         <div className="space-y-2">
           <div className="flex flex-wrap gap-3">
             {s.engines.map(e => (
-              <label key={key(e)} className="flex items-center gap-1.5 text-xs">
-                <input type="checkbox" checked={chosen.includes(key(e))} disabled={!chosen.includes(key(e)) && chosen.length >= 3}
-                  onChange={ev => setPicked(ev.currentTarget.checked ? [...chosen, key(e)] : chosen.filter(k => k !== key(e)))} />
-                {e.label}
-              </label>
+              <div key={key(e)} className="flex items-center gap-1.5">
+                <Checkbox id={`ai-track-${key(e)}`} checked={chosen.includes(key(e))} disabled={!chosen.includes(key(e)) && chosen.length >= 3}
+                  onCheckedChange={v => setPicked(v === true ? [...chosen, key(e)] : chosen.filter(k => k !== key(e)))} />
+                <Label htmlFor={`ai-track-${key(e)}`} className="text-xs font-normal">{e.label}</Label>
+              </div>
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select value={cadence} onChange={e => setCadence(e.currentTarget.value as "DAILY" | "WEEKLY")} aria-label="How often" className="h-7 rounded-md border bg-background px-2 text-xs">
-              <option value="WEEKLY">Weekly</option><option value="DAILY">Daily</option>
-            </select>
+            <Select value={cadence} onValueChange={v => setCadence(v as "DAILY" | "WEEKLY")}>
+              <SelectTrigger aria-label="How often" className="w-28 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="WEEKLY">Weekly</SelectItem>
+                <SelectItem value="DAILY">Daily</SelectItem>
+              </SelectContent>
+            </Select>
             <Button size="sm" disabled={busy || !chosen.length || !s.questions} onClick={() => void approve()}>
               {s.questions ? `Approve: ${asks} question${asks === 1 ? "" : "s"} per run` : "Needs saved buyer questions"}
             </Button>

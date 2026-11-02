@@ -4,39 +4,40 @@
 import { useState } from "react"
 import { Link } from "react-router"
 import { BanknoteIcon } from "lucide-react"
+import { ChannelMark } from "@/components/channel-mark"
 import type { AdPerformanceDays, RevenueTotals } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PeriodSelect } from "@/components/period-select"
-import { Panel, PanelHeader, StatStrip } from "@/components/page"
+import { Panel, SetupFrame, PanelHeader, StatStrip } from "@/components/page"
 import { Revenue, revenueError } from "@/lib/revenue"
 import { relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 
 /** Connect Stripe with a restricted read-only key. */
-export function RevenueSetup({ businessId }: { businessId: string }) {
+export function RevenueSetup({ businessId, onChange, bare }: { businessId: string; onChange?: () => void; bare?: boolean }) {
   const q = useApi(`revenue:${businessId}`, () => Revenue.status(businessId))
   const [key, setKey] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  if (!q.data) return q.loading ? <Skeleton className="h-24 rounded-xl" /> : null
+  if (!q.data) return q.loading ? <Skeleton className="h-24 rounded-xl" /> : <Panel id="revenue" className="flex flex-wrap items-center gap-3 p-4"><p role="alert" className="min-w-0 flex-1 text-xs text-destructive">Stripe connection status could not load.</p><Button size="sm" variant="outline" onClick={() => void q.reload()}>Try again</Button></Panel>
   const { configured, connection } = q.data
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true); setError(null)
-    try { await f(); setKey(""); await q.reload() } catch (e) { setError(revenueError(e)) } finally { setBusy(false) }
+    try { await f(); setKey(""); await q.reload(); onChange?.() } catch (e) { setError(revenueError(e)) } finally { setBusy(false) }
   }
   return (
-    <Panel id="revenue" className="space-y-3 p-4">
-      <div className="flex items-start gap-2">
-        <BanknoteIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
+    <SetupFrame bare={bare} id="revenue" className={bare ? "space-y-3" : "space-y-3 p-4"}>
+      {bare ? null : <div className="flex items-start gap-2">
+        <ChannelMark channelKey="stripe" className="mt-0.5" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-xs font-medium">Revenue · Stripe</h2>
+          <h2 className="text-xs font-medium">Revenue, Stripe</h2>
           <p className="text-[0.6875rem] text-muted-foreground">So the agent can show what growth is worth in money and customers. Read-only: OpenRecord can't charge, refund or change anything in Stripe.</p>
         </div>
-      </div>
+      </div>}
       {!configured ? (
-        <p className="text-[0.6875rem] text-muted-foreground">Not switched on for this OpenRecord server yet. Needs a token encryption key (ADS_TOKEN_ENCRYPTION_KEYS or GA4_TOKEN_ENCRYPTION_KEYS).</p>
+        <p className="text-xs text-muted-foreground">Not available yet. A workspace administrator needs to enable secure connections before you can connect Stripe.</p>
       ) : connection && connection.status === "ACTIVE" ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <p className="min-w-0 flex-1">Reading <span className="font-medium">{connection.displayName}</span>{connection.livemode ? "" : " (test mode)"} with key ending {connection.last4}, connected {relativeTime(connection.connectedAt)}.</p>
@@ -52,13 +53,13 @@ export function RevenueSetup({ businessId }: { businessId: string }) {
             <li>Create it, copy the key (it starts with rk_live_) and paste it here.</li>
           </ol>
           <div className="flex flex-wrap items-center gap-2">
-            <Input value={key} onChange={e => setKey(e.currentTarget.value)} placeholder="rk_live_…" autoComplete="off" spellCheck={false} aria-label="Stripe restricted key" className="w-80 font-mono text-xs" />
+            <Input type="password" value={key} onChange={e => setKey(e.currentTarget.value)} placeholder="rk_live_…" autoComplete="off" spellCheck={false} aria-label="Stripe restricted key" className="w-80 font-mono text-xs" />
             <Button size="sm" type="submit" disabled={busy || !key.trim()}>Connect Stripe</Button>
           </div>
         </form>
       )}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-    </Panel>
+    </SetupFrame>
   )
 }
 

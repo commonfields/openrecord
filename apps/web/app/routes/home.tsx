@@ -83,7 +83,7 @@ export function Home() {
     <div className="space-y-6 pb-4">
       <PageHeader
         title="Businesses"
-        description="Every business you track, with what needs attention first. Open one to review its issues, run checks, and manage approved facts."
+        description="See your businesses and what needs attention, then open one to see the agent's work and results."
         actions={
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <PlusIcon />
@@ -98,7 +98,7 @@ export function Home() {
         <EmptyState
           icon={<Building2Icon />}
           title="Add your first business"
-          description="OpenRecord compares what AI assistants say about a business with the facts you approve for it."
+          description="Start with a website. Your agent will read it and prepare a brief for you to review."
           action={
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <PlusIcon />

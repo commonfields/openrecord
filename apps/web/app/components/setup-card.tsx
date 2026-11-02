@@ -1,49 +1,65 @@
-// Finishing setup from Today. A business with a setup under way shows its next
-// step (the agent drafts the brief from the website, the person confirms);
-// a business with no goal yet is offered setup from its website, because
-// without a goal the agent can't save or measure ideas.
+// Setup where the person is. In the agent chat it shows what the agent is
+// doing with the website, then the first initiative to decide on. On Results
+// it is a collapsible reminder while setup is still under way, or the one box
+// to start from when a business has no goal yet.
 import { ChevronDownIcon, CompassIcon } from "lucide-react"
+import { useEffect, useState, type ReactNode } from "react"
+import { useLocation } from "react-router"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Panel } from "@/components/page"
 import { SetupFlow, SetupStartForm, useSetup } from "@/components/setup-flow"
 import { Briefs } from "@/lib/brief"
 import { useApi } from "@/lib/use-api"
+import { cn } from "@/lib/utils"
+
+/** Setup inside the agent chat, until the first initiative is decided. */
+export function SetupInChat({ businessId }: { businessId: string }) {
+  const { setup, set, error, reload } = useSetup(businessId)
+  if (error && !setup) return <Panel className="flex flex-wrap items-center gap-3 p-4"><p role="alert" className="flex-1 text-sm text-destructive">Setup could not load.</p><Button size="sm" variant="outline" onClick={() => void reload()}>Try again</Button></Panel>
+  if (!setup) return null
+  if (setup.step === "DONE" && setup.opportunity?.status !== "PROPOSED") return null
+  return <SetupFlow setup={setup} onChange={set} reload={reload} />
+}
 
 export function SetupCard({ businessId }: { businessId: string }) {
+  const { hash } = useLocation()
+  const [open, setOpen] = useState(hash === "#setup")
+  useEffect(() => { if (hash === "#setup") setOpen(true) }, [hash])
   const { setup, loading, error, set, reload: reloadSetup } = useSetup(businessId)
   const brief = useApi(`brief:${businessId}`, () => Briefs.get(businessId))
   if (loading) return <Skeleton className="h-24 rounded-xl" />
   if (error && !setup) return <Panel id="setup" className="flex flex-wrap items-center justify-between gap-3 p-4"><p role="alert" className="text-sm text-muted-foreground">Setup could not load.</p><Button size="sm" variant="outline" onClick={() => void reloadSetup()}>Try again</Button></Panel>
   const reload = () => { void brief.reload() }
   if (setup && setup.step !== "DONE") return (
-    <Panel id="setup" className="overflow-hidden">
-      <details className="group">
-        <Heading title="Finish setting up" description={setup.step === "DISCOVER" ? (setup.discovery.status === "FETCHING" ? "Reading your website." : "Your website is waiting to be read.") : "Review your business details and continue setup."} />
-        <div className="border-t border-border/60 p-4"><SetupFlow setup={setup} onChange={s => { set(s); reload() }} /></div>
-      </details>
-    </Panel>
+    <SetupPanel open={open} onOpenChange={setOpen} title={setup.step === "CONFIRM" && setup.draft?.status !== "RUNNING" ? "Setup needs you" : "Your agent is setting up"}
+      description={setup.step === "DISCOVER" ? "Reading your website. Nothing will be changed." : "Writing the brief and looking for a first step."}>
+      <SetupFlow setup={setup} onChange={s => { set(s); reload() }} reload={reloadSetup} />
+    </SetupPanel>
   )
   if (!setup && brief.data && !brief.data.hasGoal) return (
-    <Panel id="setup" className="overflow-hidden">
-      <details className="group">
-        <Heading title="Set a goal for this business" description="Add your website and review a suggested goal for your agent." />
-        <div className="border-t border-border/60 p-4"><SetupStartForm businessId={businessId} website={brief.data.website} onStarted={s => { set(s); reload() }} /></div>
-      </details>
-    </Panel>
+    <SetupPanel open={open} onOpenChange={setOpen} title="Tell your agent what you want to achieve" description="Your website and your goal, in one line. The agent does the rest.">
+      <SetupStartForm businessId={businessId} website={brief.data.website} onStarted={s => { set(s); reload() }} />
+    </SetupPanel>
   )
   return null
 }
 
-function Heading({ title, description }: { title: string; description: string }) {
+function SetupPanel({ open, onOpenChange, title, description, children }: { open: boolean; onOpenChange: (open: boolean) => void; title: string; description: string; children: ReactNode }) {
   return (
-    <summary className="flex cursor-pointer list-none items-center gap-3 p-4 outline-none focus-visible:ring-[3px] focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-      <CompassIcon aria-hidden className="mt-0.5 size-4 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <h2 className="text-base font-medium">{title}</h2>
-        <p className="text-[0.8125rem] text-muted-foreground">{description}</p>
-      </div>
-      <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-    </summary>
+    <Panel id="setup" className="overflow-hidden">
+      <Collapsible open={open} onOpenChange={onOpenChange}>
+        <CollapsibleTrigger className="flex w-full items-center gap-3 p-4 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring">
+          <CompassIcon aria-hidden className="mt-0.5 size-4 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-medium">{title}</span>
+            <span className="block text-[0.8125rem] text-muted-foreground">{description}</span>
+          </span>
+          <ChevronDownIcon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </CollapsibleTrigger>
+        <CollapsibleContent><div className="border-t border-border/60 p-4">{children}</div></CollapsibleContent>
+      </Collapsible>
+    </Panel>
   )
 }

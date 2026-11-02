@@ -150,7 +150,7 @@ export function Today() {
     <div className="rise-in space-y-6 pb-4">
       <PageHeader
         title={activeBusiness?.name ?? "Overview"}
-        description={`How AI and the web describe ${activeBusiness?.name ?? "this business"}, and what to fix next.`}
+        description={`Measured search, AI visibility and marketing results for ${activeBusiness?.name ?? "this business"}. Available data depends on your connected accounts.`}
         actions={
           <>
             <Select value={String(days)} onValueChange={(v) => setParam("days", v)}>
@@ -180,6 +180,7 @@ export function Today() {
         }
       />
 
+      <SetupCard businessId={id} />
       <WeeklyBrief businessId={id} overview={overview} />
       <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
       <RevenuePanel businessId={id} />
@@ -203,7 +204,6 @@ export function Today() {
         <HeroChart a={a} stats={stats} loading={loading} metric={trend} days={days} switcher={switcher} />
       )}
 
-      <SetupCard businessId={id} />
       <SourcesPanel businessId={id} data={overview} />
 
       <section className="space-y-3">

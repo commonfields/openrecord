@@ -1,16 +1,17 @@
+// Work: a plain record of what the agent proposed, what is under way and what
+// is done. Nothing here asks for input. Decisions live in Needs you, and the
+// next move on anything is a conversation with the agent.
 import { Link, useParams } from "react-router"
-import { ArrowRightIcon, BriefcaseIcon } from "lucide-react"
+import { ArrowRightIcon, BriefcaseIcon, CheckCheckIcon } from "lucide-react"
 import type { GrowthExecution, GrowthOpportunity } from "@openrecord/contracts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, PageHeader, Panel, PanelHeader } from "@/components/page"
-import { InitiativeDecision } from "@/components/setup-flow"
-import { NextActions, useOverviewData } from "@/components/today-overview"
-import { AgentProposalCard } from "@/components/agent-chat"
 import { Agent } from "@/lib/api"
-import { formatDateTime, sentenceCase } from "@/lib/format"
-import { GROWTH_EXECUTION_LABELS, Growth, growthPath } from "@/lib/growth"
+import { errorMessage, formatDateTime, relativeTime, sentenceCase } from "@/lib/format"
+import { GROWTH_EXECUTION_LABELS, Growth } from "@/lib/growth"
+import { askAgentPath } from "@/lib/nav"
 import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -19,90 +20,87 @@ export function WorkPage() {
   const { activeBusiness } = useWorkspace()
   const opportunities = useApi(`growth-opps-work:${id}`, () => Growth.list(id))
   const proposals = useApi(`agent-proposals:${id}`, () => Agent.proposals(id))
-  const overview = useOverviewData(id, 30)
   const list = opportunities.data?.opportunities ?? []
-  const waiting = list.filter(o => o.status === "PROPOSED")
-  const approved = list.filter(o => o.status === "APPROVED")
-  const done = list.filter(o => o.status === "REVIEWED" || o.executions.length > 0)
-  const agentOpen = proposals.data?.proposals.filter(p => p.status === "PROPOSED") ?? []
-  const agentWaiting = agentOpen.length
+  const reviewed = list.filter(o => o.status === "REVIEWED")
+  const underway = list.filter(o => o.status === "APPROVED")
+  const waiting = list.filter(o => o.status === "PROPOSED").length + (proposals.data?.proposals.filter(p => p.status === "PROPOSED").length ?? 0)
 
   return (
-    <div className="rise-in mx-auto w-full max-w-4xl space-y-6 pb-4">
-      <PageHeader
-        title="Work"
-        description={`What is proposed, approved and done for ${activeBusiness?.name ?? "this business"}. Nothing is published or changed without your approval.`}
-        actions={<Button asChild variant="outline" size="sm"><Link to={growthPath(id)}>Growth workspace<ArrowRightIcon /></Link></Button>}
-      />
+    <div className="rise-in w-full space-y-6 pb-4">
+      <PageHeader title="Work" description={`What your agent proposed, is working on and finished for ${activeBusiness?.name ?? "this business"}.`} />
 
-      {opportunities.loading && !opportunities.data ? <Skeleton className="h-48 rounded-xl" /> : list.length === 0 && agentWaiting === 0 ? (
-        <EmptyState icon={<BriefcaseIcon />} title="No work yet" description="Type /setup in the agent to get a first proposed initiative, or /plan to see what to do next."
-          action={<Button asChild><Link to={`/businesses/${id}/agent`}>Open the agent</Link></Button>} />
-      ) : (
-        <>
-          {waiting.length || agentWaiting ? (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium">Waiting for your decision</h2>
-              {waiting.map(o => (
-                <Panel key={o.id} className="p-5"><InitiativeDecision businessId={id} opportunity={o} measurement="NONE" /></Panel>
-              ))}
-              {agentOpen.map(p => (
-                <AgentProposalCard key={p.id} businessId={id} businessName={activeBusiness?.name ?? "this business"} proposal={p} onDone={() => { proposals.reload() }} />
-              ))}
-            </section>
-          ) : null}
+      {(opportunities.loading && !opportunities.data) || (proposals.loading && !proposals.data) ? <Skeleton className="h-48 rounded-xl" />
+        : (opportunities.error && !opportunities.data) || (proposals.error && !proposals.data) ? (
+          <Panel className="flex flex-wrap items-center gap-3 p-4">
+            <p role="alert" className="min-w-0 flex-1 text-sm text-destructive">Work could not load: {errorMessage(opportunities.error ?? proposals.error)}</p>
+            <Button size="sm" variant="outline" onClick={() => { void opportunities.reload(); void proposals.reload() }}>Try again</Button>
+          </Panel>
+        ) : list.length === 0 && waiting === 0 ? (
+          <EmptyState icon={<BriefcaseIcon />} title="No work yet" description="Tell your agent what you want to achieve. What it proposes and does appears here."
+            action={<Button asChild><Link to={`/businesses/${id}/agent`}>Open the agent</Link></Button>} />
+        ) : (
+          <>
+            {waiting ? (
+              <Panel className="flex flex-wrap items-center gap-3 p-4">
+                <CheckCheckIcon aria-hidden className="size-4 text-primary-ink" />
+                <p className="min-w-0 flex-1 text-sm">{waiting === 1 ? "1 proposal is waiting for your decision." : `${waiting} proposals are waiting for your decision.`}</p>
+                <Button asChild size="sm"><Link to="/approvals">Review<ArrowRightIcon /></Link></Button>
+              </Panel>
+            ) : null}
 
-          {approved.length ? (
-            <Panel>
-              <PanelHeader title="Approved" description="Make the change, then record it so it can be verified or compared." />
-              <ul className="divide-y divide-border/60 px-4 pb-2">
-                {approved.map(o => <InitiativeRow key={o.id} businessId={id} o={o} />)}
-              </ul>
-            </Panel>
-          ) : null}
+            {underway.length ? (
+              <Panel>
+                <PanelHeader title="Approved" description="You approved these initiatives. Recorded actions appear here; approval alone does not mean work has started." />
+                <ul className="divide-y divide-border/60 px-4 pb-2">
+                  {underway.map(o => (
+                    <li key={o.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">{o.title}</p>
+                        <p className="text-xs text-muted-foreground">{o.proposedChange}</p>
+                      </div>
+                      {o.executions.length ? <ul className="w-full space-y-1">{o.executions.map(e => <ExecutionReceipt key={e.id} e={e} />)}</ul> : null}
+                      <Button asChild size="sm" variant="outline">
+                        <Link to={askAgentPath(id, `What's next for “${o.title}”, and what do you need from me?`)}>Ask the agent</Link>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+            ) : null}
 
-          {done.length ? (
-            <Panel>
-              <PanelHeader title="Done" description="Recorded work and how strongly each change is proven." />
-              <ul className="divide-y divide-border/60 px-4 pb-2">
-                {done.map(o => <InitiativeRow key={o.id} businessId={id} o={o} />)}
-              </ul>
-            </Panel>
-          ) : null}
-        </>
-      )}
-
-      <NextActions businessId={id} data={overview} checks={null} />
+            {reviewed.length ? (
+              <Panel>
+                <PanelHeader title="Reviewed" description="Recorded actions and their evidence for reviewed initiatives." />
+                <ul className="divide-y divide-border/60 px-4 pb-2">
+                  {reviewed.map(o => <DoneRow key={o.id} o={o} />)}
+                </ul>
+              </Panel>
+            ) : null}
+          </>
+        )}
     </div>
   )
 }
 
-function InitiativeRow({ businessId, o }: { businessId: string; o: GrowthOpportunity }) {
+function DoneRow({ o }: { o: GrowthOpportunity }) {
+  const last = o.executions.at(-1)
   return (
     <li className="space-y-2 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 text-xs font-medium">{o.title}</span>
-        {o.executions.length === 0 ? (
-          <Button asChild size="sm" variant="outline"><Link to={`${growthPath(businessId)}#opportunity-${o.id}`}>Record the work</Link></Button>
-        ) : (
-          <Link to={`${growthPath(businessId)}#opportunity-${o.id}`} className="text-xs font-medium text-primary-ink hover:underline">Details</Link>
-        )}
+      <div className="flex flex-wrap items-baseline gap-x-3">
+        <p className="min-w-0 flex-1 text-sm font-medium">{o.title}</p>
+        {last ? <span className="text-xs text-muted-foreground">{relativeTime(last.performedAt)}</span> : null}
       </div>
-      {o.executions.length ? (
-        <ul className="space-y-1">
-          {o.executions.map(e => <ExecutionReceipt key={e.id} e={e} />)}
-        </ul>
-      ) : <p className="text-[0.6875rem] text-muted-foreground">{o.proposedChange}</p>}
+      {o.executions.length ? <ul className="space-y-1">{o.executions.map(e => <ExecutionReceipt key={e.id} e={e} />)}</ul> : null}
     </li>
   )
 }
 
 function ExecutionReceipt({ e }: { e: GrowthExecution }) {
   return (
-    <li className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
-      <Badge variant={e.assurance === "SYSTEM_VERIFIED" ? "supported" : "outline"}>{e.assurance === "SYSTEM_VERIFIED" ? "Verified by read-back" : "Attested by you"}</Badge>
+    <li className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <Badge variant={e.assurance === "SYSTEM_VERIFIED" ? "supported" : "outline"}>{e.assurance === "SYSTEM_VERIFIED" ? "Pull request merged" : "Reported by you"}</Badge>
       <span className="text-foreground">{GROWTH_EXECUTION_LABELS[e.type] ?? sentenceCase(e.type)}</span>
-      <span className="truncate">{e.target}</span>
+      <span className="min-w-0 truncate">{e.target}</span>
       <span className="ml-auto tabular-nums">{formatDateTime(e.performedAt)}</span>
     </li>
   )

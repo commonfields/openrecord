@@ -3,13 +3,15 @@
 // (Results). Read-only: OpenRecord cannot create, change or pause an ad.
 import { useEffect, useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router"
-import { MapPinIcon, MegaphoneIcon, StarIcon } from "lucide-react"
+import { ChevronRightIcon, MapPinIcon, MegaphoneIcon, StarIcon } from "lucide-react"
 import { AD_PROVIDER_NAME, AD_PROVIDERS, CHANNEL_PROVIDERS, type AdCampaignRow, type AdConnection, type AdPerformanceDays, type ChannelProvider, type LocalTotals } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PeriodSelect } from "@/components/period-select"
-import { Panel, PanelHeader, StatStrip } from "@/components/page"
+import { ChannelMark } from "@/components/channel-mark"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Panel, PanelHeader, SetupFrame, StatStrip } from "@/components/page"
 import { ADS_CALLBACK_COPY, Ads, SETUP_NEEDED, adsError, type AdAccountChoice } from "@/lib/ads"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
@@ -21,7 +23,7 @@ const BLURB: Record<ChannelProvider, string> = {
 }
 
 /** Connect Meta and Google Ads, and choose which ad accounts belong to this business. */
-export function AdAccountsSetup({ businessId }: { businessId: string }) {
+export function AdAccountsSetup({ businessId, only, onChange, bare }: { businessId: string; only?: ChannelProvider; onChange?: () => void; bare?: boolean }) {
   const status = useApi(`ads:${businessId}`, () => Ads.status(businessId))
   const [params] = useSearchParams()
   const callback = params.get("ads")
@@ -31,25 +33,25 @@ export function AdAccountsSetup({ businessId }: { businessId: string }) {
   const { hash } = useLocation()
   useEffect(() => { if (status.data && hash === "#ads") document.getElementById("ads")?.scrollIntoView({ behavior: "smooth", block: "start" }) }, [status.data, hash])
   const s = status.data
-  if (!s) return status.loading ? <Skeleton className="h-32 rounded-xl" /> : null
+  if (!s) return status.loading ? <Skeleton className="h-32 rounded-xl" /> : <Panel id="ads" className="flex flex-wrap items-center gap-3 p-4"><p role="alert" className="min-w-0 flex-1 text-xs text-destructive">Ads and Google listing status could not load.</p><Button size="sm" variant="outline" onClick={() => void status.reload()}>Try again</Button></Panel>
   const act = async (f: () => Promise<void>) => {
     setBusy(true); setError(null)
-    try { await f(); await status.reload() } catch (e) { setError(adsError(e)) } finally { setBusy(false) }
+    try { await f(); await status.reload(); onChange?.() } catch (e) { setError(adsError(e)) } finally { setBusy(false) }
   }
   const connect = (provider: ChannelProvider) => act(async () => { window.location.assign((await Ads.connect(businessId, provider)).authorizationUrl) })
 
   return (
-    <Panel id="ads" className="space-y-3 p-4">
-      <div className="flex items-start gap-2">
+    <SetupFrame bare={bare} id="ads" className={bare ? "space-y-3" : "space-y-3 p-4"}>
+      {bare ? null : <div className="flex items-start gap-2">
         <MegaphoneIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h2 className="text-xs font-medium">Ads and Google listing</h2>
           <p className="text-[0.6875rem] text-muted-foreground">So the agent can see what the ads cost, what they bring in, and how people find you on Google. Read-only: OpenRecord can't change an ad, edit your listing or reply to reviews.</p>
         </div>
-      </div>
+      </div>}
       {callbackCopy ? <p role="status" className={cn("text-xs", callbackCopy.ok ? "text-foreground" : "text-destructive")}>{callbackCopy.text}</p> : null}
-      <ul className="divide-y divide-border">
-        {CHANNEL_PROVIDERS.map(provider => {
+      <ul className={cn("divide-y divide-border", bare && "divide-y-0")}>
+        {CHANNEL_PROVIDERS.filter(p => !only || p === only).map(provider => {
           const platform = s.providers[provider]
           const bound = s.bindings.filter(b => b.provider === provider)
           const signIns = s.connections.filter(c => c.provider === provider)
@@ -57,12 +59,16 @@ export function AdAccountsSetup({ businessId }: { businessId: string }) {
           const expired = signIns.filter(c => c.status === "REAUTHORIZATION_REQUIRED")
           return (
             <li key={provider} className="space-y-2 py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-baseline gap-x-2">
+              {bare ? null : <div className="flex flex-wrap items-baseline gap-x-2">
+                <ChannelMark channelKey={provider} className="self-center" />
                 <h3 className="text-xs font-medium">{AD_PROVIDER_NAME[provider]}</h3>
                 <p className="text-[0.6875rem] text-muted-foreground">{BLURB[provider]}</p>
-              </div>
+              </div>}
               {!platform.configured ? (
-                <p className="text-[0.6875rem] text-muted-foreground">Not switched on for this OpenRecord server yet. {SETUP_NEEDED[provider][platform.reason] ?? ""}</p>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <p>Not available yet. A workspace administrator needs to enable this connection.</p>
+                  {SETUP_NEEDED[provider][platform.reason] ? <AdminDetails text={SETUP_NEEDED[provider][platform.reason]!} /> : null}
+                </div>
               ) : (
                 <>
                   {bound.map(b => (
@@ -99,7 +105,21 @@ export function AdAccountsSetup({ businessId }: { businessId: string }) {
         })}
       </ul>
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-    </Panel>
+    </SetupFrame>
+  )
+}
+
+/** What a server administrator has to set before this sign-in works. */
+export function AdminDetails({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRightIcon aria-hidden className={cn("size-3 transition-transform", open && "rotate-90")} />
+        Administrator details
+      </CollapsibleTrigger>
+      <CollapsibleContent><p className="pt-1 pl-4 text-xs text-muted-foreground">{text}</p></CollapsibleContent>
+    </Collapsible>
   )
 }
 

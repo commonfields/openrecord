@@ -4,12 +4,13 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router"
 import { SearchIcon } from "lucide-react"
+import { ChannelMark } from "@/components/channel-mark"
 import type { SearchPerformanceDays, SearchPerformanceRow, SearchTotals } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PeriodSelect } from "@/components/period-select"
-import { Panel, PanelHeader, StatStrip, pathOf } from "@/components/page"
+import { Panel, SetupFrame, PanelHeader, StatStrip, pathOf } from "@/components/page"
 import { GA4_CALLBACK_COPY } from "@/lib/growth-ga4"
 import { GOOGLE_CALLBACK_COPY, SearchConsole, searchConsoleError, siteLabel, type SearchConsoleSiteChoice } from "@/lib/search-console"
 import { useApi } from "@/lib/use-api"
@@ -24,7 +25,7 @@ function useScrollIntoViewOnHash(ready: boolean) {
 }
 
 /** Connect Google and choose which Search Console site describes this business. */
-export function SearchConsoleSetup({ businessId, onChange }: { businessId: string; onChange?: () => void }) {
+export function SearchConsoleSetup({ businessId, onChange, bare }: { businessId: string; onChange?: () => void; bare?: boolean }) {
   const status = useApi(`search-console:${businessId}`, () => SearchConsole.status(businessId))
   const [params] = useSearchParams()
   const callback = params.get("google")
@@ -34,8 +35,8 @@ export function SearchConsoleSetup({ businessId, onChange }: { businessId: strin
   const [changing, setChanging] = useState(false)
   const s = status.data
   useScrollIntoViewOnHash(Boolean(s?.configured))
-  if (!s) return status.loading ? <Skeleton className="h-24 rounded-xl" /> : null
-  if (!s.configured) return null
+  if (!s) return status.loading ? <Skeleton className="h-24 rounded-xl" /> : <Panel id="search-console" className="flex flex-wrap items-center gap-3 p-4"><p role="alert" className="min-w-0 flex-1 text-xs text-destructive">Google Search Console status could not load.</p><Button size="sm" variant="outline" onClick={() => void status.reload()}>Try again</Button></Panel>
+  if (!s.configured) return <Panel id="search-console" className="flex items-start gap-2 p-4"><ChannelMark channelKey="search-console" className="mt-0.5" /><div><h2 className="text-xs font-medium">Google Search Console</h2><p className="mt-1 text-xs text-muted-foreground">Not available yet. A workspace administrator needs to enable Google sign-in before you can connect.</p></div></Panel>
   const act = async (f: () => Promise<void>) => {
     setBusy(true); setError(null)
     try { await f(); await status.reload(); onChange?.() } catch (e) { setError(searchConsoleError(e)) } finally { setBusy(false) }
@@ -46,14 +47,14 @@ export function SearchConsoleSetup({ businessId, onChange }: { businessId: strin
   const email = (id: string) => s.connections.find(c => c.id === id)?.googleEmail ?? "a Google account"
 
   return (
-    <Panel id="search-console" className="space-y-3 p-4">
-      <div className="flex items-start gap-2">
-        <SearchIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
+    <SetupFrame bare={bare} id="search-console" className={bare ? "space-y-3" : "space-y-3 p-4"}>
+      {bare ? null : <div className="flex items-start gap-2">
+        <ChannelMark channelKey="search-console" className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <h2 className="text-xs font-medium">Google Search Console</h2>
           <p className="text-[0.6875rem] text-muted-foreground">Which Google searches show your site and bring people to it. Read-only: OpenRecord cannot change anything in Search Console.</p>
         </div>
-      </div>
+      </div>}
       {callbackCopy ? <p role="status" className={cn("text-xs", callbackCopy.ok ? "text-foreground" : "text-destructive")}>{callbackCopy.text}</p> : null}
       {s.binding && !changing ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -78,7 +79,7 @@ export function SearchConsoleSetup({ businessId, onChange }: { businessId: strin
         </div>
       )}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-    </Panel>
+    </SetupFrame>
   )
 }
 

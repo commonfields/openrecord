@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Panel } from "@/components/page"
+import { Panel, SetupFrame } from "@/components/page"
 import { ApiError, notifyDecisionsChanged } from "@/lib/api"
 import { WordPress, type WordPressChange, type WordPressValues } from "@/lib/wordpress-api"
 import { relativeTime } from "@/lib/format"
@@ -131,28 +131,28 @@ const CONNECT_ERRORS: Readonly<Record<string, string>> = {
   SiteNOT_PUBLIC: "That address doesn't point to a public website.",
   SiteREDIRECTED: "That address redirects. Use the site's final address, starting with https://.",
   InvalidRequest: "Check the address (it must start with https://), the username and the application password.",
-  WordPressNotConfigured: "Not switched on for this OpenRecord server yet. It needs a token encryption key.",
+  WordPressNotConfigured: "WordPress connection is not available yet. Contact your workspace administrator for help.",
 }
 
-export function WordPressSetup({ businessId }: { businessId: string }) {
+export function WordPressSetup({ businessId, onChange, bare }: { businessId: string; onChange?: () => void; bare?: boolean }) {
   const q = useApi(`wordpress:${businessId}`, () => WordPress.status(businessId))
   const [siteUrl, setSiteUrl] = useState(""), [username, setUsername] = useState(""), [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
-  if (!q.data) return q.loading ? <Skeleton className="h-24 rounded-xl" /> : null
+  if (!q.data) return q.loading ? <Skeleton className="h-24 rounded-xl" /> : <div className="flex flex-wrap items-center gap-2"><p role="alert" className="flex-1 text-xs text-destructive">WordPress connection status could not load.</p><Button size="sm" variant="outline" onClick={() => void q.reload()}>Try again</Button></div>
   const { configured, connection } = q.data
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true); setError(null)
-    try { await f(); setPassword(""); await q.reload() } catch (e) { setError(CONNECT_ERRORS[reasonOf(e)] ?? "Couldn't connect. Try again.") } finally { setBusy(false) }
+    try { await f(); setPassword(""); await q.reload(); onChange?.() } catch (e) { setError(CONNECT_ERRORS[reasonOf(e)] ?? "Couldn't connect. Try again.") } finally { setBusy(false) }
   }
   return (
-    <Panel id="wordpress" className="space-y-3 p-4">
-      <div className="flex items-start gap-2">
+    <SetupFrame bare={bare} id="wordpress" className={bare ? "space-y-3" : "space-y-3 p-4"}>
+      {bare ? null : <div className="flex items-start gap-2">
         <GlobeIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h2 className="text-xs font-medium">Website, WordPress</h2>
           <p className="text-[0.6875rem] text-muted-foreground">So the agent can improve your pages: titles, search descriptions, FAQs and new posts. Nothing is published until you approve the exact change, and every change can be undone.</p>
         </div>
-      </div>
+      </div>}
       {!configured ? <p className="text-[0.6875rem] text-muted-foreground">{CONNECT_ERRORS["WordPressNotConfigured"]}</p>
       : connection && connection.status === "ACTIVE" ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -173,12 +173,12 @@ export function WordPressSetup({ businessId }: { businessId: string }) {
           <div className="grid gap-2 sm:grid-cols-3">
             <Input value={siteUrl} onChange={e => setSiteUrl(e.currentTarget.value)} placeholder="https://yoursite.com" aria-label="Site address" className="text-xs" />
             <Input value={username} onChange={e => setUsername(e.currentTarget.value)} placeholder="WordPress username" aria-label="WordPress username" autoComplete="off" className="text-xs" />
-            <Input value={password} onChange={e => setPassword(e.currentTarget.value)} placeholder="Application password" aria-label="Application password" autoComplete="off" spellCheck={false} className="font-mono text-xs" />
+            <Input type="password" value={password} onChange={e => setPassword(e.currentTarget.value)} placeholder="Application password" aria-label="Application password" autoComplete="off" spellCheck={false} className="font-mono text-xs" />
           </div>
           <Button size="sm" type="submit" disabled={busy || !siteUrl.trim() || !username.trim() || !password.trim()}>Connect WordPress</Button>
         </form>
       )}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-    </Panel>
+    </SetupFrame>
   )
 }
