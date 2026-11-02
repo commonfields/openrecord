@@ -1,192 +1,110 @@
 # OpenRecord
 
 [![CI](https://github.com/commonfields/openrecord/actions/workflows/ci.yml/badge.svg)](https://github.com/commonfields/openrecord/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/commonfields/openrecord?display_name=tag&sort=semver)](https://github.com/commonfields/openrecord/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/commonfields/openrecord)](LICENSE)
 
-> Show clients exactly what AI said before and after your work.
+**An agent workspace for understanding a business, finding opportunities, and tracking marketing work and evidence.**
 
-OpenRecord is an evidence system for agencies that improve how AI describes or recommends their clients. Each business gets a workspace that records approved truth, observes what live AI surfaces answer, lets people review the gap, records the agency's corrective work, and re-checks weekly. Each client gets a shareable record: one read-only, revocable URL with the approved facts, the exact AI answers, their sources, the human judgments, and the observed before/after outcome.
+OpenRecord starts with a business website and an agent conversation. It brings public research, AI-answer monitoring, connected channels, proposed work, and results into one workspace. It is designed for people running their own businesses and agencies working across clients and products.
 
-It does not turn incomplete evidence into a score or claim that one change caused another:
-
-> Observation is not interpretation. Interpretation is not authority. Correlation is not causality. Unknown is not false.
-
-## Contents
-
-- [Who it's for](#who-its-for)
-- [How it works](#how-it-works)
-- [The workspace](#the-workspace)
-- [AI providers](#ai-providers)
-- [Quick start](#quick-start)
-- [What OpenRecord does and doesn't do](#what-openrecord-does-and-doesnt-do)
-- [Security and privacy](#security-and-privacy)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Who it's for
-
-- Agencies that improve how AI describes or recommends their clients, and need before-and-after evidence they can forward to those clients.
-- The people at those agencies who agree the facts with each client, review what the AI said, and fix what they control.
-
-What you get per client: one read-only, revocable URL showing three approved facts, the question asked about each, the exact answers one live AI surface gave, the sources cited, a human judgment per answer, and the weekly re-check with its observed outcome. The operator workflow is described in [the agency record runbook](docs/product/agency-record-v1-runbook.md).
+The agent can investigate and suggest work, but a suggestion is not a completed change, an account connection is not permission to do everything, and a change in a metric is not proof of causation. Capabilities depend on the configured providers, permissions, and available evidence.
 
 ## How it works
 
-```mermaid
-flowchart TB
-    truth["Approved truth<br/>Facts the business stands behind"]
-    observe["Observation<br/>What AI answers and sources say"]
-    review["Human review<br/>Compare observations against approved truth"]
-    correction["Recorded correction<br/>What was changed on surfaces you control"]
-    verification["Verification<br/>Re-observe the source and AI, then derive OBSERVED_CORRECTION, NO_OBSERVED_CHANGE, or INDETERMINATE"]
-    monitor["Continue observing<br/>No issue or unknown stays open for the next cycle"]
+1. **Start with a website.** Add a business and tell the agent what you want to achieve. Website discovery and a draft brief help establish context; the user can review and correct it.
+2. **Research and plan.** The agent can inspect public information, research businesses and markets, review AI answers, and propose next steps using the tools available to it.
+3. **Connect what is useful.** Channels expose supported account connections and their permissions. Availability depends on deployment configuration and the accounts connected for the business.
+4. **Review decisions.** Proposals that need a person appear in the inbox. Approval records a decision; what happens next depends on the specific action and integration. No approval should be mistaken for proof of publication or business impact.
+5. **See work and results.** Review available performance data, activity, evidence, and outcomes. Some workflows still require manual input, account selection, or follow-up.
 
-    truth --> observe --> review --> correction --> verification
-    review --> monitor
-```
+## Workspace
 
-The flow reads top to bottom, from the smallest input to the broadest result. Each stage has one responsibility: business truth, machine observation, human review, operator action, and verification. Evidence from every stage is kept, and later observations begin the same process again without implying causation.
+- **Agent** — conversations, research, proposals, and ongoing work for a business.
+- **Inbox / Needs you** — decisions awaiting human review across businesses.
+- **Results** — available AI-answer, search, advertising, revenue, and other measurements, with their sources and limitations.
+- **Channels** — connect or manage supported services, inspect connection status, and understand what access is granted.
+- **Businesses and clients** — switch between businesses, agency clients, and products. Existing records and shared reports retain their own evidence and access rules.
 
-### Design rules
+The underlying evidence tools remain available for work such as inspecting websites, reviewing AI-answer claims, maintaining approved facts, and rechecking sources. Public client records and reports can be shared through revocable links where configured.
 
-- **Evidence over scores.** OpenRecord shows concrete observations and issues, not an opaque accuracy or visibility score.
-- **Unknown stays unknown.** Missing, failed, or ambiguous evidence is never treated as false.
-- **People make judgments.** Machines collect observations; reviewers decide what those observations mean.
-- **Verification is not causation.** A before-and-after change can be recorded without claiming what caused it.
+## Research, AI, and integrations
 
-## The workspace
+- **Research catalog:** the agent can discover and call OpenRecord's defined research capabilities, including website and company research, search and SEO data, social and advertising research, AI visibility, and traffic signals. The catalog includes generated read-only API operations; a listed operation is not proof that a provider is configured or that a particular request will succeed.
+- **AI answers and evidence:** collect configured provider answers, retain source and model information when available, compare claims with approved facts, and recheck outcomes. Mock answers are synthetic and cannot establish a real-world correction.
+- **Connected accounts:** the app includes flows for Google Search Console and Analytics, Google Business Profile, Google Ads, Meta Ads, Stripe, and WordPress. Exact read, write, publishing, and verification capabilities differ by integration and server configuration; review the permissions shown before connecting.
+- **Agent and MCP:** the agent can use configured hosted or local providers. OpenRecord can expose business-scoped tools over MCP and connect to external MCP servers' read-only tools, subject to their configuration and grants.
+- **Research costs:** a business's own connected credential takes precedence where supported. OpenRecord-hosted paid research requires a configured provider, a published price, and prepaid research credit; unavailable or unpriced operations fail rather than silently becoming free.
 
-Every business has the same seven sections, in operational order:
+See [`.env.example`](.env.example) for the configuration and limitations of each provider. Do not assume that public research access permits posting, managing ads, or spending on an account.
 
-- **Overview** — answers collected, supported share, wrong / partially-correct / needs-review counts, and checks run, each with a trend; verdict share per day; answers by provider; answers by question and by approved fact; citations returned with answers; and the client record's aggregate outcomes.
-- **Prospect assay** — approve a public source for fetching, confirm machine-proposed facts, run repeated observations of one question, and review candidate findings. Nothing unconfirmed takes part in comparisons.
-- **Search** — register the business website, run inspections, and work findings (missing titles, broken canonicals, blocked pages) through proposal, approval, fix, and verification.
-- **Issues** — every claim that disagrees with approved truth, grouped and triaged, with review, re-check, and source verification on each.
-- **Representations** — watched web sources against approved facts: in sync, drifted, or unknown, with latest-check state shown honestly.
-- **Truth** — the approved facts with versions and provenance, including repository-managed facts that can only change through the manifest.
-- **Checks** — the buyer questions, the providers asked, every run with its state, and re-running on demand.
+## Evidence and safety principles
 
-**Clients** (agency section) holds the per-client records and their share links; **All businesses** is the portfolio view with attention, accuracy, and last-checked state per business.
+- **Unknown stays unknown.** Missing, failed, or ambiguous evidence is not treated as false.
+- **Keep provenance.** Distinguish public observations, approved facts, suggestions, and human-attested work.
+- **Respect permissions and approvals.** Connecting an account does not grant every capability, and consequential actions require the applicable authorization and approval.
+- **Verify without inventing causality.** A recorded change is not necessarily deployed, indexed, or responsible for a later outcome.
+- **Disclose external processing and cost.** Live providers can receive data and incur charges; use them only with appropriate authorization.
 
-## AI providers
+## Run locally
 
-Providers are explicit and never substituted: a check asks exactly the configured provider and model, or it fails visibly.
-
-- **Mock** (default) — deterministic, offline, needs no credentials. Answers are synthetic and labelled as such; they can never produce an observed correction.
-- **9Router** — live multi-model gateway. Requires an endpoint, API key, and comma-separated `NINE_ROUTER_MODELS` allowlist; see [`.env.example`](.env.example). Every check must request one allowlisted direct model.
-- **Gemini API with Google Search grounding** — the client record's live surface only (not a general check provider). Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`, default `gemini-2.5-flash`) for the worker.
-
-New providers are added as explicit adapters with declared capabilities; absent grounding, citation, or identity metadata is never fabricated into evidence.
-
-## Quick start
-
-### Use the web app
-
-This is the product. Prerequisites: Node.js 24 (see [`.node-version`](.node-version)), pnpm, and PostgreSQL 16.
+Requirements: Node.js 24 (see [`.node-version`](.node-version)), pnpm, and PostgreSQL 16. For a fresh checkout:
 
 ```bash
 git clone https://github.com/commonfields/openrecord.git
 cd openrecord
 pnpm install --frozen-lockfile
-```
-
-Prepare the database (credentials must match `compose.yaml`):
-
-```bash
 docker compose up -d postgres
 export DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord"
 pnpm db:migrate
-# Minimal seed (one business, no login): pnpm db:seed
-# Full five-company demo (login demo@northstar.test / password123): pnpm db:seed:demo
+pnpm db:seed:demo
 ```
 
-Start each service in its own terminal from the repository root.
-Every terminal needs `DATABASE_URL` (prefix each command or re-export it):
+The demo seed creates `demo@northstar.test` / `password123`. Use these credentials only for local development. Copy [`.env.example`](.env.example) to `.env` and configure a suitable `SESSION_SECRET` and any optional integrations. Load it in each terminal before starting a service (these processes do not load `.env` automatically):
 
 ```bash
-# Terminal 1: HTTP API on port 3001
+set -a
+. ./.env
+set +a
+```
+
+Start the services in separate terminals:
+
+```bash
+# API: http://localhost:3001
 DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord" pnpm --filter @openrecord/api dev
 
-# Terminal 2: AI-check and discovery workers
+# Worker: discovery, checks, and other background jobs
 DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord" pnpm --filter @openrecord/worker dev
 
-# Terminal 3: web app on port 3000
-DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord" pnpm --filter @openrecord/web dev
+# Web: http://localhost:3000
+pnpm --filter @openrecord/web dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), create an account, and add a client under **Clients**. Without a `GEMINI_API_KEY`, record checks fail visibly as unsupported; nothing falls back to another model. For an offline local walkthrough only, start the API with `RECORD_PROVIDER=mock RECORD_ALLOW_FIXTURE=1`: those answers are synthetic, labelled as such, and can never produce an observed correction.
+The hosted agent is separate from measurement providers and is opt-in: set `AGENT_EXTERNAL_PROCESSING_ENABLED`, the appropriate model and credentials only after authorizing external processing. Live answer checks also require their configured providers. For an offline local record walkthrough, `RECORD_PROVIDER=mock RECORD_ALLOW_FIXTURE=1` enables explicitly synthetic answers; it is not live verification.
 
-### The `openrecord` CLI is a separate, legacy tool
-
-The repository also ships a Rust CLI under [`src/`](src) with its own release pipeline. It is a
-**different product** with different rules: it produces visibility and accuracy **scores**, generates
-content, and targets a different audience. It shares no runtime, data, or auth with the web app
-described above.
-
-It is frozen and not part of the evidence system. If you are evaluating OpenRecord or contributing to
-the product, use the web app instructions above.
-
-The hosted Effect adapters and environment configuration are the evidence product's execution boundary.
-The Rust `LlmProvider` trait, `openrecord.toml`, per-user CLI configuration, and Tauri app belong to the
-legacy runtime. They are not alternative provider backends for the hosted worker. Shared evidence
-protocol fixtures do not imply shared execution, persistence, or permissions.
-
-On macOS or Linux, the last published CLI release installs with:
+### Local validation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/commonfields/openrecord/main/scripts/install.sh | bash
+pnpm typecheck
+pnpm lint
+pnpm test
 ```
 
-On Windows, use [`scripts/install.ps1`](scripts/install.ps1). To build from source instead:
+Some integration tests require PostgreSQL or other services. See [CONTRIBUTING.md](CONTRIBUTING.md) and the relevant package scripts for details.
 
-```bash
-cargo build --release --locked
-./target/release/openrecord quickstart
-```
+## Repository
 
-### For developers
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-Live 9Router checks require an endpoint, API key, and comma-separated `NINE_ROUTER_MODELS` allowlist; see [`.env.example`](.env.example) for the complete configuration. Configuration fails closed when any value is invalid, and every check must request one allowlisted direct model. OpenRecord never substitutes another model. `NINE_ROUTER_MODEL` remains a temporary single-model compatibility option and is ignored when `NINE_ROUTER_MODELS` is set.
-
-## What OpenRecord does and doesn't do
-
-Does:
-
-- Store the facts a business stands behind, with explicit authority.
-- Collect AI answers and web-source evidence with provenance.
-- Leave review decisions to people, and record corrections on surfaces you control.
-- Re-observe and derive `OBSERVED_CORRECTION`, `NO_OBSERVED_CHANGE`, or `INDETERMINATE`.
-
-Doesn't:
-
-- Produce accuracy or visibility scores from incomplete evidence.
-- Treat missing, failed, or ambiguous evidence as false. It stays `UNKNOWN` and open for the next cycle.
-- Claim that a correction caused a later AI answer.
-
-## Security and privacy
-
-- Your data lives in your own PostgreSQL database.
-- Each account only sees its own businesses and evidence.
-- Live AI providers are off by default. Enabling one may cost money and sends prompts to an external service.
-- Provider credentials are never stored as evidence and should never be committed.
-- Source collection is bounded; discovery does not crawl without limits.
-- A recorded correction proves that work was recorded, not that it was deployed, indexed, or responsible for a later AI answer.
+This is a pnpm workspace: `apps/web` is the web app, `apps/api` the Effect-based API, `apps/worker` the background worker, and `packages/` holds shared contracts, domain logic, integrations, and database code. The Rust CLI under [`src/`](src) is a separate legacy product with its own runtime, configuration, and release process; it is not a backend for the web agent.
 
 ## Documentation
 
+- [Agency agent architecture](docs/architecture/agency-agent-v1.md)
+- [Market research architecture](docs/architecture/market-research-v1.md)
+- [Record integrity architecture](docs/architecture/record-integrity-v1.md)
 - [Hosted observation capabilities](docs/engineering/hosted-observation-capabilities-v1.md)
 - [Evidence protocol](docs/protocol/README.md)
-- [Representation graph](docs/representation-graph/README.md)
-- [Truth projection](docs/truth/README.md)
 - [Product roadmap](docs/product/roadmap.md)
-
-## Contributing
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code style, and how to submit changes.
+- [Contributing](CONTRIBUTING.md)
 
 ## License
 
