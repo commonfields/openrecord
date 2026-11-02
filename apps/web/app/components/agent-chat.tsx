@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
 import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
-import { ArrowUpIcon, BookOpenIcon, BookmarkPlusIcon, CheckIcon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, BookOpenIcon, BookmarkPlusIcon, CheckIcon, Share2Icon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -24,6 +24,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
+import { ShareChatDialog } from "@/components/chat-share"
 import { SavePlaybookDialog, playbookMatches, playbookText, usePlaybooks, type Playbook } from "@/components/playbooks"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
@@ -1083,6 +1084,7 @@ function Composer({
     : []
   const [menuIndex, setMenuIndex] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const menuOpen = matches.length > 0
   // While the agent works, a message is queued for when it finishes instead.
   const queueing = inFlight && session !== undefined
@@ -1224,6 +1226,7 @@ function Composer({
             )) : null}
             {onCommand ? <DropdownMenuItem onSelect={() => { setText("/"); requestAnimationFrame(() => textRef.current?.focus()) }}><BookOpenIcon /><span>Playbooks</span><span className="ml-2 text-muted-foreground">SEO, AEO, GEO and your own</span></DropdownMenuItem> : null}
             {onCommand ? <DropdownMenuItem disabled={!text.trim() || text.trim().startsWith("/")} onSelect={() => setSaving(true)}><BookmarkPlusIcon /><span>Save as playbook</span></DropdownMenuItem> : null}
+            {onCommand && session?.businessId && session.conversationId && session.active ? <DropdownMenuItem onSelect={() => setSharing(true)}><Share2Icon /><span>Share this chat</span><span className="ml-2 text-muted-foreground">read-only link</span></DropdownMenuItem> : null}
             {onCommand ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem onSelect={() => fileRef.current?.click()}><PaperclipIcon />Attach files</DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -1232,6 +1235,7 @@ function Composer({
         </DropdownMenu>
         <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" aria-label="Attach files"
           onChange={e => { if (e.currentTarget.files?.length) void attach(e.currentTarget.files); e.currentTarget.value = "" }} />
+        {onCommand && session ? <ShareChatDialog open={sharing} onOpenChange={setSharing} businessId={session.businessId} conversationId={session.conversationId} /> : null}
         {onCommand ? <SavePlaybookDialog open={saving} onOpenChange={setSaving} draft={text} businessName={context?.name ?? null} /> : null}
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
