@@ -10,6 +10,7 @@ import { HISTORY_CAPABILITIES } from "./history.js"
 import { SITE_CAPABILITIES } from "./site.js"
 import { SOCIAL_CAPABILITIES } from "./social.js"
 import { TRAFFIC_CAPABILITIES } from "./traffic.js"
+import { LIVE_TRAFFIC_CAPABILITIES } from "./traffic-feed.js"
 import { CRAWLER_ACCESS_CAPABILITIES } from "./crawler-access.js"
 import { ENDPOINT_CAPABILITIES } from "./endpoints/run.js"
 import { GENERATED_ENDPOINTS } from "./endpoints/generated.js"
@@ -18,7 +19,7 @@ const GENERATED_IDS = new Set(GENERATED_ENDPOINTS.map(e => e.id))
 import type { AnyCapability } from "./types.js"
 
 export const CAPABILITIES: ReadonlyArray<AnyCapability> = [
-  ...SITE_CAPABILITIES, ...HISTORY_CAPABILITIES, ...COMPANY_CAPABILITIES, ...SOCIAL_CAPABILITIES, ...ADS_CAPABILITIES, ...AI_CAPABILITIES, ...TRAFFIC_CAPABILITIES, ...CRAWLER_ACCESS_CAPABILITIES,
+  ...SITE_CAPABILITIES, ...HISTORY_CAPABILITIES, ...COMPANY_CAPABILITIES, ...SOCIAL_CAPABILITIES, ...ADS_CAPABILITIES, ...AI_CAPABILITIES, ...TRAFFIC_CAPABILITIES, ...LIVE_TRAFFIC_CAPABILITIES, ...CRAWLER_ACCESS_CAPABILITIES,
   ...ENDPOINT_CAPABILITIES,
 ]
 export const capability = (id: string) => CAPABILITIES.find(c => c.id === id) ?? null
