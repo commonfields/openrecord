@@ -38,7 +38,17 @@ export interface Provider {
   readonly note: string
   /** Paid by the business's own provider account. Off unless the business connects it. */
   readonly paid?: boolean
+  /**
+   * The server environment variable holding OpenRecord's own credential for
+   * this provider. When set, priced endpoints work without the business
+   * having its own account, paid from the account's research credit
+   * (metering.ts). The business's own connection always wins.
+   */
+  readonly platformKeyEnv?: string
 }
+
+/** What OpenRecord charges for one call served on its own provider account, in micro-dollars (1,000,000 = $1). */
+export interface Price { readonly microUsd: number }
 
 export interface Request {
   readonly method: "GET" | "POST"
@@ -64,6 +74,8 @@ export interface Endpoint<I = unknown> {
   readonly parse: (json: unknown, input: I) => Parsed
   readonly cache?: "day" | "none"
   readonly docs: string
+  /** Price when served on OpenRecord's own account. Unpriced endpoints are never served on it. */
+  readonly price?: Price
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyEndpoint = Endpoint<any>

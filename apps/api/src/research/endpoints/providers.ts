@@ -49,7 +49,7 @@ export const PROVIDERS: ReadonlyArray<Provider> = [
   { id: "stripe", name: "Stripe (read-only restricted key)", hosts: ["api.stripe.com"], auth: { kind: "bearer" },
     connect: { how: "In Stripe, Developers, API keys, create a restricted key with Read access only for the data the agent should see. Full secret keys are refused.", url: "https://dashboard.stripe.com/apikeys", format: /^rk_(live|test)_[A-Za-z0-9]{20,}$/, example: "rk_live_..." },
     note: "The business's own Stripe data through a read-only restricted key; OpenRecord cannot charge, refund or change anything." },
-  { id: "seo_data", name: "SEO data (your own DataForSEO account)", hosts: ["api.dataforseo.com"], auth: { kind: "basic" }, paid: true,
+  { id: "seo_data", name: "SEO data (your own DataForSEO account)", hosts: ["api.dataforseo.com"], auth: { kind: "basic" }, paid: true, platformKeyEnv: "OPENRECORD_SEO_DATA_CREDENTIAL",
     connect: { how: "Optional and billed to your own DataForSEO account: paste your API login and password as login:password. Leave it unconnected and these numbers stay unknown.", url: "https://app.dataforseo.com/api-access", format: /^[^\s:]{3,120}:[^\s]{6,120}$/, example: "you@agency.com:password" },
     note: "Billed to the business's own account per request (roughly one to a few cents). Search volume, rankings, traffic and backlink numbers are this provider's estimates from its own databases, not measured visits." },
 ]

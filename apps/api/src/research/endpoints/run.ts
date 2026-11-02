@@ -12,13 +12,14 @@ import { configured as ga4Configured, read as ga4Read } from "../../growth-ga4-r
 import { GrowthGa4Repository, SearchConsoleRepository } from "@openrecord/db"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "../../record-routes.js"
 import { ResearchHttp } from "../net.js"
-import { refuse, type AnyCapability, type Observed, type Refused, type RunContext, type TimelineEvent } from "../types.js"
+import { isRefused, refuse, type AnyCapability, type Observed, type Refused, type RunContext, type TimelineEvent } from "../types.js"
 import { ACCOUNT_ENDPOINTS, CONNECTED_GOOGLE_ENDPOINTS } from "./defs-accounts.js"
 import { PUBLIC_ENDPOINTS } from "./defs-public.js"
 import { SEO_ENDPOINTS } from "./defs-seo.js"
 import { GENERATED_ENDPOINTS } from "./generated.js"
 import { BLUESKY_ENDPOINTS, META_ENDPOINTS, WIKI_MORE } from "./defs-more.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
+import { balanceOf, finishCall, platformServes, priceOf, recentCalls, route, spendSince, startCall, usd, type CredentialSource } from "./metering.js"
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
@@ -76,24 +77,51 @@ const runEndpoint = (e: AnyEndpoint, p: Provider) => (ctx: RunContext, input: un
   if (p.auth.kind === "meta_connection") {
     const access = yield* metaLibraryAccess(ctx.accountId).pipe(Effect.orElseSucceed(() => null))
     if (!access) return refuse("NOT_CONNECTED", "Meta is not connected for this business. Connect it on the Channels page; until then this is unknown, not zero.")
-    return yield* finish(e, p, ctx, input, { secret: null, bearer: access.token })
+    return yield* metered(e, p, ctx, "BUSINESS", 0, finish(e, p, ctx, input, { secret: null, bearer: access.token }))
   }
   if (p.auth.kind === "google_connection") {
     const token = yield* googleToken(ctx.accountId, ctx.businessId, p.auth.connection)
     if (!token) return refuse("NOT_CONNECTED", `${p.name}: not connected for this business. Connect Google on the Channels page; until then this is unknown, not zero.`)
-    return yield* finish(e, p, ctx, input, { secret: null, bearer: token })
+    return yield* metered(e, p, ctx, "BUSINESS", 0, finish(e, p, ctx, input, { secret: null, bearer: token }))
   }
-  const secret = p.auth.kind === "none" ? null : yield* credentialFor(ctx.businessId, p.id)
-  if (needsCredential(p) && !secret) return refuse("NOT_CONNECTED", `${p.name} is not connected for this business. The team can add its own credential on the Channels page; until then this is unknown, not zero.`)
+  const own = p.auth.kind === "none" ? null : yield* credentialFor(ctx.businessId, p.id)
+  const r = route(e, p, own, needsCredential(p))
+  if (r.kind === "refuse") return r.reason === "UNPRICED"
+    ? refuse("NOT_CONNECTED", `${p.name} is not connected for this business, and OpenRecord does not serve this endpoint on its own account (it has no published price). The team can add its own credential on the Channels page; until then this is unknown, not zero.`)
+    : refuse("NOT_CONNECTED", `${p.name} is not connected for this business. The team can add its own credential on the Channels page; until then this is unknown, not zero.`)
+  return yield* metered(e, p, ctx, r.source, r.costMicro, Effect.gen(function*() {
+  const secret = r.secret
   const http = yield* transport
   let bearer: string | null = null
   if (p.auth.kind === "client_credentials" && secret) {
-    const key = `${ctx.businessId}:${p.id}`, cached = tokens.get(key)
+    const key = `${ctx.businessId}:${p.id}:${r.source}`, cached = tokens.get(key)
     bearer = cached && cached.until > Date.now() ? cached.token : yield* Effect.promise(() => clientToken(p, (p.auth as { tokenUrl: string }).tokenUrl, secret, http))
     if (!bearer) return refuse("AUTH", FAILURES.AUTH)
     tokens.set(key, { token: bearer, until: Date.now() + 50 * 60_000 })
   }
   return yield* finish(e, p, ctx, input, { secret, bearer })
+  }))
+}) as Effect.Effect<Observed | Refused, unknown, SqlClient.SqlClient>
+
+const SERVED_BY: Readonly<Record<CredentialSource, string>> = { BUSINESS: "the business's own connection", PUBLIC: "a public route that needs no account", PLATFORM: "OpenRecord's own provider account, paid from research credit" }
+/**
+ * Records one endpoint call in the audit log and, when OpenRecord's own
+ * account serves it, takes its price from the credit first: refused with the
+ * balance and the price when the credit does not cover it, refunded when the
+ * call fails or is interrupted.
+ */
+const metered = (e: AnyEndpoint, p: Provider, ctx: RunContext, source: CredentialSource, costMicro: number, call: Effect.Effect<Observed | Refused, unknown, SqlClient.SqlClient>) => Effect.gen(function*() {
+  const started = yield* startCall({ accountId: ctx.accountId, businessId: ctx.businessId, endpoint: e.id, provider: p.id, source, costMicro })
+  if (started.kind === "insufficient")
+    return refuse("INSUFFICIENT_BALANCE", `Not run: this call costs ${usd(started.costMicro)} on OpenRecord's ${p.name} account and the research credit is ${usd(started.balanceMicro)}. An account owner can add credit, or the team can connect its own ${p.name} account on the Channels page (never metered). Until then this is unknown, not zero.`,
+      { balanceMicro: started.balanceMicro, estimatedCostMicro: started.costMicro, topup: "Research credit on the account's Billing page, or the business's own connection on the Channels page" })
+  const exit = yield* Effect.exit(call)
+  const failure = exit._tag === "Failure" ? (exit.cause._tag === "Interrupt" ? "INTERRUPTED" : "UNAVAILABLE") : isRefused(exit.value) ? exit.value.refused : null
+  yield* finishCall(started.callId, failure === null ? { ok: true } : { ok: false, failure })
+  if (exit._tag === "Failure") return yield* exit
+  const out = exit.value
+  if (isRefused(out)) return out
+  return { ...out, coverage: { ...out.coverage, servedBy: SERVED_BY[source], ...(source === "PLATFORM" ? { cost: usd(costMicro) } : {}), callId: started.callId } } satisfies Observed
 }) as Effect.Effect<Observed | Refused, unknown, SqlClient.SqlClient>
 
 const finish = (e: AnyEndpoint, p: Provider, ctx: RunContext, input: unknown, creds: { secret: string | null; bearer: string | null }) => Effect.gen(function*() {
@@ -118,13 +146,19 @@ const finish = (e: AnyEndpoint, p: Provider, ctx: RunContext, input: unknown, cr
 export const ENDPOINT_CAPABILITIES: ReadonlyArray<AnyCapability> = ENDPOINTS.flatMap(e => {
   const p = providerOf(e.provider)
   if (!p) return []
-  const access = p.auth.kind === "none" ? "Public, no account." : needsCredential(p) ? `Needs the business's own ${p.name} connection${p.paid ? " (billed to that account)" : ""}.` : `Works without an account; the business's own ${p.name} credential raises limits.`
+  const platform = needsCredential(p) && platformServes(e, p)
+  const access = p.auth.kind === "none" ? "Public, no account." : needsCredential(p)
+    ? platform ? `Uses the business's own ${p.name} connection when it has one (never metered); otherwise OpenRecord's own account at ${usd(priceOf(e)!)} per call from research credit.`
+      : `Needs the business's own ${p.name} connection${p.paid ? " (billed to that account)" : ""}.`
+    : `Works without an account; the business's own ${p.name} credential raises limits.`
   return [{
     id: e.id, platform: e.platform, title: e.title, description: `${e.description} ${access}`, label: e.label, cache: e.cache ?? "day",
     source: p.auth.kind === "none" ? "PUBLIC_API" : "CONNECTED_ACCOUNT", input: e.input, subject: e.subject, run: runEndpoint(e, p),
     ...(p.auth.kind === "meta_connection" ? { availabilityKey: p.id, availability: (ctx: { accountId: string }) => Effect.map(Effect.flatMap(SqlClient.SqlClient, sql => sql`SELECT 1 FROM ad_connections WHERE account_id = ${ctx.accountId} AND provider = 'meta' AND status = 'ACTIVE' LIMIT 1`).pipe(Effect.orElseSucceed(() => [])), r => r.length ? null : "Needs Meta connected on the Channels page") }
       : p.auth.kind === "google_connection" ? { availabilityKey: p.id, availability: (ctx: { accountId: string; businessId: string }) => Effect.map(googleConnected(ctx.accountId, ctx.businessId, (p.auth as { connection: GoogleConnection }).connection), on => on ? null : `Needs ${p.name.replace(" (connected on Channels)", "")} connected on the Channels page`) }
-      : needsCredential(p) ? { availabilityKey: p.id, availability: (ctx: { businessId: string }) => Effect.map(credentialFor(ctx.businessId, p.id).pipe(Effect.orElseSucceed(() => null)), c => c ? null : `Needs the business's own ${p.name} connection on the Channels page`) } : {}),
+      // Whether OpenRecord's own account can serve it follows the server's settings at call time, so it is checked per endpoint.
+      : needsCredential(p) ? { ...(p.platformKeyEnv ? {} : { availabilityKey: p.id }), availability: (ctx: { businessId: string }) => platformServes(e, p) ? Effect.succeed(null)
+        : Effect.map(credentialFor(ctx.businessId, p.id).pipe(Effect.orElseSucceed(() => null)), c => c ? null : `Needs the business's own ${p.name} connection on the Channels page`) } : {}),
     ...(p.headers && p.headers(process.env) === null ? { availability: () => Effect.succeed(`Needs the server setting RESEARCH_CONTACT (a declared contact ${p.name} requires)`) } : {}),
   } satisfies AnyCapability]
 })
@@ -156,6 +190,13 @@ export const researchConnectionsApi = (withSession: WithSession) => {
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "ConnectionsUnavailable" })))
   return HttpRouter.empty.pipe(
     HttpRouter.get("/api/businesses/:id/research-connections", client((_s, businessId) => Effect.flatMap(listConnections(businessId), b => json(200, b, { "cache-control": "no-store" })))),
+    HttpRouter.get("/api/businesses/:id/research-credit", client((session, businessId) => Effect.gen(function*() {
+      const balance = yield* balanceOf(session.accountId)
+      return yield* json(200, { balanceMicro: balance, balance: usd(balance), last30Days: yield* spendSince(session.accountId, 30),
+        calls: yield* recentCalls(session.accountId, businessId, 50),
+        offered: ENDPOINTS.flatMap(e => { const p = providerOf(e.provider); return p && platformServes(e, p) ? [{ endpoint: e.id, title: e.title, provider: p.name, priceMicro: priceOf(e)!, price: usd(priceOf(e)!) }] : [] }) },
+        { "cache-control": "no-store" })
+    }))),
     HttpRouter.put("/api/businesses/:id/research-connections/:provider", client((session, businessId, providerId) => Effect.gen(function*() {
       const p = CONNECTABLE.find(x => x.id === providerId)
       if (!p) return yield* json(404, { _tag: "ProviderNotFound" })
