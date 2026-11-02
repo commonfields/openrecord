@@ -21,7 +21,10 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
   const [value, setValue] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState("")
   if (!q.data) return null
+  const needle = filter.trim().toLowerCase()
+  const shown = q.data.providers.filter(p => !needle || p.connected || `${p.name} ${p.endpoints.join(" ")}`.toLowerCase().includes(needle))
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true); setError(null)
     try { await f(); setValue(""); setOpen(null); await q.reload() } catch (e) {
@@ -37,9 +40,12 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
           <p className="text-[0.6875rem] text-muted-foreground">Your own accounts with data providers, so the agent can research with them. Public sources work without any of these. Read-only: keys are stored encrypted and never shown again.</p>
         </div>
       </div>
+      {q.data.available && q.data.providers.length > 10 ? (
+        <Input value={filter} onChange={e => setFilter(e.currentTarget.value)} placeholder={`Search ${q.data.providers.length} providers, for example CRM, email, podcasts`} aria-label="Search providers" className="w-80 text-xs" />
+      ) : null}
       {!q.data.available ? <p className="text-[0.6875rem] text-muted-foreground">Connections are not available yet. Contact your workspace administrator for help.</p> : (
         <ul className="divide-y">
-          {q.data.providers.map(p => (
+          {shown.map(p => (
             <li key={p.id} className="space-y-2 py-2">
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1"><span className="font-medium">{p.name}</span>{p.paid ? <span className="text-muted-foreground"> (billed to your own account)</span> : p.optional ? <span className="text-muted-foreground"> (optional, raises limits)</span> : null}
