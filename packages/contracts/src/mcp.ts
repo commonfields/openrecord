@@ -1,8 +1,8 @@
 /**
- * Interface contract for a future OpenRecord MCP server (PR 2). Nothing here
- * is served yet. The table fixes which tools exist, what each may touch, and
- * which permission an invoking principal needs, so the server, the external
- * agent skill and the tests all read one definition.
+ * Contract for OpenRecord's MCP server (apps/api/src/mcp-server.ts). The
+ * server exposes the agent's own registered tools to an outside agent under a
+ * grant; MCP_TOOLS below names the core tools the external skill relies on.
+ * Each served tool needs the permission its effect maps to (mcpPermissionFor).
  *
  * Authority rules every tool inherits:
  * - A call is bound to one principal (user + account), one business and one
@@ -13,7 +13,16 @@
  * - Website text, AI answers and every other observed value are returned as
  *   untrusted evidence, labelled as such.
  */
-export type McpPermission = "business:read" | "evidence:read" | "work:read" | "work:propose" | "results:read"
+export type McpPermission = "business:read" | "evidence:read" | "work:read" | "work:propose" | "results:read" | "research:run"
+export const MCP_PERMISSIONS: ReadonlyArray<McpPermission> = ["business:read", "evidence:read", "work:read", "work:propose", "results:read", "research:run"]
+/**
+ * The permission a registered agent tool needs, from what it may do: reads
+ * need evidence:read, tools that save research or working notes need
+ * research:run, proposals need work:propose. Tools that start other agent
+ * work are never served (null).
+ */
+export const mcpPermissionFor = (effect: "read" | "record" | "propose" | "delegate"): McpPermission | null =>
+  effect === "read" ? "evidence:read" : effect === "record" ? "research:run" : effect === "propose" ? "work:propose" : null
 
 export interface McpToolContract {
   readonly name: string

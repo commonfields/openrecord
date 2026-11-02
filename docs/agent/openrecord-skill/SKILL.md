@@ -10,6 +10,12 @@ OpenRecord keeps a business's marketing context, approvals and evidence. You inv
 
 This skill holds no business facts, credentials or permissions. Read them from the tools every time; they change.
 
+## Connecting
+
+A person creates a grant for one business in OpenRecord (`POST /api/businesses/:id/mcp-grants` with a label and permissions: `evidence:read`, `research:run`, `work:propose`, ...). The token is shown once. Point your MCP client at the returned endpoint (`/mcp`, Streamable HTTP) with `Authorization: Bearer <token>`. The grant decides the business and which tools you see; revoking it stops everything at once.
+
+With `research:run`, `find_research_capabilities` and `run_research` reach OpenRecord's whole research catalog (thousands of read-only capabilities across public sources and the business's connected accounts), saved as dated evidence.
+
 ## Before anything else
 
 Call `get_business_context`. It tells you which business your grant covers, its confirmed brief and its setup step.
