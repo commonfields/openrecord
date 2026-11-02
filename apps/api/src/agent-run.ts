@@ -112,7 +112,7 @@ export const interruptionNote = (status: RunStatus, reason: string | null, event
     worked: events.some(e => e.type === "TOOL_STARTED"),
     decisions: mergeDecisions(completed.flatMap(e => {
       const receipt = e.payload["receipt"]
-      if (e.payload["effect"] === "delegate") return (e.payload["decisions"] as ReadonlyArray<{ type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; id: string }> | undefined) ?? []
+      if (e.payload["effect"] === "delegate") return (e.payload["decisions"] as ReadonlyArray<{ type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; id: string }> | undefined) ?? []
       return e.payload["effect"] === "propose" && receipt !== null && typeof receipt === "object" ? decisionRefs(receipt as Record<string, unknown>) : []
     })),
   }

@@ -46,8 +46,8 @@ export interface FetchInit {
   signal: AbortSignal
   connectIp: string
   servername: string
-  /** GET unless set: a server-side API read that takes a JSON query body uses the same pinned connection. */
-  method?: "GET" | "POST"
+  /** GET unless set: server-side API reads that take a JSON body, and authenticated writes to a connected site, use the same pinned connection. */
+  method?: "GET" | "POST" | "DELETE"
   body?: string
 }
 

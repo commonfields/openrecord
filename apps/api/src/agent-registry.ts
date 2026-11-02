@@ -21,6 +21,7 @@ import { dispatchInvestigation, investigationDeclarations } from "./agent-invest
 import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-tools.js"
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
+import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -66,6 +67,10 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     return { declaration, effect: saves ? "record" : "read", replay: saves ? "deduplicated" : "safe", scope: "general",
       run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
   }),
+  ...wordpressDeclarations.map((declaration): AgentToolSpec => ({ declaration,
+    effect: declaration.name === "prepare_wordpress_change" ? "propose" : "read",
+    replay: declaration.name === "prepare_wordpress_change" ? "deduplicated" : "safe", scope: "general",
+    run: (ctx, args) => dispatchWordPress(ctx, declaration.name, args) })),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchGrowthProposal(ctx.accountId, ctx.userId, ctx.businessId, args) })),
   ...draftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
@@ -132,6 +137,18 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
     }
     return { ...toolFailure("REFUSED"), guidance: guidance[reason ?? ""] ?? toolFailure("REFUSED").guidance }
   }
+  if (tag === "WordPressRefused") {
+    const reason = (e as { readonly reason?: string }).reason ?? ""
+    const guidance: Readonly<Record<string, string>> = {
+      WordPressNotConnected: "No WordPress site is connected. Ask the person to connect it on the Channels page; offer the change as a draft meanwhile.",
+      WordPressCredentialRefused: "WordPress no longer accepts the connected application password. Ask the person to reconnect it on the Channels page.",
+      WordPressNotConfigured: "WordPress connections are not switched on for this server.",
+      SeoPluginMissing: "The site has no Yoast or Rank Math, so the SEO title and description cannot be set. Offer to change the page title instead.",
+      NothingToChange: "That is already what the page says. Read it again before preparing a different change.",
+      SiteNOT_FOUND: "That page or post was not found. List the pages or posts and use an ID from the result.",
+    }
+    return { ...toolFailure("REFUSED"), guidance: guidance[reason] ?? "The WordPress site refused or could not answer. Say so plainly; do not retry blindly." }
+  }
   if (tag === "MemoryFull") return { ...toolFailure("REFUSED"), guidance: "Business memory is full. Forget an outdated or less useful note with forget_memory first, then save this one." }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")
   return toolFailure("TOOL_FAILED")
@@ -141,11 +158,12 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }
+export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
+  ...(typeof receipt["wordpressChangeId"] === "string" && UUID.test(receipt["wordpressChangeId"]) ? [{ type: "WORDPRESS_CHANGE" as const, id: receipt["wordpressChangeId"] }] : []),
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */
 export type TaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"

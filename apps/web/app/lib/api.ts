@@ -2,6 +2,7 @@
 // Most server state comes from these calls; ordinary React state covers UI-local interaction.
 import { AssayRoutes, type AssayQueue, type RegisterAssaySourceRequest, type RunAssayRequest, type ReviewAssayFactRequest, type ReviewAssayFindingRequest, Routes } from "@openrecord/contracts"
 import type { GrowthOpportunity, ProviderInfo, ProviderCatalogResponse, ProviderDailyAnswer, HarnessSelection } from "@openrecord/contracts"
+import type { WordPressChange } from "./wordpress-api"
 export class ApiError extends Error {
   readonly status: number
   readonly tag: string
@@ -262,7 +263,7 @@ export type AgentMessage = {
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[]; session?: AgentSessionInfo }
 // A helper session's link to the session that started it. Root chats have no parent.
 export type AgentSessionInfo = { parentSessionId: string | null; title: string | null; role: string | null; depth: number }
-export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; id: string }
+export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; id: string }
 export type AgentActivity =
   | { kind: "thought"; text: string; ms: number }
   | { kind: "tool"; tool: string; text: string; failed?: boolean }
@@ -321,6 +322,8 @@ export const Agent = {
 export type DecisionItem =
   | { type: "AGENT_PROPOSAL"; business: { id: string; name: string }; createdAt: string; proposal: AgentProposal }
   | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; opportunity: GrowthOpportunity }
+  | { type: "WORDPRESS_CHANGE"; business: { id: string; name: string }; createdAt: string; change: WordPressChange }
+
 export const Decisions = {
   list: () => api<{ items: DecisionItem[]; count: number }>("/api/decisions"),
 }

@@ -9,6 +9,7 @@ import { RevenueSetup } from "@/components/revenue"
 import { AiTrafficUpload } from "@/components/ai-traffic"
 import { ResearchConnections } from "@/components/research-connections"
 import { AiAnswerTracking } from "@/components/ai-answer-tracking"
+import { WordPressSetup } from "@/components/wordpress"
 import { errorMessage } from "@/lib/format"
 import { Channels } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
@@ -33,6 +34,7 @@ export function ChannelsPage() {
           <AiAnswerTracking businessId={id} />
           <AiTrafficUpload businessId={id} />
           <ResearchConnections businessId={id} />
+          <WordPressSetup businessId={id} />
           <Panel className="p-4">
             <ChannelList inventory={q.data.inventory} />
           </Panel>
