@@ -332,6 +332,8 @@ function FactCard({
   onRetire: () => void
 }) {
   const reviewed = verdicts ? verdicts.supported + verdicts.wrong + verdicts.partial + verdicts.unknown : 0
+  // Unknown is not false: accuracy counts only the answers a person could judge.
+  const judgedCount = verdicts ? verdicts.supported + verdicts.wrong + verdicts.partial : 0
   const total = verdicts ? reviewed + verdicts.unreviewed : 0
   const drift = sources.filter((r) => r.finding.state === "DRIFT").length
   return (
@@ -387,7 +389,7 @@ function FactCard({
             <span className="text-muted-foreground">In AI answers, 30 days</span>
             {total ? (
               <span className="font-medium tabular-nums">
-                {reviewed ? `${Math.round(((verdicts?.supported ?? 0) / reviewed) * 100)}% accurate` : "Not reviewed yet"}
+                {judgedCount ? `${Math.round(((verdicts?.supported ?? 0) / judgedCount) * 100)}% accurate${verdicts?.unknown ? ` · ${verdicts.unknown} unknown` : ""}` : reviewed ? "Reviewed, none could be judged" : "Not reviewed yet"}
               </span>
             ) : null}
           </div>

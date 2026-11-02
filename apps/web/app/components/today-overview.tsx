@@ -17,8 +17,15 @@ import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import type { GrowthOpportunity, GrowthProfile, GrowthSeries } from "@openrecord/contracts"
 
+/** Every answer a person reviewed, including those they could not judge (unknown). */
 export const reviewed = (c: VerdictCounts) => c.supported + c.wrong + c.partial + c.unknown
-export const accuracy = (c: VerdictCounts) => (reviewed(c) ? c.supported / reviewed(c) : null)
+/** Answers a person could judge against approved facts: unknown is not false, so it is not in the denominator. */
+export const judged = (c: VerdictCounts) => c.supported + c.wrong + c.partial
+/** Share of judged answers that were supported; null when nothing could be judged. */
+export const accuracy = (c: VerdictCounts) => (judged(c) ? c.supported / judged(c) : null)
+/** The counts behind an accuracy figure, unknown kept apart from wrong. */
+export const verdictHint = (c: VerdictCounts) =>
+  reviewed(c) ? [`${judged(c).toLocaleString()} judged`, c.wrong ? `${c.wrong.toLocaleString()} wrong` : null, c.partial ? `${c.partial.toLocaleString()} partly right` : null, c.unknown ? `${c.unknown.toLocaleString()} unknown` : null].filter(Boolean).join(" · ") : "No reviewed answers yet"
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 export const pct = (n: number | null, digits = 0) => (n === null ? "—" : `${(n * 100).toFixed(digits)}%`)
 
@@ -129,7 +136,7 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
       label: "AI answers correct",
       value: loading || !a ? skeleton : pct(acc),
       delta: acc !== null && prevAcc !== null ? <PointsDelta pts={Math.round((acc - prevAcc) * 100)} /> : null,
-      hint: a ? (reviewed(a.current) ? `${reviewed(a.current)} reviewed · ${a.current.wrong} wrong` : "No reviewed answers yet") : null,
+      hint: a ? verdictHint(a.current) : null,
       ...(a && a.current.wrong > 0 ? { tone: "wrong" as const } : {}),
       onSelect: () => navigate(`/businesses/${businessId}/issues`),
     },

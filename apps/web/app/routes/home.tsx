@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { accuracy } from "@/components/today-overview"
 import { Link, useSearchParams } from "react-router"
 import { ArrowDownRightIcon, ArrowUpRightIcon, Building2Icon, ChevronRightIcon, PlusIcon, SearchIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -13,8 +14,8 @@ import { formatDate, initial, markColor, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
-const reviewedOf = (c: VerdictCounts) => c.supported + c.wrong + c.partial + c.unknown
-const accuracyOf = (c: VerdictCounts) => (reviewedOf(c) ? c.supported / reviewedOf(c) : null)
+// Unknown is not false: accuracy is supported over the answers a person could judge.
+const accuracyOf = (c: VerdictCounts) => accuracy(c)
 
 type Row = { business: Business; overview: Overview | null; analytics: Analytics | null; loading: boolean }
 type Sort = "attention" | "accuracy" | "name" | "recent"

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { accuracy, verdictHint } from "@/components/today-overview"
 import { Link, useParams } from "react-router"
 import { toast } from "sonner"
 import { ArrowUpRightIcon, ChevronRightIcon, MessageCircleQuestionIcon, PlayIcon, PlusIcon, RadarIcon, TriangleAlertIcon } from "lucide-react"
@@ -39,8 +40,8 @@ const origins = ["BUSINESS_OWNER", "SALES", "SUPPORT", "CUSTOMER_INTERVIEW", "SE
 
 const HISTORY_PAGE = 25
 
-const reviewedOf = (c: VerdictCounts) => c.supported + c.wrong + c.partial + c.unknown
-const pct = (c: VerdictCounts) => (reviewedOf(c) ? `${Math.round((c.supported / reviewedOf(c)) * 100)}%` : "—")
+// Unknown is not false: the share is supported over the answers a person could judge.
+const pct = (c: VerdictCounts) => { const a = accuracy(c); return a === null ? "—" : `${Math.round(a * 100)}%` }
 
 /** "Today", "Yesterday", or a short date, for grouping the activity feed. */
 function dayLabel(iso: string): string {
@@ -194,7 +195,7 @@ export function ChecksPage() {
         stats={[
           { key: "q", label: "Buyer questions", value: questions.loading ? loadingValue : questionList.length, hint: "Asked on every run" },
           { key: "checks", label: "Checks, 30 days", value: a ? a.current.checks.toLocaleString() : loadingValue, hint: a ? `${a.previous.checks.toLocaleString()} the 30 days before` : "Loading" },
-          { key: "acc", label: "Answer accuracy", value: a ? pct(a.current) : loadingValue, hint: a ? `${reviewedOf(a.current).toLocaleString()} claims reviewed` : "Loading", tone: "supported" },
+          { key: "acc", label: "Answer accuracy", value: a ? pct(a.current) : loadingValue, hint: a ? verdictHint(a.current) : "Loading", tone: "supported" },
           { key: "active", label: "In progress", value: runs.loading ? loadingValue : counts.active, hint: counts.active ? "Updating live" : "Nothing queued", tone: "review" },
           { key: "failed", label: "Failed", value: runs.loading ? loadingValue : counts.failed, hint: "Hover a run for the reason", tone: "wrong" },
         ]}

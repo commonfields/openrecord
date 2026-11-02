@@ -15,7 +15,7 @@ import {
   type ModelSeries,
 } from "@/components/charts"
 import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, type Stat } from "@/components/page"
-import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing, pct, reviewed, useOverviewData } from "@/components/today-overview"
+import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing, judged, pct, useOverviewData } from "@/components/today-overview"
 import { SearchPerformancePanel } from "@/components/search-console"
 import { AdPerformancePanel, LocalProfilePanel } from "@/components/ad-accounts"
 import { WeeklyBrief } from "@/components/weekly-brief"
@@ -282,7 +282,7 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
     metric === "answers"
       ? "Answers collected per provider, per day"
       : metric === "accuracy"
-        ? "Supported ÷ reviewed claims, per day"
+        ? "Supported ÷ judged claims (unknown left out), per day"
         : metric === "checks"
           ? "Checks queued for configured providers, per day"
           : metric === "unreviewed" ? "Claims needing a reviewer's verdict, per day" : `${meta.label === "Partial" ? "Partially correct" : meta.label} claims found in AI answers, per day`
@@ -493,7 +493,7 @@ function AccuracyByModelCard({ a, stats, loading }: { a: Analytics | null; stats
   const byModel = useMemo(() => (stats ? [...stats.models].filter((m) => m.claims > 0).sort((x, y) => (y.accuracy ?? -1) - (x.accuracy ?? -1) || y.claims - x.claims) : []), [stats])
   return (
     <Panel className="shadow-(--card-shadow-raised)">
-      <PanelHeader title="Supported claims by provider" description={a ? `${pct(accuracy(a.current))} of ${reviewed(a.current).toLocaleString()} reviewed claims are supported` : "Supported ÷ reviewed claims"} />
+      <PanelHeader title="Supported claims by provider" description={a ? `${pct(accuracy(a.current))} of ${judged(a.current).toLocaleString()} judged claims are supported${a.current.unknown ? ` (${a.current.unknown.toLocaleString()} could not be judged)` : ""}` : "Supported ÷ judged claims"} />
       <div className="p-2 pt-2">
         {loading || !stats ? (
           <ListSkeleton />

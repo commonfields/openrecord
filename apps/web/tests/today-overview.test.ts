@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { GrowthOpportunity, GrowthSeries } from "@openrecord/contracts"
-import { buildActions, goalTotals } from "../app/components/today-overview"
+import { accuracy, buildActions, goalTotals, judged, verdictHint } from "../app/components/today-overview"
 import type { IssueWithEvidence, RepresentationRow, SearchOverview } from "../app/lib/api"
 
 const biz = "00000000-0000-4000-8000-000000000001"
@@ -126,5 +126,22 @@ describe("setup steps", () => {
       { activeFacts: 3, checks: 4, hasGoal: false, goalLoading: false },
     )
     expect(actions.map((a) => a.key)).toEqual(["rep:drift", "setup:goal"])
+  })
+})
+
+describe("answer accuracy", () => {
+  const c = (supported: number, wrong: number, partial: number, unknown: number) => ({ supported, wrong, partial, unknown, unreviewed: 0 })
+  it("leaves unknown out: unknown is not false", () => {
+    expect(accuracy(c(2, 0, 0, 2))).toBe(1)
+    expect(accuracy(c(1, 1, 0, 5))).toBe(0.5)
+    expect(judged(c(1, 1, 1, 5))).toBe(3)
+  })
+  it("has no rate when nothing could be judged", () => {
+    expect(accuracy(c(0, 0, 0, 3))).toBeNull()
+    expect(accuracy(c(0, 0, 0, 0))).toBeNull()
+  })
+  it("names unknown apart from wrong in the hint", () => {
+    expect(verdictHint(c(2, 1, 0, 3))).toBe("3 judged · 1 wrong · 3 unknown")
+    expect(verdictHint(c(0, 0, 0, 0))).toBe("No reviewed answers yet")
   })
 })
