@@ -39,22 +39,50 @@ export const AI_REFERRERS: ReadonlyArray<readonly [RegExp, string]> = [
 ]
 
 const MONTHS: Readonly<Record<string, string>> = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" }
-interface Line { readonly day: string; readonly path: string; readonly status: number; readonly referrer: string; readonly agent: string }
+export interface Line { readonly day: string; readonly path: string; readonly status: number; readonly referrer: string; readonly agent: string }
 const COMBINED = /^\S+ \S+ \S+ \[(\d{2})\/(\w{3})\/(\d{4}):[^\]]+\] "(?:[A-Z]+) ([^ "]+)[^"]*" (\d{3}) \S+(?: "([^"]*)" "([^"]*)")?/
 export const parseLine = (raw: string): Line | null => {
   const m = raw.match(COMBINED)
   if (m) return { day: `${m[3]}-${MONTHS[m[2]!] ?? "01"}-${m[1]}`, path: m[4]!.split("?")[0]!.slice(0, 300), status: Number(m[5]), referrer: m[6] ?? "", agent: m[7] ?? "" }
   if (raw.trimStart().startsWith("{")) {
-    try {
-      const j = JSON.parse(raw) as Record<string, unknown>
-      const t = Date.parse(String(j["time"] ?? j["timestamp"] ?? j["@timestamp"] ?? ""))
-      const path = String(j["path"] ?? j["uri"] ?? j["request_uri"] ?? j["url"] ?? "")
-      if (!Number.isFinite(t) || !path) return null
-      return { day: new Date(t).toISOString().slice(0, 10), path: path.replace(/^https?:\/\/[^/]+/, "").split("?")[0]!.slice(0, 300), status: Number(j["status"] ?? j["status_code"] ?? 0),
-        referrer: String(j["referrer"] ?? j["referer"] ?? j["http_referer"] ?? ""), agent: String(j["user_agent"] ?? j["userAgent"] ?? j["http_user_agent"] ?? "") }
-    } catch { return null }
+    try { return parseRecord(JSON.parse(raw) as Record<string, unknown>) } catch { return null }
   }
   return null
+}
+
+/** A timestamp as text, epoch seconds, milliseconds or nanoseconds. */
+const when = (v: unknown): number => {
+  if (typeof v === "number" && Number.isFinite(v)) return v > 1e17 ? v / 1e6 : v > 1e12 ? v : v * 1000
+  if (typeof v === "string" && /^\d{10,19}$/.test(v)) return when(Number(v))
+  return Date.parse(String(v ?? ""))
+}
+const first = (v: unknown) => Array.isArray(v) ? v[0] : v
+/**
+ * One structured log record: plain JSON lines (time, path, status, referrer,
+ * user_agent), a host log drain's request records with a nested proxy object
+ * (path, userAgent, referer, statusCode), or a CDN's HTTP request log fields
+ * (ClientRequestURI, ClientRequestUserAgent, ClientRequestReferer,
+ * EdgeResponseStatus, EdgeStartTimestamp).
+ */
+export const parseRecord = (j: Record<string, unknown>): Line | null => {
+  const proxy = j["proxy"] && typeof j["proxy"] === "object" ? j["proxy"] as Record<string, unknown> : {}
+  const t = when(j["time"] ?? j["timestamp"] ?? j["@timestamp"] ?? j["EdgeStartTimestamp"] ?? proxy["timestamp"])
+  const path = String(proxy["path"] ?? j["ClientRequestURI"] ?? j["path"] ?? j["uri"] ?? j["request_uri"] ?? j["url"] ?? "")
+  if (!Number.isFinite(t) || !path) return null
+  return { day: new Date(t).toISOString().slice(0, 10), path: path.replace(/^https?:\/\/[^/]+/, "").split("?")[0]!.slice(0, 300) || "/",
+    status: Number(proxy["statusCode"] ?? j["EdgeResponseStatus"] ?? j["status"] ?? j["status_code"] ?? 0),
+    referrer: String(proxy["referer"] ?? j["ClientRequestReferer"] ?? j["referrer"] ?? j["referer"] ?? j["http_referer"] ?? ""),
+    agent: String(first(proxy["userAgent"]) ?? j["ClientRequestUserAgent"] ?? j["user_agent"] ?? j["userAgent"] ?? j["http_user_agent"] ?? "") }
+}
+
+/** Which AI event a request is, if any: a crawler or assistant fetcher, or a visit referred by an assistant. */
+export const classify = (l: Line): { readonly event: "CRAWLER" | "REFERRAL"; readonly name: string } | null => {
+  const bot = AI_AGENTS.find(b => b.agent.test(l.agent))
+  if (bot) return { event: "CRAWLER", name: bot.name }
+  let host = ""
+  try { host = l.referrer && l.referrer !== "-" ? new URL(l.referrer).hostname.toLowerCase() : "" } catch { host = "" }
+  const ref = AI_REFERRERS.find(([re]) => re.test(host))
+  return ref && l.status < 400 ? { event: "REFERRAL", name: ref[1] } : null
 }
 
 export const summariseLog = (text: string) => {

@@ -19,6 +19,7 @@ import { WordPressSetup } from "@/components/wordpress"
 import { AiAnswerTracking } from "@/components/ai-answer-tracking"
 import { AiTrafficUpload } from "@/components/ai-traffic"
 import { ResearchConnections } from "@/components/research-connections"
+import { AgentAccess, LiveTrafficFeed, ToolServers } from "@/components/agent-access"
 import { ADS_CALLBACK_COPY, Ads, adsError } from "@/lib/ads"
 import { Revenue } from "@/lib/revenue"
 import { SearchConsole, searchConsoleError, siteLabel } from "@/lib/search-console"
@@ -266,18 +267,21 @@ function MeasurementNote({ inventory }: { inventory: { channels: ReadonlyArray<{
 function MoreTools({ businessId }: { businessId: string }) {
   const [open, setOpen] = useState(false)
   const { hash } = useLocation()
-  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#research-connections"].includes(hash)) setOpen(true) }, [hash])
+  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#research-connections", "#agent-access", "#tool-servers"].includes(hash)) setOpen(true) }, [hash])
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">
       <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md text-sm font-medium outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRightIcon aria-hidden className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-90")} />
         More data for the agent
-        <span className="font-normal text-muted-foreground">AI answer tracking, server logs and research accounts</span>
+        <span className="font-normal text-muted-foreground">AI answer tracking, server logs, research accounts, tool servers and agent access</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-3">
         <AiAnswerTracking businessId={businessId} />
         <AiTrafficUpload businessId={businessId} />
+        <LiveTrafficFeed businessId={businessId} />
         <ResearchConnections businessId={businessId} />
+        <ToolServers businessId={businessId} />
+        <AgentAccess businessId={businessId} />
       </CollapsibleContent>
     </Collapsible>
   )

@@ -24,6 +24,7 @@ import { businessWebsite } from "../agent-web-tools.js"
 import { CAPABILITIES, INDEX, capability, describe, findCapabilities } from "./catalog.js"
 import { normalizeDomain, normalizeUrl } from "./inputs.js"
 import { researchNet } from "./net.js"
+import { balanceOf, recentCalls, spendSince, usd } from "./endpoints/metering.js"
 import { isRefused, type AnyCapability, type Observed, type Refused, type TimelineEvent } from "./types.js"
 
 const scoped = (accountId: string, businessId: string) => Effect.gen(function*() {
@@ -143,7 +144,7 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
     if (out._tag === "Left") row = yield* settle(r.id, { status: "FAILED", failure: "UNAVAILABLE" })
     else if (isRefused(out.right)) {
       row = yield* settle(r.id, { status: "FAILED", failure: out.right.refused.replace(/[^A-Z_]/g, "").slice(0, 40) || "REFUSED" })
-      return answer(out.right.refused, `${c.title}: not observed (${out.right.refused.toLowerCase().replace(/_/g, " ")})`, out.right.message, { capability: c.id, observationId: row.id })
+      return answer(out.right.refused, `${c.title}: not observed (${out.right.refused.toLowerCase().replace(/_/g, " ")})`, out.right.message, { capability: c.id, observationId: row.id, ...(out.right.detail ?? {}) })
     } else {
       // Pages read from the public web archive are named, with their capture dates.
       const archivedPages = net.archivedReads?.() ?? []
@@ -320,6 +321,21 @@ export const askAiAssistants = (ctx: ToolContext, args: typeof AskInput.Type) =>
 const WebResearchInput = Schema.Struct({ question: Schema.String.pipe(Schema.minLength(10), Schema.maxLength(1500)) })
 export const webResearch = (ctx: ToolContext, args: typeof WebResearchInput.Type) => runResearch(ctx, { capability: "web.research", question: args.question.slice(0, 500), input: { question: args.question } })
 
+// ---------------------------------------------------------------- research credit
+
+const CreditInput = Schema.Struct({ limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 30))) })
+/** The account's research credit, 30-day spend, and this business's recent provider calls with whose account served each. */
+export const readResearchCredit = (ctx: ToolContext, args: typeof CreditInput.Type) => Effect.gen(function*() {
+  yield* scoped(ctx.accountId, ctx.businessId)
+  const balance = yield* balanceOf(ctx.accountId)
+  const spend = yield* spendSince(ctx.accountId, 30)
+  const calls = yield* recentCalls(ctx.accountId, ctx.businessId, args.limit ?? 10)
+  return { summary: `Research credit ${usd(balance)}; ${spend.calls} provider calls in 30 days, ${spend.paidCalls} on OpenRecord's accounts (${usd(spend.spentMicro)})`, citations: [],
+    data: { balanceMicro: balance, balance: usd(balance), last30Days: { ...spend, spent: usd(spend.spentMicro) },
+      calls: calls.map(c => ({ endpoint: c.endpoint, provider: c.provider, servedBy: c.credentialSource, status: c.status, failure: c.failure, cost: usd(c.costMicro), refunded: c.refunded, at: c.startedAt, durationMs: c.durationMs })),
+      note: "Calls on the business's own connection or a public route are never charged. A failed paid call is refunded. Ask before running many paid calls; say what each costs." } } satisfies AgentToolResult
+})
+
 // ---------------------------------------------------------------- declarations
 
 export const researchDeclarations: ReadonlyArray<ToolDeclaration> = [
@@ -344,6 +360,9 @@ export const researchDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "read_research_evidence",
     description: "Read research saved for this business from earlier chats: a list (optionally for one company or subject) or one observation by observationId with findings, coverage and date. Use it before running the same research again and to cite earlier findings. Read-only.",
     parametersJsonSchema: JSONSchema.make(EvidenceInput) },
+  { name: "read_research_credit",
+    description: "The account's research credit, what provider calls cost in the last 30 days, and this business's recent provider calls with whose account served each (the business's own, a public route, or OpenRecord's account at a price). Use it before planning many paid calls. Read-only.",
+    parametersJsonSchema: JSONSchema.make(CreditInput) },
   { name: "research_timeline",
     description: "Every dated event saved for a company (posts, videos, ads started, jobs posted, pricing and page changes, archive versions, domain registration, community stories, AI answer checks), merged in date order with counts per month, to reconstruct how its marketing and growth activity unfolded. Read-only.",
     parametersJsonSchema: JSONSchema.make(TimelineInput) },
@@ -359,6 +378,7 @@ export const dispatchResearch = (ctx: ToolContext, name: string, raw: unknown) =
   if (name === "web_research") return yield* webResearch(ctx, yield* decode(WebResearchInput))
   if (name === "find_research_capabilities") return yield* findResearch(ctx, yield* decode(FindInput))
   if (name === "read_research_evidence") return yield* readResearchEvidence(ctx, yield* decode(EvidenceInput))
+  if (name === "read_research_credit") return yield* readResearchCredit(ctx, yield* decode(CreditInput))
   if (name === "research_timeline") return yield* researchTimeline(ctx, yield* decode(TimelineInput))
   return yield* crossSourceInvestigation(ctx, yield* decode(FrameInput))
 })

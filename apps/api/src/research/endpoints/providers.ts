@@ -2,11 +2,12 @@
 // API; where it needs an account, it is the business's own (added by its team
 // on the Channels page), never an OpenRecord account. "paid" providers bill
 // the business's account and stay unused until the business connects one.
+import { DIRECTORY_PROVIDERS } from "./generated.js"
 import type { Provider } from "./types.js"
 
 const contact = (env: NodeJS.ProcessEnv) => env["RESEARCH_CONTACT"]?.trim() || null
 
-export const PROVIDERS: ReadonlyArray<Provider> = [
+const HAND_WRITTEN: ReadonlyArray<Provider> = [
   { id: "apple", name: "Apple App Store and Podcasts (public lookup)", hosts: ["itunes.apple.com"], auth: { kind: "none" },
     note: "Apple's public search and lookup: listings, ratings counts and recent reviews as Apple shows them. Ratings are for the country asked." },
   { id: "github", name: "GitHub", hosts: ["api.github.com"], auth: { kind: "bearer", optional: true },
@@ -49,10 +50,12 @@ export const PROVIDERS: ReadonlyArray<Provider> = [
   { id: "stripe", name: "Stripe (read-only restricted key)", hosts: ["api.stripe.com"], auth: { kind: "bearer" },
     connect: { how: "In Stripe, Developers, API keys, create a restricted key with Read access only for the data the agent should see. Full secret keys are refused.", url: "https://dashboard.stripe.com/apikeys", format: /^rk_(live|test)_[A-Za-z0-9]{20,}$/, example: "rk_live_..." },
     note: "The business's own Stripe data through a read-only restricted key; OpenRecord cannot charge, refund or change anything." },
-  { id: "seo_data", name: "SEO data (your own DataForSEO account)", hosts: ["api.dataforseo.com"], auth: { kind: "basic" }, paid: true,
+  { id: "seo_data", name: "SEO data (your own DataForSEO account)", hosts: ["api.dataforseo.com"], auth: { kind: "basic" }, paid: true, platformKeyEnv: "OPENRECORD_SEO_DATA_CREDENTIAL",
     connect: { how: "Optional and billed to your own DataForSEO account: paste your API login and password as login:password. Leave it unconnected and these numbers stay unknown.", url: "https://app.dataforseo.com/api-access", format: /^[^\s:]{3,120}:[^\s]{6,120}$/, example: "you@agency.com:password" },
     note: "Billed to the business's own account per request (roughly one to a few cents). Search volume, rankings, traffic and backlink numbers are this provider's estimates from its own databases, not measured visits." },
 ]
+/** Hand-written providers first; generated ones never replace them. */
+export const PROVIDERS: ReadonlyArray<Provider> = [...HAND_WRITTEN, ...DIRECTORY_PROVIDERS.filter(d => !HAND_WRITTEN.some(h => h.id === d.id))]
 export const provider = (id: string) => PROVIDERS.find(p => p.id === id) ?? null
 /** Providers a business can connect a credential for. */
 export const CONNECTABLE = PROVIDERS.filter(p => p.connect)

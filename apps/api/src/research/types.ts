@@ -19,8 +19,8 @@ export interface Observed {
   readonly timeline?: ReadonlyArray<TimelineEvent>
 }
 /** A capability that could not run: a stable reason and what the agent should do instead. */
-export interface Refused { readonly refused: string; readonly message: string }
-export const refuse = (refused: string, message: string): Refused => ({ refused, message })
+export interface Refused { readonly refused: string; readonly message: string; readonly detail?: Record<string, unknown> }
+export const refuse = (refused: string, message: string, detail?: Record<string, unknown>): Refused => ({ refused, message, ...(detail ? { detail } : {}) })
 export const isRefused = (r: Observed | Refused): r is Refused => "refused" in r
 
 export interface RunContext {

@@ -22,6 +22,7 @@ import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
+import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -67,6 +68,9 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     return { declaration, effect: saves ? "record" : "read", replay: saves ? "deduplicated" : "safe", scope: "general",
       run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
   }),
+  // Outside tool servers the team connected: only tools the server marks read-only are ever called.
+  ...mcpClientDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "read", replay: "safe", scope: "general",
+    run: (ctx, args) => dispatchMcpClient(ctx, declaration.name, args) })),
   ...wordpressDeclarations.map((declaration): AgentToolSpec => ({ declaration,
     effect: declaration.name === "prepare_wordpress_change" ? "propose" : "read",
     replay: declaration.name === "prepare_wordpress_change" ? "deduplicated" : "safe", scope: "general",
