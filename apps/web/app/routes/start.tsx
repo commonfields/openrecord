@@ -17,8 +17,8 @@ export function StartPage() {
     <div className="flex flex-1 flex-col items-center justify-center px-4 pb-[12vh]">
       <div className="w-full max-w-xl space-y-6">
         <div className="space-y-2 text-center">
-          <h1 className="text-2xl font-medium tracking-tight text-balance">Tell OpenRecord about your business</h1>
-          <p className="text-sm text-muted-foreground text-balance">Start with your website. The agent reads it, suggests a brief for you to confirm, shows which channels it can work with, and proposes a first step.</p>
+          <h1 className="text-2xl font-medium tracking-tight text-balance">What's your website, and what do you want to achieve?</h1>
+          <p className="text-sm text-muted-foreground text-balance">That's all your agent needs. It reads your site, writes the brief, and comes back with a first step for you to approve.</p>
         </div>
         <SetupStartForm
           autoFocus

@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router"
-import { ArrowRightIcon, CheckCircle2Icon, PlusIcon } from "lucide-react"
+import { ArrowRightIcon, PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AreaTrendChart } from "@/components/charts"
@@ -9,6 +9,7 @@ import { RepresentationStateBadge } from "@/components/status"
 import { findingKindLabels } from "@/routes/search"
 import { ApiError, Facts, Issues, Representations, Search, api, type Analytics, type RepresentationRow, type VerdictCounts } from "@/lib/api"
 import { GROWTH_GOAL_LABELS, Growth, growthPath } from "@/lib/growth"
+import { askAgentPath } from "@/lib/nav"
 import { groupClaims } from "@/lib/issues"
 import { relativeTime, sentenceCase } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
@@ -159,8 +160,8 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
           key: "goal",
           label: "Business goal",
           value: data.loading.growth ? skeleton : "Not set",
-          hint: "Set one to measure results",
-          onSelect: () => navigate(growthPath(businessId)),
+          hint: "Ask your agent to set one",
+          onSelect: () => navigate(askAgentPath(businessId, "Help me set our marketing goal and what we should count as success.")),
         },
   ]
   return <StatStrip stats={stats} />
@@ -173,14 +174,6 @@ type Action = { key: string; tone: "wrong" | "partial" | "unknown" | "review" | 
 /** What is still unset; each gap becomes a setup step instead of a silent empty card. */
 export type SetupState = { activeFacts: number | null; checks: number | null; hasGoal: boolean; goalLoading: boolean }
 
-const toneDot: Record<Action["tone"], string> = {
-  wrong: "bg-wrong",
-  partial: "bg-partial",
-  unknown: "bg-unknown",
-  review: "bg-review",
-  brand: "bg-primary-ink",
-}
-
 const severityRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
 
 export function buildActions(businessId: string, data: Pick<OverviewData, "issues" | "representations" | "search" | "opportunities">, setup?: SetupState): Action[] {
@@ -190,15 +183,15 @@ export function buildActions(businessId: string, data: Pick<OverviewData, "issue
   // A new business has nothing to fix yet: walk it through the loop instead
   // of reporting "all caught up".
   if (setup?.activeFacts === 0)
-    out.push({ key: "setup:facts", tone: "brand", setup: true, title: "Approve the facts AI should get right", detail: "Prices, policies and integrations: the answers you want buyers to hear", cta: "Add facts", to: `${base}/truth`, rank: 5 })
+    out.push({ key: "setup:facts", tone: "brand", setup: true, title: "Approve the facts AI should get right", detail: "Your agent drafts prices, policies and contact details from your site for you to approve", cta: "Ask the agent", to: askAgentPath(businessId, "Draft the facts AI assistants should get right about us, from our website, for me to approve."), rank: 5 })
   if (setup?.checks === 0 && !(data.issues ?? []).length)
-    out.push({ key: "setup:check", tone: "brand", setup: true, title: "See what AI says about you today", detail: "Run a check to ask AI assistants the questions buyers ask", cta: "Run a check", to: `${base}/checks`, rank: 6 })
+    out.push({ key: "setup:check", tone: "brand", setup: true, title: "See what AI says about you today", detail: "Your agent asks AI assistants the questions buyers ask", cta: "Ask the agent", to: askAgentPath(businessId, "Check what AI assistants say about us when buyers ask about what we sell."), rank: 6 })
   if (data.representations && data.representations.length === 0)
-    out.push({ key: "setup:sources", tone: "brand", setup: true, title: "Track a page that publishes your facts", detail: "Get flagged when a pricing page or listing drifts from what you approved", cta: "Track", to: `${base}/representations`, rank: 70 })
+    out.push({ key: "setup:sources", tone: "brand", setup: true, title: "Watch the pages that publish your facts", detail: "Get flagged when a pricing page or listing drifts from what you approved", cta: "Ask the agent", to: askAgentPath(businessId, "Find the pages and listings that publish our facts and watch them for changes."), rank: 70 })
   if (data.search && !data.search.lastInspection)
-    out.push({ key: "setup:website", tone: "brand", setup: true, title: "Inspect your website", detail: "Find pages AI and search engines cannot read or index", cta: "Inspect", to: `${base}/search`, rank: 75 })
+    out.push({ key: "setup:website", tone: "brand", setup: true, title: "Inspect your website", detail: "Find pages AI and search engines cannot read or index", cta: "Ask the agent", to: askAgentPath(businessId, "Inspect our website for pages AI assistants and search engines cannot read or index."), rank: 75 })
   if (setup && !setup.hasGoal && !setup.goalLoading)
-    out.push({ key: "setup:goal", tone: "brand", setup: true, title: "Set a business goal", detail: "Count the leads or signups this work should move", cta: "Set goal", to: growthPath(businessId), rank: 80 })
+    out.push({ key: "setup:goal", tone: "brand", setup: true, title: "Agree a business goal", detail: "Tell your agent what marketing should achieve, and it picks the number to count", cta: "Ask the agent", to: askAgentPath(businessId, "Help me set our marketing goal and what we should count as success."), rank: 80 })
 
   for (const r of data.representations ?? []) {
     const fact = sentenceCase(r.fact.predicate)
@@ -274,91 +267,12 @@ export function buildActions(businessId: string, data: Pick<OverviewData, "issue
 
   for (const o of data.opportunities) {
     if (o.status === "PROPOSED")
-      out.push({ key: `opp:${o.id}`, tone: "brand", title: `Approve the initiative “${o.title}”`, detail: "Proposed and waiting for a decision", cta: "Decide", to: growthPath(businessId), rank: 55 })
+      out.push({ key: `opp:${o.id}`, tone: "brand", title: `Review the initiative “${o.title}”`, detail: "Proposed and waiting for your decision", cta: "Review", to: "/approvals", rank: 55 })
     else if (o.status === "APPROVED" && o.progress === "NOT_STARTED")
-      out.push({ key: `opp:${o.id}`, tone: "brand", title: `Record the work for “${o.title}”`, detail: "Approved, no work recorded yet", cta: "Record", to: growthPath(businessId), rank: 65 })
+      out.push({ key: `opp:${o.id}`, tone: "brand", title: `Start “${o.title}”`, detail: "Approved, not started yet", cta: "Ask the agent", to: askAgentPath(businessId, `Let's start the approved initiative “${o.title}”. What do you need from me?`), rank: 65 })
   }
 
   return out.sort((x, y) => x.rank - y.rank)
-}
-
-/** One ranked list across every surface: the page's answer to "what now?". */
-export function NextActions({ businessId, data, checks }: { businessId: string; data: OverviewData; checks: number | null }) {
-  const [all, setAll] = useState(false)
-  const { issues, representations, search, opportunities, activeFacts, profile } = data
-  const hasGoal = !!profile
-  const goalLoading = data.loading.growth
-  const actions = useMemo(
-    () => buildActions(businessId, { issues, representations, search, opportunities }, { activeFacts, checks, hasGoal, goalLoading }),
-    [businessId, issues, representations, search, opportunities, activeFacts, checks, hasGoal, goalLoading],
-  )
-  const loading = data.loading.issues || data.loading.representations || data.loading.search
-  const shown = all ? actions : actions.slice(0, 5)
-  const onlySetup = actions.length > 0 && actions.every((x) => x.setup)
-  const description = loading
-    ? "Checking every source"
-    : onlySetup
-      ? "Finish setting up to see how AI describes this business"
-      : actions.length
-        ? `${actions.length} ${actions.length === 1 ? "thing needs" : "things need"} your attention, most important first`
-        : "Nothing needs your attention"
-  return (
-    <Panel>
-      <PanelHeader title={onlySetup ? "Get started" : "Do next"} description={description}>
-        <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
-          <Link to={`/businesses/${businessId}/issues`}>
-            All issues
-            <ArrowRightIcon />
-          </Link>
-        </Button>
-      </PanelHeader>
-      {loading ? (
-        <div className="space-y-2 p-4 pt-1">
-          {Array.from({ length: 3 }, (_, i) => (
-            <Skeleton key={i} className="h-10" />
-          ))}
-        </div>
-      ) : actions.length === 0 ? (
-        <div className="flex items-center gap-3 px-4 pt-1 pb-4 text-xs text-muted-foreground">
-          <CheckCircle2Icon className="size-4 shrink-0 text-supported" />
-          <span className="flex-1">You're all caught up. Run a check to see what AI says today.</span>
-          <Button asChild size="sm" variant="outline" className="h-7 text-xs">
-            <Link to={`/businesses/${businessId}/checks`}>Run a check</Link>
-          </Button>
-        </div>
-      ) : (
-        <ol className="divide-y divide-border/60 px-2 pb-2">
-          {shown.map((x) => (
-            <li key={x.key}>
-              <Link to={x.to} className="group flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-foreground/[0.03]">
-                {x.setup ? (
-                  <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary-ink/10 text-primary-ink">
-                    <PlusIcon className="size-3" />
-                  </span>
-                ) : (
-                  <span aria-hidden className={cn("mx-1.5 size-2 shrink-0 rounded-full", toneDot[x.tone])} />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">{x.title}</span>
-                  <span className="block truncate text-[0.6875rem] text-muted-foreground">{x.detail}</span>
-                </span>
-                <span className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary-ink transition-colors group-hover:bg-primary-ink/10">
-                  {x.cta}
-                </span>
-              </Link>
-            </li>
-          ))}
-          {actions.length > 5 ? (
-            <li className="px-2 pt-2">
-              <button type="button" onClick={() => setAll((v) => !v)} className="text-xs font-medium text-muted-foreground hover:text-foreground">
-                {all ? "Show fewer" : `Show ${actions.length - 5} more`}
-              </button>
-            </li>
-          ) : null}
-        </ol>
-      )}
-    </Panel>
-  )
 }
 
 /* --------------------------------------------------------- sources */

@@ -104,7 +104,7 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
       const base = `/businesses/${bid}`
       const pages: Array<[string, string, ReactNode, string]> = [
         ["Agent", "agent", <LayoutGridIcon key="i" />, "chat setup status plan report"],
-        ["Channels", "channels", <GlobeIcon key="i" />, "connections integrations analytics ga4 github social"],
+        ["Channels", "channels", <GlobeIcon key="i" />, "channels connect integrations google ads meta stripe wordpress analytics"],
         ["Work", "work", <InboxIcon key="i" />, "initiatives approvals executions"],
         ["Results", "results", <LayoutGridIcon key="i" />, "today dashboard analytics overview"],
         ["AI answer issues", "issues", <InboxIcon key="i" />, "wrong claims inbox review"],
@@ -140,9 +140,8 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
         openSettings("general")
       },
     })
-    out.push({ id: "page:approvals", group: "Actions", label: "Waiting on you", icon: <FileCheck2Icon />, keywords: "approve approvals decisions inbox proposals pending", run: go("/approvals") })
-    out.push({ id: "page:clients", group: "Agency", label: "Clients", icon: <FileCheck2Icon />, keywords: "agency record share", run: go("/clients") })
-    out.push({ id: "page:businesses", group: "Agency", label: "All businesses", icon: <Building2Icon />, run: go("/businesses") })
+    out.push({ id: "page:approvals", group: "Actions", label: "Needs you", icon: <FileCheck2Icon />, keywords: "waiting approve approvals decisions inbox proposals pending", run: go("/approvals") })
+    out.push({ id: "page:businesses", group: "Actions", label: "Businesses and clients", icon: <Building2Icon />, keywords: "clients agency all", run: go("/businesses") })
     for (const b of businesses) {
       if (b.id === bid) continue
       out.push({

@@ -57,6 +57,12 @@ export function PageHeader({
 }
 
 /** A white card on the canvas: no border, a soft ring shadow. */
+/** A setup panel's frame: a card on its own, or nothing extra when the panel
+ * sits inside a row of the Channels list. */
+export function SetupFrame({ bare, className, children, id }: { bare?: boolean | undefined; className: string; children: ReactNode; id: string }) {
+  return bare ? <div id={id} className={className}>{children}</div> : <Panel id={id} className={className}>{children}</Panel>
+}
+
 export function Panel({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
   return (
     <section id={id} className={cn("overflow-hidden rounded-xl bg-card text-card-foreground shadow-(--card-shadow)", className)}>

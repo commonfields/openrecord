@@ -5,25 +5,19 @@ import {
   ArchiveRestoreIcon,
   ArrowLeftIcon,
   BarChart3Icon,
-  BookCheckIcon,
   BriefcaseIcon,
-  ChevronDownIcon,
   RadioTowerIcon,
   Building2Icon,
-  FlaskConicalIcon,
   CheckIcon,
   CheckCheckIcon,
   ChevronRightIcon,
   ChevronsUpDownIcon,
-  GlobeIcon,
-  InboxIcon,
   KeyboardIcon,
   ListFilterIcon,
   LogOutIcon,
   MessagesSquareIcon,
   PanelLeftIcon,
   PlusIcon,
-  RadarIcon,
   SearchIcon,
   SettingsIcon,
   UserRoundIcon,
@@ -144,6 +138,9 @@ export function AppShell() {
   const [pane, setPane] = useState(false)
   const paneContext = useMemo(() => ({ slot: paneSlot, setPane }), [paneSlot])
   const location = useLocation()
+  // Match Results' full-width layout on the business and client lists and
+  // throughout Work navigation, including evidence tool detail pages.
+  const fullWidthPage = ["/approvals", "/businesses", "/clients"].includes(location.pathname) || /^\/businesses\/[^/]+\/(results|channels|work|search|issues|representations|truth|checks|assay|facts)(\/|$)/.test(location.pathname)
   const chrome = useMemo(() => ({ setMinimal, setWorkspace, setWide, setFocus }), [])
   const sidebarCollapsed = focus ? !focusSidebar : collapsed
   const toggleSidebar = () => (focus ? setFocusSidebar((v) => !v) : setCollapsed((c) => !c))
@@ -285,7 +282,7 @@ export function AppShell() {
           <div ref={setHeaderSlot} className="ml-auto flex shrink-0 items-center gap-2 [&_[data-slot=button]]:h-8 [&_[data-slot=button]]:px-2.5 [&_[data-slot=button]]:text-xs [&_[data-slot=button]_svg]:size-3.5" />
         </header>
         <main className={cn("relative min-h-0 flex-1", workspace ? "overflow-hidden" : "overflow-y-auto")}>
-          <div className={cn("flex w-full flex-col", workspace ? "h-full" : cn("mx-auto min-h-full px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8", !wide && "max-w-[1400px]"))}>
+          <div className={cn("flex w-full flex-col", workspace ? "h-full" : cn("mx-auto min-h-full px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8", !wide && !fullWidthPage && "max-w-[1400px]"))}>
             <Outlet />
           </div>
         </main>
@@ -349,14 +346,12 @@ function SidebarBody() {
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
         {agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>
           <SidebarGroup label="Workspace">
-            <SidebarLink to="/approvals" icon={<CheckCheckIcon />} label="Waiting on you" count={waiting} />
+            <SidebarLink to="/approvals" icon={<CheckCheckIcon />} label="Needs you" count={waiting} />
             {base ? <>
               <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
               <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
-              <SidebarLink to={`${base}/work`} icon={<BriefcaseIcon />} label="Work" />
             </> : null}
           </SidebarGroup>
-          {base ? <EvidenceTools base={base} /> : null}
         </>}
       </nav>
 
@@ -596,39 +591,6 @@ function ChatHistory({ archived, filter, onLeaveArchive }: { archived: boolean; 
   )
 }
 
-// Specialist views stay one click away, folded until needed; they open on
-// their own when the current page is one of them.
-const EVIDENCE_TOOLS = ["search", "issues", "representations", "truth", "checks", "assay", "facts"]
-
-function EvidenceTools({ base }: { base: string }) {
-  const { collapsed } = useContext(SidebarStateContext)
-  const location = useLocation()
-  const here = EVIDENCE_TOOLS.some(t => location.pathname.startsWith(`${base}/${t}`))
-  const [open, setOpen] = useState(here)
-  useEffect(() => { if (here) setOpen(true) }, [here])
-  const links = (
-    <>
-      <SidebarLink to={`${base}/search`} icon={<SearchIcon />} label="Website checks" />
-      <SidebarLink to={`${base}/issues`} icon={<InboxIcon />} label="AI answer issues" />
-      <SidebarLink to={`${base}/representations`} icon={<GlobeIcon />} label="Facts on the web" />
-      <SidebarLink to={`${base}/truth`} icon={<BookCheckIcon />} label="Approved facts" />
-      <SidebarLink to={`${base}/checks`} icon={<RadarIcon />} label="AI answer checks" />
-      <SidebarLink to={`${base}/assay`} icon={<FlaskConicalIcon />} label="Prospect research" />
-    </>
-  )
-  if (collapsed) return open ? <div className="flex flex-col gap-px">{links}</div> : null
-  return (
-    <div className="flex flex-col">
-      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
-        className="flex items-center gap-1 rounded-md px-2 pb-1 text-left text-sm font-medium text-muted-foreground hover:text-foreground">
-        Evidence tools
-        <ChevronDownIcon className={cn("size-3 transition-transform", open ? "" : "-rotate-90")} />
-      </button>
-      {open ? <div className="flex flex-col gap-px">{links}</div> : null}
-    </div>
-  )
-}
-
 /** How many decisions wait on the signed-in person; reloads on navigation and after any decision. */
 function useWaitingCount(pathname: string) {
   const [count, setCount] = useState(0)
@@ -683,12 +645,12 @@ function ViewTabs() {
       value={view}
       onValueChange={(v) => {
         if (v === view) return
-        nav(v === "agent" ? `${base}/agent` : `${base}/results`)
+        nav(v === "agent" ? `${base}/agent` : "/approvals")
       }}
     >
       <TabsList aria-label="Workspace view" className="grid h-7 w-auto grid-cols-2 items-stretch gap-0.5 rounded-[7px] bg-sidebar p-0.5 shadow-(--track-inner)">
         <TabsTrigger value="agent" className={trigger}>Agent</TabsTrigger>
-        <TabsTrigger value="today" className={trigger}>Work</TabsTrigger>
+        <TabsTrigger value="today" className={trigger}>Workspace</TabsTrigger>
       </TabsList>
     </Tabs>
   )
@@ -862,11 +824,11 @@ function AccountMenu() {
         <DropdownMenuSeparator className="my-1.5" />
         <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/businesses")}>
           <Building2Icon />
-          All businesses
+          Businesses
         </DropdownMenuItem>
         <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/clients")}>
           <BriefcaseIcon />
-          All clients
+          Clients and products
         </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1.5" />
         <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => void Auth.signout().finally(() => nav("/signin"))}>
@@ -914,13 +876,13 @@ function Breadcrumbs() {
     }
     crumbs.push({ label: "AI answer" })
   } else if (parts[0] === "clients") {
-    crumbs.push({ label: "Clients", ...(parts[1] ? { to: "/clients" } : {}) })
+    crumbs.push({ label: "Businesses", to: "/businesses" })
     if (parts[1] && activeBusiness?.id === parts[1]) crumbs.push({ label: activeBusiness.name, to: `/businesses/${activeBusiness.id}/agent` })
-    if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Growth workspace" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Client record" })
+    if (parts[1]) crumbs.push({ label: parts[2] === "growth" ? "Goal and measurement" : parts[2] === "growth-measurement" ? "Measurement imports" : parts[2] === "discovery" ? "AI Discovery" : "Business record" })
   } else if (parts[0] === "agent") {
     crumbs.push({ label: "General chat" })
   } else if (parts[0] === "approvals") {
-    crumbs.push({ label: "Waiting on you" })
+    crumbs.push({ label: "Needs you" })
   } else if (parts[0] === "start") {
     crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {

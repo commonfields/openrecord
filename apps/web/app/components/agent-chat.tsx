@@ -16,6 +16,7 @@ import { LiveTrace, RunTrace, initialProgress, progressOf, type Progress } from 
 import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentAttachment, type AgentCitation, type AgentContextUse, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
+import { SetupInChat } from "@/components/setup-card"
 import { Growth } from "@/lib/growth"
 import { agentEvidencePath, webSourceUrl } from "@/lib/agent-evidence"
 import { chatPath, helperSearch, notifyAgentChats, useChatActivity } from "@/lib/agent-chats"
@@ -573,6 +574,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           autoFocus
           session={session}
           context={context ?? null}
+          prefill={!compact}
         />
       </div> : null}
     </div>
@@ -693,6 +695,11 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
 // ---- overview: the agent is the page ----
 
 // Replies, work and evidence remain in one conversation column.
+export function DecisionConversation({ businessId, businessName, detail }: { businessId: string; businessName: string; detail: ReactNode }) {
+  const session = useAgentSession(businessId)
+  return <Thread session={session} businessName={businessName} placeholder="Message the agent about this business" onCommand={command => session.send(`/${command}`)} context={chatContext(businessId, businessName)} work={detail} />
+}
+
 export function AgentChat(props: { businessId: string | null; businessName: string; onConversationChange?: (active: boolean) => void }) {
   const [searchParams] = useSearchParams()
   return <OverviewAgent key={`${props.businessId}:${searchParams.get("chat") ?? "current"}`} {...props} />
@@ -723,6 +730,7 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
       <div className="flex h-full min-h-0 flex-1 flex-col items-center px-4 sm:px-6">
         <div aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-(--chat-max-width) space-y-4 py-6">
+            {businessId ? <SetupInChat businessId={businessId} /> : null}
             {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
           </div>
         </div>
@@ -1007,8 +1015,13 @@ function Composer({
   session,
   modelBlocked,
   context,
+  prefill = false,
 }: {
   onSend: (text: string, attachments?: AgentAttachment[]) => void
+  /** Start with the `?ask=` text from the address, so a link elsewhere in the
+   * app can hand the agent a request. It is typed, never sent, until the
+   * person presses send. */
+  prefill?: boolean
   /** Slash commands run as conversational turns through the selected agent. */
   onCommand?: ((command: AgentCommand) => void) | undefined
   disabled: boolean
@@ -1026,7 +1039,13 @@ function Composer({
   const inFlight = session?.busy ?? false
   const { preferences } = usePreferences()
   const { openSettings } = useSettings()
-  const [text, setText] = useState("")
+  const [askParams, setAskParams] = useSearchParams()
+  const asked = prefill ? askParams.get("ask") : null
+  const [text, setText] = useState(asked ?? "")
+  useEffect(() => {
+    if (!asked) return
+    setAskParams(p => { const next = new URLSearchParams(p); next.delete("ask"); return next }, { replace: true })
+  }, [asked, setAskParams])
   const [files, setFiles] = useState<AgentAttachment[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const [listening, setListening] = useState(false)

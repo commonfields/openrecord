@@ -47,3 +47,8 @@ export const representationFilterLabels: Record<RepresentationFilter, string> = 
   UNKNOWN: "Unknown",
   IN_SYNC: "In sync",
 }
+
+/** The business's agent with a request already typed, for setup steps the
+ * agent does itself instead of a form. */
+export const askAgentPath = (businessId: string, request: string) =>
+  `/businesses/${encodeURIComponent(businessId)}/agent?ask=${encodeURIComponent(request)}`
