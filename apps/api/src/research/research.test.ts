@@ -222,6 +222,14 @@ describe("AI visibility analysis", () => {
     expect(citedUrls("see https://a.example.org/x.")).toEqual(["https://a.example.org/x"])
     expect(sourceType("https://www.g2.com/products/x")).toBe("REVIEW_SITE")
   })
+  it("does not count another company's product of the same generic name as the business", () => {
+    const generic: Brands = { target: { name: "Moderation API", aliases: [], domains: ["moderationapi.com"], matchCase: false, ambiguity: null }, competitors: [], owned: ["moderationapi.com"], source: "test" }
+    expect(analyse("Use OpenAI's Moderation API for text. The Mistral Moderation API is cheaper.", generic, meta)).toMatchObject({ brandMentioned: false })
+    expect(analyse("Moderation API is a good pick for images.", generic, meta)).toMatchObject({ brandMentioned: true })
+    expect(analyse("Options: Hive, Sightengine and Moderation API.", generic, meta)).toMatchObject({ brandMentioned: true })
+    expect(analyse("Try the Acme Moderation API (moderationapi.com).", generic, meta)).toMatchObject({ brandMentioned: true })
+    expect(analyse("1. **Moderation API** covers video.", generic, meta)).toMatchObject({ brandMentioned: true })
+  })
   it("asks as a persona in a location without naming the business, and reports visibility by context", () => {
     expect(framed("best dentist for a cleaning?", { persona: "a busy parent", location: "Austin, Texas" })).toBe("I'm a busy parent in Austin, Texas. best dentist for a cleaning?")
     expect(framed("best dentist?", { location: "Jakarta" })).toBe("I'm in Jakarta. best dentist?")

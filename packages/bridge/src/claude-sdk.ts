@@ -180,7 +180,8 @@ export async function claudeSearchAnswer(opts: { binary: string; env: NodeJS.Pro
   try {
     const q = query({ prompt: opts.prompt, options: {
       ...lockdown(opts.cwd, opts.binary, opts.env, abort),
-      tools: ["WebSearch"], allowedTools: ["WebSearch"],
+      // WebSearch is the only tool that exists in this session, and the permission callback is its single gate.
+      tools: ["WebSearch"],
       canUseTool: async (name: string, input: Record<string, unknown>) => name === "WebSearch" ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: "Only web search is available." },
       model: opts.model, systemPrompt: opts.system, maxTurns: 8,
     } })

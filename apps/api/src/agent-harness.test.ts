@@ -97,6 +97,24 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     expect(events.filter(e => e.type === "VERIFICATION").map(e => e.payload["passed"])).toEqual([false, false])
   })
 
+  it("sends an answer that only offers read-only research back once to do the research", async () => {
+    const tools = [{ name: "read_ad_performance", description: "Ads", parametersJsonSchema: { type: "object", properties: {} } },
+      { name: "research_company", description: "Research", parametersJsonSchema: { type: "object", properties: {} } }]
+    const seen: string[] = []
+    const answer = await Effect.runPromise(runConversation({ message: "Should we spend on ads?", history: [], tools,
+      model: scripted([calls("read_ad_performance"), text("No ad account is connected. Want me to research your competitors now?"), calls("research_company"), text("Here is the plan with a capped first test.")], seen),
+      dispatch: () => Effect.succeed(read) }))
+    expect(seen[2]).toContain("OpenRecord runtime check: your answer offers read-only research")
+    expect(answer).toMatchObject({ reply: "Here is the plan with a capped first test.", outcome: "ANSWERED" })
+    // Only once, and never after research ran or when no research tool is declared.
+    const twice = await Effect.runPromise(runConversation({ message: "Should we spend?", history: [], tools,
+      model: scripted([text("Want me to research it?"), text("Want me to research it?")]), dispatch: () => Effect.succeed(read) }))
+    expect(twice.reply).toBe("Want me to research it?")
+    const plain = await Effect.runPromise(runConversation({ message: "Hi", history: [], tools: tools.slice(0, 1),
+      model: scripted([text("Want me to check it?")]), dispatch: () => Effect.succeed(read) }))
+    expect(plain.reply).toBe("Want me to check it?")
+  })
+
   it("compacts older tool results within a run instead of failing on context size", async () => {
     const big: AgentToolResult = { summary: "Large read", citations: [{ kind: "issue", id: "issue-big", text: "Big" }], data: "x".repeat(15000) }
     const seen: string[] = []

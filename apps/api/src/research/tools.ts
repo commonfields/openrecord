@@ -118,7 +118,11 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
   if (!c) return answer("UNKNOWN_CAPABILITY", `No research capability ${args.capability}`, "Use one of the listed capabilities, or call find_research_capabilities.",
     { suggestions: findCapabilities(args.capability.replace(/[._]/g, " "), undefined, 4).map(x => x.id) })
   // Input that does not fit the capability's own schema is refused before anything runs.
-  const input = yield* Schema.decodeUnknown(c.input, { onExcessProperty: "error" })(args.input ?? {})
+  const decoded = yield* Schema.decodeUnknown(c.input, { onExcessProperty: "error" })(args.input ?? {}).pipe(Effect.either)
+  // Wrong input gets the capability's own schema and the exact problem, so the next step can correct it.
+  if (decoded._tag === "Left") return answer("INVALID_INPUT", `${c.title}: the input does not fit`, "Call run_research again with an input object that matches expectedInput exactly (no other fields).",
+    { capability: c.id, problem: String(decoded.left.message ?? decoded.left).slice(0, 600), expectedInput: JSONSchema.make(c.input) })
+  const input = decoded.right
   const unavailable = yield* availabilityOf(c, ctx)
   if (unavailable) return answer("NOT_AVAILABLE", `${c.title}: not available`, `${unavailable}. Say this evidence is unknown, not zero, and use other capabilities.`, { capability: c.id })
   const subject = c.subject(input)
@@ -140,7 +144,12 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
     else if (isRefused(out.right)) {
       row = yield* settle(r.id, { status: "FAILED", failure: out.right.refused.replace(/[^A-Z_]/g, "").slice(0, 40) || "REFUSED" })
       return answer(out.right.refused, `${c.title}: not observed (${out.right.refused.toLowerCase().replace(/_/g, " ")})`, out.right.message, { capability: c.id, observationId: row.id })
-    } else row = yield* settle(r.id, { status: out.right.status, findings: { ...out.right.findings, ...(out.right.timeline?.length ? { timeline: out.right.timeline } : {}), ...(out.right.citations?.length ? { _citations: out.right.citations } : {}) }, coverage: out.right.coverage })
+    } else {
+      // Pages read from the public web archive are named, with their capture dates.
+      const archivedPages = net.archivedReads?.() ?? []
+      const coverage = archivedPages.length ? { ...out.right.coverage, archivedPages, archiveNote: "The site blocked automated reading, so these pages were read from the public web archive's latest copy, dated as shown; the live page may differ." } : out.right.coverage
+      row = yield* settle(r.id, { status: out.right.status, coverage, findings: { ...out.right.findings, ...(out.right.timeline?.length ? { timeline: out.right.timeline } : {}), ...(out.right.citations?.length ? { _citations: out.right.citations } : {}) } })
+    }
   }
   if (row.status === "FAILED") return answer(row.failure ?? "UNAVAILABLE", `${c.title}: not observed`, "The source did not answer. Say it is unknown; you may try once more later.", { capability: c.id, observationId: row.id })
   const cites = (row.findings?.["_citations"] as AgentToolResult["citations"] | undefined) ?? []
@@ -271,12 +280,61 @@ export const crossSourceInvestigation = (ctx: ToolContext, args: typeof FrameInp
   } satisfies AgentToolResult
 })
 
+// ---------------------------------------------------------------- first-class research tools
+
+const BUNDLE = { profile: "site.profile", technologies: "site.technologies", content: "site.content", pricing: "site.pricing", growth: "site.growth_signals",
+  partners: "site.partners", jobs: "company.jobs", history: "site.history", dns: "domain.dns", keywords: "site.keywords", registration: "domain.registration" } as const
+type Facet = keyof typeof BUNDLE
+const CompanyInput = Schema.Struct({
+  domain: Schema.String.pipe(Schema.minLength(4), Schema.maxLength(253)),
+  question: Schema.String.pipe(Schema.minLength(10), Schema.maxLength(500)),
+  facets: Schema.optional(Schema.Array(Schema.Literal(...(Object.keys(BUNDLE) as [Facet, ...Facet[]]))).pipe(Schema.minItems(1), Schema.maxItems(11))),
+})
+const DEFAULT_FACETS: ReadonlyArray<Facet> = ["profile", "growth", "technologies", "content", "pricing", "partners", "jobs", "history"]
+/** Several capabilities about one company at once, in parallel; each result is saved and cited like run_research. */
+export const researchCompany = (ctx: ToolContext, args: typeof CompanyInput.Type) => Effect.gen(function*() {
+  const facets = [...new Set(args.facets ?? DEFAULT_FACETS)]
+  const results = yield* Effect.forEach(facets, f => runResearch(ctx, { capability: BUNDLE[f], question: args.question, input: { domain: args.domain } }).pipe(Effect.either, Effect.map(r => ({ f, r }))), { concurrency: 4 })
+  const out = results.map(({ f, r }) => {
+    if (r._tag === "Left") return { facet: f, status: "UNAVAILABLE" }
+    const d = r.right.data as Record<string, unknown>
+    return { facet: f, capability: d["capability"], status: d["status"], label: d["label"] ?? null, observationId: d["observationId"] ?? null, findings: d["findings"] ? compact(d["findings"], 6, 160) : undefined, recovery: d["recovery"], coverage: d["coverage"] ? compact(d["coverage"], 4, 200) : undefined }
+  })
+  const observed = out.filter(o => o.status === "OBSERVED").length
+  return {
+    summary: `Researched ${args.domain}: ${observed} of ${facets.length} facets observed`,
+    citations: results.flatMap(({ r }) => r._tag === "Right" ? r.right.citations : []).slice(0, 10),
+    data: { domain: args.domain, results: out, guidance: "Each facet is saved research (read one fully with read_research_evidence). Label points SEEN, ESTIMATED or INFERRED with dates; a facet that was not observed is unknown, not zero." },
+  } satisfies AgentToolResult
+})
+
+const AskInput = Schema.Struct({
+  questions: Schema.Array(Schema.String.pipe(Schema.minLength(5), Schema.maxLength(500))).pipe(Schema.minItems(1), Schema.maxItems(8)),
+  competitors: Schema.optional(Schema.Array(Schema.String.pipe(Schema.minLength(2), Schema.maxLength(80))).pipe(Schema.maxItems(10))),
+  persona: Schema.optional(Schema.String.pipe(Schema.minLength(3), Schema.maxLength(160))),
+  location: Schema.optional(Schema.String.pipe(Schema.minLength(2), Schema.maxLength(80))),
+})
+export const askAiAssistants = (ctx: ToolContext, args: typeof AskInput.Type) =>
+  runResearch(ctx, { capability: "ai.answers", question: `What AI assistants answer: ${args.questions[0]!.slice(0, 200)}`, input: { prompts: args.questions, ...(args.competitors ? { competitors: args.competitors } : {}), ...(args.persona ? { persona: args.persona } : {}), ...(args.location ? { location: args.location } : {}) } })
+
+const WebResearchInput = Schema.Struct({ question: Schema.String.pipe(Schema.minLength(10), Schema.maxLength(1500)) })
+export const webResearch = (ctx: ToolContext, args: typeof WebResearchInput.Type) => runResearch(ctx, { capability: "web.research", question: args.question.slice(0, 500), input: { question: args.question } })
+
 // ---------------------------------------------------------------- declarations
 
 export const researchDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "cross_source_marketing_investigation",
     description: "Start or re-plan a marketing investigation around the owner's objective: which research capabilities are available now (and why any are not), research already saved for the companies involved, internal evidence to read, and the method (competing explanations, SEEN/ESTIMATED/INFERRED labels, and the choice to propose, ask, keep investigating or recommend no action). Read-only.",
     parametersJsonSchema: JSONSchema.make(FrameInput) },
+  { name: "research_company",
+    description: "Research one company (a competitor or the business itself) in one call: profile, growth loops, technology and advertising pixels, content cadence, pricing, partners, hiring and archive history, run in parallel and saved as dated evidence (or pick facets: profile, technologies, content, pricing, growth, partners, jobs, history, dns, keywords, registration). Blocked sites are read from the public web archive. Start here for any question about how a company markets, sells or grows.",
+    parametersJsonSchema: JSONSchema.make(CompanyInput) },
+  { name: "ask_ai_assistants",
+    description: "Ask up to 8 buyer questions on the team's connected AI assistants (with their own web search) and see whether the business is named, who is recommended instead and which pages are cited, optionally as a persona in a location. Use it whenever the question is about AI answers or AI visibility; then run_research ai.visibility for the report.",
+    parametersJsonSchema: JSONSchema.make(AskInput) },
+  { name: "web_research",
+    description: "Give a broad research question to the team's connected AI subscription with its web search (many searches, many pages) and get a dated answer with every source and the searches it ran. Use it when search_web is too narrow: market maps, what customers say, pricing across competitors, launches and press.",
+    parametersJsonSchema: JSONSchema.make(WebResearchInput) },
   { name: "find_research_capabilities",
     description: "Find OpenRecord's research capabilities for a need (for example 'how does this competitor advertise', 'pricing history', 'what do AI assistants say about us'), with each one's input schema and whether it is available here. Read-only.",
     parametersJsonSchema: JSONSchema.make(FindInput) },
@@ -291,11 +349,14 @@ export const researchDeclarations: ReadonlyArray<ToolDeclaration> = [
     parametersJsonSchema: JSONSchema.make(TimelineInput) },
 ]
 /** Tools that save research observations; the rest only read. */
-export const RESEARCH_SAVES = new Set(["run_research"])
+export const RESEARCH_SAVES = new Set(["run_research", "research_company", "ask_ai_assistants", "web_research"])
 
 export const dispatchResearch = (ctx: ToolContext, name: string, raw: unknown) => Effect.gen(function*() {
   const decode = <A, I>(schema: Schema.Schema<A, I>) => Schema.decodeUnknown(schema, { onExcessProperty: "error" })(raw)
   if (name === "run_research") return yield* runResearch(ctx, yield* decode(RunInput))
+  if (name === "research_company") return yield* researchCompany(ctx, yield* decode(CompanyInput))
+  if (name === "ask_ai_assistants") return yield* askAiAssistants(ctx, yield* decode(AskInput))
+  if (name === "web_research") return yield* webResearch(ctx, yield* decode(WebResearchInput))
   if (name === "find_research_capabilities") return yield* findResearch(ctx, yield* decode(FindInput))
   if (name === "read_research_evidence") return yield* readResearchEvidence(ctx, yield* decode(EvidenceInput))
   if (name === "research_timeline") return yield* researchTimeline(ctx, yield* decode(TimelineInput))
