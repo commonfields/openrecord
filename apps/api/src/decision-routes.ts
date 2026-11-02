@@ -9,11 +9,13 @@ import { AgentProposalRepository, BusinessRepository, GrowthRefused, GrowthRepos
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { json, operatorSessionFor, type WithSession } from "./record-routes.js"
 import { listChanges, type WordPressChange } from "./wordpress.js"
+import { listActions, type AccountAction } from "./account-actions.js"
 
 export type DecisionItem =
   | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly proposal: AgentProposal }
   | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly opportunity: GrowthOpportunity }
   | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly change: WordPressChange }
+  | { readonly type: "ACCOUNT_ACTION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly action: AccountAction }
 
 export const pendingDecisions = (accountId: string) => Effect.gen(function*() {
   const businesses = yield* (yield* BusinessRepository).list(accountId)
@@ -25,10 +27,12 @@ export const pendingDecisions = (accountId: string) => Effect.gen(function*() {
     // A business without a growth profile has no initiatives yet.
     const initiatives = yield* growth.list(accountId, b.id).pipe(Effect.catchIf(e => e instanceof GrowthRefused, () => Effect.succeed([])))
     const changes = yield* listChanges(accountId, b.id, "PROPOSED")
+    const actions = yield* listActions(accountId, b.id, "PROPOSED")
     return [
       ...open.map((proposal): DecisionItem => ({ type: "AGENT_PROPOSAL", business, createdAt: proposal.createdAt, proposal })),
       ...initiatives.filter(o => o.status === "PROPOSED").map((opportunity): DecisionItem => ({ type: "GROWTH_OPPORTUNITY", business, createdAt: opportunity.createdAt, opportunity })),
       ...changes.map((change): DecisionItem => ({ type: "WORDPRESS_CHANGE", business, createdAt: change.createdAt, change })),
+      ...actions.map((action): DecisionItem => ({ type: "ACCOUNT_ACTION", business, createdAt: action.createdAt, action })),
     ]
   }), { concurrency: 4 })
   return perBusiness.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt))

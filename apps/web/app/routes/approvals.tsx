@@ -7,6 +7,7 @@ import { EmptyState, PageHeader, Panel } from "@/components/page"
 import { InitiativeDecision } from "@/components/setup-flow"
 import { AgentProposalCard } from "@/components/agent-chat"
 import { WordPressChangeCard } from "@/components/wordpress"
+import { AccountActionCard } from "@/components/account-action"
 import { DECISIONS_CHANGED, Decisions, notifyDecisionsChanged, type DecisionItem } from "@/lib/api"
 import { errorMessage, relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
@@ -46,12 +47,14 @@ export function ApprovalsPage() {
             <span className="text-muted-foreground">· {group.items.length}</span>
           </h2>
           {group.items.map(item => (
-            <div key={`${item.type}:${item.type === "AGENT_PROPOSAL" ? item.proposal.id : item.type === "WORDPRESS_CHANGE" ? item.change.id : item.opportunity.id}`} className="space-y-1">
+            <div key={`${item.type}:${item.type === "AGENT_PROPOSAL" ? item.proposal.id : item.type === "WORDPRESS_CHANGE" ? item.change.id : item.type === "ACCOUNT_ACTION" ? item.action.id : item.opportunity.id}`} className="space-y-1">
               <p className="text-[0.6875rem] text-muted-foreground">Proposed {relativeTime(item.createdAt)}</p>
               {item.type === "GROWTH_OPPORTUNITY"
                 ? <Panel className="p-5"><InitiativeDecision businessId={businessId} opportunity={item.opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></Panel>
                 : item.type === "WORDPRESS_CHANGE"
                 ? <WordPressChangeCard businessId={businessId} change={item.change} onDone={() => { void reload() }} />
+                : item.type === "ACCOUNT_ACTION"
+                ? <AccountActionCard businessId={businessId} action={item.action} onDone={() => { void reload() }} />
                 : <AgentProposalCard businessId={businessId} businessName={group.name} proposal={item.proposal} onDone={() => { void reload() }} />}
             </div>
           ))}

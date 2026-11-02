@@ -27,6 +27,7 @@ import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHar
 import { AgentModelPicker } from "@/components/agent-model-picker"
 import { NewChatDialog } from "@/components/new-chat-dialog"
 import { WordPressChangeById } from "@/components/wordpress"
+import { AccountActionById } from "@/components/account-action"
 import { AgentFollowups } from "@/components/agent-followups"
 import { followupChatEvent, followupModel } from "@/lib/agent-followups"
 
@@ -366,6 +367,7 @@ function MessageDecisions({ session, businessName, refs }: { session: AgentSessi
   const cards = refs.flatMap(ref => {
     if (ref.type === "GROWTH_OPPORTUNITY") return [<InitiativeCard key={ref.id} businessId={businessId} opportunityId={ref.id} />]
     if (ref.type === "WORDPRESS_CHANGE") return [<WordPressChangeById key={ref.id} businessId={businessId} changeId={ref.id} />]
+    if (ref.type === "ACCOUNT_ACTION") return [<AccountActionById key={ref.id} businessId={businessId} actionId={ref.id} />]
     const proposal = session.proposals.find(p => p.id === ref.id)
     return proposal ? [<AgentProposalCard key={ref.id} businessId={businessId} businessName={businessName} proposal={proposal} onDone={session.refreshProposals} />] : []
   })

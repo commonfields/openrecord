@@ -33,6 +33,8 @@ const headers = (c: GoogleAdsConfig, token: string, loginCustomerId: string | nu
 })
 const digits = (v: unknown) => { const s = text(v, 20).replace(/-/g, ""); return /^\d{1,20}$/.test(s) ? s : null }
 
+export { headers as googleAdsHeaders, digits as googleAdsDigits }
+
 /** One GAQL query; every page up to a bound. */
 export const googleAdsSearch = async (c: GoogleAdsConfig, token: string, customerId: string, loginCustomerId: string | null, query: string): Promise<Array<Record<string, unknown>>> => {
   if (!/^\s*SELECT\s/i.test(query)) throw unexpected()
