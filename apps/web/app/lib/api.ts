@@ -2,6 +2,7 @@
 // Most server state comes from these calls; ordinary React state covers UI-local interaction.
 import { AssayRoutes, type AssayQueue, type RegisterAssaySourceRequest, type RunAssayRequest, type ReviewAssayFactRequest, type ReviewAssayFindingRequest, Routes } from "@openrecord/contracts"
 import type { GrowthOpportunity, ProviderInfo, ProviderCatalogResponse, ProviderDailyAnswer, HarnessSelection } from "@openrecord/contracts"
+import type { WordPressChange } from "./wordpress-api"
 export class ApiError extends Error {
   readonly status: number
   readonly tag: string
@@ -323,27 +324,6 @@ export type DecisionItem =
   | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; opportunity: GrowthOpportunity }
   | { type: "WORDPRESS_CHANGE"; business: { id: string; name: string }; createdAt: string; change: WordPressChange }
 
-/** A change to a connected WordPress site: prepared, approved by a person, then published. */
-export type WordPressValues = { title?: string; content?: string; meta?: Record<string, string>; status?: string }
-export type WordPressChange = {
-  id: string; kind: "UPDATE_COPY" | "SET_SEO" | "ADD_FAQ" | "CREATE_POST"; postType: "posts" | "pages"; postId: number | null
-  targetTitle: string; targetLink: string | null; before: WordPressValues; after: WordPressValues; rationale: string
-  status: "PROPOSED" | "PUBLISHING" | "PUBLISHED" | "REJECTED" | "FAILED" | "UNDONE"; proposedBy: "ASSISTANT" | "OPERATOR"
-  failure: string | null; publishedLink: string | null; liveCheck: { status: number | null; observed: boolean | null } | null; createdAt: string; decidedAt: string | null
-}
-export type WordPressConnection = { siteUrl: string; username: string; last4: string; seoPlugin: "YOAST" | "RANK_MATH" | "NONE"; canPublish: boolean
-  canAddScripts: boolean; siteName: string; status: "ACTIVE" | "REVOKED"; connectedAt: string }
-const wpBase = (businessId: string) => `/api/businesses/${encodeURIComponent(businessId)}/wordpress`
-export const WordPress = {
-  status: (businessId: string) => api<{ configured: boolean; connection: WordPressConnection | null }>(wpBase(businessId)),
-  connect: (businessId: string, siteUrl: string, username: string, appPassword: string) =>
-    api<{ connection: WordPressConnection }>(wpBase(businessId), { method: "POST", body: JSON.stringify({ siteUrl, username, appPassword }) }),
-  disconnect: (businessId: string) => api<{ disconnected: boolean }>(wpBase(businessId), { method: "DELETE" }),
-  change: (businessId: string, id: string) => api<{ change: WordPressChange }>(`${wpBase(businessId)}/changes/${encodeURIComponent(id)}`),
-  approve: (businessId: string, id: string) => api<{ change: WordPressChange }>(`${wpBase(businessId)}/changes/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
-  reject: (businessId: string, id: string) => api<{ change: WordPressChange }>(`${wpBase(businessId)}/changes/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }),
-  undo: (businessId: string, id: string) => api<{ change: WordPressChange }>(`${wpBase(businessId)}/changes/${encodeURIComponent(id)}/undo`, { method: "POST", body: "{}" }),
-}
 export const Decisions = {
   list: () => api<{ items: DecisionItem[]; count: number }>("/api/decisions"),
 }
