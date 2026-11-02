@@ -22,6 +22,7 @@ import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
+import { accountActionDeclarations, dispatchAccountAction } from "./account-actions.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -71,6 +72,10 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     effect: declaration.name === "prepare_wordpress_change" ? "propose" : "read",
     replay: declaration.name === "prepare_wordpress_change" ? "deduplicated" : "safe", scope: "general",
     run: (ctx, args) => dispatchWordPress(ctx, declaration.name, args) })),
+  ...accountActionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
+    effect: declaration.name === "prepare_account_action" ? "propose" : "read",
+    replay: declaration.name === "prepare_account_action" ? "deduplicated" : "safe", scope: "general",
+    run: (ctx, args) => dispatchAccountAction(ctx, declaration.name, args) })),
   ...growthProposalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
     run: (ctx, args) => dispatchGrowthProposal(ctx.accountId, ctx.userId, ctx.businessId, args) })),
   ...draftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "propose", replay: "deduplicated", scope: "general",
@@ -149,6 +154,25 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
     }
     return { ...toolFailure("REFUSED"), guidance: guidance[reason] ?? "The WordPress site refused or could not answer. Say so plainly; do not retry blindly." }
   }
+  if (tag === "AccountActionRefused" || tag === "AdsRefused") {
+    const reason = (e as { readonly reason?: string }).reason ?? ""
+    const guidance: Readonly<Record<string, string>> = {
+      LocalProfileNotConnected: "No Google Business Profile is connected to this business. Ask the person to connect it on the Channels page; offer the reply as text meanwhile.",
+      AdsNotConnected: "No Google Ads account is connected to this business. Ask the person to connect it on the Channels page; offer the change as a plan meanwhile.",
+      AccountAmbiguous: "The business has several connected accounts or locations. Read them first and pass account.",
+      AdsReauthorizationRequired: "The connection needs a new sign-in. Ask the person to reconnect it on the Channels page.",
+      NothingToChange: "That is already the current value. Read it again before preparing a different change.",
+      SharedBudget: "That campaign uses a shared budget that other campaigns draw on. Say so; the person changes it in Google Ads.",
+      BudgetIncreaseTooLarge: "A budget can at most double in one step. Prepare a smaller increase and say when to review the next one.",
+      FinalUrlNotOwnSite: "An ad must send people to the business's own website. Use a page on it.",
+      GoogleRejected: "Google refused this exact change when checking it (policy, limits or permissions). Revise it (shorter text, no claims Google restricts) or say plainly why it cannot be made.",
+      CampaignNotFound: "That campaign was not found. Read the campaigns and use an ID from the result.",
+      AdGroupNotFound: "That ad group is not in the campaign. Read the campaign with campaignId to list its ad groups.",
+    }
+    return { ...toolFailure("REFUSED"), guidance: guidance[reason]
+      ?? (/^Ad[A-Z_]+$/.test(reason) ? `The ad breaks Google's limits (${reason.slice(2).toLowerCase().replace(/_/g, " ")}). Fix it and prepare it again.`
+      : "The account refused or could not answer. Say so plainly; do not retry blindly.") }
+  }
   if (tag === "MemoryFull") return { ...toolFailure("REFUSED"), guidance: "Business memory is full. Forget an outdated or less useful note with forget_memory first, then save this one." }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")
   return toolFailure("TOOL_FAILED")
@@ -158,12 +182,13 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; readonly id: string }
+export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
   ...(typeof receipt["wordpressChangeId"] === "string" && UUID.test(receipt["wordpressChangeId"]) ? [{ type: "WORDPRESS_CHANGE" as const, id: receipt["wordpressChangeId"] }] : []),
+  ...(typeof receipt["accountActionId"] === "string" && UUID.test(receipt["accountActionId"]) ? [{ type: "ACCOUNT_ACTION" as const, id: receipt["accountActionId"] }] : []),
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */
 export type TaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"

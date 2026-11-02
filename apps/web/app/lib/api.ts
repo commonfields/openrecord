@@ -263,7 +263,7 @@ export type AgentMessage = {
 export type AgentConversation = { id: string; revision: number; messages: AgentMessage[]; session?: AgentSessionInfo }
 // A helper session's link to the session that started it. Root chats have no parent.
 export type AgentSessionInfo = { parentSessionId: string | null; title: string | null; role: string | null; depth: number }
-export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; id: string }
+export type AgentDecisionRef = { type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"; id: string }
 export type AgentActivity =
   | { kind: "thought"; text: string; ms: number }
   | { kind: "tool"; tool: string; text: string; failed?: boolean }
@@ -323,7 +323,23 @@ export type DecisionItem =
   | { type: "AGENT_PROPOSAL"; business: { id: string; name: string }; createdAt: string; proposal: AgentProposal }
   | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; opportunity: GrowthOpportunity }
   | { type: "WORDPRESS_CHANGE"; business: { id: string; name: string }; createdAt: string; change: WordPressChange }
+  | { type: "ACCOUNT_ACTION"; business: { id: string; name: string }; createdAt: string; action: AccountAction }
 
+/** One change to the business's own Google Business Profile or Google Ads account: prepared, approved by a person, carried out once. */
+export type AccountAction = {
+  id: string; provider: "google_business" | "google_ads"
+  kind: "REPLY_TO_REVIEW" | "PAUSE_CAMPAIGN" | "ENABLE_CAMPAIGN" | "SET_DAILY_BUDGET" | "CREATE_SEARCH_AD"
+  target: Record<string, unknown>; before: Record<string, unknown>; after: Record<string, unknown>; rationale: string
+  status: "PROPOSED" | "EXECUTING" | "DONE" | "REJECTED" | "FAILED" | "UNDONE"; proposedBy: "ASSISTANT" | "OPERATOR"
+  failure: string | null; result: Record<string, unknown> | null; createdAt: string; decidedAt: string | null
+}
+const actionBase = (businessId: string) => `/api/businesses/${encodeURIComponent(businessId)}/account-actions`
+export const AccountActions = {
+  get: (businessId: string, id: string) => api<{ action: AccountAction }>(`${actionBase(businessId)}/${encodeURIComponent(id)}`),
+  approve: (businessId: string, id: string) => api<{ action: AccountAction }>(`${actionBase(businessId)}/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
+  reject: (businessId: string, id: string) => api<{ action: AccountAction }>(`${actionBase(businessId)}/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }),
+  undo: (businessId: string, id: string) => api<{ action: AccountAction }>(`${actionBase(businessId)}/${encodeURIComponent(id)}/undo`, { method: "POST", body: "{}" }),
+}
 export const Decisions = {
   list: () => api<{ items: DecisionItem[]; count: number }>("/api/decisions"),
 }
