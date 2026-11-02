@@ -37,6 +37,7 @@ import { ClientRecordPage } from "./routes/client"
 import { ClientDiscoveryPage } from "./routes/client-discovery"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
+import { SharedChatPage } from "./routes/shared-chat"
 import { PublicGrowthReportPage } from "./routes/public-growth-report"
 import { ApprovalsPage, BusinessInboxPage } from "./routes/approvals"
 
@@ -50,6 +51,7 @@ function App() {
           <Route path="/signup" element={<SignUp />} />
           {/* The client-facing record: public, read-only, outside the workspace shell. */}
           <Route path="/open/:publicId" element={<PublicRecordPage />} />
+          <Route path="/shared/:token" element={<SharedChatPage />} />
           <Route path="/reports/:publicId" element={<PublicGrowthReportPage />} />
           <Route
             element={

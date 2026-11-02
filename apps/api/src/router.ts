@@ -140,6 +140,8 @@ import { researchConnectionsApi } from "./research/endpoints/run.js"
 import { mcpApi, mcpGrantsApi } from "./mcp-server.js"
 import { aiTrafficFeedApi } from "./research/traffic-feed.js"
 import { mcpConnectionsApi } from "./mcp-client.js"
+import { playbooksApi } from "./playbooks.js"
+import { chatSharesApi } from "./chat-shares.js"
 import { wordpressApi } from "./wordpress.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 
@@ -1624,7 +1626,7 @@ export const makeRouter = () => {
   )
   return HttpRouter.concat(HttpRouter.concat(objectivesApi(withSession), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi), memoryApi),
-    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(HttpRouter.concat(acquisitionApi(withSession), wordpressApi(withSession)), HttpRouter.concat(trackingScheduleApi(withSession), HttpRouter.concat(answerScheduleApi(withSession), HttpRouter.concat(researchConnectionsApi(withSession), HttpRouter.concat(mcpGrantsApi(withSession), HttpRouter.concat(mcpApi, HttpRouter.concat(aiTrafficFeedApi(withSession), mcpConnectionsApi(withSession))))))))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
+    HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(HttpRouter.concat(acquisitionApi(withSession), wordpressApi(withSession)), HttpRouter.concat(trackingScheduleApi(withSession), HttpRouter.concat(answerScheduleApi(withSession), HttpRouter.concat(researchConnectionsApi(withSession), HttpRouter.concat(mcpGrantsApi(withSession), HttpRouter.concat(mcpApi, HttpRouter.concat(aiTrafficFeedApi(withSession), HttpRouter.concat(mcpConnectionsApi(withSession), HttpRouter.concat(playbooksApi(withSession), chatSharesApi(withSession))))))))))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   )))
 }
 
