@@ -42,6 +42,7 @@ describe("navigation", () => {
     expect(sectionTitles).toEqual({
       agent: "Agent",
       channels: "Channels",
+      inbox: "Needs you",
       work: "Work",
       results: "Results",
       overview: "Agent",

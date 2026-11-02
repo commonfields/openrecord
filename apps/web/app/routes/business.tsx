@@ -6,11 +6,13 @@ import { AgentChat } from "@/components/agent-chat"
 import { EmptyState } from "@/components/page"
 import { usePreferences } from "@/lib/preferences"
 import { useWorkspace } from "@/lib/workspace"
+import { WorkspaceAgentProvider } from "@/components/workspace-agent"
 import { Today } from "./today"
 
 export function BusinessLayout() {
   const { id = "" } = useParams()
   const { setActiveBusinessId, businesses, businessesLoading } = useWorkspace()
+  const business = businesses.find((b) => b.id === id)
 
   useEffect(() => setActiveBusinessId(id), [id, setActiveBusinessId])
 
@@ -28,7 +30,8 @@ export function BusinessLayout() {
       />
     )
   }
-  return <Outlet />
+  // Workspace pages share one agent pane; the Agent tab is the full conversation.
+  return <WorkspaceAgentProvider businessId={id} businessName={business?.name ?? "this business"}><Outlet /></WorkspaceAgentProvider>
 }
 
 /** Kept for links made before the four-area workspace: ?view= or the landing

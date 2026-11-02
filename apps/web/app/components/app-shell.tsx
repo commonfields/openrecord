@@ -319,7 +319,7 @@ function SidebarBody() {
   const agent = useAgentView()
   const pathname = useLocation().pathname
   const general = pathname === "/agent"
-  const waiting = useWaitingCount(pathname)
+  const waiting = useWaitingCount(pathname, activeBusiness?.id ?? null)
   // The chat history shows archived chats instead while this is on, and the
   // filter narrows both to one business.
   const [archived, setArchived] = useState(false)
@@ -346,7 +346,7 @@ function SidebarBody() {
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
         {agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>
           <SidebarGroup label="Workspace">
-            <SidebarLink to="/approvals" icon={<CheckCheckIcon />} label="Needs you" count={waiting} />
+            <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<CheckCheckIcon />} label="Needs you" count={waiting} />
             {base ? <>
               <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
               <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
@@ -592,16 +592,17 @@ function ChatHistory({ archived, filter, onLeaveArchive }: { archived: boolean; 
 }
 
 /** How many decisions wait on the signed-in person; reloads on navigation and after any decision. */
-function useWaitingCount(pathname: string) {
+/** Decisions waiting on a person: for the open business, or across all of them. */
+function useWaitingCount(pathname: string, businessId: string | null) {
   const [count, setCount] = useState(0)
   useEffect(() => {
     let live = true
-    const load = () => { void Decisions.list().then(r => { if (live) setCount(r.count) }).catch(() => {}) }
+    const load = () => { void Decisions.list().then(r => { if (live) setCount(businessId ? r.items.filter(i => i.business.id === businessId).length : r.count) }).catch(() => {}) }
     load()
     window.addEventListener(DECISIONS_CHANGED, load)
     window.addEventListener("focus", load)
     return () => { live = false; window.removeEventListener(DECISIONS_CHANGED, load); window.removeEventListener("focus", load) }
-  }, [pathname])
+  }, [pathname, businessId])
   return count
 }
 
@@ -645,7 +646,7 @@ function ViewTabs() {
       value={view}
       onValueChange={(v) => {
         if (v === view) return
-        nav(v === "agent" ? `${base}/agent` : "/approvals")
+        nav(v === "agent" ? `${base}/agent` : `${base}/inbox`)
       }}
     >
       <TabsList aria-label="Workspace view" className="grid h-7 w-auto grid-cols-2 items-stretch gap-0.5 rounded-[7px] bg-sidebar p-0.5 shadow-(--track-inner)">

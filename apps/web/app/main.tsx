@@ -38,7 +38,7 @@ import { ClientDiscoveryPage } from "./routes/client-discovery"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
 import { PublicGrowthReportPage } from "./routes/public-growth-report"
-import { ApprovalsPage } from "./routes/approvals"
+import { ApprovalsPage, BusinessInboxPage } from "./routes/approvals"
 
 function App() {
   return (
@@ -78,6 +78,7 @@ function App() {
               <Route index element={<Navigate to="agent" replace />} />
               <Route path="agent" element={<AgentPage />} />
               <Route path="channels" element={<ChannelsPage />} />
+              <Route path="inbox" element={<BusinessInboxPage />} />
               <Route path="work" element={<WorkPage />} />
               <Route path="results" element={<ResultsPage />} />
               <Route path="overview" element={<Overview />} />

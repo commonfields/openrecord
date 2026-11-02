@@ -484,8 +484,10 @@ function SourceChip({ businessId, citation: c }: { businessId: string | null; ci
   ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
 }
 
-function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context, banner = true, composer = true }: {
+function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context, banner = true, composer = true, seed = null }: {
   session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null; banner?: boolean
+  /** A request another part of the page hands the composer: typed, never sent until the person sends it. */
+  seed?: ComposerSeed | null
   // Off for a read-only view (a helper reviewed beside the conversation).
   composer?: boolean
 }) {
@@ -575,6 +577,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
           session={session}
           context={context ?? null}
           prefill={!compact}
+          seed={seed}
         />
       </div> : null}
     </div>
@@ -650,11 +653,14 @@ function useSlidePresence(open: boolean) {
 // The chat as its own card on the canvas, left of the content panel, the way
 // the sidebar sits. It grows in to half the width; on narrow screens it takes
 // the whole width and the content panel steps aside.
-function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand, context }: {
+export type ComposerSeed = { readonly text: string; readonly nonce: number }
+
+export function AgentPane({ open, session, businessName, placeholder, onClose, closeLabel, closeIcon, onCommand, context, seed = null }: {
   open: boolean; session: AgentSession; businessName: string; placeholder: string
   onClose: () => void; closeLabel?: string; closeIcon?: ReactNode
   onCommand: (c: AgentCommand) => void
   context?: AgentChatContext | null
+  seed?: ComposerSeed | null
 }) {
   const pane = useSlidePresence(open)
   const { slot, setPane } = usePaneSlot()
@@ -682,7 +688,7 @@ function AgentPane({ open, session, businessName, placeholder, onClose, closeLab
           {pane.present ? (
             <>
               <ConversationHeader onClose={onClose} {...(closeLabel ? { closeLabel } : {})} {...(closeIcon ? { closeIcon } : {})} />
-              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} context={context ?? null} />
+              <Thread session={session} businessName={businessName} compact placeholder={placeholder} onCommand={onCommand} context={context ?? null} seed={seed} />
             </>
           ) : null}
         </div>
@@ -1016,12 +1022,15 @@ function Composer({
   modelBlocked,
   context,
   prefill = false,
+  seed = null,
 }: {
   onSend: (text: string, attachments?: AgentAttachment[]) => void
   /** Start with the `?ask=` text from the address, so a link elsewhere in the
    * app can hand the agent a request. It is typed, never sent, until the
    * person presses send. */
   prefill?: boolean
+  /** A request handed over by the page around the pane; each new nonce replaces the draft. */
+  seed?: ComposerSeed | null
   /** Slash commands run as conversational turns through the selected agent. */
   onCommand?: ((command: AgentCommand) => void) | undefined
   disabled: boolean
@@ -1048,6 +1057,13 @@ function Composer({
   }, [asked, setAskParams])
   const [files, setFiles] = useState<AgentAttachment[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+  const seedNonce = seed?.nonce ?? null
+  useEffect(() => {
+    if (seedNonce === null || !seed) return
+    setText(seed.text)
+    requestAnimationFrame(() => { const el = textRef.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedNonce])
   const [listening, setListening] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<Recognition | null>(null)
