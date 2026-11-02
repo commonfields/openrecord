@@ -8,7 +8,6 @@ import { useWorkspace } from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { cn } from "@/lib/utils"
 
 /** One list of businesses to chat about. A client record is the same
  * business seen from the agency side, so it is listed once, by its own name. */
