@@ -19,6 +19,7 @@ import { WordPressSetup } from "@/components/wordpress"
 import { AiAnswerTracking } from "@/components/ai-answer-tracking"
 import { AiTrafficUpload } from "@/components/ai-traffic"
 import { ResearchConnections } from "@/components/research-connections"
+import { AskAgentButton } from "@/components/workspace-agent"
 import { AgentAccess, LiveTrafficFeed, ToolServers } from "@/components/agent-access"
 import { ADS_CALLBACK_COPY, Ads, adsError } from "@/lib/ads"
 import { Revenue } from "@/lib/revenue"
@@ -161,7 +162,10 @@ export function ChannelsPage() {
       <Panel className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
           <h2 className="text-sm font-medium">Accounts</h2>
-          <span className="text-xs text-muted-foreground">{loading ? "Checking" : incomplete ? "Some statuses unavailable" : connected ? `${connected} connected` : "None connected yet"}</span>
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{loading ? "Checking" : incomplete ? "Some statuses unavailable" : connected ? `${connected} connected` : "None connected yet"}</span>
+            <AskAgentButton businessId={id} request={`Which of our channels should ${name} connect first, and what would each one let you measure or do for our goal?`}>Which first?</AskAgentButton>
+          </span>
         </div>
         {loading ? <div className="space-y-2 p-4">{[0, 1, 2].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
           : <ul className="divide-y divide-border/60">{rows}</ul>}
@@ -173,6 +177,7 @@ export function ChannelsPage() {
             <h2 className="text-sm font-medium">Found on your website</h2>
             <p className="text-xs text-muted-foreground">Profiles your homepage links to. The agent reads them in research; it can't post there.</p>
           </div>
+          <AskAgentButton businessId={id} request={`Research our profiles linked from the website (${profiles.map(p => p.label).join(", ")}): how active each is, how they compare with competitors, and what to improve first.`}>Research these profiles</AskAgentButton>
           <ul className="flex flex-wrap gap-2">
             {profiles.map(p => (
               <li key={p.key}>
@@ -216,6 +221,7 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
             </div>
             <p className="truncate text-xs text-muted-foreground">{identity && state === "connected" ? identity : purpose}</p>
           </div>
+          <ChannelAsk title={title} connected={state === "connected"} />
           {action ? (
             <Button size="sm" variant={action.variant} disabled={busy} onClick={action.run} className="min-w-24">
               {busy ? <LoaderCircleIcon className="animate-spin" /> : null}{action.label}
@@ -239,6 +245,13 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
       </Collapsible>
     </li>
   )
+}
+
+/** Hands the agent this channel: what it shows when connected, what it would add when not. */
+function ChannelAsk({ title, connected }: { title: string; connected: boolean }) {
+  const { id = "" } = useParams()
+  return <AskAgentButton businessId={id} className="h-7 text-xs text-muted-foreground"
+    request={connected ? `What does our ${title} data show right now, and what should we do about it?` : `What would connecting ${title} let you measure or do for us, and is it worth connecting now?`}>Ask</AskAgentButton>
 }
 
 function RowError({ text, onRetry }: { text: string; onRetry: () => void }) {

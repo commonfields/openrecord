@@ -25,6 +25,7 @@ export const workspaceNav = (base: string): WorkspaceNavItem[] => [
 export const sectionTitles: Record<string, string> = {
   agent: "Agent",
   channels: "Channels",
+  inbox: "Needs you",
   work: "Work",
   results: "Results",
   overview: "Agent",

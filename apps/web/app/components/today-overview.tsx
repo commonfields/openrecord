@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router"
+import { useAskAgent } from "@/components/workspace-agent"
 import { ArrowRightIcon, PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -110,6 +111,7 @@ export function goalTotals(series: GrowthSeries | null, days: number) {
 /** Four answers to "are we OK?", one per surface; each opens where to act. */
 export function HealthStrip({ businessId, a, data, days, loading }: { businessId: string; a: Analytics | null; data: OverviewData; days: number; loading: boolean }) {
   const navigate = useNavigate()
+  const ask = useAskAgent(businessId)
   const skeleton = <Skeleton className="h-5 w-14" />
   const acc = a ? accuracy(a.current) : null
   const prevAcc = a ? accuracy(a.previous) : null
@@ -161,7 +163,7 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
           label: "Business goal",
           value: data.loading.growth ? skeleton : "Not set",
           hint: "Ask your agent to set one",
-          onSelect: () => navigate(askAgentPath(businessId, "Help me set our marketing goal and what we should count as success.")),
+          onSelect: () => ask("Help me set our marketing goal and what we should count as success."),
         },
   ]
   return <StatStrip stats={stats} />

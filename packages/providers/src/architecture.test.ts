@@ -15,6 +15,8 @@ const LOCAL_PROCESS_OWNERS = new Set([
   join(root, "packages/bridge/src/process.ts"),
   // The local-mode launcher: starts only this Node binary on the bridge program, gated by OPENRECORD_LOCAL_BRIDGE.
   join(root, "packages/fs-containment/src/local-bridge-process.ts"),
+  // A developer's evaluation script (pnpm tsx, never deployed): runs the local claude CLI for a baseline answer.
+  join(root, "apps/api/scripts/run-live-tasks.ts"),
 ])
 describe("hosted Effect architecture guards", () => {
   it("has no Rust execution, subprocess, or IPC dependency in hosted sources", () => {
