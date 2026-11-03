@@ -81,8 +81,10 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     expect(failed).toMatchObject({ status: "FAILED", failure_reason: "TIMEOUT", model_steps: 1, tool_calls: 1 })
     expect(failed.settled_at).not.toBeNull()
     const journal = await events(failed.id)
-    expect(journal.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "RUN_FINISHED"])
+    expect(journal.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "VERIFICATION", "RUN_FINISHED"])
     expect(journal[5]!.payload).toMatchObject({ effect: "propose", receipt: { proposalId: saved[0], status: "PROPOSED", executed: false } })
+    // The failed model step is journalled with its reason.
+    expect(journal[7]!.payload).toMatchObject({ passed: false, action: "MODEL_FAILED", reason: "TIMEOUT" })
     // Retrying continues from the note and returns the same pending proposal.
     let context = ""
     const retry: ModelResponse[] = [call("propose_check_run", { questionId }), text("The re-check awaits your approval.")]

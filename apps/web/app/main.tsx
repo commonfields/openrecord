@@ -38,6 +38,7 @@ import { ClientDiscoveryPage } from "./routes/client-discovery"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
 import { SharedChatPage } from "./routes/shared-chat"
+import { UsagePage } from "./routes/usage"
 import { PublicGrowthReportPage } from "./routes/public-growth-report"
 import { ApprovalsPage, BusinessInboxPage } from "./routes/approvals"
 
@@ -67,6 +68,7 @@ function App() {
             <Route path="/" element={<RootRedirect />} />
             <Route path="/start" element={<StartPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
+            <Route path="/usage" element={<UsagePage />} />
             <Route path="/agent" element={<AgentChat businessId={null} businessName="General chat" />} />
             <Route path="/products/new" element={<NewProductPage />} />
             <Route path="/clients/:id/growth" element={<ClientGrowthPage />} />

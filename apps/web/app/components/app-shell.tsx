@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import { Link, Outlet, useLocation, useMatch, useNavigate } from "react-router"
 import {
+  GaugeIcon,
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
@@ -141,7 +142,7 @@ export function AppShell() {
   const location = useLocation()
   // Match Results' full-width layout on the business and client lists and
   // throughout Work navigation, including evidence tool detail pages.
-  const fullWidthPage = ["/approvals", "/businesses", "/clients"].includes(location.pathname) || /^\/businesses\/[^/]+\/(results|channels|work|search|issues|representations|truth|checks|assay|facts)(\/|$)/.test(location.pathname)
+  const fullWidthPage = ["/approvals", "/businesses", "/clients", "/usage"].includes(location.pathname) || /^\/businesses\/[^/]+\/(results|channels|work|search|issues|representations|truth|checks|assay|facts)(\/|$)/.test(location.pathname)
   const chrome = useMemo(() => ({ setMinimal, setWorkspace, setWide, setFocus }), [])
   const sidebarCollapsed = focus ? !focusSidebar : collapsed
   const toggleSidebar = () => (focus ? setFocusSidebar((v) => !v) : setCollapsed((c) => !c))
@@ -824,6 +825,10 @@ function AccountMenu() {
           <KeyboardIcon />
           Keyboard shortcuts
         </DropdownMenuItem>
+        <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/usage")}>
+          <GaugeIcon />
+          Usage
+        </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1.5" />
         <DropdownMenuItem className={SIDEBAR_MENU_ITEM} onSelect={() => nav("/businesses")}>
           <Building2Icon />
@@ -888,6 +893,8 @@ function Breadcrumbs() {
     crumbs.push({ label: "Inbox" })
   } else if (parts[0] === "start") {
     crumbs.push({ label: "Set up a business" })
+  } else if (parts[0] === "usage") {
+    crumbs.push({ label: "Usage" })
   } else if (parts[0] === "products" && parts[1] === "new") {
     crumbs.push({ label: "Clients", to: "/clients" }, { label: "Add a product" })
   } else {
