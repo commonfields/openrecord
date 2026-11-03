@@ -1,8 +1,9 @@
 // An agent answer as formatted text: GitHub-flavoured Markdown (lists, tables, code, task lists) with the app's
 // type scale. Raw HTML in the answer is never rendered, and links open in a
 // new tab without passing this page as the opener.
-import { memo } from "react"
+import { isValidElement, memo, type ReactNode } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
+import { ChatVisual } from "@/components/chat-visual"
 import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
 
@@ -21,10 +22,27 @@ const components: Components = {
   img: ({ alt }) => alt ? <span className="text-muted-foreground">[{alt}]</span> : null,
 }
 
-export const ChatMarkdown = memo(function ChatMarkdown({ text, className }: { text: string; className?: string }) {
+/** The ```chart block inside a <pre>, if this is one: its raw spec text. */
+const chartSource = (children: ReactNode): string | null => {
+  const child = Array.isArray(children) ? children[0] : children
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(child)) return null
+  if (!/\blanguage-chart\b/.test(child.props.className ?? "")) return null
+  return String(child.props.children ?? "").trim()
+}
+// Charts while a reply is still being revealed show "Drawing chart…" instead of half-written JSON.
+const withVisuals = (live: boolean): Components => ({
+  ...components,
+  pre: ({ children }) => {
+    const chart = chartSource(children)
+    return chart !== null ? <ChatVisual raw={chart} live={live} /> : <pre>{children}</pre>
+  },
+})
+const SETTLED = withVisuals(false), LIVE = withVisuals(true)
+
+export const ChatMarkdown = memo(function ChatMarkdown({ text, className, live = false }: { text: string; className?: string; live?: boolean }) {
   return (
     <div className={cn("chat-markdown min-w-0 text-base leading-relaxed break-words", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} skipHtml>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={live ? LIVE : SETTLED} skipHtml>{text}</ReactMarkdown>
     </div>
   )
 })

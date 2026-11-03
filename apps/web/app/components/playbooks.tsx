@@ -15,21 +15,29 @@ import { api, ApiError } from "@/lib/api"
 export type Playbook = { readonly name: string; readonly title: string; readonly prompt: string; readonly area: string; readonly builtIn: boolean }
 export const PLAYBOOKS_CHANGED = "openrecord:playbooks-changed"
 
-let cache: Promise<ReadonlyArray<Playbook>> | null = null
-const load = () => (cache ??= api<{ playbooks: Playbook[] }>("/api/playbooks").then(r => r.playbooks).catch(() => { cache = null; return [] }))
-const changed = (list: ReadonlyArray<Playbook>) => { cache = Promise.resolve(list); window.dispatchEvent(new Event(PLAYBOOKS_CHANGED)) }
+// One cached list per business: a business's plugins add their playbooks to the account's.
+const cache = new Map<string, Promise<ReadonlyArray<Playbook>>>()
+const load = (businessId: string | null) => {
+  const key = businessId ?? ""
+  let p = cache.get(key)
+  if (!p) { p = api<{ playbooks: Playbook[] }>(`/api/playbooks${businessId ? `?businessId=${encodeURIComponent(businessId)}` : ""}`).then(r => r.playbooks).catch(() => { cache.delete(key); return [] }); cache.set(key, p) }
+  return p
+}
+/** Drops every cached list (a playbook or plugin changed) and tells open composers. */
+export const playbooksChanged = () => { cache.clear(); window.dispatchEvent(new Event(PLAYBOOKS_CHANGED)) }
+const changed = (_list: ReadonlyArray<Playbook>) => playbooksChanged()
 
 /** The playbooks offered in the composer, shared by every composer on the page. */
-export function usePlaybooks(enabled: boolean) {
+export function usePlaybooks(enabled: boolean, businessId: string | null = null) {
   const [list, setList] = useState<ReadonlyArray<Playbook>>([])
   useEffect(() => {
     if (!enabled) return
     let live = true
-    const refresh = () => { void load().then(l => { if (live) setList(l) }) }
+    const refresh = () => { void load(businessId).then(l => { if (live) setList(l) }) }
     refresh()
     window.addEventListener(PLAYBOOKS_CHANGED, refresh)
     return () => { live = false; window.removeEventListener(PLAYBOOKS_CHANGED, refresh) }
-  }, [enabled])
+  }, [enabled, businessId])
   return list
 }
 

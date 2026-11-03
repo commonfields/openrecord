@@ -28,6 +28,7 @@ import { Channels } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace"
 import { cn } from "@/lib/utils"
+import { PluginsPanel } from "@/components/plugins-panel"
 
 type State = "connected" | "choose" | "reconnect" | "available" | "unavailable"
 const STATE_BADGE: Record<State, { label: string; variant: "supported" | "partial" | "wrong" | "outline" | "unknown" } | null> = {
@@ -266,7 +267,7 @@ function MeasurementNote({ inventory }: { inventory: { channels: ReadonlyArray<{
 function MoreTools({ businessId }: { businessId: string }) {
   const [open, setOpen] = useState(false)
   const { hash } = useLocation()
-  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#agent-access", "#tool-servers"].includes(hash)) setOpen(true) }, [hash])
+  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#agent-access", "#tool-servers", "#plugins"].includes(hash)) setOpen(true) }, [hash])
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">
       <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md text-sm font-medium outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
@@ -279,6 +280,7 @@ function MoreTools({ businessId }: { businessId: string }) {
         <AiTrafficUpload businessId={businessId} />
         <LiveTrafficFeed businessId={businessId} />
         <ToolServers businessId={businessId} />
+        <PluginsPanel businessId={businessId} />
         <AgentAccess businessId={businessId} />
       </CollapsibleContent>
     </Collapsible>

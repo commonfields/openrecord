@@ -208,7 +208,7 @@ const trackRun = (ctx: RunContext, input: TrackArgs) => Effect.gen(function*() {
 
 // ---------------------------------------------------------------- reports over saved answers
 
-const savedAnswers = (businessId: string, days: number) => Effect.gen(function*() {
+export const savedAnswers = (businessId: string, days: number) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT id, findings, observed_at FROM research_observations WHERE business_id = ${businessId} AND operation = 'ai.answers' AND status = 'OBSERVED'
     AND observed_at >= now() - make_interval(days => ${days}) ORDER BY observed_at`

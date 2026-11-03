@@ -35,6 +35,22 @@ const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), tit
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session),
   title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
 const parse = Schema.decodeUnknown(Conversation)
+/** Sums a turn's per-step token counts; null when no step reported that count. */
+const sumOf = (usage: ReadonlyArray<Record<string, unknown>>, key: string) => {
+  const xs = usage.map(u => u[key]).filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0)
+  return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0)) : null
+}
+/** One durable usage row for a completed turn (agent_usage), inside the reply's transaction. */
+const recordUsage = (scope: ConversationScope, runId: string, reply: { readonly provider: string; readonly requestedModel?: string | null | undefined; readonly usage: ReadonlyArray<unknown>; readonly toolCalls?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined }) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const usage = reply.usage.filter((u): u is Record<string, unknown> => typeof u === "object" && u !== null)
+  const observed = usage.map(u => u["observedModel"]).find((m): m is string => typeof m === "string" && m.length > 0)
+  const model = (observed ?? reply.requestedModel ?? "unknown").slice(0, 200)
+  yield* sql`INSERT INTO agent_usage(account_id, business_id, user_id, run_id, provider, model, model_steps, tool_calls, prompt_tokens, output_tokens, thought_tokens, total_tokens, duration_ms)
+    VALUES (${scope.accountId}, ${scope.businessId}, ${scope.userId}, ${runId}, ${(reply.provider || "unknown").slice(0, 60)}, ${model}, ${usage.length}, ${reply.toolCalls?.length ?? 0},
+      ${sumOf(usage, "promptTokens")}, ${sumOf(usage, "outputTokens")}, ${sumOf(usage, "thoughtTokens")}, ${sumOf(usage, "totalTokens")}, ${reply.durationMs === undefined ? null : Math.max(0, Math.round(reply.durationMs))})
+    ON CONFLICT (run_id) DO NOTHING`
+})
 export type ConversationScope = { readonly accountId: string; readonly userId: string; readonly businessId: string | null }
 export const loadConversation = (scope: ConversationScope, conversationId?: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -299,8 +315,11 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
         AND (${body.selection === undefined} OR EXISTS(SELECT 1 FROM agent_harness_instances i JOIN agent_bridges b ON b.id=i.bridge_id
           WHERE i.id=${body.selection?.instanceId ?? null} AND i.account_id=${scope.accountId} AND i.user_id=${scope.userId} AND i.enabled AND b.revoked_at IS NULL))
       RETURNING id`
-      // The reply and the run's completion commit together.
-      if (rows.length) yield* finishRun(runId, "COMPLETED", { outcome: run.outcome, gaps: run.gaps })
+      // The reply, the run's completion and its usage commit together.
+      if (rows.length) {
+        yield* finishRun(runId, "COMPLETED", { outcome: run.outcome, gaps: run.gaps })
+        yield* recordUsage(scope, runId, reply)
+      }
       return rows.length > 0
     }))
     if (!updated) {

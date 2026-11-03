@@ -1,3 +1,4 @@
+import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
@@ -286,11 +287,12 @@ function Text({ id, label, value, onChange, placeholder, required, long, classNa
 export function InitiativeDecision({ businessId, opportunity, measurement, onDecided }: { businessId: string; opportunity: GrowthOpportunity; measurement: "CONNECTED" | "MANUAL_ONLY" | "NONE"; onDecided?: () => void }) {
   const [current, setCurrent] = useState(opportunity)
   const [busy, setBusy] = useState<"approve" | "cancel" | null>(null)
-  const decide = async (decision: "approve" | "cancel") => {
+  const decide = async (decision: "approve" | "cancel", why?: string) => {
     setBusy(decision)
     try {
       const r = await Growth.decide(businessId, current.id, decision, { expectedStatus: current.status, expectedRevision: current.revision, idempotencyKey: crypto.randomUUID(),
-        reason: decision === "approve" ? "Approved in OpenRecord" : "Declined in OpenRecord" })
+        reason: decision === "approve" ? "Approved in OpenRecord" : why ? `Declined: ${why}`.slice(0, 500) : "Declined in OpenRecord" })
+      void recordDecision(businessId, { kind: "GROWTH_OPPORTUNITY", itemId: current.id, verdict: decision === "approve" ? "APPROVED" : "REJECTED", title: current.title, reason: why })
       setCurrent(r.opportunity)
       onDecided?.()
     } catch (err) {
@@ -320,7 +322,7 @@ export function InitiativeDecision({ businessId, opportunity, measurement, onDec
       {current.status === "PROPOSED" ? (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <p className="mr-auto text-[0.6875rem] text-muted-foreground">Approving records your decision. Nothing is published or changed on your site.</p>
-          <Button variant="ghost" onClick={() => decide("cancel")} disabled={busy !== null}>Not now</Button>
+          <RejectWithReason label="Not now" size="default" disabled={busy !== null} onReject={why => decide("cancel", why)} />
           <Button onClick={() => decide("approve")} disabled={busy !== null}>{busy === "approve" ? <LoaderCircleIcon className="animate-spin" /> : <CheckIcon />}Approve</Button>
         </div>
       ) : current.status === "APPROVED" ? (

@@ -91,8 +91,8 @@ suite("playbooks (disposable PostgreSQL)", () => {
       const listed = await send(h, "/api/playbooks", { method: "GET", session: f.session })
       expect(listed.status).toBe(200)
       const names = (listed.json.playbooks as Array<{ name: string; area: string; builtIn: boolean }>).map(p => p.name)
-      expect(names).toEqual(expect.arrayContaining(["seo-audit", "aeo-check", "geo-citations", "ai-crawlers", "weekly-review"]))
-      expect(new Set((listed.json.playbooks as Array<{ area: string }>).map(p => p.area))).toEqual(new Set(["SEO", "AEO", "GEO", "Research", "Review"]))
+      expect(names).toEqual(expect.arrayContaining(["seo-audit", "aeo-check", "geo-citations", "ai-crawlers", "weekly-review", "daily-loop", "paying-users", "outcome-review", "portfolio-digest", "schema-kit", "rank-watch"]))
+      expect(new Set((listed.json.playbooks as Array<{ area: string }>).map(p => p.area))).toEqual(new Set(["SEO", "AEO", "GEO", "Research", "Review", "Loop"]))
       expect((await send(h, "/api/playbooks", { method: "GET" })).status).toBe(401)
 
       const save = (name: string, body: unknown, session = f.session, origin?: string) => send(h, `/api/playbooks/${name}`, { method: "PUT", session, body, ...(origin ? { origin } : {}) })

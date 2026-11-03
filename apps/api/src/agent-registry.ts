@@ -23,6 +23,7 @@ import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
 import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
+import { decisionFeedbackDeclarations, dispatchDecisionFeedback } from "./decision-feedback.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -68,6 +69,10 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     return { declaration, effect: saves ? "record" : "read", replay: saves ? "deduplicated" : "safe", scope: "general",
       run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
   }),
+  // The owner's verdicts and reasons; the outcome note is working memory, not a decision.
+  ...decisionFeedbackDeclarations.map((declaration): AgentToolSpec => ({ declaration,
+    effect: declaration.name === "record_outcome_note" ? "record" : "read", replay: declaration.name === "record_outcome_note" ? "deduplicated" : "safe", scope: "general",
+    run: (ctx, args) => dispatchDecisionFeedback(ctx, declaration.name, args) })),
   // Outside tool servers the team connected: only tools the server marks read-only are ever called.
   ...mcpClientDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "read", replay: "safe", scope: "general",
     run: (ctx, args) => dispatchMcpClient(ctx, declaration.name, args) })),

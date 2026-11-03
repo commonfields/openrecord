@@ -26,6 +26,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { ShareChatDialog } from "@/components/chat-share"
+import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { SavePlaybookDialog, playbookMatches, playbookText, usePlaybooks, type Playbook } from "@/components/playbooks"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
@@ -43,7 +44,9 @@ type Message = { id: string; role: "user" | "agent"; text: string; attachments?:
   // Helper sessions this reply started, and which session sent this message.
   tasks?: AgentTaskRef[]; origin?: AgentMessageOrigin
   // A pending reply's live trace, and a finished reply's folded one.
-  progress?: Progress; activity?: AgentActivity[]; durationMs?: number }
+  progress?: Progress; activity?: AgentActivity[]; durationMs?: number
+  // Arrived in this session (not loaded from history): it gets an entrance.
+  fresh?: boolean }
 
 // The business or client a conversation was started with, shown in the
 // composer tray to the left of the model. A general chat has none.
@@ -170,7 +173,9 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
     void Agent.load(businessId, conversationId).then(r => {
       if (!live || !r.conversation) return
       setRevision(r.conversation.revision)
-      setMessages(toDisplayMessages(r.conversation.messages))
+      // The settled thread replaces the local one; a reply that just arrived keeps its entrance.
+      const settled = toDisplayMessages(r.conversation.messages)
+      setMessages(prev => keepFresh(prev, settled))
     }).catch(() => {})
     return () => { live = false }
   }, [businessId, conversationId, pendingWorking])
@@ -189,7 +194,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
     activity.start(businessId, requestId, "New chat", conversationId, providerTag)
     // A reply starts as "Thinking"; it turns to "Working" once the model runs a tool.
     let progress = initialProgress()
-    setMessages(m => [...m, { id: uid(), role: "user", text, ...(attachments.length ? { attachments } : {}) }, { id: uid(), role: "agent", text: "", pending: true, progress }])
+    setMessages(m => [...m, { id: uid(), role: "user", text, fresh: true, ...(attachments.length ? { attachments } : {}) }, { id: uid(), role: "agent", text: "", pending: true, progress }])
     const turnSelection = selectionField && reasoningEffort ? { ...selectionField, reasoningEffort } : selectionField
     // Follow the run's journal while the reply is pending. Polling resumes from
     // the last sequence seen, so a missed poll loses nothing.
@@ -210,7 +215,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
       notifyAgentChats()
       if (!mounted.current) return
       setConversationId(r.conversationId); setRevision(r.revision)
-      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
+      setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", fresh: true, text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
         ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}),
         ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}), ...(r.context ? { context: r.context } : {}) }])
@@ -504,6 +509,52 @@ export function AnswerResources({ businessId, citations }: { businessId: string 
   </Collapsible>
 }
 
+/** Carries the "just arrived" mark from the local thread onto the same messages loaded from the server. */
+function keepFresh(prev: ReadonlyArray<Message>, next: Message[]): Message[] {
+  const fresh = new Set(prev.filter(m => m.fresh).map(m => `${m.role}:${m.text}`))
+  return fresh.size ? next.map(m => fresh.has(`${m.role}:${m.text}`) ? { ...m, fresh: true } : m) : next
+}
+
+// When each reply's reveal began, by its text, so a remount continues the reveal instead of restarting it.
+const revealStarted = new Map<string, number>()
+
+const reducedMotion = () => typeof window !== "undefined" && (window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.hasAttribute("data-reduce-motion"))
+
+/**
+ * A reply that just arrived, revealed word by word behind a soft caret: fast
+ * for short answers, capped at about two seconds for long ones. The text is
+ * the complete reply; this only paces how it appears. A click shows it all at
+ * once, and reduced motion shows it all immediately.
+ */
+function RevealReply({ text, className }: { text: string; className?: string }) {
+  const words = text.split(/(\s+)/)
+  const total = words.length
+  const duration = Math.min(2200, Math.max(450, total * 7))
+  const startedAt = (() => { const t = revealStarted.get(text) ?? Date.now(); revealStarted.set(text, t); return t })()
+  const [shown, setShown] = useState(() => reducedMotion() ? total : Math.min(total, Math.ceil((1 - (1 - Math.min(1, (Date.now() - startedAt) / duration)) ** 2) * total)))
+  useEffect(() => {
+    if (shown >= total) return
+    const start = performance.now() - (Date.now() - startedAt)
+    let raf = 0, last = 0
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - start) / duration)
+      // Updates at most every 40ms: smooth to the eye without re-rendering the Markdown every frame.
+      if (t - last >= 40 || k === 1) { last = t; setShown(Math.max(1, Math.ceil((1 - (1 - k) ** 2) * total))) }
+      if (k < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total])
+  const done = shown >= total
+  return (
+    <div onClick={done ? undefined : () => setShown(total)} className={done ? undefined : "cursor-default"} aria-busy={!done}>
+      <ChatMarkdown text={done ? text : words.slice(0, shown).join("")} live={!done} {...(className ? { className } : {})} />
+      {done ? null : <span aria-hidden className="reply-caret" />}
+    </div>
+  )
+}
+
 function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context, banner = true, composer = true, seed = null }: {
   session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null; banner?: boolean
   /** A request another part of the page hands the composer: typed, never sent until the person sends it. */
@@ -513,16 +564,31 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
 }) {
   // Scroll only the thread itself: scrollIntoView would also shift the clipped
   // panes around it while they slide.
+  // It follows new content only while the reader is at (or near) the bottom,
+  // so scrolling up to reread is never fought. Growth of any kind (a new step,
+  // a reply being revealed) is followed by size, without smooth-scroll
+  // animations piling on each other.
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const stick = useRef(true)
   useEffect(() => {
-    const el = scrollRef.current
-    el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-  }, [session.messages])
+    const el = scrollRef.current, content = contentRef.current
+    if (!el || !content) return
+    const onScroll = () => { stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120 }
+    const follow = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight })
+    el.addEventListener("scroll", onScroll, { passive: true })
+    follow.observe(content)
+    el.scrollTop = el.scrollHeight
+    return () => { el.removeEventListener("scroll", onScroll); follow.disconnect() }
+  }, [])
+  // Sending a message always brings the thread back to the bottom.
+  const sent = session.messages.filter(m => m.role === "user").length
+  useEffect(() => { stick.current = true; const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight }, [sent])
   const statuses = taskStatuses(session.messages)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className={cn("mx-auto w-full max-w-(--chat-max-width)", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
+        <div ref={contentRef} className={cn("mx-auto w-full max-w-(--chat-max-width)", compact ? "px-4 py-4" : "px-4 py-6 sm:px-6")}>
           {banner ? <HelperBanner session={session} /> : null}
           {session.active ? (
             <ol aria-live="polite" className="space-y-3">
@@ -542,7 +608,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                           {m.attachments.map((f, j) => <li key={`${f.name}:${j}`}><AttachmentChip file={f} /></li>)}
                         </ul>
                       ) : null}
-                      {m.text ? <p className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap">{m.text}</p> : null}
+                      {m.text ? <p className={cn("max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-base leading-relaxed whitespace-pre-wrap", m.fresh && "bubble-in")}>{m.text}</p> : null}
                     </>
                   ) : (
                     <div className="w-full space-y-1.5">
@@ -551,15 +617,17 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       ) : (
                         <>
                           <RunTrace activity={workLog(m)} durationMs={m.durationMs} />
-                          <ChatMarkdown text={m.text} className={m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90"} />
+                          {m.fresh
+                            ? <RevealReply text={m.text} className={m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90"} />
+                            : <ChatMarkdown text={m.text} className={m.run && m.run.status !== "COMPLETED" ? "text-muted-foreground" : "text-foreground/90"} />}
                         </>
                       )}
                       {m.run?.gaps?.length ? (
                         <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
                       ) : null}
-                      {m.citations?.length && !m.pending ? <AnswerResources businessId={session.businessId} citations={m.citations} /> : null}
+                      {m.citations?.length && !m.pending ? <div className={m.fresh ? "step-in [animation-delay:400ms]" : undefined}><AnswerResources businessId={session.businessId} citations={m.citations} /></div> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
-                      {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
+                      {m.decisions?.length ? <div className={m.fresh ? "step-in [animation-delay:550ms]" : undefined}><MessageDecisions session={session} businessName={businessName} refs={m.decisions} /></div> : null}
                     </div>
                   )}
                   <CopyButton text={m.text} className={m.role === "user" ? "-mr-1.5" : "-ml-1.5"} />
@@ -1095,7 +1163,7 @@ function Composer({
 
   const command = onCommand ? parseCommand(text) : null
   // The "/" menu: OpenRecord's commands, then playbooks (built-in SEO/AEO/GEO and the account's own).
-  const playbooks = usePlaybooks(!!onCommand)
+  const playbooks = usePlaybooks(!!onCommand, session?.businessId ?? null)
   const matches: ReadonlyArray<MenuItem> = onCommand
     ? [...commandMatches(text).map(c => ({ kind: "command" as const, ...c })), ...playbookMatches(text, playbooks).map(p => ({ kind: "playbook" as const, playbook: p }))]
     : []
@@ -1416,9 +1484,13 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     void Questions.list(businessId).then(r => { if (live) setPrompt(r.questions.find(q => q.id === proposal.questionId)?.prompt ?? null) }).catch(() => {})
     return () => { live = false }
   }, [businessId, proposal.questionId])
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (approve) await Agent.approve(businessId, proposal.id, model); else await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (approve) await Agent.approve(businessId, proposal.id, model); else await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_PROPOSAL", itemId: proposal.id, verdict: approve ? "APPROVED" : "REJECTED", title: `Re-check: ${prompt ?? proposal.message}`, reason })
+      onDone()
+    }
     catch { setError("The proposal could not be updated. Reload its current status before trying again.") }
     finally { setWorking(false) }
   }
@@ -1428,7 +1500,7 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     <p>Approval queues one external measurement call using 9Router and the exact model you select. Estimated cost is unavailable; provider charges may apply. No fact or judgment is approved.</p>
     <Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Measurement model"><SelectValue placeholder="Choose a measurement model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
     {!models.length ? <p>No supported measurement model is configured. This proposal cannot run here.</p> : null}
-    <div className="flex gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    <div className="flex flex-wrap gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div>
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
@@ -1436,9 +1508,13 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
 function SavedDraft({ businessId, proposal, onDone }: { businessId: string; proposal: AgentProposal; onDone: () => void }) {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const decide = async (accept: boolean) => {
+  const decide = async (accept: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (accept) await Agent.acceptDraft(businessId, proposal.id); else await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (accept) await Agent.acceptDraft(businessId, proposal.id); else await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_DRAFT", itemId: proposal.id, verdict: accept ? "APPROVED" : "REJECTED", title: proposal.message, reason })
+      onDone()
+    }
     catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
     finally { setWorking(false) }
   }
@@ -1455,7 +1531,7 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
         return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : web ? <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="underline">{c.text}</a> : <span>Evidence unavailable</span>}</li>
       })}</ul>
     </> : <p>Draft evidence unavailable</p>}
-    {proposal.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><Button variant="outline" size="sm" disabled={working} onClick={() => void decide(false)}>Reject</Button></div> : null}
+    {proposal.status === "PROPOSED" ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div> : null}
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
@@ -1465,16 +1541,20 @@ function AcquisitionProposal({ businessId, proposal, onDone }: { businessId: str
   const [error, setError] = useState<string | null>(null)
   const plan = proposal.payload?.measurementPlan
   const cost = plan?.estimatedMaxCostUsd
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (approve && cost !== null && cost !== undefined) await Agent.approveAcquisition(businessId, proposal.id, cost); else if (!approve) await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (approve && cost !== null && cost !== undefined) await Agent.approveAcquisition(businessId, proposal.id, cost); else if (!approve) await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_PROPOSAL", itemId: proposal.id, verdict: approve ? "APPROVED" : "REJECTED", title: "Acquisition measurement", reason })
+      onDone()
+    }
     catch { setError("The measurement was not approved here. Its configuration, cost or status may have changed. Reload before retrying.") }
     finally { setWorking(false) }
   }
   return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">Proposed acquisition measurement</p><p className="max-h-80 overflow-auto whitespace-pre-wrap">{proposal.payload?.text ?? "Measurement plan unavailable"}</p>
     {cost === null || cost === undefined ? <p>Approval is blocked until a measurement cost bound is configured and a new proposal is prepared.</p> : null}
-    <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div>
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
