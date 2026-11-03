@@ -26,6 +26,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { cn } from "@/lib/utils"
 import { COMMANDS, commandMatches, parseCommand, type AgentCommand } from "@/components/agent-commands"
 import { ShareChatDialog } from "@/components/chat-share"
+import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { SavePlaybookDialog, playbookMatches, playbookText, usePlaybooks, type Playbook } from "@/components/playbooks"
 import { modelOptions, selectionLabel, selectionValue, useAgentSelection, useHarnessCatalog } from "@/lib/harness"
 import { AgentModelPicker } from "@/components/agent-model-picker"
@@ -1483,9 +1484,13 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     void Questions.list(businessId).then(r => { if (live) setPrompt(r.questions.find(q => q.id === proposal.questionId)?.prompt ?? null) }).catch(() => {})
     return () => { live = false }
   }, [businessId, proposal.questionId])
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (approve) await Agent.approve(businessId, proposal.id, model); else await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (approve) await Agent.approve(businessId, proposal.id, model); else await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_PROPOSAL", itemId: proposal.id, verdict: approve ? "APPROVED" : "REJECTED", title: `Re-check: ${prompt ?? proposal.message}`, reason })
+      onDone()
+    }
     catch { setError("The proposal could not be updated. Reload its current status before trying again.") }
     finally { setWorking(false) }
   }
@@ -1495,7 +1500,7 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
     <p>Approval queues one external measurement call using 9Router and the exact model you select. Estimated cost is unavailable; provider charges may apply. No fact or judgment is approved.</p>
     <Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Measurement model"><SelectValue placeholder="Choose a measurement model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
     {!models.length ? <p>No supported measurement model is configured. This proposal cannot run here.</p> : null}
-    <div className="flex gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    <div className="flex flex-wrap gap-2"><Button size="sm" disabled={working || !prompt || !models.includes(model)} onClick={() => void decide(true)}>Approve and queue check</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div>
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
@@ -1503,9 +1508,13 @@ function CheckProposal({ businessId, businessName, proposal, onDone }: { busines
 function SavedDraft({ businessId, proposal, onDone }: { businessId: string; proposal: AgentProposal; onDone: () => void }) {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const decide = async (accept: boolean) => {
+  const decide = async (accept: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (accept) await Agent.acceptDraft(businessId, proposal.id); else await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (accept) await Agent.acceptDraft(businessId, proposal.id); else await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_DRAFT", itemId: proposal.id, verdict: accept ? "APPROVED" : "REJECTED", title: proposal.message, reason })
+      onDone()
+    }
     catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
     finally { setWorking(false) }
   }
@@ -1522,7 +1531,7 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
         return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : web ? <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="underline">{c.text}</a> : <span>Evidence unavailable</span>}</li>
       })}</ul>
     </> : <p>Draft evidence unavailable</p>}
-    {proposal.status === "PROPOSED" ? <div className="flex gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><Button variant="outline" size="sm" disabled={working} onClick={() => void decide(false)}>Reject</Button></div> : null}
+    {proposal.status === "PROPOSED" ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div> : null}
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }
@@ -1532,16 +1541,20 @@ function AcquisitionProposal({ businessId, proposal, onDone }: { businessId: str
   const [error, setError] = useState<string | null>(null)
   const plan = proposal.payload?.measurementPlan
   const cost = plan?.estimatedMaxCostUsd
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, reason?: string) => {
     setWorking(true); setError(null)
-    try { if (approve && cost !== null && cost !== undefined) await Agent.approveAcquisition(businessId, proposal.id, cost); else if (!approve) await Agent.reject(businessId, proposal.id); onDone() }
+    try {
+      if (approve && cost !== null && cost !== undefined) await Agent.approveAcquisition(businessId, proposal.id, cost); else if (!approve) await Agent.reject(businessId, proposal.id)
+      void recordDecision(businessId, { kind: "AGENT_PROPOSAL", itemId: proposal.id, verdict: approve ? "APPROVED" : "REJECTED", title: "Acquisition measurement", reason })
+      onDone()
+    }
     catch { setError("The measurement was not approved here. Its configuration, cost or status may have changed. Reload before retrying.") }
     finally { setWorking(false) }
   }
   return <section aria-label="Acquisition measurement proposal" className="space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
     <p className="font-medium">Proposed acquisition measurement</p><p className="max-h-80 overflow-auto whitespace-pre-wrap">{proposal.payload?.text ?? "Measurement plan unavailable"}</p>
     {cost === null || cost === undefined ? <p>Approval is blocked until a measurement cost bound is configured and a new proposal is prepared.</p> : null}
-    <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><Button size="sm" variant="outline" disabled={working} onClick={() => void decide(false)}>Reject</Button></div>
+    <div className="flex gap-2"><Button size="sm" disabled={working || !plan || cost === null || cost === undefined || !!plan.missingRequirements.length} onClick={() => void decide(true)}>Approve estimated USD {cost?.toFixed(2) ?? "unknown"} and queue</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div>
     {error ? <p role="alert">{error}</p> : null}
   </section>
 }

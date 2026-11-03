@@ -2,6 +2,7 @@
 // a person approves a prepared change on. The card shows exactly what will
 // change, publishes it on approval, says whether the live page shows it, and
 // can undo it.
+import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { useState } from "react"
 import { toast } from "sonner"
 import { ExternalLinkIcon, GlobeIcon, Undo2Icon } from "lucide-react"
@@ -99,8 +100,8 @@ export function WordPressChangeCard({ businessId, change: initial, onDone }: { b
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {change.status === "PROPOSED" ? <>
-          <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => act(() => WordPress.approve(businessId, change.id), "Published to WordPress")}>Approve and publish</Button>
-          <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={busy} onClick={() => act(() => WordPress.reject(businessId, change.id), "Change rejected")}>Reject</Button>
+          <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => act(async () => { const r = await WordPress.approve(businessId, change.id); void recordDecision(businessId, { kind: "WORDPRESS_CHANGE", itemId: change.id, verdict: "APPROVED", title: what }); return r }, "Published to WordPress")}>Approve and publish</Button>
+          <RejectWithReason disabled={busy} className="h-8 text-xs" onReject={reason => act(async () => { const r = await WordPress.reject(businessId, change.id); void recordDecision(businessId, { kind: "WORDPRESS_CHANGE", itemId: change.id, verdict: "REJECTED", title: what, reason }); return r }, "Change rejected")} />
         </> : null}
         {change.status === "PUBLISHED" ? (
           <Button size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => act(() => WordPress.undo(businessId, change.id), change.kind === "CREATE_POST" ? "Moved back to draft" : "Change undone")}>
