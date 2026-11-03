@@ -4,12 +4,13 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
-  BarChart3Icon,
+  ChartColumnIcon,
   BriefcaseIcon,
-  RadioTowerIcon,
+  PlugIcon,
   Building2Icon,
   CheckIcon,
-  CheckCheckIcon,
+  InboxIcon,
+  CircleAlertIcon,
   ChevronRightIcon,
   ChevronsUpDownIcon,
   KeyboardIcon,
@@ -346,10 +347,11 @@ function SidebarBody() {
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
         {agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>
           <SidebarGroup label="Workspace">
-            <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<CheckCheckIcon />} label="Needs you" count={waiting} />
+            <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<InboxIcon />} label="Inbox" count={waiting + (base ? attention : 0)} />
             {base ? <>
-              <SidebarLink to={`${base}/results`} icon={<BarChart3Icon />} label="Results" count={attention} />
-              <SidebarLink to={`${base}/channels`} icon={<RadioTowerIcon />} label="Channels" />
+              <SidebarLink to={`${base}/results`} icon={<ChartColumnIcon />} label="Overview" count={attention} />
+              <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answer issues" />
+              <SidebarLink to={`${base}/channels`} icon={<PlugIcon />} label="Channels" />
             </> : null}
           </SidebarGroup>
         </>}
@@ -883,7 +885,7 @@ function Breadcrumbs() {
   } else if (parts[0] === "agent") {
     crumbs.push({ label: "General chat" })
   } else if (parts[0] === "approvals") {
-    crumbs.push({ label: "Needs you" })
+    crumbs.push({ label: "Inbox" })
   } else if (parts[0] === "start") {
     crumbs.push({ label: "Set up a business" })
   } else if (parts[0] === "products" && parts[1] === "new") {

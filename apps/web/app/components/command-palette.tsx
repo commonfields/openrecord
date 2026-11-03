@@ -106,7 +106,7 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
         ["Agent", "agent", <LayoutGridIcon key="i" />, "chat setup status plan report"],
         ["Channels", "channels", <GlobeIcon key="i" />, "channels connect integrations google ads meta stripe wordpress analytics"],
         ["Work", "work", <InboxIcon key="i" />, "initiatives approvals executions"],
-        ["Results", "results", <LayoutGridIcon key="i" />, "today dashboard analytics overview"],
+        ["Overview", "results", <LayoutGridIcon key="i" />, "results today dashboard analytics overview"],
         ["AI answer issues", "issues", <InboxIcon key="i" />, "wrong claims inbox review"],
         ["Facts on the web", "representations", <GlobeIcon key="i" />, "representations sources drift in sync"],
         ["Approved facts", "truth", <BookCheckIcon key="i" />, "truth facts approved"],
@@ -140,7 +140,7 @@ function MenuSurface({ onClose }: { onClose: () => void }) {
         openSettings("general")
       },
     })
-    out.push({ id: "page:approvals", group: "Actions", label: "Needs you", icon: <FileCheck2Icon />, keywords: "waiting approve approvals decisions inbox proposals pending", run: go("/approvals") })
+    out.push({ id: "page:approvals", group: "Actions", label: "Inbox", icon: <FileCheck2Icon />, keywords: "waiting approve approvals decisions inbox proposals pending", run: go("/approvals") })
     out.push({ id: "page:businesses", group: "Actions", label: "Businesses and clients", icon: <Building2Icon />, keywords: "clients agency all", run: go("/businesses") })
     for (const b of businesses) {
       if (b.id === bid) continue

@@ -22,6 +22,7 @@ import { WeeklyBrief } from "@/components/weekly-brief"
 import { useChrome } from "@/components/app-shell"
 import { RevenuePanel } from "@/components/revenue"
 import { SetupCard } from "@/components/setup-card"
+import { DiscoveryOverview } from "@/components/discovery-overview"
 import { AnalyticsApi, type Analytics, type VerdictCounts } from "@/lib/api"
 import { OUTCOME_LABELS, Records } from "@/lib/record"
 import { errorMessage, relativeTime, sentenceCase } from "@/lib/format"
@@ -118,7 +119,7 @@ export function Today() {
   }, [setWide])
   const days: Period = periods.includes(Number(params.get("days")) as Period) ? (Number(params.get("days")) as Period) : 30
   const requested = params.get("metric")
-  const { data, loading, error } = useApi(`analytics:${id}:${days}`, () => AnalyticsApi.get(id, days))
+  const { data, loading, error, reload } = useApi(`analytics:${id}:${days}`, () => AnalyticsApi.get(id, days))
   const a = data?.analytics ?? null
   const stats = useModelStats(a)
   const overview = useOverviewData(id, days)
@@ -187,6 +188,7 @@ export function Today() {
       <SearchPerformancePanel businessId={id} />
       <AdPerformancePanel businessId={id} />
       <LocalProfilePanel businessId={id} />
+      <DiscoveryOverview businessId={id} />
 
       {trend === "goal" ? (
         <section className="space-y-3">
@@ -199,7 +201,7 @@ export function Today() {
           <GoalTrend data={overview} days={days} formatDate={shortDate} />
         </section>
       ) : error && !a ? (
-        <EmptyState icon={<BarChart3Icon />} title="Answer analytics could not load" description={errorMessage(error)} />
+        <EmptyState icon={<BarChart3Icon />} title="Answer analytics could not load" description={errorMessage(error)} action={<Button size="sm" variant="outline" onClick={() => void reload()}>Try again</Button>} />
       ) : (
         <HeroChart a={a} stats={stats} loading={loading} metric={trend} days={days} switcher={switcher} />
       )}

@@ -3,6 +3,7 @@ import { chatCompletionAnswer, chatCompletionRequest } from "@openrecord/contrac
 
 export class AgentModelError extends Data.TaggedError("AgentModelError")<{
   readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED"
+  readonly detail?: "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY"
 }> {}
 
 const bounded = (name: string, fallback: number, max: number) => Config.integer(name).pipe(
@@ -28,7 +29,7 @@ export const agentSettings = Config.all({
   apiKey: Config.redacted("AGENT_API_KEY"),
   baseUrl: Config.string("AGENT_BASE_URL").pipe(Config.withDefault("http://127.0.0.1:8317")),
   maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 2048, 8192),
-  timeoutMs: bounded("AGENT_TIMEOUT_MS", 20000, 120000),
+  timeoutMs: bounded("AGENT_TIMEOUT_MS", 60000, 120000),
 })
 
 export const Part = Schema.Struct({
@@ -68,14 +69,14 @@ const readJson = async (response: Response, max = 256000): Promise<unknown> => {
       const next = await reader.read()
       if (next.done) break
       size += next.value.byteLength
-      if (size > max) throw new AgentModelError({ reason: "MALFORMED" })
+      if (size > max) throw new AgentModelError({ reason: "MALFORMED", detail: "RESPONSE_TOO_LARGE" })
       chunks.push(next.value)
     }
   } finally { await reader.cancel() }
   const bytes = new Uint8Array(size)
   let offset = 0
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
-  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { throw new AgentModelError({ reason: "MALFORMED" }) }
+  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { throw new AgentModelError({ reason: "MALFORMED", detail: "INVALID_JSON" }) }
 }
 /** Gemini models that think and can return thought summaries. */
 const THINKING_GEMINI = /^gemini-(?:2\.5|[3-9])/
@@ -105,8 +106,12 @@ export const configuredAgentModel = Effect.gen(function*() {
         generationConfig: { maxOutputTokens: cfg.maxOutputTokens, ...(THINKING_GEMINI.test(cfg.model) ? { thinkingConfig: { includeThoughts: true } } : {}) } }),
     })
     if (!response.ok) return refuseStatus(response)
-    const parsed = Schema.decodeUnknownEither(Response)(await readJson(response))
-    if (parsed._tag === "Left" || parsed.right.candidates[0]?.finishReason !== "STOP") throw new AgentModelError({ reason: "MALFORMED" })
+    const raw = await readJson(response)
+    const finish = typeof raw === "object" && raw !== null && "candidates" in raw && Array.isArray(raw.candidates) && typeof raw.candidates[0] === "object" && raw.candidates[0] !== null && "finishReason" in raw.candidates[0] ? raw.candidates[0].finishReason : null
+    if (finish === "MAX_TOKENS") throw new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" })
+    const parsed = Schema.decodeUnknownEither(Response)(raw)
+    if (parsed._tag === "Left") throw new AgentModelError({ reason: "MALFORMED", detail: "INVALID_RESPONSE" })
+    if (parsed.right.candidates[0]?.finishReason !== "STOP") throw new AgentModelError({ reason: "MALFORMED", detail: "PROVIDER_STOPPED" })
     return parsed.right
   }
   // CLIProxyAPI answers in the OpenAI chat format with native tool calls.
@@ -118,7 +123,7 @@ export const configuredAgentModel = Effect.gen(function*() {
     })
     if (!response.ok) return refuseStatus(response)
     const answer = chatCompletionAnswer(await readJson(response, 1000000))
-    if (answer.kind === "malformed") throw new AgentModelError({ reason: "MALFORMED" })
+    if (answer.kind === "malformed") throw new AgentModelError({ reason: "MALFORMED", detail: "INVALID_RESPONSE" })
     const thought = answer.thought ? [{ text: answer.thought.slice(-8000), thought: true }] : []
     const parts = [...thought, ...(answer.kind === "text" ? [{ text: answer.text.slice(0, 20000) }] : answer.calls.map(c => ({ functionCall: { name: c.name, args: c.args } })))]
     const u = answer.usage

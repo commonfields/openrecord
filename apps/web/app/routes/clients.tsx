@@ -1,7 +1,5 @@
-// Agency workspace: the agency's clients as a marketing-operations entry
-// point. Identity (who the client is) stays separate from marketing progress
-// (goal, initiatives, verified work), and every row opens the client's Growth
-// workspace — with Record Integrity and AI Discovery one clear step away.
+// Agency workspace: clients and products open their business agent, while
+// their existing records and growth data remain available at their routes.
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { ChevronRightIcon, FileCheck2Icon, GlobeIcon, LinkIcon, PlusIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
@@ -13,13 +11,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { EmptyState, PageHeader, Panel, StatStrip, StepFlow, domainOf } from "@/components/page"
+import { EmptyState, PageHeader, Panel, StatStrip, domainOf } from "@/components/page"
 import { Spinner } from "@/components/spinner"
 import { errorMessage, formatDate, initial, markColor, relativeTime } from "@/lib/format"
 import { Records, type Engagement } from "@/lib/record"
 import { Growth } from "@/lib/growth"
 import { clientGrowthLine } from "@/lib/growth-stage"
 import { useApi } from "@/lib/use-api"
+import { useWorkspace } from "@/lib/workspace"
 
 type GrowthState = { profile: GrowthProfile | null; opportunities: GrowthOpportunity[]; done: boolean }
 
@@ -61,7 +60,7 @@ export function ClientsPage() {
     <div className="space-y-6 pb-4">
       <PageHeader
         title="Clients"
-        description="Each client's Growth workspace: the goal, the initiatives, what is verified, what is measured, and what needs you. Record Integrity and AI Discovery stay one step away."
+        description="Open a client or product to work with its agent and see its progress."
         actions={
           <><Button size="sm" asChild><Link to="/products/new"><PlusIcon />Add a product</Link></Button>
           <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -88,30 +87,20 @@ export function ClientsPage() {
         <EmptyState icon={<TriangleAlertIcon />} title="Clients could not load" description={errorMessage(clients.error)} action={<Button variant="outline" size="sm" onClick={() => void clients.reload()}>Try again</Button>} />
       ) : list.length === 0 ? (
         <Panel>
-          <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center">
+          <div className="p-6">
             <div className="space-y-3">
               <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink">
                 <FileCheck2Icon className="size-4" />
               </span>
-              <h2 className="text-sm font-medium">Add a client, set its goal, then run the loop</h2>
+              <h2 className="text-sm font-medium">Add your first client</h2>
               <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-                A client starts with a marketing goal and an exact metric. Initiatives move through Plan, Execute, Measure and Report, and every claim stays labeled by its proof.
-                Separately, you can approve facts, check what live AI surfaces say, and share a read-only record.
+                Add a name and website, then open the agent to discuss what the client needs.
               </p>
               <Button size="sm" onClick={() => setOpen(true)}>
                 <PlusIcon />
                 Add your first client
               </Button>
             </div>
-            <StepFlow
-              className="lg:grid-cols-2"
-              steps={[
-                { key: "add", label: "Add the client", hint: "Name and website", state: "current" },
-                { key: "goal", label: "Set the goal", hint: "What to improve, counted exactly", state: "todo" },
-                { key: "work", label: "Plan and execute", hint: "Approved initiatives, recorded actions", state: "todo" },
-                { key: "report", label: "Measure and report", hint: "Daily figures, client report", state: "todo" },
-              ]}
-            />
           </div>
         </Panel>
       ) : (
@@ -162,9 +151,9 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
   return (
     <li>
       <Link
-        to={`/clients/${c.businessId}/growth`}
+        to={`/businesses/${c.businessId}/agent`}
         className="grid items-center gap-x-4 gap-y-1 px-4 py-2.5 text-xs transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)_9rem_7rem_1rem]"
-        aria-label={`${c.name}, open growth workspace`}
+        aria-label={`${c.name}, open agent`}
       >
         <span className="flex min-w-0 items-center gap-3">
           <span className={`mark-shine flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${markColor(c.name).bg} ${markColor(c.name).text}`}>{initial(c.name)}</span>
@@ -186,9 +175,7 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
             <span className="block truncate text-muted-foreground" title={progress}>{progress}</span>
           ) : null}
           <span className="mt-0.5 flex items-center gap-2 text-[11px]">
-            <span className="font-medium text-primary-ink">Growth workspace</span>
-            <Link to={`/clients/${c.businessId}`} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>Record</Link>
-            <Link to={`/clients/${c.businessId}/discovery`} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>AI Discovery</Link>
+            <span className="font-medium text-primary-ink">Open agent</span>
           </span>
         </span>
         <span className="text-muted-foreground" title={c.lastCheckedAt ? formatDate(c.lastCheckedAt) : undefined}>
@@ -212,6 +199,7 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
 
 function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const nav = useNavigate()
+  const { reloadBusinesses, setActiveBusinessId } = useWorkspace()
   const [name, setName] = useState("")
   const [website, setWebsite] = useState("https://")
   const [engagement, setEngagement] = useState<Engagement>("CLIENT")
@@ -222,8 +210,10 @@ function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
     setError(null)
     try {
       const { client } = await Records.create({ name: name.trim(), websiteUrl: website.trim(), engagement })
+      await reloadBusinesses()
+      setActiveBusinessId(client.businessId)
       onOpenChange(false)
-      nav(`/clients/${client.businessId}`)
+      nav(`/businesses/${client.businessId}/agent`)
     } catch (e) {
       setError(errorMessage(e))
     } finally {
@@ -235,7 +225,7 @@ function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New client</DialogTitle>
-          <DialogDescription>Next you set the client's marketing goal, or approve facts for the record.</DialogDescription>
+          <DialogDescription>Add the client, then work with its agent.</DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"

@@ -1,10 +1,10 @@
 import { GlobeIcon } from "lucide-react"
-import { siFacebook, siG2, siGithub, siGoogle, siGoogleads, siGoogleanalytics, siGooglesearchconsole, siInstagram, siMeta, siPinterest, siProducthunt, siStripe, siTiktok, siWordpress, siX, siYelp, siYoutube, type SimpleIcon } from "simple-icons"
+import { siFacebook, siG2, siGithub, siGoogle, siGoogleads, siGoogleanalytics, siGooglesearchconsole, siInstagram, siMeta, siPinterest, siProducthunt, siTiktok, siWordpress, siX, siYelp, siYoutube, type SimpleIcon } from "simple-icons"
 import { cn } from "@/lib/utils"
 
 const MARKS: Record<string, SimpleIcon> = {
   ga4: siGoogleanalytics, github: siGithub, "search-console": siGooglesearchconsole,
-  meta: siMeta, google_ads: siGoogleads, google_business: siGoogle, stripe: siStripe, wordpress: siWordpress,
+  meta: siMeta, google_ads: siGoogleads, google_business: siGoogle, wordpress: siWordpress,
   "profile:GITHUB": siGithub, "profile:GOOGLE_BUSINESS": siGoogle,
   "profile:FACEBOOK": siFacebook, "profile:INSTAGRAM": siInstagram,
   "profile:YOUTUBE": siYoutube, "profile:X": siX, "profile:TIKTOK": siTiktok,
@@ -13,6 +13,8 @@ const MARKS: Record<string, SimpleIcon> = {
 }
 
 export function ChannelMark({ channelKey, className }: { channelKey: string; className?: string }) {
+  // Stripe's own site favicon, rather than the tiny Simple Icons wordmark.
+  if (channelKey === "stripe") return <img aria-hidden alt="" src="/stripe-mark.svg" className={cn("size-4 shrink-0", className)} />
   const icon = MARKS[channelKey]
   if (!icon) return <GlobeIcon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", className)} />
   const [r, g, b] = [0, 2, 4].map(i => parseInt(icon.hex.slice(i, i + 2), 16))

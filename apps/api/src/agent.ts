@@ -143,7 +143,8 @@ export const runConversation = (input: {
     })
     const stepStarted = Date.now()
     const system = (input.system ?? AGENT_SYSTEM) + voiceFor(input.style) + (input.generateTitle ? TITLE_INSTRUCTION : "")
-    const response = yield* input.model({ contents, tools, system, onThought })
+    const response = yield* input.model({ contents, tools, system, onThought }).pipe(Effect.tapError(error =>
+      journal.record("VERIFICATION", { passed: false, action: "MODEL_FAILED", reason: error.reason, detail: error.detail ?? null, step })))
     const candidate = response.candidates[0]
     if (!candidate) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
     const thought = candidate.content.parts.filter(p => p.thought && p.text).map(p => p.text!).join("\n\n").trim()
@@ -160,7 +161,11 @@ export const runConversation = (input: {
     if (tools.length === 0 && functions.length) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
     if (!functions.length) {
       const rawReply = candidate.content.parts.filter(p => !p.thought).map(p => p.text ?? "").join("").trim()
-      if (!rawReply || rawReply.length > 16000) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
+      if (!rawReply || rawReply.length > 16000) {
+        const detail = rawReply ? "RESPONSE_TOO_LARGE" : "EMPTY_REPLY"
+        yield* journal.record("VERIFICATION", { passed: false, action: "MODEL_FAILED", reason: "MALFORMED", detail, step })
+        return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED", detail }))
+      }
       // Completion check: a workflow's required evidence must have been read.
       const missing = (input.completion?.requiredTools ?? []).filter(t => !succeeded.has(t))
       if (missing.length && !reminded && !finalStep && step < budget.modelSteps && calls < budget.toolCalls) {
