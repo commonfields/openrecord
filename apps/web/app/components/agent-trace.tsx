@@ -150,6 +150,13 @@ export function LiveTrace({ progress }: { progress: Progress }) {
 /** A finished turn's work log, folded into one "Worked for 12s" row above its answer. */
 export function RunTrace({ activity, durationMs }: { activity: ReadonlyArray<AgentActivity>; durationMs?: number | undefined }) {
   const [open, setOpen] = useState(false)
+  // The steps mount on first open (collapsed), then fold open on the next frame; they stay mounted to fold closed.
+  const [mounted, setMounted] = useState(false)
+  const toggle = () => {
+    if (open) return setOpen(false)
+    setMounted(true)
+    requestAnimationFrame(() => requestAnimationFrame(() => setOpen(true)))
+  }
   if (!activity.length) return null
   const worked = activity.some(a => a.kind === "tool")
   const label = `${worked ? "Worked" : "Thought"}${durationMs !== undefined ? ` for ${elapsed(durationMs)}` : ""}`
@@ -158,7 +165,7 @@ export function RunTrace({ activity, durationMs }: { activity: ReadonlyArray<Age
   const kinds = [...new Map(tools.map(t => [toolIcon(t.kind === "tool" ? t.tool : ""), t])).keys()].slice(0, 4)
   return (
     <div className="w-full">
-      <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
+      <button type="button" onClick={toggle} aria-expanded={open}
         className="group/worked flex h-6 items-center gap-1 rounded-md px-0.5 text-sm text-muted-foreground tabular-nums hover:text-foreground">
         {label}
         {tools.length ? (
@@ -169,13 +176,13 @@ export function RunTrace({ activity, durationMs }: { activity: ReadonlyArray<Age
         ) : null}
         <ChevronRightIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform group-hover/worked:opacity-100", open && "rotate-90")} />
       </button>
-      <div className="fold" data-open={open} aria-hidden={!open} inert={!open}>
+      {mounted ? <div className="fold" data-open={open} aria-hidden={!open} inert={!open}>
         <div>
           <ul className={cn(RAIL, "mt-1 max-h-72 overflow-y-auto border-b border-border/60 pb-2")} aria-label="What the agent did">
             {activity.map((item, i) => <Step key={i} item={item} />)}
           </ul>
         </div>
-      </div>
+      </div> : null}
     </div>
   )
 }
