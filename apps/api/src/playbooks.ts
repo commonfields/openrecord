@@ -9,9 +9,9 @@
 //   PUT    /api/playbooks/:name    save (create or replace) one of the account's own
 //   DELETE /api/playbooks/:name    delete one of the account's own
 import { SqlClient } from "@effect/sql"
-import { HttpRouter, type HttpServerResponse } from "@effect/platform"
+import { HttpRouter, HttpServerRequest, type HttpServerResponse } from "@effect/platform"
 import { Effect, Schema } from "effect"
-import type { Session } from "@openrecord/db"
+import { BusinessRepository, type Session } from "@openrecord/db"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 export interface Playbook { readonly name: string; readonly title: string; readonly prompt: string; readonly area: string; readonly builtIn: boolean }
@@ -69,9 +69,20 @@ export const playbooksApi = (withSession: WithSession) => {
       const { params } = yield* HttpRouter.RouteContext
       return yield* run(session, params["name"] ?? "")
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "PlaybooksUnavailable" })))
-  const list = (accountId: string) => Effect.map(ownOf(accountId), own => ({ playbooks: [...BUILT_IN_PLAYBOOKS, ...own] }))
+  const list = (accountId: string, businessId: string | null = null) => Effect.gen(function*() {
+    const own = yield* ownOf(accountId)
+    // Plugins switched on for the business add their playbooks (imported lazily: plugins.ts reads the built-ins from here).
+    const fromPlugins = businessId ? yield* Effect.flatMap(Effect.promise(() => import("./plugins.js")), m => m.pluginPlaybooks(accountId, businessId)) : []
+    return { playbooks: [...BUILT_IN_PLAYBOOKS, ...fromPlugins, ...own] }
+  })
   return HttpRouter.empty.pipe(
-    HttpRouter.get("/api/playbooks", route(s => Effect.flatMap(list(s.accountId), body => json(200, body, { "cache-control": "no-store" })))),
+    HttpRouter.get("/api/playbooks", route(s => Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const businessId = new URL(req.url, "http://localhost").searchParams.get("businessId")
+      // A business's plugin playbooks only for a business in the caller's account.
+      const scoped = businessId && /^[0-9a-f-]{36}$/i.test(businessId) && (yield* (yield* BusinessRepository).getScoped(s.accountId, businessId)) ? businessId : null
+      return yield* json(200, yield* list(s.accountId, scoped), { "cache-control": "no-store" })
+    }))),
     HttpRouter.put("/api/playbooks/:name", route((s, name) => Effect.gen(function*() {
       if (!NAME.test(name)) return yield* json(422, { _tag: "InvalidName", rule: "2 to 40 characters: lowercase letters, digits and hyphens, starting with a letter" })
       if (RESERVED.has(name) || BUILT_IN_PLAYBOOKS.some(p => p.name === name)) return yield* json(409, { _tag: "NameTaken" })

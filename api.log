@@ -21,3 +21,6 @@ packages/truth                           |  WARN  Unsupported engine: wanted
 > OPENRECORD_BUILD_COMMIT=$(git rev-parse HEAD 2>/dev/null) OPENRECORD_BUILD_DIRTY=$(git status --porcelain 2>/dev/null | grep -q . && echo true || (git rev-parse HEAD >/dev/null 2>&1 && echo false)) tsx src/server.ts
 
 [17:35:41.707] INFO (#1): API listening on port 3001
+/home/user/openrecord/apps/api:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @openrecord/api@0.1.0 dev: `OPENRECORD_BUILD_COMMIT=$(git rev-parse HEAD 2>/dev/null) OPENRECORD_BUILD_DIRTY=$(git status --porcelain 2>/dev/null | grep -q . && echo true || (git rev-parse HEAD >/dev/null 2>&1 && echo false)) tsx src/server.ts`
+Command failed with signal "SIGTERM"

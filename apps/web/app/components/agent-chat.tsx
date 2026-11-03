@@ -1163,7 +1163,7 @@ function Composer({
 
   const command = onCommand ? parseCommand(text) : null
   // The "/" menu: OpenRecord's commands, then playbooks (built-in SEO/AEO/GEO and the account's own).
-  const playbooks = usePlaybooks(!!onCommand)
+  const playbooks = usePlaybooks(!!onCommand, session?.businessId ?? null)
   const matches: ReadonlyArray<MenuItem> = onCommand
     ? [...commandMatches(text).map(c => ({ kind: "command" as const, ...c })), ...playbookMatches(text, playbooks).map(p => ({ kind: "playbook" as const, playbook: p }))]
     : []
