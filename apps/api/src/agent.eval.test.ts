@@ -5,6 +5,7 @@ import { runConversation, AGENT_SYSTEM, agentDeclarations } from "./agent.js"
 import { readAgentReferralEvidence } from "./agent-referral-tools.js"
 import { configuredAgentModel, AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
 import { AgentUnknownTool } from "./agent-tools.js"
+import { memoryJournal } from "./agent-run.js"
 
 const text = (value: string): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ text: value }] }, finishReason: "STOP" }] })
 const tool = (name: string, args = {}): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name, args } }] }, finishReason: "STOP" }] })
@@ -12,6 +13,13 @@ const result = { summary: "One UNKNOWN judgment", citations: [{ kind: "issue", i
 const fixture = (responses: ModelResponse[]): AgentModel => () => Effect.succeed(responses.shift() ?? text("No more evidence"))
 
 describe("deterministic conversational contract evaluations (not live model accuracy)", () => {
+  it("records a safe model failure category without provider content", async () => {
+    const { events, journal } = memoryJournal()
+    const result = await Effect.runPromise(Effect.either(runConversation({ message: "Explain", history: [], journal,
+      model: () => Effect.fail(new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" })), dispatch: () => Effect.die("not called") })))
+    expect(result).toMatchObject({ _tag: "Left", left: { reason: "MALFORMED" } })
+    expect(events).toContainEqual({ type: "VERIFICATION", payload: { passed: false, action: "MODEL_FAILED", reason: "MALFORMED", detail: "OUTPUT_LIMIT", step: 1 } })
+  })
   it.each([
     ["None recorded (`totalActive: 0`).", "None recorded."],
     ["Unknown (`REFERRAL_DATA_UNAVAILABLE`, `SIGNUPS_NOT_MEASURED`).", "Unknown (referral data unavailable, signups not measured)."],

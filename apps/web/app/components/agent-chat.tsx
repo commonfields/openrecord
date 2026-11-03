@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
 import { useChrome, useOverlaySlot, usePaneSlot } from "@/components/app-shell"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { modKey, useSettings } from "@/components/settings-dialog"
 import { usePreferences } from "@/lib/preferences"
 import { Link, useNavigate, useSearchParams } from "react-router"
@@ -489,6 +490,20 @@ function SourceChip({ businessId, citation: c }: { businessId: string | null; ci
   ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
 }
 
+export function AnswerResources({ businessId, citations }: { businessId: string | null; citations: AgentCitation[] }) {
+  if (!citations.length) return null
+  return <Collapsible className="pt-0.5">
+    <CollapsibleTrigger className="rounded text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      Resources ({citations.length})
+    </CollapsibleTrigger>
+    <CollapsibleContent>
+      <ul className="flex flex-wrap gap-1.5 pt-2" aria-label="Resources">
+        {citations.map(citation => <li key={`${citation.kind}:${citation.id}`}><SourceChip businessId={businessId} citation={citation} /></li>)}
+      </ul>
+    </CollapsibleContent>
+  </Collapsible>
+}
+
 function Thread({ session, businessName = "", compact, placeholder, onCommand, work, context, banner = true, composer = true, seed = null }: {
   session: AgentSession; businessName?: string; compact?: boolean; placeholder: string; onCommand: (c: AgentCommand) => void; work?: ReactNode; context?: AgentChatContext | null; banner?: boolean
   /** A request another part of the page hands the composer: typed, never sent until the person sends it. */
@@ -542,11 +557,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       {m.run?.gaps?.length ? (
                         <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400">Not fully checked: {m.run.gaps.join("; ")}</p>
                       ) : null}
-                      {m.citations?.length && !m.pending ? (
-                        <ul className="flex flex-wrap gap-1.5 pt-0.5" aria-label="Sources">
-                          {m.citations.map(c => <li key={`${c.kind}:${c.id}`}><SourceChip businessId={session.businessId} citation={c} /></li>)}
-                        </ul>
-                      ) : null}
+                      {m.citations?.length && !m.pending ? <AnswerResources businessId={session.businessId} citations={m.citations} /> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
                       {m.decisions?.length ? <MessageDecisions session={session} businessName={businessName} refs={m.decisions} /> : null}
                     </div>
@@ -706,9 +717,15 @@ export function AgentPane({ open, session, businessName, placeholder, onClose, c
 // ---- overview: the agent is the page ----
 
 // Replies, work and evidence remain in one conversation column.
-export function DecisionConversation({ businessId, businessName, detail }: { businessId: string; businessName: string; detail: ReactNode }) {
-  const session = useAgentSession(businessId)
-  return <Thread session={session} businessName={businessName} placeholder="Message the agent about this business" onCommand={command => session.send(`/${command}`)} context={chatContext(businessId, businessName)} work={detail} />
+export function DecisionConversation({ businessId, businessName, conversationId, detail }: { businessId: string; businessName: string; conversationId: string; detail: ReactNode }) {
+  const session = useAgentSession(businessId, true, conversationId)
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <div aria-label="Selected item" className="max-h-[45%] shrink-0 overflow-y-auto px-4 pb-3 sm:px-6">{detail}</div>
+    <div className="min-h-0 flex-1 flex flex-col">
+      <p className="shrink-0 px-4 text-xs text-muted-foreground sm:px-6">Original conversation</p>
+      <Thread session={session} businessName={businessName} placeholder="Message the agent about this business" onCommand={command => session.send(`/${command}`)} context={chatContext(businessId, businessName)} />
+    </div>
+  </div>
 }
 
 export function AgentChat(props: { businessId: string | null; businessName: string; onConversationChange?: (active: boolean) => void }) {

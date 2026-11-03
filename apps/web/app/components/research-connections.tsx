@@ -19,12 +19,11 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
   const q = useApi(`research-connections:${businessId}`, () => api<Status>(base(businessId)))
   const [open, setOpen] = useState<string | null>(null)
   const [value, setValue] = useState("")
+  const [query, setQuery] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState("")
-  if (!q.data) return null
-  const needle = filter.trim().toLowerCase()
-  const shown = q.data.providers.filter(p => !needle || p.connected || `${p.name} ${p.endpoints.join(" ")}`.toLowerCase().includes(needle))
+  if (!q.data) return q.loading ? null : <Panel id="research-connections" className="flex flex-wrap items-center gap-3 p-4"><p role="alert" className="min-w-0 flex-1 text-xs text-destructive">Research accounts could not load.</p><Button size="sm" variant="outline" onClick={() => void q.reload()}>Try again</Button></Panel>
+  const providers = q.data.providers.filter(provider => provider.connected || `${provider.name} ${provider.endpoints.join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()))
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true); setError(null)
     try { await f(); setValue(""); setOpen(null); await q.reload() } catch (e) {
@@ -36,16 +35,16 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
       <div className="flex items-start gap-2">
         <DatabaseIcon aria-hidden className="mt-0.5 size-3.5 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-xs font-medium">Research data connections</h2>
-          <p className="text-[0.6875rem] text-muted-foreground">Your own accounts with data providers, so the agent can research with them. Public sources work without any of these. Read-only: keys are stored encrypted and never shown again.</p>
+          <h2 className="text-sm font-medium">Research accounts</h2>
+          <p className="text-xs text-muted-foreground">Connect accounts for your agent to use in research. Public sources don't need a connection. Some accounts require an API key and may charge you directly.</p>
         </div>
       </div>
-      {q.data.available && q.data.providers.length > 10 ? (
-        <Input value={filter} onChange={e => setFilter(e.currentTarget.value)} placeholder={`Search ${q.data.providers.length} providers, for example CRM, email, podcasts`} aria-label="Search providers" className="w-80 text-xs" />
-      ) : null}
       {!q.data.available ? <p className="text-[0.6875rem] text-muted-foreground">Connections are not available yet. Contact your workspace administrator for help.</p> : (
+        <div className="space-y-2">
+        <Input value={query} onChange={event => setQuery(event.currentTarget.value)} placeholder="Search research accounts" aria-label="Search research accounts" className="max-w-sm" />
+        {providers.length === 0 ? <p className="text-xs text-muted-foreground">No research accounts match your search.</p> : null}
         <ul className="divide-y">
-          {shown.map(p => (
+          {providers.map(p => (
             <li key={p.id} className="space-y-2 py-2">
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1"><span className="font-medium">{p.name}</span>{p.paid ? <span className="text-muted-foreground"> (billed to your own account)</span> : p.optional ? <span className="text-muted-foreground"> (optional, raises limits)</span> : null}
@@ -53,7 +52,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
                 {p.connected ? (<>
                   <span className="text-[0.6875rem] text-muted-foreground">Connected, ending {p.hint}</span>
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => api(`${base(businessId)}/${p.id}`, { method: "DELETE" }))}>Disconnect</Button>
-                </>) : <Button size="sm" variant="outline" onClick={() => { setOpen(open === p.id ? null : p.id); setValue(""); setError(null) }}>Connect</Button>}
+                </>) : <Button size="sm" variant="outline" onClick={() => { setOpen(open === p.id ? null : p.id); setValue(""); setError(null) }}>Connect with key</Button>}
               </div>
               {open === p.id ? (
                 <form className="space-y-2" onSubmit={e => { e.preventDefault(); if (value.trim()) void act(() => api(`${base(businessId)}/${p.id}`, { method: "PUT", body: JSON.stringify({ credential: value.trim() }) })) }}>
@@ -67,6 +66,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
             </li>
           ))}
         </ul>
+        </div>
       )}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </Panel>

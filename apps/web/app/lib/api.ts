@@ -320,9 +320,9 @@ export const Agent = {
 
 /** Everything waiting on a person, across the businesses this session can reach. */
 export type DecisionItem =
-  | { type: "AGENT_PROPOSAL"; business: { id: string; name: string }; createdAt: string; proposal: AgentProposal }
-  | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; opportunity: GrowthOpportunity }
-  | { type: "WORDPRESS_CHANGE"; business: { id: string; name: string }; createdAt: string; change: WordPressChange }
+  | { type: "AGENT_PROPOSAL"; business: { id: string; name: string }; createdAt: string; conversationId?: string; proposal: AgentProposal }
+  | { type: "GROWTH_OPPORTUNITY"; business: { id: string; name: string }; createdAt: string; conversationId?: string; opportunity: GrowthOpportunity }
+  | { type: "WORDPRESS_CHANGE"; business: { id: string; name: string }; createdAt: string; conversationId?: string; change: WordPressChange }
 
 export const Decisions = {
   list: () => api<{ items: DecisionItem[]; count: number }>("/api/decisions"),

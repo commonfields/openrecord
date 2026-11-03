@@ -75,6 +75,7 @@ const STOPPED: Readonly<Record<string, string>> = {
   CANCELLED: "Stopped before finishing.",
   INTERRUPTED: "This request was interrupted before it finished.",
   TIMEOUT: "This request timed out before it finished.",
+  MALFORMED: "The model returned a response OpenRecord could not use.",
   RATE_LIMITED: "The model provider was rate limited before this request finished.",
   CONTEXT_LIMIT: "This request ran out of context space before it finished.",
   TOOL_LIMIT: "This request used its whole step budget before it finished.",

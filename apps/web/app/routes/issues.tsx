@@ -110,8 +110,8 @@ export function IssuesPage() {
   return (
     <div className="space-y-4 pb-4">
       <PageHeader
-        title="Issues"
-        description="Claims from AI answers that disagree with your approved facts, or still need a verdict. Supported claims stay out of this inbox."
+        title="AI answer issues"
+        description="Review claims that need a verdict, or open a reviewed issue to see its evidence and follow-up. Unreviewed claims are not marked wrong."
         actions={
           <>
             <Button

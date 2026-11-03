@@ -99,7 +99,9 @@ export const HarnessAnswer = Schema.Union(
 export type HarnessAnswer = typeof HarnessAnswer.Type
 export const HarnessModelInput = Schema.Struct({
   reasoningEffort: Schema.optional(HarnessReasoningEffort),
-  system: Schema.String.pipe(Schema.maxLength(16000)),
+  // Business and session instructions are combined for delegated agent turns.
+  // Keep a bounded limit with room for that complete server-owned prompt.
+  system: Schema.String.pipe(Schema.maxLength(32000)),
   contents: Schema.Array(Schema.Struct({ role: Schema.Literal("user", "model"), parts: Schema.Array(Schema.Unknown) })),
   tools: Schema.Array(Schema.Unknown),
   /** Allow only the subscription's own web search (run on the provider's side), for AI-answer measurement. */

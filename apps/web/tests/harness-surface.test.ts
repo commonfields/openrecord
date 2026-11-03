@@ -57,7 +57,7 @@ describe("agent workspace presentation", () => {
     const sidebar = shell.slice(shell.indexOf("function SidebarBody()"), shell.indexOf("const CHATS_SHOWN"))
     expect(sidebar.includes("{agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>")).toBe(true)
     expect(sidebar.includes('label="Agent"')).toBe(false)
-    for (const label of ["Channels", "Results"]) {
+    for (const label of ["Inbox", "Channels", "Overview"]) {
       expect(sidebar.includes(`label="${label}"`)).toBe(true)
     }
     expect(sidebar).not.toContain('label="Work"')
@@ -68,7 +68,7 @@ describe("agent workspace presentation", () => {
     expect(tabs.includes("grid h-7 w-auto")).toBe(true)
     expect(tabs.includes("data-[state=active]:bg-control data-[state=active]:text-foreground data-[state=active]:shadow-(--control-shadow)")).toBe(true)
     expect(tabs.includes("data-[state=active]:shadow-(--card-shadow)")).toBe(false)
-    expect(sidebar.indexOf('label="Results"')).toBeLessThan(sidebar.indexOf('label="Channels"'))
+    expect(sidebar.indexOf('label="Overview"')).toBeLessThan(sidebar.indexOf('label="Channels"'))
     expect(sidebar.includes("<ViewTabs")).toBe(false)
     const header = shell.slice(shell.indexOf("<header"), shell.indexOf("</header>"))
     expect(header.includes("<ViewTabs />")).toBe(true)

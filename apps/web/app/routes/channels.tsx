@@ -19,7 +19,6 @@ import { WordPressSetup } from "@/components/wordpress"
 import { AiAnswerTracking } from "@/components/ai-answer-tracking"
 import { AiTrafficUpload } from "@/components/ai-traffic"
 import { ResearchConnections } from "@/components/research-connections"
-import { AskAgentButton } from "@/components/workspace-agent"
 import { AgentAccess, LiveTrafficFeed, ToolServers } from "@/components/agent-access"
 import { ADS_CALLBACK_COPY, Ads, adsError } from "@/lib/ads"
 import { Revenue } from "@/lib/revenue"
@@ -36,7 +35,7 @@ const STATE_BADGE: Record<State, { label: string; variant: "supported" | "partia
   choose: { label: "Finish setup", variant: "partial" },
   reconnect: { label: "Reconnect", variant: "wrong" },
   available: null,
-  unavailable: { label: "Not switched on", variant: "unknown" },
+  unavailable: { label: "Setup required", variant: "unknown" },
 }
 
 export function ChannelsPage() {
@@ -164,11 +163,9 @@ export function ChannelsPage() {
           <h2 className="text-sm font-medium">Accounts</h2>
           <span className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">{loading ? "Checking" : incomplete ? "Some statuses unavailable" : connected ? `${connected} connected` : "None connected yet"}</span>
-            <AskAgentButton businessId={id} request={`Which of our channels should ${name} connect first, and what would each one let you measure or do for our goal?`}>Which first?</AskAgentButton>
           </span>
         </div>
-        {loading ? <div className="space-y-2 p-4">{[0, 1, 2].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
-          : <ul className="divide-y divide-border/60">{rows}</ul>}
+        <ul className="divide-y divide-border/60">{rows}{loading ? <li className="p-4"><Skeleton className="h-12 rounded-lg" /></li> : null}</ul>
       </Panel>
 
       {profiles.length ? (
@@ -177,7 +174,6 @@ export function ChannelsPage() {
             <h2 className="text-sm font-medium">Found on your website</h2>
             <p className="text-xs text-muted-foreground">Profiles your homepage links to. The agent reads them in research; it can't post there.</p>
           </div>
-          <AskAgentButton businessId={id} request={`Research our profiles linked from the website (${profiles.map(p => p.label).join(", ")}): how active each is, how they compare with competitors, and what to improve first.`}>Research these profiles</AskAgentButton>
           <ul className="flex flex-wrap gap-2">
             {profiles.map(p => (
               <li key={p.key}>
@@ -191,6 +187,7 @@ export function ChannelsPage() {
         </Panel>
       ) : null}
 
+      <ResearchConnections businessId={id} />
       <MoreTools businessId={id} />
     </div>
   )
@@ -201,12 +198,17 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
   onToggle: () => void; onConnect: () => void; busy?: boolean; error?: string | null; children: ReactNode
 }) {
   const badge = STATE_BADGE[state]
+  const unavailableReason = row === "google" ? "Google sign-in must be configured on this server before you can connect your account."
+    : row === "meta" ? "Meta sign-in and secure credential storage must be configured on this server before you can connect."
+      : row === "google_ads" ? "Google Ads sign-in and the required developer access must be configured on this server before you can connect."
+        : row === "google_business" ? "Google sign-in and secure credential storage must be configured on this server before you can connect."
+          : "Secure credential storage must be configured on this server before you can connect."
   // Opens the row instead of signing in when there is something to finish or manage here.
   const action = state === "connected" ? { label: open ? "Done" : "Manage", run: onToggle, variant: "outline" as const }
     : state === "choose" ? { label: open ? "Close" : "Finish setup", run: onToggle, variant: "default" as const }
     : state === "reconnect" ? { label: "Reconnect", run: onConnect, variant: "default" as const }
     : state === "available" ? { label: "Connect", run: onConnect, variant: "default" as const }
-    : null
+    : { label: open ? "Close" : "Connect", run: onToggle, variant: "outline" as const }
   return (
     <li id={row} className="scroll-mt-20">
       <Collapsible open={open} onOpenChange={onToggle}>
@@ -221,37 +223,21 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
             </div>
             <p className="truncate text-xs text-muted-foreground">{identity && state === "connected" ? identity : purpose}</p>
           </div>
-          <ChannelAsk title={title} connected={state === "connected"} />
-          {action ? (
-            <Button size="sm" variant={action.variant} disabled={busy} onClick={action.run} className="min-w-24">
-              {busy ? <LoaderCircleIcon className="animate-spin" /> : null}{action.label}
-            </Button>
-          ) : (
-            <CollapsibleTrigger asChild>
-              <Button size="sm" variant="ghost" className="text-muted-foreground">
-                Why<ChevronRightIcon className={cn("transition-transform", open && "rotate-90")} />
-              </Button>
-            </CollapsibleTrigger>
-          )}
+          <Button size="sm" variant={action.variant} disabled={busy} onClick={action.run} className="min-w-24">
+            {busy ? <LoaderCircleIcon className="animate-spin" /> : null}{action.label}
+          </Button>
         </div>
         {error ? <p role="alert" className="px-4 pb-3 pl-15 text-xs text-destructive">{error}</p> : null}
         <CollapsibleContent>
           <div className="border-t border-border/60 bg-muted/30 px-4 py-3 sm:pl-15">
             {state === "unavailable"
-              ? <p className="text-xs text-muted-foreground">This connection is not available yet. Contact your workspace administrator for help.</p>
+              ? <p className="text-xs text-muted-foreground">{unavailableReason} Once configured, you can connect your own account here.</p>
               : children}
           </div>
         </CollapsibleContent>
       </Collapsible>
     </li>
   )
-}
-
-/** Hands the agent this channel: what it shows when connected, what it would add when not. */
-function ChannelAsk({ title, connected }: { title: string; connected: boolean }) {
-  const { id = "" } = useParams()
-  return <AskAgentButton businessId={id} className="h-7 text-xs text-muted-foreground"
-    request={connected ? `What does our ${title} data show right now, and what should we do about it?` : `What would connecting ${title} let you measure or do for us, and is it worth connecting now?`}>Ask</AskAgentButton>
 }
 
 function RowError({ text, onRetry }: { text: string; onRetry: () => void }) {
@@ -280,19 +266,18 @@ function MeasurementNote({ inventory }: { inventory: { channels: ReadonlyArray<{
 function MoreTools({ businessId }: { businessId: string }) {
   const [open, setOpen] = useState(false)
   const { hash } = useLocation()
-  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#research-connections", "#agent-access", "#tool-servers"].includes(hash)) setOpen(true) }, [hash])
+  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#agent-access", "#tool-servers"].includes(hash)) setOpen(true) }, [hash])
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">
       <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md text-sm font-medium outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRightIcon aria-hidden className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-90")} />
         More data for the agent
-        <span className="font-normal text-muted-foreground">AI answer tracking, server logs, research accounts, tool servers and agent access</span>
+        <span className="font-normal text-muted-foreground">AI answer tracking, server logs, tool servers and agent access</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-3">
         <AiAnswerTracking businessId={businessId} />
         <AiTrafficUpload businessId={businessId} />
         <LiveTrafficFeed businessId={businessId} />
-        <ResearchConnections businessId={businessId} />
         <ToolServers businessId={businessId} />
         <AgentAccess businessId={businessId} />
       </CollapsibleContent>

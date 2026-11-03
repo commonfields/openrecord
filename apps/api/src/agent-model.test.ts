@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ConfigProvider, Effect } from "effect"
-import { configuredAgentModel } from "./agent-model.js"
+import { agentSettings, configuredAgentModel } from "./agent-model.js"
 const config = ConfigProvider.fromMap(new Map([
   ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"], ["AGENT_TIMEOUT_MS", "50"],
 ]))
 const invoke = () => Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents: [{ role: "user", parts: [{ text: "Stored question" }] }], tools: [], system: "Untrusted evidence" })).pipe(Effect.withConfigProvider(config))))
 afterEach(() => vi.unstubAllGlobals())
 describe("Gemini assistant transport (local HTTP fixtures only)", () => {
+  it("allows a model response up to 60 seconds by default while respecting an explicit timeout", async () => {
+    const base = [["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"]] as Array<[string, string]>
+    const defaults = await Effect.runPromise(agentSettings.pipe(Effect.withConfigProvider(ConfigProvider.fromMap(new Map(base)))))
+    const configured = await Effect.runPromise(agentSettings.pipe(Effect.withConfigProvider(config)))
+    expect(defaults.timeoutMs).toBe(60000)
+    expect(configured.timeoutMs).toBe(50)
+  })
   it("refuses external processing before fetch even when model credentials are configured", async () => {
     const fetch = vi.fn()
     vi.stubGlobal("fetch", fetch)
@@ -43,6 +50,12 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
   it("aborts a timed-out provider", async () => {
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted")))))
     expect(await invoke()).toMatchObject({ _tag: "Left", left: { reason: "TIMEOUT" } })
+  })
+  it("classifies an output limit without retaining provider content", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ candidates: [{ finishReason: "MAX_TOKENS", privateText: "sensitive provider output" }] })))
+    const result = await invoke()
+    expect(result).toMatchObject({ _tag: "Left", left: { reason: "MALFORMED", detail: "OUTPUT_LIMIT" } })
+    expect(JSON.stringify(result)).not.toContain("sensitive provider output")
   })
 })
 

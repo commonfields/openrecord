@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { HarnessJobResult, HarnessSelection } from "./harness.js"
+import { HarnessJobResult, HarnessModelInput, HarnessSelection } from "./harness.js"
 
 describe("harness wire boundaries", () => {
   const instanceId = "00000000-0000-4000-8000-000000000001"
@@ -28,5 +28,10 @@ describe("harness wire boundaries", () => {
     for (const reasoningEffort of ["--unsafe", "high\nflag", "invented", 42]) {
       expect(() => Schema.decodeUnknownSync(HarnessSelection)({ instanceId, model: "fixture", reasoningEffort })).toThrow()
     }
+  })
+  it("accepts combined business and session instructions while bounding their size", () => {
+    const input = { system: "x".repeat(17000), contents: [], tools: [] }
+    expect(Schema.decodeUnknownSync(HarnessModelInput)(input).system).toHaveLength(17000)
+    expect(() => Schema.decodeUnknownSync(HarnessModelInput)({ ...input, system: "x".repeat(32001) })).toThrow()
   })
 })
