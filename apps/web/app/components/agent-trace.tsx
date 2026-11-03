@@ -83,26 +83,30 @@ export function ThinkingGlyph({ live = true }: { live?: boolean }) {
   return <span aria-hidden className="inline-flex size-4 items-center justify-center font-mono text-base leading-none text-secondary">{live ? GLYPHS[i] : "✻"}</span>
 }
 
-// One work log line: a 24px icon slot and a muted label.
-function LogRow({ icon, children, wrap, className }: { icon: ReactNode; children: ReactNode; wrap?: boolean; className?: string }) {
+// One work log line on the timeline: a node on the rail and a label. Tool
+// steps sit in a small round node; reasoning is a lighter aside with its glyph.
+function LogRow({ icon, children, wrap, node = false, className }: { icon: ReactNode; children: ReactNode; wrap?: boolean; node?: boolean; className?: string | undefined }) {
   return (
-    <li className={cn("flex min-h-6 min-w-0 gap-1 text-sm leading-relaxed text-muted-foreground", wrap ? "items-start" : "items-center", className)}>
-      <span className="flex size-6 shrink-0 items-center justify-end pr-0.5 [&_svg]:size-3.5">{icon}</span>
-      <span className={cn("min-w-0 flex-1", wrap ? "pt-px" : "truncate")}>{children}</span>
+    <li className={cn("relative flex min-h-7 min-w-0 gap-2 py-0.5 text-sm leading-relaxed text-muted-foreground", wrap ? "items-start" : "items-center", className)}>
+      <span className={cn("relative z-10 flex size-6 shrink-0 items-center justify-center [&_svg]:size-3.5",
+        node && "rounded-full bg-background text-foreground/70 shadow-(--control-shadow)")}>{icon}</span>
+      <span className={cn("min-w-0 flex-1", wrap ? "pt-0.5" : "truncate")}>{children}</span>
     </li>
   )
 }
+/** The rail the steps hang on: a thin line through the node column. */
+const RAIL = "relative flex min-w-0 flex-col before:absolute before:top-3 before:bottom-3 before:left-[11.5px] before:w-px before:bg-border"
 
-function Step({ item }: { item: AgentActivity }) {
+function Step({ item, animate = false }: { item: AgentActivity; animate?: boolean }) {
   if (item.kind === "thought") return (
-    <LogRow icon={<ThinkingGlyph live={false} />} wrap>
-      <span className="line-clamp-4 whitespace-pre-wrap">{item.text}</span>
+    <LogRow icon={<ThinkingGlyph live={false} />} wrap className={animate ? "step-in" : undefined}>
+      <span className="line-clamp-4 whitespace-pre-wrap text-muted-foreground/80 italic">{item.text}</span>
     </LogRow>
   )
   const Icon = toolIcon(item.tool)
   return (
-    <LogRow icon={item.failed ? <XIcon className="text-wrong" aria-label="Not completed" /> : <Icon aria-hidden />}>
-      {item.text}
+    <LogRow node icon={item.failed ? <XIcon className="text-wrong" aria-label="Not completed" /> : <Icon aria-hidden />} className={animate ? "step-in" : undefined}>
+      <span className={item.failed ? "text-wrong/80" : "text-foreground/80"}>{item.text}</span>
     </LogRow>
   )
 }
@@ -130,9 +134,14 @@ export function LiveTrace({ progress }: { progress: Progress }) {
       <p className="flex h-6 items-baseline gap-1 px-0.5 text-sm text-muted-foreground tabular-nums">
         <span className="thinking">{working ? "Working" : "Thinking"} for {elapsed(now - progress.startedAt)}</span>
       </p>
-      <ul className="flex min-w-0 flex-col" aria-label="Steps so far">
-        {progress.trace.map((item, i) => <Step key={i} item={item} />)}
-        <LogRow icon={LiveIcon ? <LiveIcon aria-hidden /> : <ThinkingGlyph />}><span className="thinking">{live}</span></LogRow>
+      <ul className={cn(RAIL, "mt-1")} aria-label="Steps so far">
+        {/* Finished steps stay mounted, so only the newest one slides in. */}
+        {progress.trace.map((item, i) => <Step key={i} item={item} animate />)}
+        {/* The step under way re-enters whenever the agent moves to another tool. */}
+        <LogRow key={`live:${progress.trace.length}:${progress.currentTool ?? progress.phase}`} className="step-in" node={!!LiveIcon}
+          icon={LiveIcon ? <span className="live-ring flex size-6 items-center justify-center rounded-full"><LiveIcon aria-hidden /></span> : <ThinkingGlyph />}>
+          <span className="thinking">{live}</span>
+        </LogRow>
       </ul>
     </div>
   )
@@ -144,18 +153,29 @@ export function RunTrace({ activity, durationMs }: { activity: ReadonlyArray<Age
   if (!activity.length) return null
   const worked = activity.some(a => a.kind === "tool")
   const label = `${worked ? "Worked" : "Thought"}${durationMs !== undefined ? ` for ${elapsed(durationMs)}` : ""}`
+  const tools = activity.filter(a => a.kind === "tool")
+  // Up to four distinct tool icons, so the folded row says what kind of work it was.
+  const kinds = [...new Map(tools.map(t => [toolIcon(t.kind === "tool" ? t.tool : ""), t])).keys()].slice(0, 4)
   return (
     <div className="w-full">
       <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
         className="group/worked flex h-6 items-center gap-1 rounded-md px-0.5 text-sm text-muted-foreground tabular-nums hover:text-foreground">
         {label}
+        {tools.length ? (
+          <span className="ml-1 flex items-center gap-1 text-muted-foreground/70 [&_svg]:size-3">
+            {kinds.map((Icon, i) => <Icon key={i} aria-hidden />)}
+            <span className="text-xs">{tools.length} step{tools.length === 1 ? "" : "s"}</span>
+          </span>
+        ) : null}
         <ChevronRightIcon className={cn("size-3.5 shrink-0 opacity-60 transition-transform group-hover/worked:opacity-100", open && "rotate-90")} />
       </button>
-      {open ? (
-        <ul className="mt-0.5 flex max-h-72 min-w-0 flex-col overflow-y-auto border-b border-border/60 pb-2" aria-label="What the agent did">
-          {activity.map((item, i) => <Step key={i} item={item} />)}
-        </ul>
-      ) : null}
+      <div className="fold" data-open={open} aria-hidden={!open} inert={!open}>
+        <div>
+          <ul className={cn(RAIL, "mt-1 max-h-72 overflow-y-auto border-b border-border/60 pb-2")} aria-label="What the agent did">
+            {activity.map((item, i) => <Step key={i} item={item} />)}
+          </ul>
+        </div>
+      </div>
     </div>
   )
 }
