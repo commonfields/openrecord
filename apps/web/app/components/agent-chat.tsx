@@ -548,7 +548,7 @@ function RevealReply({ text, className }: { text: string; className?: string }) 
   const done = shown >= total
   return (
     <div onClick={done ? undefined : () => setShown(total)} className={done ? undefined : "cursor-default"} aria-busy={!done}>
-      <ChatMarkdown text={done ? text : words.slice(0, shown).join("")} {...(className ? { className } : {})} />
+      <ChatMarkdown text={done ? text : words.slice(0, shown).join("")} live={!done} {...(className ? { className } : {})} />
       {done ? null : <span aria-hidden className="reply-caret" />}
     </div>
   )
