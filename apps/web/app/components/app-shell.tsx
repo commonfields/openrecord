@@ -351,6 +351,7 @@ function SidebarBody() {
             <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<InboxIcon />} label="Inbox" count={waiting + (base ? attention : 0)} />
             {base ? <>
               <SidebarLink to={`${base}/results`} icon={<ChartColumnIcon />} label="Overview" count={attention} />
+              <SidebarLink to={`${base}/campaigns`} icon={<BriefcaseIcon />} label="Campaigns" />
               <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answer issues" />
               <SidebarLink to={`${base}/channels`} icon={<PlugIcon />} label="Channels" />
             </> : null}
