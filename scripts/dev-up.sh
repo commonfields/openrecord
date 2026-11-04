@@ -61,14 +61,28 @@ if [ -z "$setup_pid" ] || ! ps -p "$setup_pid" -o command= 2>/dev/null | grep -q
   echo "$!" > "$setup_pid_file"
 fi
 
-# 2. API on :3001 (no watcher). Restart it when it serves an older commit.
+# Agent chat runs separately from HTTP and unrelated worker queues. Existing API
+# processes may still own loops until their next idle restart; claims coordinate.
+agent_worker_count="$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM agent_worker_instances WHERE mode='standalone' AND stopped_at IS NULL AND heartbeat_at>now()-interval '30 seconds'")"
+if [ "$agent_worker_count" -eq 0 ]; then
+  echo "starting agent request worker (logs: /tmp/opencode-agent-worker.log)"
+  DATABASE_URL="$DATABASE_URL" nohup pnpm --filter @openrecord/api agent:worker > /tmp/opencode-agent-worker.log 2>&1 &
+fi
+
+# 2. API on :3001 (no watcher). Restart it when it serves an older commit,
+# but never deliberately interrupt an active turn (including helper sessions).
 head_sha="$(git rev-parse --short=12 HEAD)"
 if lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
   if [ "$running" != "$head_sha" ]; then
-    echo "API serves ${running:-unknown}, checkout is $head_sha; restarting API"
-    kill $(lsof -tiTCP:3001 -sTCP:LISTEN)
-    while lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
+    active="$(psql "$DATABASE_URL" -tAc "SELECT (SELECT count(*) FROM agent_request_jobs WHERE status='RUNNING')+(SELECT count(*) FROM agent_conversations WHERE lease_until>now())")"
+    if [ "$active" -gt 0 ]; then
+      echo "WARNING: API is stale but agent work is active; leaving it running. Re-run when idle." >&2
+    else
+      echo "API serves ${running:-unknown}, checkout is $head_sha; restarting API"
+      kill $(lsof -tiTCP:3001 -sTCP:LISTEN)
+      while lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
+    fi
   fi
 fi
 #    OPENRECORD_LOCAL_BRIDGE=1: the API starts a bridge for the signed-in user
@@ -76,7 +90,7 @@ fi
 if ! lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting API on :3001 (logs: /tmp/opencode-api.log)"
   DATABASE_URL="$DATABASE_URL" \
-  PORT=3001 APP_BASE_URL="http://localhost:3000" OPENRECORD_LOCAL_BRIDGE=1 \
+  PORT=3001 APP_BASE_URL="http://localhost:3000" OPENRECORD_LOCAL_BRIDGE=1 AGENT_REQUEST_WORKER_ENABLED=false \
     nohup pnpm --filter @openrecord/api dev > /tmp/opencode-api.log 2>&1 &
 fi
 

@@ -20,6 +20,13 @@ Practical notes for running this checkout locally. Architecture lives in
 - The script starts a setup-only worker for website discovery. It does not
   consume AI-check, publishing, or other worker queues; start the full worker
   separately when those queues are intended to run.
+- It also starts a standalone agent chat worker (`pnpm --filter
+  @openrecord/api agent:worker`). Newly started APIs set
+  `AGENT_REQUEST_WORKER_ENABLED=false`; the default remains true for deployments
+  without a separate worker. Migration 0076 is required. Live workers appear in
+  authenticated `/api/dev/runtime`; the script leaves live workers alone and
+  defers stale-API restarts while agent work is active. Drain a worker before
+  replacing it; ambiguous in-flight work is never replayed automatically.
 - Before testing or reviewing anything locally, confirm you are looking at
   current code. Work merges on GitHub through PRs, and this checkout does not
   pull by itself: on 2026-10-30 it sat at PR #85 while `origin/main` had #86

@@ -1,6 +1,11 @@
 import { SqlClient } from "@effect/sql"
 import { Effect } from "effect"
 import { configuredAgentModel } from "./agent-model.js"
+import { randomUUID } from "node:crypto"
+
+const instanceId = randomUUID()
+const startedAt = new Date().toISOString()
+const fingerprint = /^[a-f0-9]{64}$/.test(process.env["OPENRECORD_BUILD_FINGERPRINT"] ?? "") ? process.env["OPENRECORD_BUILD_FINGERPRINT"] : null
 
 // Hosted code may not start subprocesses or import fs (architecture guards),
 // so the API does not inspect its checkout. The launcher states what it
@@ -28,10 +33,14 @@ export const runtimeDiagnostic = Effect.gen(function*() {
     : []
   const latest = migrations[0]?.filename ?? null
   const agentConfigured = yield* configuredAgentModel.pipe(Effect.isSuccess)
+  const agentWorkers = yield* sql`SELECT id,mode,started_at,heartbeat_at,source_fingerprint FROM agent_worker_instances
+    WHERE stopped_at IS NULL AND heartbeat_at>now()-interval '30 seconds' ORDER BY started_at DESC`
   return {
     // The launch environment is fixed for the process, so this is startup state.
     ...readStartupGit(),
+    instanceId, startedAt, sourceFingerprint: fingerprint,
     latestMigration: latest !== null && /^\d{4}_[a-z0-9_]+\.sql$/.test(latest) ? latest : null,
     agentConfigured,
+    agentWorkers,
   }
 })

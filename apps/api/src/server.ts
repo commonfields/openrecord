@@ -3,103 +3,15 @@ import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Config, Effect, Layer } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { createServer } from "node:http"
-import {
-  GrowthRepositoriesLive,
-  SetupRepositoryLive,
-  AgentProposalRepositoryLive,
-  AuthRepositoryLive,
-  AssayRepositoryLive,
-  AssayReviewRepositoryLive,
-  BusinessRepositoryLive,
-  CheckRunRepositoryLive,
-  ClaimRepositoryLive,
-  DiscoveryFrontierRepositoryLive,
-  DiscoveryMatchRepositoryLive,
-  DiscoveryObservationRepositoryLive,
-  DiscoveryRunRepositoryLive,
-  DiscoveryScopeRepositoryLive,
-  EvidenceLineageRepositoryLive,
-  FactRepositoryLive,
-  InterventionBindingRepositoryLive,
-  InterventionRepositoryLive,
-  JudgmentRepositoryLive,
-  ObservationRepositoryLive,
-  ProductReadRepositoryLive,
-  QuestionRepositoryLive,
-  SiteFindingEventRepositoryLive,
-  SiteFindingRepositoryLive,
-  SiteFixProposalRepositoryLive,
-  SiteGscRepositoryLive,
-  SiteMutationRepositoryLive,
-  SiteOperatorEventRepositoryLive,
-  SitePageObservationRepositoryLive,
-  SiteRunRepositoryLive,
-  SiteTargetRepositoryLive,
-  SiteVerificationRepositoryLive,
-  SourceTargetRepositoryLive,
-  ReobservationIntentRepositoryLive,
-  ReobservationRepositoryLive,
-  RecordRepositoryLive,
-  AcquisitionRepositoryLive,
-  GrowthMeasurementRepositoryLive,
-} from "@openrecord/db"
-import { GitHubExecutionLive } from "@openrecord/site-operator"
-import { Ga4ProviderLive } from "@openrecord/ga4"
-import { AdsProviderLive } from "@openrecord/ads"
+import { Repos } from "./services.js"
 import { makeRouter } from "./router.js"
 import { resumeLocalBridges } from "./local-bridge.js"
 import { briefScheduler } from "./growth-brief.js"
 import { trackingScheduler } from "./acquisition-schedule.js"
 import { answerScheduler } from "./research/answer-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
-
-const Repos = Layer.mergeAll(
-  GitHubExecutionLive,
-  // W8: GA4 OAuth client, redirect URI and token encryption keys from server configuration only.
-  Ga4ProviderLive,
-  // Meta and Google Ads app credentials and redirect URI, from server configuration only.
-  AdsProviderLive,
-  GrowthRepositoriesLive,
-  SetupRepositoryLive,
-  GrowthMeasurementRepositoryLive,
-  AgentProposalRepositoryLive,
-  RecordRepositoryLive,
-  AcquisitionRepositoryLive,
-  AssayRepositoryLive,
-  AssayReviewRepositoryLive,
-  AuthRepositoryLive,
-  BusinessRepositoryLive,
-  FactRepositoryLive,
-  QuestionRepositoryLive,
-  SourceTargetRepositoryLive,
-  CheckRunRepositoryLive,
-  ObservationRepositoryLive,
-  ClaimRepositoryLive,
-  InterventionBindingRepositoryLive,
-  InterventionRepositoryLive,
-  JudgmentRepositoryLive,
-  ProductReadRepositoryLive,
-  QuestionRepositoryLive,
-  SourceTargetRepositoryLive,
-  ReobservationIntentRepositoryLive,
-  ReobservationRepositoryLive,
-  DiscoveryScopeRepositoryLive,
-  DiscoveryRunRepositoryLive,
-  EvidenceLineageRepositoryLive,
-  DiscoveryFrontierRepositoryLive,
-  DiscoveryObservationRepositoryLive,
-  DiscoveryMatchRepositoryLive,
-  SiteTargetRepositoryLive,
-  SiteRunRepositoryLive,
-  SitePageObservationRepositoryLive,
-  SiteFindingRepositoryLive,
-  SiteFindingEventRepositoryLive,
-  SiteFixProposalRepositoryLive,
-  SiteMutationRepositoryLive,
-  SiteVerificationRepositoryLive,
-  SiteOperatorEventRepositoryLive,
-  SiteGscRepositoryLive,
-)
+import { agentRequestWorker } from "./agent-request-queue.js"
+import { withAgentWorkerRuntime } from "./agent-worker-runtime.js"
 
 // Only what the API consumes: requiring unused keys (session secret,
 // worker path) at boot would be a regression for dev and deploy.
@@ -107,6 +19,7 @@ const ApiConfig = Config.all({
   databaseUrl: Config.redacted("DATABASE_URL"),
   port: Config.integer("PORT").pipe(Config.withDefault(3001)),
   appBaseUrl: Config.string("APP_BASE_URL").pipe(Config.withDefault("http://localhost:3000")),
+  agentRequestWorkerEnabled: Config.boolean("AGENT_REQUEST_WORKER_ENABLED").pipe(Config.withDefault(true)),
 })
 
 const main = Effect.flatMap(ApiConfig, (config) =>
@@ -124,7 +37,10 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const Tracking = Layer.effectDiscard(Effect.forkDaemon(trackingScheduler.pipe(Effect.delay("45 seconds"))))
     // Approved AI answer tracking on the team's own subscriptions.
     const AnswerTracking = Layer.effectDiscard(Effect.forkDaemon(answerScheduler.pipe(Effect.delay("60 seconds"))))
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking).pipe(
+    const AgentRequests = config.agentRequestWorkerEnabled
+      ? Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", agentRequestWorker)))
+      : Layer.empty
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking, AgentRequests).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )
