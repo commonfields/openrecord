@@ -17,6 +17,7 @@ import { AgentPage, BusinessLayout, Overview, ResultsPage } from "./routes/busin
 import { ChannelsPage } from "./routes/channels"
 import { RootRedirect, StartPage } from "./routes/start"
 import { WorkPage } from "./routes/work"
+import { CampaignsPage } from "./routes/campaign-progress"
 import { AssayPage } from "./routes/assay"
 import { ChecksPage } from "./routes/checks"
 import { DiscoveryPage } from "./routes/discovery"
@@ -84,6 +85,7 @@ function App() {
               <Route path="channels" element={<ChannelsPage />} />
               <Route path="inbox" element={<BusinessInboxPage />} />
               <Route path="work" element={<WorkPage />} />
+              <Route path="campaigns" element={<CampaignsPage />} />
               <Route path="results" element={<ResultsPage />} />
               <Route path="overview" element={<Overview />} />
               <Route path="truth" element={<TruthPage />} />

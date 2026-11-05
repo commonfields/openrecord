@@ -27,6 +27,7 @@ export const sectionTitles: Record<string, string> = {
   channels: "Channels",
   inbox: "Inbox",
   work: "Work",
+  campaigns: "Campaigns",
   results: "Overview",
   overview: "Agent",
   assay: "Prospect research",

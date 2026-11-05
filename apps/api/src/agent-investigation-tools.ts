@@ -67,7 +67,7 @@ export const dispatchInvestigation = (ctx: ToolContext, name: string, raw: unkno
   const proposalId = waiting && "proposalId" in waiting ? waiting.proposalId.toLowerCase() : null
   const note = input.note.trim()
   const reason = input.kind === "REVISION" ? input.reason.trim() : null
-  const state = "workState" in input ? { value: input.workState, expected: input.expectedStateNoteId?.toLowerCase() ?? null } : null
+  const state = waiting ? { value: "WAITING_FOR_INPUT" as const, expected: waiting.expectedStateNoteId?.toLowerCase() ?? null } : null
   const key = requestKey(["investigation-note:v1", ctx.userId, ctx.businessId, input.investigationId.toLowerCase(), input.kind, note, reason ?? "", state?.value ?? "", state?.expected ?? "", resumeAfter ?? "", proposalId ?? ""])
   const rows = yield* sql.withTransaction(Effect.gen(function*() {
     const parent = yield* sql`SELECT id FROM growth_investigations WHERE id = ${input.investigationId} AND business_id = ${ctx.businessId} FOR UPDATE`
