@@ -44,8 +44,8 @@ configuration in these six checkouts; the campaign bridge bundle is generated.
 
 ## Remaining integration work
 
-These checkouts must remain until their unique changes are reconciled and
-validated. A clean working tree or a backup commit does not mean safe to delete.
+Checkouts with genuinely unique changes must remain until those changes are
+reconciled and validated. A clean working tree or a backup commit alone does not mean safe to delete.
 Several histories are roughly 200 commits behind main, with squash/rebase
 duplicates and conflicting implementations.
 
@@ -54,10 +54,10 @@ duplicates and conflicting implementations.
 | `backup/local-development-20261106` | Integrate unreleased inference recovery, client request reattachment and setup changes while preserving the newer campaign UI, plugins, usage and marketing loop. |
 | `feat/account-actions` (`b992e16`) | Review and integrate approval-gated Google review replies and Google Ads changes; conflicts in registry, routing, API client and approvals. Do not enable external execution as part of cleanup. |
 | `feat/growth-github-delivery-v1` | Reconcile the older delivery contracts/repository/UI against today's delivery implementation; broad conflicts make a blind merge unsafe. |
-| `backup/research-catalog-20261106` | Reconcile agent/research tool changes, preserve the live-task runner, run tests. |
-| `backup/wordpress-20261106` | Compare against the newer merged WordPress publishing implementation; retain any unique safety or validation changes without restoring old UI/routes. |
-| `backup/agent-referrals-20261106` | Compare against the already-present referral implementation; reconcile differing tests/tools and evidence semantics. |
-| Unified candidate / verification / direct / UI and stack readiness branches | Deduplicate older workflow tests against the existing `stack-workflow.integration.test.ts` and worker fixture; preserve useful unique assertions. Never replace newer workspace UI with a historical integration snapshot. |
+| `backup/research-catalog-20261106` | Reviewed: live-task runner, web readers and network module match main exactly; invalid-input assertions are already applied. Remaining differences are newer tools, metering and expanded instructions on main. No unique change remains. |
+| `backup/wordpress-20261106` | Reviewed: client, client tests, integration tests, server implementation and migration match main exactly. Registration, receipts, approvals, transport POST/body support and UI are present; main additionally extracts the API module, masks passwords and captures rejection reasons. No unique change remains. |
+| `backup/agent-referrals-20261106` | Reviewed: tool and draft implementation already present. Main extends reporting with pending/attempt counts, citation provenance, bounded measured surfaces, safer fixture clocks and additional evidence links. Old registration and export changes are included. No unique change remains. |
+| Unified candidate / verification / direct / UI and stack readiness branches | Reviewed: their older workflow tests are superseded by the current test. The direct branch's test differs only in newer repository-layer wiring; its worker fixture matches main. Earlier tests are subsets of the current worker-backed workflow with stronger provenance, referral and unauthenticated-access assertions. Other commits are patch-equivalent to main. No unique change remains; do not restore the historical UI. |
 | `backup/ga4-validation-20261106` | The independent read-only probe is included in this maintenance change. Its checkout can be removed after this change merges. |
 
 ## Validation and limitations
@@ -66,6 +66,7 @@ The cloud feature PR 124 passed hosted and CLI CI. PR 126 subsequently introduce
 one stale web test expectation: `sectionTitles` includes Campaigns but the test
 did not. This maintenance change aligns that expectation with the shipped route.
 At the merged baseline, API/web typechecks passed and 262 of 263 web tests passed.
+With the breadcrumb expectation corrected, all 263 web tests pass.
 
 Only offline self-tests should run for the GA4 probe during consolidation.
 Its live mode requires explicit operator credentials and writes results outside
