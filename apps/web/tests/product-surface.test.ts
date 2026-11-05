@@ -41,6 +41,7 @@ describe("navigation", () => {
   it("breadcrumbs name the four workspace areas and the evidence tools in plain language", () => {
     expect(sectionTitles).toEqual({
       agent: "Agent",
+      campaigns: "Campaigns",
       channels: "Channels",
       inbox: "Inbox",
       work: "Work",
