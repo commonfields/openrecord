@@ -12,7 +12,7 @@ import {
   RadarIcon,
   ShieldIcon,
   SlidersHorizontalIcon,
-  SparklesIcon,
+  MessagesSquareIcon,
   SunIcon,
   UserRoundIcon,
   XIcon,
@@ -78,7 +78,7 @@ const nav: Array<{ group: string; items: Array<{ id: SettingsSection; label: str
     group: "Preferences",
     items: [
       { id: "general", label: "General", icon: <SlidersHorizontalIcon /> },
-      { id: "agent", label: "Agent", icon: <SparklesIcon /> },
+      { id: "agent", label: "Agent", icon: <MessagesSquareIcon /> },
       { id: "checks", label: "Checks", icon: <RadarIcon /> },
       { id: "shortcuts", label: "Keyboard shortcuts", icon: <KeyboardIcon /> },
     ],

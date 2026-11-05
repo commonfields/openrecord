@@ -281,6 +281,32 @@ export type AgentChatSummary = { id: string; businessId: string | null; business
   // Set while the person has the chat archived.
   archivedAt?: string | null }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
+export type AgentTurnReply = { reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number; context?: AgentContextUse }
+const requestDelay = (signal?: AbortSignal) => new Promise<void>((resolve,reject) => {
+  if (signal?.aborted) { reject(new DOMException("Detached","AbortError")); return }
+  const abort = () => { clearTimeout(timer); reject(new DOMException("Detached","AbortError")) }
+  const timer = setTimeout(() => { signal?.removeEventListener("abort",abort); resolve() },750)
+  signal?.addEventListener("abort",abort,{ once:true })
+})
+export async function waitForAgentRequest(requestId: string, signal?: AbortSignal): Promise<AgentTurnReply> {
+  let disconnectedSince: number | null = null
+  for (;;) {
+    let job: { status: string; result: AgentTurnReply | null; failure_reason: string | null }
+    try {
+      job = await api(`/api/agent/requests/${encodeURIComponent(requestId)}`, signal ? { signal } : undefined)
+      disconnectedSince=null
+    } catch (error) {
+      if (signal?.aborted || (error instanceof ApiError && error.status<500)) throw error
+      disconnectedSince ??= Date.now()
+      if (Date.now()-disconnectedSince>30000) throw new ApiError(503,{_tag:"ConnectionLost",reason:"RECONNECT_REQUIRED"})
+      await requestDelay(signal)
+      continue
+    }
+    if (job.status === "COMPLETED" && job.result) return job.result
+    if (!["QUEUED","RUNNING"].includes(job.status)) throw new ApiError(503,{ _tag:"AgentUnavailable",reason:job.failure_reason ?? (job.status === "CANCELLED" ? "CANCELLED" : "UNAVAILABLE") })
+    await requestDelay(signal)
+  }
+}
 /** A note the agent keeps about one business across chats. */
 export type BusinessMemoryNote = { id: string; kind: "PREFERENCE" | "DECISION" | "LESSON" | "AVOID" | "CONTEXT"; text: string; source: "ASSISTANT" | "OPERATOR"; createdAt: string }
 export const BusinessMemory = {
@@ -301,9 +327,12 @@ export const Agent = {
   // Selection is optional: omitted (undefined, dropped by JSON.stringify)
   // means the hosted default. The server validates any selection it receives.
   send: (businessId: string | null, message: string, requestId: string, revision: number, conversationId?: string, selection?: HarnessSelection, style?: "friendly" | "concise" | "detailed", attachments?: ReadonlyArray<AgentAttachment>) =>
-    api<{ reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number; context?: AgentContextUse }>(`${agentBase(businessId)}/messages`, {
+    api<{ requestId: string }>(`${agentBase(businessId)}/requests`, {
       method: "POST", body: JSON.stringify({ message, requestId, revision, conversationId, selection, style, ...(attachments?.length ? { attachments } : {}) }),
-    }),
+    }).then(() => waitForAgentRequest(requestId)),
+  waitRequest: waitForAgentRequest,
+  pendingRequest: (conversationId: string) => api<{ request: { request_id: string; status: string; message: string; attachments?: AgentAttachment[] } | null }>(`/api/agent/requests?conversationId=${encodeURIComponent(conversationId)}`),
+  cancelRequest: (requestId: string) => api(`/api/agent/requests/${encodeURIComponent(requestId)}/cancel`,{ method:"POST",body:"{}" }),
   // Live journal of the run answering a request, after the last seen sequence.
   progress: (requestId: string, after: number) => api<AgentRunProgress>(`/api/agent/runs/progress?requestId=${encodeURIComponent(requestId)}&after=${after}`),
   // Stops the turn in flight. The pending send settles on its own after this.

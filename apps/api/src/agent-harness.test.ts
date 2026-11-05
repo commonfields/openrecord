@@ -76,10 +76,11 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     expect(seen[1]).toContain('"error":"BUDGET_EXHAUSTED"')
     expect(seen[1]).toContain("Do not call more tools")
     expect(answer).toMatchObject({ outcome: "ANSWERED_WITH_GAPS", gaps: ["Budget used up before every check could run"] })
-    // A model that keeps calling tools after the final notice cannot end the run with an answer.
+    // A model that ignores the tool-free answer phase cannot dispatch more work.
     const looping = await Effect.runPromise(Effect.either(runConversation({ message: "loop", history: [], budget: { modelSteps: 3, toolCalls: 9 },
       model: () => Effect.succeed(calls("read_open_issues")), dispatch: () => Effect.succeed(read) })))
-    expect(looping).toMatchObject({ _tag: "Left", left: { reason: "TOOL_LIMIT" } })
+    expect(looping).toMatchObject({ _tag: "Right", right: { outcome: "ANSWERED_WITH_GAPS" } })
+    expect(looping._tag === "Right" && looping.right.toolCalls).toHaveLength(2)
   })
 
   it("verifies workflow completion: one reminder for a skipped required tool, then an honest gap", async () => {

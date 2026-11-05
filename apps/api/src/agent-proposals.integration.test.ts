@@ -100,7 +100,10 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     expect(response.headers.get("cache-control")).toBe("no-store")
     const latest = await pool.query("SELECT filename FROM public.schema_migrations ORDER BY filename DESC LIMIT 1")
     const body: unknown = await response.json()
-    expect(body).toEqual({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: true, latestMigration: latest.rows[0].filename, agentConfigured: true })
+    expect(body).toMatchObject({ commitSha: commit, shortCommitSha: commit.slice(0, 12), dirtyAtStartup: true, latestMigration: latest.rows[0].filename, agentConfigured: true })
+    expect(body).toHaveProperty("instanceId")
+    expect(body).toHaveProperty("startedAt")
+    expect(body).toHaveProperty("sourceFingerprint")
     // Without launcher-provided metadata the commit is unknown, not guessed.
     vi.stubEnv("OPENRECORD_BUILD_COMMIT", "")
     vi.stubEnv("OPENRECORD_BUILD_DIRTY", "")

@@ -6,8 +6,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PageHeader, Panel } from "@/components/page"
 import { useWorkspace } from "@/lib/workspace"
-import { errorMessage } from "@/lib/format"
-import { Records, type Engagement } from "@/lib/record"
+import type { Engagement } from "@/lib/record"
+import { Setup, setupError } from "@/lib/setup"
 
 export function NewProductPage() {
   const navigate = useNavigate()
@@ -20,11 +20,12 @@ export function NewProductPage() {
     <Panel><form className="grid gap-4 p-5" onSubmit={async e => {
       e.preventDefault(); const form = new FormData(e.currentTarget); setBusy(true); setError(null)
       try {
-        const { client } = await Records.create({ name: String(form.get("name") ?? "").trim(), websiteUrl: String(form.get("websiteUrl") ?? "").trim(), engagement })
+        const { setup } = await Setup.start({ name: String(form.get("name") ?? "").trim(), websiteUrl: String(form.get("websiteUrl") ?? "").trim(), engagement: engagement === "DOGFOOD" ? "DOGFOOD" : "CLIENT" })
+        const clientId = setup.businessId
         await reloadBusinesses()
-        setActiveBusinessId(client.businessId)
-        navigate(`/businesses/${client.businessId}/agent`)
-      } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) }
+        setActiveBusinessId(clientId)
+        navigate(`/businesses/${clientId}/agent`)
+      } catch (err) { setError(setupError(err)) } finally { setBusy(false) }
     }}>
       <div className="grid gap-2"><Label htmlFor="product-name">Product name</Label><Input id="product-name" name="name" maxLength={200} required autoFocus /></div>
       <div className="grid gap-2"><Label htmlFor="product-url">Website</Label><Input id="product-url" name="websiteUrl" type="url" placeholder="https://example.com" maxLength={2000} required /></div>

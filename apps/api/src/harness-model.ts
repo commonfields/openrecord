@@ -3,6 +3,13 @@ import type { HarnessSelection } from "@openrecord/contracts"
 import { AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
 import { invokeHarness, resolveHarness, HarnessRefused } from "./harness-store.js"
 
+export const harnessFailureReason = (reason: string): AgentModelError["reason"] => {
+  if (reason === "CANCELLED") return "CANCELLED"
+  if (reason === "UNAUTHENTICATED" || reason === "MODEL_UNAVAILABLE") return "UNCONFIGURED"
+  if (reason === "RATE_LIMITED" || reason === "TIMEOUT" || reason === "CONTEXT_LIMIT" || reason === "MALFORMED") return reason
+  return "UNAVAILABLE"
+}
+
 export const harnessModel = (
   scope: { accountId: string; userId: string; businessId: string | null },
   selection: HarnessSelection
@@ -18,14 +25,7 @@ export const harnessModel = (
           if (result.kind === "failed")
             return Effect.fail(
               new AgentModelError({
-                reason:
-                  result.reason === "RATE_LIMITED"
-                    ? "RATE_LIMITED"
-                    : result.reason === "MALFORMED"
-                      ? "MALFORMED"
-                      : result.reason === "TIMEOUT"
-                        ? "TIMEOUT"
-                        : "UNAVAILABLE"
+                reason: harnessFailureReason(result.reason)
               })
             )
           const response: ModelResponse = {
@@ -50,12 +50,7 @@ export const harnessModel = (
           e instanceof AgentModelError
             ? e
             : new AgentModelError({
-                reason:
-                  e instanceof HarnessRefused && e.reason === "CONTEXT_LIMIT"
-                    ? "CONTEXT_LIMIT"
-                    : e instanceof HarnessRefused && e.reason === "MODEL_UNAVAILABLE"
-                      ? "UNCONFIGURED"
-                      : "UNAVAILABLE"
+                reason: e instanceof HarnessRefused ? harnessFailureReason(e.reason) : "UNAVAILABLE"
               })
         )
       )

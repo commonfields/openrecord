@@ -21,10 +21,18 @@ describe("agent commands", () => {
   })
 
   it("lists matching commands while a slash command is being typed", () => {
-    expect(commandMatches("/").map(c => c.key)).toEqual(["setup", "status", "plan", "report"])
+    expect(commandMatches("/").map(c => c.key)).toEqual(["setup", "status", "plan", "report", "campaign", "campaign-status", "campaign-run", "campaign-review"])
     expect(commandMatches("/s").map(c => c.key)).toEqual(["setup", "status"])
     expect(commandMatches("/re").map(c => c.key)).toEqual(["report"])
     expect(commandMatches("/setup now")).toEqual([])
     expect(commandMatches("hello")).toEqual([])
+  })
+  it("offers campaign machinery without swallowing command arguments", () => {
+    expect(parseCommand("/campaign")).toBe("campaign")
+    expect(parseCommand("/campaign-run")).toBe("campaign-run")
+    expect(parseCommand("/campaign-status")).toBe("campaign-status")
+    expect(parseCommand("/campaign-review")).toBe("campaign-review")
+    expect(parseCommand("/campaign Generate qualified demos")).toBeNull()
+    expect(commandMatches("/campaign-r").map(c => c.key)).toEqual(["campaign-run", "campaign-review"])
   })
 })

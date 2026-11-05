@@ -23,6 +23,9 @@ import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
 import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
+import { campaignDraftDeclarations, draftMarketingCampaign } from "./campaign-agent.js"
+import { campaignRunDeclarations, dispatchCampaignRun } from "./campaign-engine.js"
+import { campaignRevisionDeclarations, reviseCampaign } from "./campaign-revisions.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -53,6 +56,13 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
+  ...campaignRevisionDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
+    run: (ctx, args) => reviseCampaign(ctx, args) })),
+  ...campaignRunDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: declaration.name.startsWith("read_") ? "read" : "record",
+    replay: declaration.name.startsWith("read_") ? "safe" : "deduplicated", scope: "general",
+    run: (ctx, args) => dispatchCampaignRun(ctx, declaration.name, args) })),
+  ...campaignDraftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
+    run: (ctx, args) => draftMarketingCampaign(ctx, args) })),
   ...executionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
     effect: declaration.name === "prepare_page_change" ? "propose" : "read",
     replay: declaration.name === "prepare_page_change" ? "deduplicated" : "safe", scope: "general",
@@ -128,6 +138,8 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentUnknownTool) return toolFailure("UNKNOWN_TOOL")
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
+  if (tag === "CampaignRevisionRefused") return { ...toolFailure("REFUSED"), guidance: "Read the current campaign. Edits require its current revision, DRAFT stage, unfinished tasks and no linked delivery proposals. Do not overwrite stale content or retry unchanged inputs. Explain the blocker or offer a separately named alternative." }
+  if (tag === "CampaignRunRefused") return { ...toolFailure("REFUSED"), guidance: "The campaign run is stale, cancelled, too large or has a conflicting delivery link. Read its current run and brief. Do not replay external work, replace links or retry unchanged inputs." }
   if (tag === "AgentInvestigationConflict") return { ...toolFailure("REFUSED"), guidance: "The investigation state changed. Read read_investigation for its current state_note_id before deciding whether a new state change is still appropriate. Do not blindly retry." }
   if (tag === "GrowthExecutionRefused") {
     const reason = (e as { readonly reason?: string }).reason

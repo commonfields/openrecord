@@ -11,13 +11,17 @@ import { Channels, type SetupView } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 
-export type AgentCommand = "setup" | "status" | "plan" | "report"
+export type AgentCommand = "setup" | "status" | "plan" | "report" | "campaign" | "campaign-status" | "campaign-run" | "campaign-review"
 
 export const COMMANDS: ReadonlyArray<{ readonly key: AgentCommand; readonly description: string; readonly icon: ReactNode }> = [
   { key: "setup", description: "Understand and configure this business", icon: <CompassIcon /> },
   { key: "status", description: "Current work, channels and blockers", icon: <ListChecksIcon /> },
   { key: "plan", description: "What to do next, most important first", icon: <ClipboardListIcon /> },
   { key: "report", description: "What was done, verified and measured", icon: <FileBarChartIcon /> },
+  { key: "campaign", description: "Prepare and save a campaign from your goal", icon: <ClipboardListIcon /> },
+  { key: "campaign-status", description: "Campaign priorities, blockers and reviews due", icon: <ListChecksIcon /> },
+  { key: "campaign-run", description: "Prepare campaign work; external actions need approval", icon: <CompassIcon /> },
+  { key: "campaign-review", description: "Review available results and the next experiment", icon: <FileBarChartIcon /> },
 ]
 
 // Exact phrasings only: anything looser goes to the conversational agent, so a
@@ -32,14 +36,14 @@ const PHRASES: ReadonlyArray<readonly [AgentCommand, RegExp]> = [
 /** A typed application command, or null when the text is a message for the agent. */
 export const parseCommand = (text: string): AgentCommand | null => {
   const t = text.trim()
-  const slash = /^\/(\w+)\s*$/.exec(t)
+  const slash = /^\/([\w-]+)\s*$/.exec(t)
   if (slash) return COMMANDS.find(c => c.key === slash[1]!.toLowerCase())?.key ?? null
   return PHRASES.find(([, re]) => re.test(t))?.[0] ?? null
 }
 
 /** Commands matching what has been typed after "/", for the composer menu. */
 export const commandMatches = (text: string) => {
-  const m = /^\/(\w*)$/.exec(text.trim())
+  const m = /^\/([\w-]*)$/.exec(text.trim())
   return m ? COMMANDS.filter(c => c.key.startsWith(m[1]!.toLowerCase())) : []
 }
 

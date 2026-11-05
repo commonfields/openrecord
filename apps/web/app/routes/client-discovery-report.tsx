@@ -13,7 +13,7 @@ import { EmptyState, PageHeader } from "@/components/page"
 import { useApi } from "@/lib/use-api"
 import { errorMessage, formatDate } from "@/lib/format"
 import {
-  BASIS_LABELS, Discovery, GROUP_LABELS, MENTION_LABELS, RECOMMENDATION_LABELS, discoveryPath, fraction, type Fraction, type Report,
+  BASIS_LABELS, Discovery, GROUP_LABELS, MENTION_LABELS, RECOMMENDATION_LABELS, fraction, type Fraction, type Report,
 } from "@/lib/acquisition"
 
 const range = (from: string | null, to: string | null) => (from ? (formatDate(from) === formatDate(to) ? formatDate(from) : `${formatDate(from)} to ${formatDate(to)}`) : "No answers collected")
@@ -30,11 +30,14 @@ function Row({ label, value, note }: { label: string; value: string; note?: stri
 const f = (x: Fraction) => fraction(x)
 
 export function DiscoveryReportView({ report }: { report: Report }) {
+  const latest = report.periods.at(-1)
   return (
-    <article className="mx-auto max-w-3xl space-y-8 text-sm leading-relaxed">
-      <header className="space-y-2">
-        <p className="text-xs tracking-wide text-muted-foreground uppercase">AI Discovery report</p>
-        <h1 className="text-lg font-semibold tracking-tight text-balance">{report.question}</h1>
+    <article className="mx-auto max-w-4xl space-y-8 text-sm leading-relaxed">
+      <header className="space-y-4 rounded-xl bg-card p-5 shadow-(--card-shadow) print:shadow-none">
+        <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">AI discovery · Evidence report</p>
+        <h1 className="text-xl font-semibold tracking-tight text-balance">{report.business.name}</h1>
+        <p className="text-muted-foreground">{report.question}</p></div>
+        <details className="text-xs"><summary className="cursor-pointer font-medium">Study details</summary>
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
           <dt className="text-muted-foreground">Business</dt><dd>{report.business.name} ({report.business.websiteUrl})</dd>
           <dt className="text-muted-foreground">Category</dt><dd>{report.category ?? "Not set"}</dd>
@@ -45,11 +48,23 @@ export function DiscoveryReportView({ report }: { report: Report }) {
           <dt className="text-muted-foreground">Owned domains</dt><dd>{report.ownedDomains.join(", ") || "None"}</dd>
           <dt className="text-muted-foreground">Named competitors</dt><dd>{report.competitors.join(", ") || "None"}</dd>
         </dl>
+        </details>
       </header>
 
-      {report.periods.length === 0 ? <p className="text-muted-foreground">No completed measurement batch yet.</p> : null}
+      {latest ? <section aria-label="Latest measurement summary" className="space-y-3">
+        <div><h2 className="text-base font-semibold">Latest measurement</h2><p className="text-xs text-muted-foreground">{latest.surface} · {range(latest.collectedFrom, latest.collectedTo)} · {latest.scope === "SMOKE" ? "Small test batch" : "Full batch"}</p></div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { label: "Answers collected", value: f({ n: latest.metrics.succeeded, d: latest.metrics.planned }), note: "of planned samples" },
+            { label: "Reviewed", value: f(latest.metrics.reviewed), note: "of successful samples" },
+            { label: "Mentioned", value: f(latest.metrics.mentionRate), note: "of clear mention reviews" },
+            { label: "Recommended", value: f(latest.metrics.recommendationRate), note: "of reviewed samples" },
+          ].map(stat => <div key={stat.label} className="rounded-xl bg-card p-4 shadow-(--card-shadow) print:shadow-none"><p className="text-xs text-muted-foreground">{stat.label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{stat.value}</p><p className="text-xs text-muted-foreground">{stat.note}</p></div>)}
+        </div>
+        <p className="text-xs text-muted-foreground">Mentions and recommendations reflect the sampled answers and their review status—not all AI responses or a guarantee of future results.</p>
+      </section> : <p className="rounded-xl bg-card p-4 text-muted-foreground shadow-(--card-shadow)">No completed measurement batch yet. The report will show results once answers have been collected.</p>}
       {report.periods.map((p, i) => (
-        <section key={p.batchId} className="space-y-4">
+        <section key={p.batchId} className="space-y-4 rounded-xl bg-card p-5 shadow-(--card-shadow) print:shadow-none">
           <div>
             <h2 className="text-base font-semibold">Period {i + 1}: {range(p.collectedFrom, p.collectedTo)}</h2>
             <p className="text-xs text-muted-foreground">{p.surface} · {p.scope === "SMOKE" ? "Smoke batch" : "Full batch"} · question set v{p.setVersion} · {p.sampleCount} sample{p.sampleCount === 1 ? "" : "s"} per question</p>
@@ -116,7 +131,7 @@ export function DiscoveryReportView({ report }: { report: Report }) {
         </section>
       ))}
 
-      <section className="space-y-2">
+      <section className="space-y-2 rounded-xl bg-card p-5 shadow-(--card-shadow) print:shadow-none">
         <h2 className="text-base font-semibold">AI referral evidence (GA4)</h2>
         {report.referrals.provided ? report.referrals.imports.map(r => (
           <div key={r.id} className="space-y-1 text-xs">
@@ -125,14 +140,14 @@ export function DiscoveryReportView({ report }: { report: Report }) {
               <Row label="All sessions in export" value={String(r.totalSessions)} />
               <Row label="AI-attributed sessions" value={String(r.aiSessions)} />
               {r.bySource.map(s => <Row key={s.assistant} label={`· ${s.assistant}`} value={String(s.sessions)} note={s.sources.join(", ")} />)}
-              <Row label={r.conversionEvent ? `AI-attributed “${r.conversionEvent}” key events` : "Signups"} value={r.signups === "SIGNUPS_NOT_MEASURED" ? "SIGNUPS_NOT_MEASURED" : String(r.signups)}
+              <Row label={r.conversionEvent ? `AI-attributed “${r.conversionEvent}” key events` : "Signups"} value={r.signups === "SIGNUPS_NOT_MEASURED" ? "Not measured" : String(r.signups)}
                 note={r.signups === "SIGNUPS_NOT_MEASURED" ? "No conversion event is configured in this export" : undefined} />
             </tbody></table>
           </div>
-        )) : <p className="text-xs text-muted-foreground">No GA4 export provided. AI referral traffic: not measured. Signups: SIGNUPS_NOT_MEASURED.</p>}
+        )) : <p className="text-xs text-muted-foreground">No GA4 export provided. AI referral traffic and signups have not been measured.</p>}
       </section>
 
-      <section className="space-y-2">
+      <section className="space-y-2 rounded-xl bg-card p-5 shadow-(--card-shadow) print:shadow-none">
         <h2 className="text-base font-semibold">Limitations</h2>
         <ul className="list-disc space-y-1 pl-5 text-xs">
           {report.limitations.map(l => <li key={l}>{l}</li>)}
@@ -150,12 +165,12 @@ export function ClientDiscoveryReportPage() {
   if (res.loading && !res.data) return <Skeleton className="h-96 rounded-xl" />
   if (!res.data) {
     return <EmptyState icon={<TriangleAlertIcon />} title="Report could not load" description={errorMessage(res.error)}
-      action={<Button asChild variant="outline" size="sm"><Link to={discoveryPath(id)}>AI Discovery</Link></Button>} />
+      action={<Button asChild variant="outline" size="sm"><Link to={`/businesses/${id}/issues`}>AI answers</Link></Button>} />
   }
   return (
     <div className="space-y-6 pb-8">
       <div className="print:hidden">
-        <PageHeader back={{ to: discoveryPath(id), label: "AI Discovery" }} title="Agency report"
+        <PageHeader back={{ to: `/businesses/${id}/issues`, label: "AI answers" }} title="Evidence report"
           actions={<Button size="sm" variant="outline" onClick={() => window.print()}><PrinterIcon />Print or save PDF</Button>} />
       </div>
       <DiscoveryReportView report={res.data.report} />

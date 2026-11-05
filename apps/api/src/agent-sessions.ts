@@ -359,3 +359,4 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
 const production = createSessions()
 export const sessionResponder = production.responder
 export const sendSessionTurn = production.sendTurn
+export const wakeSessionParent = production.wakeParent

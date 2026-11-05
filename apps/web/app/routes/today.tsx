@@ -695,14 +695,7 @@ function RecordOutcomesCard({ businessId }: { businessId: string }) {
   if (missing || (rec.loading && !rec.data) || (!rec.error && slots.length === 0)) return null
   return (
     <Panel className="shadow-(--card-shadow-raised)">
-      <PanelHeader title="Record outcomes" description="Before/after comparisons in this business's client record">
-        <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
-          <Link to={`/clients/${businessId}`}>
-            Open client record
-            <ArrowRightIcon />
-          </Link>
-        </Button>
-      </PanelHeader>
+      <PanelHeader title="Recorded outcomes" description="Before-and-after comparisons from reviewed evidence" />
       <div className="p-2">
         {rec.error ? (
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">{errorMessage(rec.error)}</p>

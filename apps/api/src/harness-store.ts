@@ -15,6 +15,7 @@ export class HarnessRefused extends Data.TaggedError("HarnessRefused")<{
   readonly reason:
     | "NOT_FOUND"
     | "UNAVAILABLE"
+    | "TIMEOUT"
     | "MODEL_UNAVAILABLE"
     | "PAIR_EXPIRED"
     | "UNAUTHENTICATED"
@@ -154,7 +155,7 @@ export const resolveHarness = (session: Session, selection: HarnessSelection) =>
     const instance = instances.find((i) => i.id === selection.instanceId)
     if (!instance) return yield* fail("NOT_FOUND")
     if (!instance.enabled || !instance.installed || instance.state !== "ready" || instance.auth === "unauthenticated")
-      return yield* fail("UNAVAILABLE")
+      return yield* fail("TIMEOUT")
     if (!instance.models.some((m) => m.id === selection.model) || instance.disabledModels?.includes(selection.model)) return yield* fail("MODEL_UNAVAILABLE")
     if (selection.reasoningEffort && ((instance.driver !== "codex" && instance.driver !== "opencode" && instance.driver !== "claude") || !instance.models.find(m => m.id === selection.model)?.reasoningEfforts?.includes(selection.reasoningEffort)))
       return yield* fail("MODEL_UNAVAILABLE")

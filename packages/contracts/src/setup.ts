@@ -12,6 +12,8 @@ export const SetupStartInput = Schema.Struct({
   goalStatement: Schema.optionalWith(Schema.NullOr(Text(1000)), { default: () => null }),
   /** Set up an existing business instead of creating one. */
   businessId: Schema.optionalWith(Schema.NullOr(Schema.UUID), { default: () => null }),
+  name: Schema.optional(Text(200)),
+  engagement: Schema.optional(Schema.Literal("CLIENT", "DOGFOOD")),
 })
 export type SetupStartInput = typeof SetupStartInput.Type
 
@@ -136,6 +138,7 @@ export interface SetupView {
   readonly goalStatement: string | null
   readonly step: SetupStep
   readonly revision: number
+  readonly autoAdvance?: boolean
   readonly discovery:
     | { readonly status: "QUEUED" | "FETCHING" }
     | { readonly status: "FAILED"; readonly failure: string }

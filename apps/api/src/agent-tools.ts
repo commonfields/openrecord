@@ -6,6 +6,7 @@ import { WEB_AGENT_TOOLS } from "./agent-web-tools.js"
 import { ADS_AGENT_TOOLS } from "./agent-ads-tools.js"
 import { RESULTS_AGENT_TOOLS } from "./agent-results-tools.js"
 import { OBJECTIVE_AGENT_TOOLS } from "./objectives.js"
+import { CAMPAIGN_AGENT_TOOLS } from "./campaigns.js"
 import { PERFORMANCE_AGENT_TOOLS } from "./agent-performance-tools.js"
 import { INVESTIGATION_READ_TOOLS } from "./agent-investigation-tools.js"
 // Agent tool harness V1: first-class, schema-declared, tenant-scoped,
@@ -397,6 +398,7 @@ const readProposals: AgentToolDef = {
  * proposal/approval boundary review and an update to agent-tools.test.ts,
  * which asserts this exact list. */
 export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
+  ...CAMPAIGN_AGENT_TOOLS,
   ...GROWTH_AGENT_TOOLS,
   ...ACQUISITION_AGENT_TOOLS,
   ...REFERRAL_AGENT_TOOLS,

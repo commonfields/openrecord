@@ -6,6 +6,7 @@
 import { useState } from "react"
 import { CableIcon, KeyRoundIcon, RadioTowerIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Panel } from "@/components/page"
 import { api, ApiError } from "@/lib/api"
@@ -121,7 +122,7 @@ export function AgentAccess({ businessId }: { businessId: string }) {
         <div className="flex flex-wrap gap-3">
           {PERMISSIONS.map(p => (
             <label key={p.id} className="flex items-center gap-1.5 text-[0.6875rem]">
-              <input type="checkbox" checked={perms.includes(p.id)} onChange={e => setPerms(e.currentTarget.checked ? [...perms, p.id] : perms.filter(x => x !== p.id))} />{p.label}
+              <Checkbox checked={perms.includes(p.id)} onCheckedChange={checked => setPerms(current => checked === true ? [...current, p.id] : current.filter(x => x !== p.id))} />{p.label}
             </label>
           ))}
         </div>

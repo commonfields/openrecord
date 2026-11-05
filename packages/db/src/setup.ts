@@ -20,6 +20,7 @@ const Row = Schema.Struct({
   discovery_attempts: IntField, claim_token: NullableUuidField, discovery: NullableJsonField, discovery_failure: NullableTextField,
   brief: NullableJsonField, brief_confirmed_at: NullableTimestampField, channels_reviewed_at: NullableTimestampField,
   opportunity_id: NullableUuidField, revision: IntField,
+  auto_advance: Schema.Boolean,
 })
 export interface SetupRow {
   readonly id: string
@@ -37,6 +38,7 @@ export interface SetupRow {
   readonly channelsReviewedAt: string | null
   readonly opportunityId: string | null
   readonly revision: number
+  readonly autoAdvance: boolean
 }
 const toRow = (r: typeof Row.Type): SetupRow => ({
   id: r.id, accountId: r.account_id, businessId: r.business_id, businessName: r.business_name, websiteUrl: r.website_url, websiteHost: r.website_host,
@@ -46,7 +48,7 @@ const toRow = (r: typeof Row.Type): SetupRow => ({
   discoveryFailure: r.discovery_failure,
   brief: r.brief && r.brief_confirmed_at ? { ...(r.brief as unknown as SetupBrief), confirmedAt: iso(r.brief_confirmed_at) } : null,
   channelsReviewedAt: r.channels_reviewed_at ? iso(r.channels_reviewed_at) : null,
-  opportunityId: r.opportunity_id, revision: Number(r.revision),
+  opportunityId: r.opportunity_id, revision: Number(r.revision), autoAdvance: r.auto_advance,
 })
 
 /** The host a setup is keyed on: one setup per website per account. */
@@ -117,12 +119,18 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
         const owned = yield* sql`SELECT id FROM businesses WHERE id = ${businessId} AND account_id = ${session.accountId}`
         if (owned.length === 0) return yield* Effect.fail(new SetupRefused({ reason: "SetupNotFound" }))
         const current = yield* byBusiness(session.accountId, businessId)
-        if (current) return { setup: current, created: false }
+        if (current) {
+          yield* sql`UPDATE business_setups SET auto_advance = true, started_by_user_id = ${session.userId}, revision = revision + 1, updated_at = now() WHERE id = ${current.id} AND NOT auto_advance`
+          return { setup: yield* reread(session.accountId, businessId), created: false }
+        }
         if (existingForHost) return yield* Effect.fail(new SetupRefused({ reason: "WebsiteInUse", businessId: existingForHost.businessId }))
         const profile = yield* sql`SELECT 1 FROM record_profiles WHERE business_id = ${businessId}`
         if (profile.length === 0) yield* sql`INSERT INTO record_profiles (business_id, website_url, engagement) VALUES (${businessId}, ${input.websiteUrl}, 'CLIENT')`
       } else {
-        if (existingForHost) return { setup: existingForHost, created: false }
+        if (existingForHost) {
+          yield* sql`UPDATE business_setups SET auto_advance = true, started_by_user_id = ${session.userId}, revision = revision + 1, updated_at = now() WHERE id = ${existingForHost.id} AND NOT auto_advance`
+          return { setup: yield* reread(session.accountId, existingForHost.businessId), created: false }
+        }
         // An existing client on the same website is the same business: adopt it.
         const clients = yield* sql`SELECT p.business_id, p.website_url FROM record_profiles p JOIN businesses b ON b.id = p.business_id
           WHERE b.account_id = ${session.accountId} ORDER BY p.created_at, p.business_id`
@@ -131,10 +139,10 @@ export const SetupRepositoryLive = Layer.effect(SetupRepository, Effect.map(PgCl
           const adopted = yield* byBusiness(session.accountId, String(match["business_id"]))
           if (adopted) return { setup: adopted, created: false }
         }
-        businessId = match ? String(match["business_id"]) : (yield* (yield* RecordRepository).createClient(session, { name: host, websiteUrl: input.websiteUrl, engagement: "CLIENT" })).businessId
+        businessId = match ? String(match["business_id"]) : (yield* (yield* RecordRepository).createClient(session, { name: input.name?.trim() || host, websiteUrl: input.websiteUrl, engagement: input.engagement ?? "CLIENT" })).businessId
       }
-      yield* sql`INSERT INTO business_setups (account_id, business_id, website_url, website_host, goal_statement, started_by_user_id)
-        VALUES (${session.accountId}, ${businessId}, ${input.websiteUrl}, ${host}, ${input.goalStatement}, ${session.userId})`
+      yield* sql`INSERT INTO business_setups (account_id, business_id, website_url, website_host, goal_statement, started_by_user_id, auto_advance)
+        VALUES (${session.accountId}, ${businessId}, ${input.websiteUrl}, ${host}, ${input.goalStatement}, ${session.userId}, true)`
       return { setup: yield* reread(session.accountId, businessId), created: true }
     })),
 
