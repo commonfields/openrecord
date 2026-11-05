@@ -15,7 +15,7 @@ const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promp
 // The run that produced an agent message: its outcome, or how it stopped.
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })
-const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY"), id: Schema.UUID })
+const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE"), id: Schema.UUID })
 const TaskStatus = Schema.Literal("RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED")
 const TaskRef = Schema.Struct({ id: Schema.UUID, sessionId: Schema.UUID, title: Schema.String, role: Schema.String, status: TaskStatus, model: Schema.optional(Schema.String) })
 // A message another session sent: a task it asked for, a follow-up,
@@ -199,7 +199,7 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
     readonly reply: string; readonly citations: ReadonlyArray<unknown>; readonly toolCalls: ReadonlyArray<unknown>; readonly usage: ReadonlyArray<unknown>
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
-    readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY"; readonly id: string }> | undefined
+    readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
     readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
     readonly context?: typeof ContextUse.Type | undefined
