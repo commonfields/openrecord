@@ -5,6 +5,9 @@ Practical notes for running this checkout locally. Architecture lives in
 
 ## Dev environment
 
+- Canonical local checkout: `/Users/wira/openrecord`, normally on merged `main`.
+  Keep development in this directory; use temporary branches here for PRs,
+  then return to `main`. Do not create more worktrees unless explicitly asked.
 - Stack: pnpm workspace (`apps/api` Effect server on :3001, `apps/web` Vite on
   :3000, `apps/worker`), Postgres 16 via Docker.
 - Fastest start: `scripts/dev-up.sh`. It fetches GitHub, fast-forwards a clean
