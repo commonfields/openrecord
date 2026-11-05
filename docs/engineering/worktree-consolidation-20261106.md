@@ -52,7 +52,7 @@ duplicates and conflicting implementations.
 | Branch / snapshot | Required action |
 | --- | --- |
 | `backup/local-development-20261106` | Integrate unreleased inference recovery, client request reattachment and setup changes while preserving the newer campaign UI, plugins, usage and marketing loop. |
-| `feat/account-actions` (`b992e16`) | Review and integrate approval-gated Google review replies and Google Ads changes; conflicts in registry, routing, API client and approvals. Do not enable external execution as part of cleanup. |
+| `feat/account-actions` (`b992e16`) | Reconciled on the canonical checkout with current registry, inbox and feedback. The consolidation change adds migration 0077, claimed/verified undo, full ad readback and stale-budget safeguards. Remove its original clean checkout only after that change merges to main. No live provider writes are used for validation. |
 | `feat/growth-github-delivery-v1` | Reconcile the older delivery contracts/repository/UI against today's delivery implementation; broad conflicts make a blind merge unsafe. |
 | `backup/research-catalog-20261106` | Reviewed: live-task runner, web readers and network module match main exactly; invalid-input assertions are already applied. Remaining differences are newer tools, metering and expanded instructions on main. No unique change remains. |
 | `backup/wordpress-20261106` | Reviewed: client, client tests, integration tests, server implementation and migration match main exactly. Registration, receipts, approvals, transport POST/body support and UI are present; main additionally extracts the API module, masks passwords and captures rejection reasons. No unique change remains. |

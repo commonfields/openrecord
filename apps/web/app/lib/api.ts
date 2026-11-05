@@ -330,7 +330,7 @@ export type AccountAction = {
   id: string; provider: "google_business" | "google_ads"
   kind: "REPLY_TO_REVIEW" | "PAUSE_CAMPAIGN" | "ENABLE_CAMPAIGN" | "SET_DAILY_BUDGET" | "CREATE_SEARCH_AD"
   target: Record<string, unknown>; before: Record<string, unknown>; after: Record<string, unknown>; rationale: string
-  status: "PROPOSED" | "EXECUTING" | "DONE" | "REJECTED" | "FAILED" | "UNDONE"; proposedBy: "ASSISTANT" | "OPERATOR"
+  status: "PROPOSED" | "EXECUTING" | "DONE" | "REJECTED" | "FAILED" | "UNDOING" | "UNDONE"; proposedBy: "ASSISTANT" | "OPERATOR"
   failure: string | null; result: Record<string, unknown> | null; createdAt: string; decidedAt: string | null
 }
 const actionBase = (businessId: string) => `/api/businesses/${encodeURIComponent(businessId)}/account-actions`

@@ -4,6 +4,7 @@
 // ad), carries it out on approval, says what Google holds afterwards, and can
 // undo it.
 import { useState } from "react"
+import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { toast } from "sonner"
 import { MegaphoneIcon, MessageSquareReplyIcon, Undo2Icon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -19,15 +20,16 @@ const REASONS: Readonly<Record<string, string>> = {
   NotStoredAsApproved: "Google didn't hold the change exactly as approved afterwards, so it isn't counted as done.",
   ActionNotPending: "This was already decided.",
   ActionNotDone: "Only a change that was carried out can be undone.",
+  UndoNotStored: "Google did not confirm the undo. Inspect the account before making another change.",
   AdsReauthorizationRequired: "The Google connection needs a new sign-in. Reconnect it on the Channels page.",
-  ProviderUnavailable: "Google didn't answer. Try again in a moment.",
+  ProviderUnavailable: "Google didn't answer. Inspect the account before making another change; the outcome may be unknown.",
   ProviderQuota: "Google is limiting requests. Try again in a few minutes.",
   AdAccountNotAccessible: "The connected Google sign-in can't change this account.",
   ProviderRejected: "Google refused this change.",
   CampaignNotFound: "That campaign no longer exists.",
 }
 const reasonOf = (e: unknown) => e instanceof ApiError && typeof e.body["reason"] === "string" ? e.body["reason"] : ""
-const STATUS: Readonly<Record<AccountAction["status"], string>> = { PROPOSED: "Waiting for approval", EXECUTING: "Working", DONE: "Done", REJECTED: "Rejected", FAILED: "Not done", UNDONE: "Undone" }
+const STATUS: Readonly<Record<AccountAction["status"], string>> = { PROPOSED: "Waiting for approval", EXECUTING: "Working", DONE: "Done", REJECTED: "Rejected", FAILED: "Needs inspection", UNDOING: "Undoing", UNDONE: "Undone" }
 const str = (v: unknown) => typeof v === "string" ? v : typeof v === "number" ? String(v) : ""
 const money = (v: unknown, currency: unknown) => typeof v === "number" ? new Intl.NumberFormat(undefined, { style: "currency", currency: str(currency) || "USD" }).format(v) : ""
 
@@ -58,11 +60,13 @@ function Preview({ action: a }: { action: AccountAction }) {
         <p className="font-medium">{list(a.after["headlines"]).join(" | ")}</p>
         <p>{list(a.after["descriptions"]).join(" ")}</p>
         <p className="text-muted-foreground">{str(a.after["finalUrl"])}</p>
+        {a.after["path1"] || a.after["path2"] ? <p className="text-muted-foreground">Display path: {[a.after["path1"], a.after["path2"]].map(str).filter(Boolean).join("/")}</p> : null}
         <p className="text-muted-foreground">Created paused: it doesn't run or spend until someone turns it on.</p>
       </div>
     )
   }
   if (a.kind === "SET_DAILY_BUDGET") return <p className="text-xs text-muted-foreground">Google can spend up to twice the daily budget on a single day; the monthly total stays within about 30 times it.</p>
+  if (a.kind === "ENABLE_CAMPAIGN") return <p className="text-xs text-muted-foreground">Enabling can spend from the existing {a.after["budgetShared"] ? "shared " : ""}daily budget of {money(typeof a.after["budgetDailyMicros"] === "number" ? a.after["budgetDailyMicros"] / 1_000_000 : undefined, a.target["currency"])}. Google may spend more than the daily amount on an individual day.</p>
   return null
 }
 
@@ -87,14 +91,22 @@ export function AccountActionCard({ businessId, action: initial, onDone }: { bus
       </div>
       <p className="text-xs text-muted-foreground">{action.rationale}</p>
       <Preview action={action} />
-      {action.status === "FAILED" && action.failure ? <p className="text-xs text-destructive">{REASONS[action.failure] ?? "It couldn't be done."}</p> : null}
+      {action.status === "FAILED" && action.failure ? <p className="text-xs text-destructive">{REASONS[action.failure] ?? "The action was not confirmed. Inspect Google before preparing another change."}</p> : null}
       {action.status === "DONE" ? <p className="text-xs text-muted-foreground">Done {action.decidedAt ? relativeTime(action.decidedAt) : ""}, and Google shows the change.</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         {action.status === "PROPOSED" ? <>
-          <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => act(() => AccountActions.approve(businessId, action.id), action.kind === "REPLY_TO_REVIEW" ? "Reply posted" : "Change made in Google Ads")}>
+          <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => act(async () => {
+            const result = await AccountActions.approve(businessId, action.id)
+            void recordDecision(businessId, { kind: "ACCOUNT_ACTION", itemId: action.id, verdict: "APPROVED", title: title(action) })
+            return result
+          }, action.kind === "REPLY_TO_REVIEW" ? "Reply posted" : "Change made in Google Ads")}>
             {action.kind === "REPLY_TO_REVIEW" ? "Approve and post" : "Approve and apply"}
           </Button>
-          <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={busy} onClick={() => act(() => AccountActions.reject(businessId, action.id), "Rejected")}>Reject</Button>
+          <RejectWithReason className="h-8 text-xs" disabled={busy} onReject={reason => act(async () => {
+            const result = await AccountActions.reject(businessId, action.id)
+            void recordDecision(businessId, { kind: "ACCOUNT_ACTION", itemId: action.id, verdict: "REJECTED", title: title(action), reason })
+            return result
+          }, "Rejected")} />
         </> : null}
         {action.status === "DONE" ? (
           <Button size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => act(() => AccountActions.undo(businessId, action.id), "Undone")}><Undo2Icon />Undo</Button>

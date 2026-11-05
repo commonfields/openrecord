@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS account_actions (
   before_values JSONB NOT NULL CHECK (jsonb_typeof(before_values) = 'object' AND octet_length(before_values::text) <= 20000),
   after_values JSONB NOT NULL CHECK (jsonb_typeof(after_values) = 'object' AND octet_length(after_values::text) <= 20000),
   rationale TEXT NOT NULL CHECK (length(trim(rationale)) BETWEEN 1 AND 2000),
-  status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'EXECUTING', 'DONE', 'REJECTED', 'FAILED', 'UNDONE')),
+  status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'EXECUTING', 'DONE', 'REJECTED', 'FAILED', 'UNDOING', 'UNDONE')),
   proposed_by TEXT NOT NULL CHECK (proposed_by IN ('ASSISTANT', 'OPERATOR')),
   created_by_user_id UUID NOT NULL REFERENCES users(id),
   request_key TEXT NOT NULL CHECK (request_key ~ '^[a-f0-9]{64}$'),
@@ -39,3 +39,11 @@ CREATE TABLE IF NOT EXISTS account_actions (
   CHECK ((provider = 'google_business') = (kind = 'REPLY_TO_REVIEW'))
 );
 CREATE INDEX IF NOT EXISTS account_actions_recent ON account_actions(business_id, created_at DESC);
+
+-- Also supports a database that ran the earlier feature-branch migration.
+ALTER TABLE account_actions DROP CONSTRAINT IF EXISTS account_actions_status_check;
+ALTER TABLE account_actions ADD CONSTRAINT account_actions_status_check
+  CHECK (status IN ('PROPOSED', 'EXECUTING', 'DONE', 'REJECTED', 'FAILED', 'UNDOING', 'UNDONE'));
+ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
+ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check
+  CHECK (kind IN ('AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'ACCOUNT_ACTION'));

@@ -17,7 +17,7 @@ import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const Kind = Schema.Literal("AGENT_PROPOSAL", "AGENT_DRAFT", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE")
+const Kind = Schema.Literal("AGENT_PROPOSAL", "AGENT_DRAFT", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE", "ACCOUNT_ACTION")
 const Feedback = Schema.Struct({
   kind: Kind, itemId: Schema.UUID, verdict: Schema.Literal("APPROVED", "REJECTED"),
   title: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(300)),

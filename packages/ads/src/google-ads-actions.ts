@@ -44,19 +44,19 @@ export const googleAdsAdGroups = async (c: GoogleAdsConfig, token: string, t: Ad
   return rows.flatMap(r => { const g = (r["adGroup"] ?? {}) as Record<string, unknown>; const id = digits(g["id"])
     return id ? [{ adGroupId: id, name: text(g["name"], 200), status: text(g["status"], 30), type: text(g["type"], 40) || null, campaignId }] : [] })
 }
-export interface AdState { readonly resourceName: string; readonly status: string; readonly approval: string | null; readonly headlines: ReadonlyArray<string>; readonly descriptions: ReadonlyArray<string>; readonly finalUrls: ReadonlyArray<string> }
+export interface AdState { readonly resourceName: string; readonly status: string; readonly approval: string | null; readonly headlines: ReadonlyArray<string>; readonly descriptions: ReadonlyArray<string>; readonly finalUrls: ReadonlyArray<string>; readonly path1: string; readonly path2: string }
 const AD_RESOURCE = /^customers\/(\d{1,20})\/adGroupAds\/(\d{1,20})~(\d{1,20})$/
 export const googleAdsAd = async (c: GoogleAdsConfig, token: string, t: AdsTarget, resourceName: string): Promise<AdState | null> => {
   const m = AD_RESOURCE.exec(resourceName)
   need(!!m && m[1] === t.customerId)
   const rows = await googleAdsSearch(c, token, t.customerId, t.loginCustomerId,
-    `SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.policy_summary.approval_status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions FROM ad_group_ad WHERE ad_group.id = ${m![2]} AND ad_group_ad.ad.id = ${m![3]}`)
+    `SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.policy_summary.approval_status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ad_group.id = ${m![2]} AND ad_group_ad.ad.id = ${m![3]}`)
   const a = rows[0]?.["adGroupAd"] as Record<string, unknown> | undefined
   if (!a) return null
   const ad = (a["ad"] ?? {}) as Record<string, unknown>, rsa = (ad["responsiveSearchAd"] ?? {}) as Record<string, unknown>
   const texts = (v: unknown) => (Array.isArray(v) ? v : []).map(x => text((x as Record<string, unknown>)["text"], 120)).filter(Boolean)
   return { resourceName, status: text(a["status"], 30), approval: text(((a["policySummary"] ?? {}) as Record<string, unknown>)["approvalStatus"], 40) || null,
-    headlines: texts(rsa["headlines"]), descriptions: texts(rsa["descriptions"]), finalUrls: (Array.isArray(ad["finalUrls"]) ? ad["finalUrls"] : []).map(u => text(u, 2000)) }
+    headlines: texts(rsa["headlines"]), descriptions: texts(rsa["descriptions"]), finalUrls: (Array.isArray(ad["finalUrls"]) ? ad["finalUrls"] : []).map(u => text(u, 2000)), path1: text(rsa["path1"], 15), path2: text(rsa["path2"], 15) }
 }
 
 const mutate = async (c: GoogleAdsConfig, token: string, t: AdsTarget, service: "campaigns" | "campaignBudgets" | "adGroupAds", operations: ReadonlyArray<unknown>, validateOnly: boolean) => {

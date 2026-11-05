@@ -45,7 +45,7 @@ type Values = Readonly<Record<string, unknown>>
 export interface AccountAction {
   readonly id: string; readonly provider: "google_business" | "google_ads"; readonly kind: ActionKind
   readonly target: Values; readonly before: Values; readonly after: Values; readonly rationale: string
-  readonly status: "PROPOSED" | "EXECUTING" | "DONE" | "REJECTED" | "FAILED" | "UNDONE"; readonly proposedBy: "ASSISTANT" | "OPERATOR"
+  readonly status: "PROPOSED" | "EXECUTING" | "DONE" | "REJECTED" | "FAILED" | "UNDOING" | "UNDONE"; readonly proposedBy: "ASSISTANT" | "OPERATOR"
   readonly failure: string | null; readonly result: Values | null; readonly createdAt: string; readonly decidedAt: string | null
 }
 const toAction = (r: Record<string, unknown>): AccountAction => ({
@@ -131,15 +131,20 @@ const planAds = (scope: { accountId: string; businessId: string }, input: Prepar
   if (input.kind === "PAUSE_CAMPAIGN" || input.kind === "ENABLE_CAMPAIGN") {
     const status = input.kind === "PAUSE_CAMPAIGN" ? "PAUSED" : "ENABLED"
     if (campaign.status === status) return yield* refuse("NothingToChange")
+    if (input.kind === "ENABLE_CAMPAIGN" && !campaign.budget) return yield* refuse("BudgetNotFound")
+    if (input.kind === "ENABLE_CAMPAIGN" && campaign.budget?.period !== "DAILY") return yield* refuse("BudgetNotDaily")
+    const budget = input.kind === "ENABLE_CAMPAIGN" && campaign.budget ? {
+      budgetResourceName: campaign.budget.resourceName, budgetDailyMicros: campaign.budget.dailyMicros, budgetShared: campaign.budget.shared,
+    } : {}
     yield* validate(tok => googleAdsSetCampaignStatus(access.config, tok, t, campaign.campaignId, status, true))
-    return { bindingId: b.id, target, before: { status: campaign.status }, after: { status } } satisfies Plan
+    return { bindingId: b.id, target, before: { status: campaign.status, ...budget }, after: { status, ...budget } } satisfies Plan
   }
   if (input.kind === "SET_DAILY_BUDGET") {
     if (input.dailyBudget === undefined) return yield* refuse("InvalidRequest")
     const budget = campaign.budget
     if (!budget) return yield* refuse("BudgetNotFound")
     if (budget.shared) return yield* refuse("SharedBudget")
-    if (budget.period && budget.period !== "DAILY") return yield* refuse("BudgetNotDaily")
+    if (budget.period !== "DAILY") return yield* refuse("BudgetNotDaily")
     const dailyMicros = toMicros(input.dailyBudget)
     if (dailyMicros === budget.dailyMicros) return yield* refuse("NothingToChange")
     if (dailyMicros > budget.dailyMicros * 2) return yield* refuse("BudgetIncreaseTooLarge")
@@ -195,17 +200,28 @@ const observe = (accountId: string, businessId: string, a: AccountAction, bindin
   if (a.kind === "CREATE_SEARCH_AD") {
     if (!resourceName) return {} as Values
     const ad = yield* access.run(b, tok => googleAdsAd(access.config, tok, t, resourceName))
-    return ad ? { status: ad.status, approval: ad.approval, headlines: ad.headlines, descriptions: ad.descriptions, finalUrls: ad.finalUrls } as Values : {} as Values
+    return ad ? { status: ad.status, approval: ad.approval, headlines: ad.headlines, descriptions: ad.descriptions, finalUrls: ad.finalUrls, path1: ad.path1, path2: ad.path2 } as Values : {} as Values
   }
   const c = yield* access.run(b, tok => googleAdsCampaign(access.config, tok, t, s(a.target["campaignId"])))
   if (!c) return yield* refuse("CampaignNotFound")
-  return (a.kind === "SET_DAILY_BUDGET" ? { dailyMicros: c.budget?.dailyMicros ?? null } : { status: c.status }) as Values
+  if (a.kind === "SET_DAILY_BUDGET" && (!c.budget || c.budget.resourceName !== a.target["budgetResourceName"] || c.budget.shared || c.budget.period !== "DAILY")) {
+    return yield* refuse("ChangedSincePrepared")
+  }
+  return (a.kind === "SET_DAILY_BUDGET" ? { dailyMicros: c.budget?.dailyMicros ?? null } : {
+    status: c.status, budgetResourceName: c.budget?.resourceName, budgetDailyMicros: c.budget?.dailyMicros, budgetShared: c.budget?.shared,
+  }) as Values
 })
 const holds = (a: AccountAction, observed: Values, wanted: Values) => {
   if (a.kind === "REPLY_TO_REVIEW") return observed["reply"] === wanted["reply"]
   if (a.kind === "SET_DAILY_BUDGET") return observed["dailyMicros"] === wanted["dailyMicros"]
-  if (a.kind === "CREATE_SEARCH_AD") return observed["status"] === "PAUSED" && JSON.stringify(observed["headlines"]) === JSON.stringify(wanted["headlines"])
-  return observed["status"] === wanted["status"]
+  if (a.kind === "CREATE_SEARCH_AD") return observed["status"] === "PAUSED"
+    && JSON.stringify(observed["headlines"]) === JSON.stringify(wanted["headlines"])
+    && JSON.stringify(observed["descriptions"]) === JSON.stringify(wanted["descriptions"])
+    && JSON.stringify(observed["finalUrls"]) === JSON.stringify([wanted["finalUrl"]])
+    && (observed["path1"] ?? "") === (wanted["path1"] ?? "") && (observed["path2"] ?? "") === (wanted["path2"] ?? "")
+  return observed["status"] === wanted["status"] && (wanted["budgetResourceName"] === undefined || (
+    observed["budgetResourceName"] === wanted["budgetResourceName"] && observed["budgetDailyMicros"] === wanted["budgetDailyMicros"] && observed["budgetShared"] === wanted["budgetShared"]
+  ))
 }
 const write = (accountId: string, businessId: string, a: AccountAction, bindingId: string, values: Values, undo: { resourceName: string | null } | null) => Effect.gen(function*() {
   if (a.kind === "REPLY_TO_REVIEW") {
@@ -244,6 +260,10 @@ export const executeAction = (session: Session, businessId: string, id: string) 
   if (!claimed) return yield* refuse("ActionNotPending")
   const a = toAction(claimed), bindingId = String(claimed["binding_id"])
   const outcome = yield* Effect.gen(function*() {
+    if (a.kind === "CREATE_SEARCH_AD") {
+      const website = yield* businessWebsite(businessId)
+      if (!website || normalizeDomain(website) !== normalizeDomain(new URL(s(a.after["finalUrl"])).hostname)) return yield* refuse("FinalUrlNotOwnSite")
+    }
     const now = yield* observe(session.accountId, businessId, a, bindingId, null)
     if (a.kind !== "CREATE_SEARCH_AD" && !holds(a, now, a.before)) return { failure: "ChangedSincePrepared", result: { observedBefore: now } }
     const resourceName = yield* write(session.accountId, businessId, a, bindingId, a.after, null)
@@ -260,15 +280,27 @@ export const executeAction = (session: Session, businessId: string, id: string) 
 
 /** Puts the previous value back; a new ad is removed. Refused if the target changed since. */
 export const undoAction = (session: Session, businessId: string, id: string) => Effect.gen(function*() {
-  const row = yield* actionRow(session.accountId, businessId, id)
-  if (!row || row["status"] !== "DONE") return yield* refuse("ActionNotDone")
+  const sql = yield* SqlClient.SqlClient
+  const row = (yield* sql`UPDATE account_actions SET status='UNDOING',undone_by_user_id=${session.userId}
+    WHERE id=${id} AND account_id=${session.accountId} AND business_id=${businessId} AND status='DONE' RETURNING *`)[0]
+  if (!row) return yield* refuse("ActionNotDone")
   const a = toAction(row), bindingId = String(row["binding_id"])
   const resourceName = typeof a.result?.["resourceName"] === "string" ? a.result["resourceName"] : null
-  const now = yield* observe(session.accountId, businessId, a, bindingId, resourceName)
-  if (a.kind !== "CREATE_SEARCH_AD" && !holds(a, now, a.after)) return yield* refuse("ChangedSinceDone")
-  yield* write(session.accountId, businessId, a, bindingId, a.before, a.kind === "CREATE_SEARCH_AD" ? { resourceName } : null)
-  const sql = yield* SqlClient.SqlClient
-  yield* sql`UPDATE account_actions SET status = 'UNDONE', undone_by_user_id = ${session.userId}, undone_at = now() WHERE id = ${id} AND status = 'DONE'`
+  const outcome = yield* Effect.gen(function*() {
+    if (a.kind === "CREATE_SEARCH_AD" && !resourceName) return yield* refuse("ActionNotDone")
+    const now = yield* observe(session.accountId, businessId, a, bindingId, resourceName)
+    if (!holds(a, now, a.after)) return yield* refuse("ChangedSinceDone")
+    yield* write(session.accountId, businessId, a, bindingId, a.before, a.kind === "CREATE_SEARCH_AD" ? { resourceName } : null)
+    const observed = yield* observe(session.accountId, businessId, a, bindingId, resourceName)
+    const verified = a.kind === "CREATE_SEARCH_AD" ? Object.keys(observed).length === 0 || observed["status"] === "REMOVED" : holds(a, observed, a.before)
+    if (!verified) return yield* refuse("UndoNotStored")
+  }).pipe(Effect.either)
+  if (outcome._tag === "Left") {
+    const reason = reasonOf(outcome.left)
+    yield* sql`UPDATE account_actions SET status='FAILED',failure=${reason} WHERE id=${id} AND status='UNDOING'`
+    return yield* refuse(reason)
+  }
+  yield* sql`UPDATE account_actions SET status = 'UNDONE', undone_at = now() WHERE id = ${id} AND status = 'UNDOING'`
   return (yield* actionOf(session.accountId, businessId, id))!
 })
 

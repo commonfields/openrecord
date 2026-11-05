@@ -15,6 +15,7 @@ import { AdsProvider, adsConfigFromEnv } from "@openrecord/ads"
 import { accountActionsApi, dispatchAccountAction } from "./account-actions.js"
 import { growthApi } from "./growth-routes.js"
 import { requireSession, RepoLayers } from "./router.js"
+import { decisionApi } from "./decision-routes.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const product = {
@@ -25,7 +26,7 @@ const product = {
 const suite = url ? describe : describe.skip
 suite("approved account actions (scripted Google Business Profile and Google Ads)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope
-  const repos = Layer.mergeAll(RepoLayers.GrowthRepositoriesLive, RepoLayers.BusinessRepositoryLive, AuthRepositoryLive, RecordRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
+  const repos = Layer.mergeAll(RepoLayers.GrowthRepositoriesLive, RepoLayers.BusinessRepositoryLive, RepoLayers.AgentProposalRepositoryLive, AuthRepositoryLive, RecordRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const handlers: Array<{ dispose: () => Promise<void> }> = []
   beforeAll(async () => { pool = new pg.Pool({ connectionString: url }); scope = await Effect.runPromise(Scope.make()); await Effect.runPromise(Layer.buildWithScope(repos, scope)) })
   afterAll(async () => { for (const h of handlers) await h.dispose(); await Effect.runPromise(Scope.close(scope, Exit.void)); await pool.end() })
@@ -42,7 +43,8 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     // Scripted Google: platform state the writes change.
     const reviews: Record<string, { comment: string; reply: string | null }> = { r1: { comment: "Waited an hour past my booking", reply: null }, r2: { comment: "Lovely cut", reply: null } }
     const campaigns: Record<string, { status: string; budget: number; shared: boolean }> = { "7": { status: "ENABLED", budget: 20_000_000, shared: false }, "8": { status: "ENABLED", budget: 10_000_000, shared: true } }
-    const ads = new Map<string, { status: string; headlines: string[] }>()
+    const ads = new Map<string, { status: string; headlines: string[]; descriptions: string[]; finalUrls: string[]; path1?: string; path2?: string }>()
+    let corruptAd: "descriptions" | "url" | "path" | null = null
     const writes: string[] = []
     const google = async (input: string, init: RequestInit) => {
       const u = new URL(input), method = init.method ?? "GET"
@@ -62,7 +64,7 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
         if (q.includes("FROM campaign ")) return body({ results: Object.entries(campaigns).filter(([id]) => !one || id === one).map(([id, c]) => ({ campaign: { id, name: `Campaign ${id}`, status: c.status, advertisingChannelType: "SEARCH" }, campaignBudget: { resourceName: `customers/100/campaignBudgets/5${id}`, amountMicros: String(c.budget), explicitlyShared: c.shared, period: "DAILY" } })) })
         if (q.includes("FROM ad_group ")) return body({ results: [{ adGroup: { id: "70", name: "Haircuts", status: "ENABLED", type: "SEARCH_STANDARD" } }] })
         if (q.includes("FROM ad_group_ad ")) { const id = /ad_group_ad\.ad\.id = (\d+)/.exec(q)![1]!; const ad = ads.get(id)
-          return body({ results: ad ? [{ adGroupAd: { resourceName: `customers/100/adGroupAds/70~${id}`, status: ad.status, policySummary: { approvalStatus: "UNKNOWN" }, ad: { finalUrls: ["https://www.northstar-salon.com/book"], responsiveSearchAd: { headlines: ad.headlines.map(text => ({ text })), descriptions: [] } } } }] : [] }) }
+          return body({ results: ad ? [{ adGroupAd: { resourceName: `customers/100/adGroupAds/70~${id}`, status: ad.status, policySummary: { approvalStatus: "UNKNOWN" }, ad: { finalUrls: ad.finalUrls, responsiveSearchAd: { headlines: ad.headlines.map(text => ({ text })), descriptions: ad.descriptions.map(text => ({ text })), path1: ad.path1, path2: ad.path2 } } } }] : [] }) }
       }
       const mutate = /^\/googleads\/v21\/customers\/100\/(campaigns|campaignBudgets|adGroupAds):mutate$/.exec(u.pathname)
       if (mutate) {
@@ -72,7 +74,14 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
         const op = req.operations[0]!
         if (mutate[1] === "campaigns") campaigns[op["update"].resourceName.split("/").pop()]!.status = op["update"].status
         if (mutate[1] === "campaignBudgets") campaigns[op["update"].resourceName.split("/").pop().slice(1)]!.budget = Number(op["update"].amountMicros)
-        if (mutate[1] === "adGroupAds" && op["create"]) { ads.set("901", { status: op["create"].status, headlines: op["create"].ad.responsiveSearchAd.headlines.map((h: { text: string }) => h.text) }); return body({ results: [{ resourceName: "customers/100/adGroupAds/70~901" }] }) }
+        if (mutate[1] === "adGroupAds" && op["create"]) {
+          const created = op["create"], rsa = created.ad.responsiveSearchAd
+          ads.set("901", { status: created.status, headlines: rsa.headlines.map((h: { text: string }) => h.text),
+            descriptions: corruptAd === "descriptions" ? ["Not the approved copy"] : rsa.descriptions.map((d: { text: string }) => d.text),
+            finalUrls: corruptAd === "url" ? ["https://other-salon.com/"] : created.ad.finalUrls,
+            path1: corruptAd === "path" ? "changed" : rsa.path1, path2: rsa.path2 })
+          return body({ results: [{ resourceName: "customers/100/adGroupAds/70~901" }] })
+        }
         if (mutate[1] === "adGroupAds" && op["remove"]) { ads.delete(op["remove"].split("~").pop()); return body({ results: [{ resourceName: op["remove"] }] }) }
         return body({ results: [{ resourceName: "ok" }] })
       }
@@ -84,8 +93,8 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     }, google as typeof fetch)
     expect(config.googleAds.configured && config.googleBusiness.configured).toBe(true)
     const layer = Layer.provideMerge(Layer.succeed(AdsProvider, config), repos)
-    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))),
-      accountActionsApi(r => Effect.flatMap(requireSession, ({ session }) => r(session)))), layer)
+    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(decisionApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))), HttpRouter.concat(growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))),
+      accountActionsApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))))), layer)
     handlers.push(web)
     const seen: string[] = []
     type Acct = Awaited<ReturnType<typeof account>>
@@ -116,13 +125,24 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     const prepared = Either.getOrThrow(await agent("prepare_account_action", { kind: "REPLY_TO_REVIEW", reviewId: "r1", reply: "Sorry for the wait, Ana. We now text when we run late; call us to rebook.", rationale: "Unanswered two-star review about waiting." }))
     const actionId = String((prepared.data as { accountActionId: string }).accountActionId)
     expect(writes).toEqual([])
-    const done = await ok<{ action: { status: string; result: { observed: { reply: string } } } }>(call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/approve`))
-    expect(done.action).toMatchObject({ status: "DONE", result: { observed: { reply: "Sorry for the wait, Ana. We now text when we run late; call us to rebook." } } })
+    const inbox = await ok<{ items: Array<{ type: string; action?: { id: string } }> }>(call(a, "GET", "/api/decisions"))
+    expect(inbox.items).toEqual(expect.arrayContaining([expect.objectContaining({ type: "ACCOUNT_ACTION", action: expect.objectContaining({ id: actionId }) })]))
+    expect((await call(other, "GET", `/api/businesses/${biz}/account-actions/${actionId}`)).status).toBe(404)
+    const approvalPath = `http://localhost/api/businesses/${biz}/account-actions/${actionId}/approve`
+    expect((await web.handler(new Request(approvalPath, { method: "POST" }))).status).toBe(401)
+    expect((await web.handler(new Request(approvalPath, { method: "POST", headers: { cookie: `or_session=${a.cookie}`, origin: "https://hostile.example", "content-type": "application/json" }, body: "{}" }))).status).toBe(403)
+    const approvals = await Promise.all([0, 1].map(() => call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/approve`)))
+    expect(approvals.map(r => r.status).sort()).toEqual([200, 409])
+    const done = await approvals.find(r => r.status === 200)!.json()
+    expect(done).toMatchObject({ action: { status: "DONE", result: { observed: { reply: "Sorry for the wait, Ana. We now text when we run late; call us to rebook." } } } })
     expect((await call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/approve`)).status).toBe(409)
     expect(writes).toEqual(["PUT reply r1"])
     // Another account cannot see or undo it.
     expect((await call(other, "POST", `/api/businesses/${biz}/account-actions/${actionId}/undo`)).status).toBe(404)
-    expect((await ok<{ action: { status: string } }>(call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/undo`))).action.status).toBe("UNDONE")
+    const undos = await Promise.all([0, 1].map(() => call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/undo`)))
+    expect(undos.map(r => r.status).sort()).toEqual([200, 409])
+    expect(await undos.find(r => r.status === 200)!.json()).toMatchObject({ action: { status: "UNDONE" } })
+    expect(writes).toEqual(["PUT reply r1", "DELETE reply r1"])
     expect(reviews["r1"]!.reply).toBeNull()
 
     // Answered by hand after it was prepared: refused, not overwritten.
@@ -154,6 +174,25 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     await ok(call(a, "POST", `/api/businesses/${biz}/account-actions/${(budget.data as { accountActionId: string }).accountActionId}/approve`))
     expect(campaigns["7"]!.budget).toBe(30_000_000)
 
+    // A budget that became shared must not be written, even at the same amount.
+    const staleBudget = Either.getOrThrow(await agent("prepare_account_action", { kind: "SET_DAILY_BUDGET", campaignId: "7", dailyBudget: 25, rationale: "Lower the budget." }))
+    campaigns["7"]!.shared = true
+    const beforeShared = writes.length
+    expect((await call(a, "POST", `/api/businesses/${biz}/account-actions/${(staleBudget.data as { accountActionId: string }).accountActionId}/approve`)).status).toBe(409)
+    expect(writes).toHaveLength(beforeShared)
+    campaigns["7"]!.shared = false
+
+    // Enabling approves the displayed existing budget, not a later changed one.
+    campaigns["7"]!.status = "PAUSED"
+    const enable = Either.getOrThrow(await agent("prepare_account_action", { kind: "ENABLE_CAMPAIGN", campaignId: "7", rationale: "Resume the approved experiment." }))
+    expect((enable.data as { after: { budgetDailyMicros: number } }).after.budgetDailyMicros).toBe(30_000_000)
+    campaigns["7"]!.budget = 40_000_000
+    const beforeEnable = writes.length
+    expect((await call(a, "POST", `/api/businesses/${biz}/account-actions/${(enable.data as { accountActionId: string }).accountActionId}/approve`)).status).toBe(409)
+    expect(writes).toHaveLength(beforeEnable)
+    campaigns["7"]!.budget = 30_000_000
+    campaigns["7"]!.status = "ENABLED"
+
     // New search ad: own site only, created paused, removed on undo.
     const draft = { kind: "CREATE_SEARCH_AD", campaignId: "7", adGroupId: "70", headlines: ["Haircuts in Austin", "Book online in a minute", "Open late on Fridays"], descriptions: ["Same-week appointments with senior stylists.", "Book online and get a reminder text."], rationale: "Test a booking-led message." }
     const elsewhere = await agent("prepare_account_action", { ...draft, finalUrl: "https://other-salon.com/book" })
@@ -164,8 +203,17 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     await ok(call(a, "POST", `/api/businesses/${biz}/account-actions/${(ad.data as { accountActionId: string }).accountActionId}/undo`))
     expect(ads.size).toBe(0)
 
+    // Headlines alone never establish that the complete approved ad was stored.
+    for (const field of ["descriptions", "url", "path"] as const) {
+      corruptAd = field
+      const mismatched = Either.getOrThrow(await agent("prepare_account_action", { ...draft, headlines: [`Haircuts ${field}`, ...draft.headlines.slice(1)], finalUrl: "https://www.northstar-salon.com/book", path1: "book", path2: "now" }))
+      const response = await call(a, "POST", `/api/businesses/${biz}/account-actions/${(mismatched.data as { accountActionId: string }).accountActionId}/approve`)
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ reason: "NotStoredAsApproved" })
+    }
+
     const listed = await ok<{ actions: Array<{ status: string }> }>(call(a, "GET", `/api/businesses/${biz}/account-actions`))
-    expect(listed.actions.map(x => x.status).sort()).toEqual(["DONE", "FAILED", "UNDONE", "UNDONE", "UNDONE"])
+    expect(listed.actions.map(x => x.status).sort()).toEqual(["DONE", "FAILED", "FAILED", "FAILED", "FAILED", "FAILED", "FAILED", "UNDONE", "UNDONE", "UNDONE"])
     for (const text of seen) expect(text).not.toMatch(/SECRET/)
   })
 })
