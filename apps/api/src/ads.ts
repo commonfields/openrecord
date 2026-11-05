@@ -3,8 +3,9 @@
 // Operator-only and account-scoped like the GA4 routes: another account's
 // connection, binding or business is "not found". Tokens, codes and app
 // secrets never appear in a response, a log line or a redirect; the callback
-// sends the operator back with a short status word. Every platform call reads;
-// nothing here can create, change or pause an ad.
+// sends the operator back with a short status word. Every platform call here
+// reads; the few writes a person approves one by one live in account-actions.ts
+// and get their token through writeAccess below.
 import { createHash } from "node:crypto"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
@@ -132,6 +133,17 @@ const withToken = <A>(config: AdsConfig, c: ConnectionRow, f: (token: string) =>
   if (result._tag === "Right") return result.right
   if (result.left.kind === "AUTH") { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
   return yield* refuse(reasonOf(result.left))
+})
+
+/** The bindings of one provider for a business, the provider's config, and a
+ * way to call it with a binding's token. Only account-actions.ts uses it, for
+ * writes a person has approved. */
+export const writeAccess = <P extends "google_ads" | "google_business">(accountId: string, businessId: string, provider: P) => Effect.gen(function*() {
+  const config = yield* adsConfig
+  const providerConfig = provider === "google_ads" ? (yield* googleOf(config)).config : (yield* businessOf(config)).config
+  const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider === provider)
+  const run = <A>(b: (typeof bindings)[number], f: (token: string) => Promise<A>) => Effect.flatMap(connection(accountId, b.connectionId), c => withToken(config, c, f))
+  return { bindings, config: providerConfig as P extends "google_ads" ? import("@openrecord/ads").GoogleAdsConfig : import("@openrecord/ads").GoogleBusinessConfig, run }
 })
 
 const listAccounts = (config: AdsConfig, c: ConnectionRow): Effect.Effect<ReadonlyArray<AdAccount>, AdsRefused | import("@effect/sql/SqlError").SqlError, SqlClient.SqlClient> => c.provider === "meta"

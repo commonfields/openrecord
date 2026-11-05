@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 
-export type DecisionKind = "AGENT_PROPOSAL" | "AGENT_DRAFT" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE"
+export type DecisionKind = "AGENT_PROPOSAL" | "AGENT_DRAFT" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"
 
 /** Records a decision for the agent to read. Never blocks the decision itself. */
 export const recordDecision = (businessId: string, d: { kind: DecisionKind; itemId: string; verdict: "APPROVED" | "REJECTED"; title: string; reason?: string | undefined }) =>

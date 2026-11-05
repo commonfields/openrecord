@@ -10,11 +10,13 @@ import { AgentProposalRepository, BusinessRepository, GrowthRefused, GrowthRepos
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { json, operatorSessionFor, type WithSession } from "./record-routes.js"
 import { listChanges, type WordPressChange } from "./wordpress.js"
+import { listActions, type AccountAction } from "./account-actions.js"
 
 export type DecisionItem =
   | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly proposal: AgentProposal }
   | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly opportunity: GrowthOpportunity }
   | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly change: WordPressChange }
+  | { readonly type: "ACCOUNT_ACTION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly action: AccountAction }
 
 export const pendingDecisions = (accountId: string, userId: string) => Effect.gen(function*() {
   const businesses = yield* (yield* BusinessRepository).list(accountId)
@@ -26,10 +28,12 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
     // A business without a growth profile has no initiatives yet.
     const initiatives = yield* growth.list(accountId, b.id).pipe(Effect.catchIf(e => e instanceof GrowthRefused, () => Effect.succeed([])))
     const changes = yield* listChanges(accountId, b.id, "PROPOSED")
+    const actions = yield* listActions(accountId, b.id, "PROPOSED")
     return [
       ...open.map((proposal): DecisionItem => ({ type: "AGENT_PROPOSAL", business, createdAt: proposal.createdAt, proposal })),
       ...initiatives.filter(o => o.status === "PROPOSED").map((opportunity): DecisionItem => ({ type: "GROWTH_OPPORTUNITY", business, createdAt: opportunity.createdAt, opportunity })),
       ...changes.map((change): DecisionItem => ({ type: "WORDPRESS_CHANGE", business, createdAt: change.createdAt, change })),
+      ...actions.map((action): DecisionItem => ({ type: "ACCOUNT_ACTION", business, createdAt: action.createdAt, action })),
     ]
   }), { concurrency: 4 })
   const items = perBusiness.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -45,7 +49,8 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       AND e.payload ? 'receipt' ORDER BY e.created_at DESC`
   return items.map(item => {
     const [key, id] = item.type === "AGENT_PROPOSAL" ? ["proposalId", item.proposal.id]
-      : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id] : ["wordpressChangeId", item.change.id]
+      : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id]
+      : item.type === "ACCOUNT_ACTION" ? ["accountActionId", item.action.id] : ["wordpressChangeId", item.change.id]
     const match = receipts.find(row => String(row["business_id"]) === item.business.id && (row["receipt"] as Record<string, unknown> | null)?.[key] === id)
     return match ? { ...item, conversationId: String(match["conversation_id"]) } : item
   })

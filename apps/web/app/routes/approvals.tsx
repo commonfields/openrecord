@@ -10,6 +10,7 @@ import { useChrome } from "@/components/app-shell"
 import { WordPressChangeCard } from "@/components/wordpress"
 import { DECISIONS_CHANGED, Decisions, Issues, notifyDecisionsChanged, type DecisionItem, type IssueWithEvidence } from "@/lib/api"
 import { occurrenceHref } from "@/lib/issues"
+import { AccountActionCard } from "@/components/account-action"
 import { errorMessage, relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
@@ -19,7 +20,7 @@ import { AskAgentButton } from "@/components/workspace-agent"
 type InboxItem = { id: string; business: string; businessId?: string; conversationId?: string; kind: string; title: string; summary: string; time: string; detail: ReactNode }
 
 function decisionId(item: DecisionItem) {
-  return `${item.type}:${item.type === "AGENT_PROPOSAL" ? item.proposal.id : item.type === "WORDPRESS_CHANGE" ? item.change.id : item.opportunity.id}`
+  return `${item.type}:${item.type === "AGENT_PROPOSAL" ? item.proposal.id : item.type === "WORDPRESS_CHANGE" ? item.change.id : item.type === "ACCOUNT_ACTION" ? item.action.id : item.opportunity.id}`
 }
 /** One business's inbox: its decisions, plus AI answers waiting for review. */
 export function BusinessInboxPage() {
@@ -43,14 +44,16 @@ export function ApprovalsPage({ businessId }: { businessId?: string } = {}) {
   const items = (decisions.data?.items ?? []).filter(item => !businessId || item.business.id === businessId)
   const decisionRows: InboxItem[] = items.map(item => ({
     id: decisionId(item), business: item.business.name, businessId: item.business.id, ...(item.conversationId ? { conversationId: item.conversationId } : {}),
-    kind: item.type === "GROWTH_OPPORTUNITY" ? "Proposed work" : item.type === "WORDPRESS_CHANGE" ? "Website change" : "Agent proposal",
-    title: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.title : item.type === "WORDPRESS_CHANGE" ? `Website change: ${item.change.targetTitle}` : item.proposal.message,
-    summary: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.problemStatement : item.type === "WORDPRESS_CHANGE" ? item.change.rationale : "Agent proposal",
+    kind: item.type === "GROWTH_OPPORTUNITY" ? "Proposed work" : item.type === "WORDPRESS_CHANGE" ? "Website change" : item.type === "ACCOUNT_ACTION" ? "Account change" : "Agent proposal",
+    title: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.title : item.type === "WORDPRESS_CHANGE" ? `Website change: ${item.change.targetTitle}` : item.type === "ACCOUNT_ACTION" ? item.action.kind.replaceAll("_", " ") : item.proposal.message,
+    summary: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.problemStatement : item.type === "WORDPRESS_CHANGE" ? item.change.rationale : item.type === "ACCOUNT_ACTION" ? item.action.rationale : "Agent proposal",
     time: relativeTime(item.createdAt),
     detail: item.type === "GROWTH_OPPORTUNITY"
       ? <Panel className="p-5 sm:p-6"><InitiativeDecision businessId={item.business.id} opportunity={item.opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></Panel>
       : item.type === "WORDPRESS_CHANGE"
       ? <WordPressChangeCard businessId={item.business.id} change={item.change} onDone={() => { void reload() }} />
+      : item.type === "ACCOUNT_ACTION"
+      ? <AccountActionCard businessId={item.business.id} action={item.action} onDone={() => { void reload() }} />
       : <AgentProposalCard businessId={item.business.id} businessName={item.business.name} proposal={item.proposal} onDone={() => { void reload() }} />,
   }))
   const businessName = activeBusiness && activeBusiness.id === businessId ? activeBusiness.name : "this business"
