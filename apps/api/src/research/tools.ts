@@ -118,7 +118,11 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
   if (!c) return answer("UNKNOWN_CAPABILITY", `No research capability ${args.capability}`, "Use one of the listed capabilities, or call find_research_capabilities.",
     { suggestions: findCapabilities(args.capability.replace(/[._]/g, " "), undefined, 4).map(x => x.id) })
   // Input that does not fit the capability's own schema is refused before anything runs.
-  const input = yield* Schema.decodeUnknown(c.input, { onExcessProperty: "error" })(args.input ?? {})
+  const decoded = yield* Schema.decodeUnknown(c.input, { onExcessProperty: "error" })(args.input ?? {}).pipe(Effect.either)
+  // Wrong input gets the capability's own schema and the exact problem, so the next step can correct it.
+  if (decoded._tag === "Left") return answer("INVALID_INPUT", `${c.title}: the input does not fit`, "Call run_research again with an input object that matches expectedInput exactly (no other fields).",
+    { capability: c.id, problem: String(decoded.left.message ?? decoded.left).slice(0, 600), expectedInput: JSONSchema.make(c.input) })
+  const input = decoded.right
   const unavailable = yield* availabilityOf(c, ctx)
   if (unavailable) return answer("NOT_AVAILABLE", `${c.title}: not available`, `${unavailable}. Say this evidence is unknown, not zero, and use other capabilities.`, { capability: c.id })
   const subject = c.subject(input)
@@ -140,7 +144,12 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
     else if (isRefused(out.right)) {
       row = yield* settle(r.id, { status: "FAILED", failure: out.right.refused.replace(/[^A-Z_]/g, "").slice(0, 40) || "REFUSED" })
       return answer(out.right.refused, `${c.title}: not observed (${out.right.refused.toLowerCase().replace(/_/g, " ")})`, out.right.message, { capability: c.id, observationId: row.id })
-    } else row = yield* settle(r.id, { status: out.right.status, findings: { ...out.right.findings, ...(out.right.timeline?.length ? { timeline: out.right.timeline } : {}), ...(out.right.citations?.length ? { _citations: out.right.citations } : {}) }, coverage: out.right.coverage })
+    } else {
+      // Pages read from the public web archive are named, with their capture dates.
+      const archivedPages = net.archivedReads?.() ?? []
+      const coverage = archivedPages.length ? { ...out.right.coverage, archivedPages, archiveNote: "The site blocked automated reading, so these pages were read from the public web archive's latest copy, dated as shown; the live page may differ." } : out.right.coverage
+      row = yield* settle(r.id, { status: out.right.status, coverage, findings: { ...out.right.findings, ...(out.right.timeline?.length ? { timeline: out.right.timeline } : {}), ...(out.right.citations?.length ? { _citations: out.right.citations } : {}) } })
+    }
   }
   if (row.status === "FAILED") return answer(row.failure ?? "UNAVAILABLE", `${c.title}: not observed`, "The source did not answer. Say it is unknown; you may try once more later.", { capability: c.id, observationId: row.id })
   const cites = (row.findings?.["_citations"] as AgentToolResult["citations"] | undefined) ?? []

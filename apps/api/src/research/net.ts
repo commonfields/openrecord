@@ -16,14 +16,18 @@ import { safeFetch, type HttpTransport } from "@openrecord/representation"
 import { AGENT_USER_AGENT, readRobots, webAccess, type WebAccessService } from "../web-access.js"
 
 export type PageState = "OK" | "NOT_PUBLIC" | "BLOCKED_BY_ROBOTS" | "ROBOTS_UNAVAILABLE" | "UNREADABLE"
-export interface PageResult { readonly state: PageState; readonly url: string; readonly finalUrl: string; readonly status: number | null; readonly body: string | null; readonly headers: Readonly<Record<string, string>>; readonly contentType: string | null }
-export interface ApiResult { readonly status: number | null; readonly body: string | null; readonly failure: string | null }
+export interface PageResult { readonly state: PageState; readonly url: string; readonly finalUrl: string; readonly status: number | null; readonly body: string | null; readonly headers: Readonly<Record<string, string>>; readonly contentType: string | null
+  /** Set when the page was read from the public web archive: the capture date. */
+  readonly archivedAt?: string | null }
+export interface ApiResult { readonly status: number | null; readonly body: string | null; readonly failure: string | null; readonly finalUrl?: string }
 export interface DnsRecords { readonly mx: ReadonlyArray<string>; readonly txt: ReadonlyArray<string>; readonly ns: ReadonlyArray<string>; readonly cname: ReadonlyArray<string> }
 
 export interface ResearchNetService {
   readonly page: (url: string, kind?: "page" | "xml") => Promise<PageResult>
   readonly api: (url: string, accept: "json" | "xml" | "html") => Promise<ApiResult>
   readonly dns: (host: string) => Promise<DnsRecords>
+  /** Pages this network read from the public web archive because the site blocked automated reading. */
+  readonly archivedReads?: () => ReadonlyArray<{ readonly url: string; readonly capturedAt: string | null }>
 }
 export class ResearchNet extends Context.Tag("ResearchNet")<ResearchNet, ResearchNetService>() {}
 /** Transport for public endpoints; tests provide a fake. */
@@ -86,11 +90,23 @@ export const makeResearchNet = (web: WebAccessService, transport?: HttpTransport
       }
       return { state: body === null ? (ev.failure === "SECURITY_REJECTED" || ev.failure === "INVALID_URL" ? "NOT_PUBLIC" : "UNREADABLE") : "OK", url, finalUrl: ev.finalUrl, status: ev.status, body, headers: ev.headers, contentType: ev.contentType }
   }
-  return {
+  const archived: Array<{ url: string; capturedAt: string | null }> = []
+  /** The latest public-archive copy of a page whose site blocked automated reading (never one robots.txt disallows). */
+  const fromArchive = async (url: string, kind: "page" | "xml"): Promise<PageResult | null> => {
+    const r = await net.api(`https://web.archive.org/web/2id_/${url}`, kind === "xml" ? "xml" : "html")
+    if (!r.body || r.status !== 200) return null
+    const ts = r.finalUrl?.match(/\/web\/(\d{14})id_\//)?.[1] ?? null
+    const capturedAt = ts ? `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}` : null
+    archived.push({ url, capturedAt })
+    return { state: "OK", url, finalUrl: url, status: 200, body: r.body, headers: {}, contentType: kind === "xml" ? "application/xml" : "text/html", archivedAt: capturedAt }
+  }
+  const net: ResearchNetService = {
+    archivedReads: () => archived,
     page: async (url, kind = "page") => {
       const key = `${kind}:${url}`, hit = pageCache.get(key)
       if (hit && Date.now() - hit.at < PAGE_TTL_MS) return hit.result
-      const result = await read(url, kind)
+      let result = await read(url, kind)
+      if (result.state === "ROBOTS_UNAVAILABLE" || (result.state === "UNREADABLE" && (result.status === null || [401, 403, 429, 503].includes(result.status)))) result = (await fromArchive(url, kind)) ?? result
       if (result.state === "OK") {
         if (pageCache.size >= PAGE_CACHE_MAX) pageCache.delete(pageCache.keys().next().value!)
         pageCache.set(key, { at: Date.now(), result })
@@ -106,7 +122,7 @@ export const makeResearchNet = (web: WebAccessService, transport?: HttpTransport
         limits: { timeoutMs: 15_000, maxRedirects: 3, maxBytes: 3_000_000, acceptedContentTypes: ACCEPT[accept], allowMissingContentType: true },
         redirectPolicy: { maxRedirects: 3, allowCrossOrigin: true, isAllowedRedirect: (next: string) => { try { const u = new URL(next); return u.protocol === "https:" && isPublicApiHost(u.hostname) } catch { return false } } },
       })
-      return { status: ev.status, body: ev.body ? Buffer.from(ev.body).toString("utf8") : null, failure: ev.failure }
+      return { status: ev.status, body: ev.body ? Buffer.from(ev.body).toString("utf8") : null, failure: ev.failure, finalUrl: ev.finalUrl }
     },
     dns: async host => {
       const safe = async <A>(f: () => Promise<A[]>) => { try { return await f() } catch { return [] as A[] } }
@@ -119,6 +135,7 @@ export const makeResearchNet = (web: WebAccessService, transport?: HttpTransport
       return { mx, txt, ns, cname }
     },
   }
+  return net
 }
 
 export const researchNet = Effect.gen(function*() {

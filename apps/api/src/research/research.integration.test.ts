@@ -130,8 +130,10 @@ suite("research (disposable PostgreSQL)", () => {
     const before = calls.length
     const unknown = await tool(f.ctx, "run_research", { capability: "vendor.call_any_endpoint", question: q, input: { url: "https://admin.example.org/delete" } })
     expect(unknown.right.data).toMatchObject({ status: "UNKNOWN_CAPABILITY" })
-    expect(await tool(f.ctx, "run_research", { capability: "site.profile", question: q, input: { domain: "rival.com", endpoint: "admin" } })).toMatchObject({ _tag: "Left", left: { _tag: "ParseError" } })
-    expect(await tool(f.ctx, "run_research", { capability: "site.profile", question: q, input: { domain: "localhost" } })).toMatchObject({ _tag: "Left", left: { _tag: "ParseError" } })
+    // Input that does not fit is refused with the expected schema, so the agent can correct it; nothing is read.
+    const widened = await tool(f.ctx, "run_research", { capability: "site.profile", question: q, input: { domain: "rival.com", endpoint: "admin" } })
+    expect(widened.right.data).toMatchObject({ status: "INVALID_INPUT", expectedInput: expect.objectContaining({ required: ["domain"] }) })
+    expect((await tool(f.ctx, "run_research", { capability: "site.profile", question: q, input: { domain: "localhost" } })).right.data).toMatchObject({ status: "INVALID_INPUT" })
     expect(await tool(f.ctx, "run_research", { capability: "site.profile", question: q, input: { domain: "rival.com" }, mcpTool: "content_publish" })).toMatchObject({ _tag: "Left", left: { _tag: "ParseError" } })
     expect(await tool(f.ctx, "call_vendor_tool", {})).toMatchObject({ _tag: "Left", left: { _tag: "AgentUnknownTool" } })
     expect(calls.length).toBe(before)
