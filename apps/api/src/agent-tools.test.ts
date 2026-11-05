@@ -18,6 +18,7 @@ describe("agent tool harness", () => {
       "discover_buyer_questions",
       "read_acquisition_citations",
       "read_acquisition_overview",
+      "read_ai_referral_evidence",
       "read_business_truth",
       "read_buyer_question_results",
       "read_competitor_appearances",

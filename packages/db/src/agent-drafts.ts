@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { createHash } from "node:crypto"
 import { operatorView } from "./record-view.js"
 import type { RecordSnapshot } from "./record.js"
+import type { AgentReportSupplement } from "./agent-referrals.js"
 
 const Text = (max: number) => Schema.String.pipe(Schema.minLength(1), Schema.maxLength(max))
 export const ActionDraftInput = Schema.Struct({
@@ -46,7 +47,7 @@ export const buildActionDraft = (snapshot: RecordSnapshot, input: typeof ActionD
     evidence: { recordItemId: slot.item.id, factId: slot.item.fact.id, factVersion: slot.item.fact.version, questionId: slot.item.question.id, sourceUrl: slot.item.sourceUrl, observed, input, finding: slot.finding } })
 }
 
-export const buildClientReport = (snapshot: RecordSnapshot, input: typeof ReportDraftInput.Type, generatedAt: string, pending: ReadonlyArray<{ readonly id: string; readonly kind: string; readonly status: string }> = []): DraftPayload | null => {
+export const buildClientReport = (snapshot: RecordSnapshot, input: typeof ReportDraftInput.Type, generatedAt: string, pending: ReadonlyArray<{ readonly id: string; readonly kind: string; readonly status: string }> = [], supplement?: AgentReportSupplement): DraftPayload | null => {
   const start = Date.parse(input.start), end = Date.parse(input.end)
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 93 * 86400000 || end > Date.parse(generatedAt)) return null
   const view = operatorView(snapshot)
@@ -78,14 +79,14 @@ export const buildClientReport = (snapshot: RecordSnapshot, input: typeof Report
     `Private client report draft: ${snapshot.profile.name}`, `Generated: ${generatedAt}\nPeriod: ${input.start} to ${input.end} (end exclusive). Coverage selects runs by creation time.`,
     "Measurement coverage", ...(batches.length ? batches.map(b => `Batch ${b.kind} (${b.createdAt}): ${b.questions.length} questions, ${b.attempted} attempted, ${b.successful} successful, ${b.synthetic} synthetic and excluded from findings. Human review: ${b.reviewed} of ${b.eligible} eligible real answers.\nSurfaces: ${[...new Set(b.observations.map(o => `${o.provider}; requested ${o.requestedModel ?? "unknown"}; observed ${o.observedModel ?? "unknown"}`))].join("; ") || "No successful observation"}.`) : ["No measurement runs in this period. This is missing evidence, not evidence of no problems."]),
     "Findings", ...batches.map(b => `${b.contradictions} reviewed contradictions, ${b.matches} reviewed matches and ${b.unknown} unknown judgments out of ${b.reviewed} reviewed real answers. These are answer-level judgments; they do not establish every supported fact's current state.`),
-    "Recommendation observations, competitor appearances and acquisition citations are not included by this report contract.",
+    supplement?.text ?? "Recommendation observations, competitor appearances and acquisition citations are not included by this report contract.",
     "Agency work", ...(actions.length ? actions.map(a => `${a.performedAt}: human-recorded ${a.type}. Source links: ${a.links.join(", ") || "None recorded"}.`) : ["No completed agency work recorded in this period. Proposals are not completed actions."]),
     ...pending.filter(p => p.status === "PROPOSED").map(p => `Awaiting approval: ${p.kind === "REQUEST_CHECK" ? "measurement re-check" : p.kind === "DRAFT_SOURCE_ACTION" ? "source action hypothesis" : "private client report"}. This is not completed agency work.`),
     "Observed changes", ...facts.map(f => `${f.label}: ${f.comparison === null ? "No before-and-after comparison" : f.comparison.state === "DERIVED" ? f.comparison.text : f.comparison.state === "AWAITING_REVIEW" ? "Awaiting human review" : "Follow-up check pending"}. Comparison reflects the stored record at generation time, including evidence outside this report period.`),
     "Recommended next steps", "Agency operator: review remaining unknown or unreviewed answers, inspect linked evidence, and review pending proposals. Publication and paid re-checks require separate explicit approval.",
-    "Important unknowns", "Referral data is unavailable in this report contract. Signups and revenue are not measured here. Unreviewed evidence is not confirmed. Source locations are not proof of their current content.",
+    "Important unknowns", supplement ? "Unreviewed evidence is not confirmed. Source locations are not proof of their current content. Revenue and causal acquisition outcomes are not measured here." : "Referral data is unavailable in this report contract. Signups and revenue are not measured here. Unreviewed evidence is not confirmed. Source locations are not proof of their current content.",
     view.disclosure, "This private draft has not been published or delivered.",
   ].join("\n\n")
-  return sealDraft({ kind: "PREPARE_CLIENT_REPORT", generatedAt, businessId: snapshot.profile.businessId, text, references,
-    evidence: { period: input, facts, batches, actions, pending, generatedAt } })
+  return sealDraft({ kind: "PREPARE_CLIENT_REPORT", generatedAt, businessId: snapshot.profile.businessId, text, references: [...references, ...(supplement?.references ?? [])],
+    evidence: { period: input, facts, batches, actions, pending, generatedAt, ...(supplement ? { acquisition: supplement.evidence } : {}) } })
 }
