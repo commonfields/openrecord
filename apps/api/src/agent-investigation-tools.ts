@@ -11,11 +11,12 @@ const Open = Schema.Struct({ goalId: Schema.UUID, question: Text(2000) })
 const NoteFields = { investigationId: Schema.UUID, note: Text(4000) }
 const StateFields = { workState: Schema.Literal("OPEN", "WAITING_FOR_INPUT", "CLOSED"), expectedStateNoteId: Schema.NullOr(Schema.UUID) }
 const StateChange = Schema.Struct(StateFields)
+const LinkFields = { campaignId: Schema.optional(Schema.UUID), expectedCampaignRevision: Schema.optional(Schema.Int.pipe(Schema.positive())) }
 const Note = Schema.Union(
-  Schema.Struct({ ...NoteFields, ...StateFields, kind: Schema.Literal("REVISION"), reason: Text(2000) }),
-  Schema.Struct({ ...NoteFields, kind: Schema.Literal("REVISION"), reason: Text(2000) }),
-  Schema.Struct({ ...NoteFields, ...StateFields, kind: Schema.Literal("HYPOTHESIS", "OBSERVATION", "CONCLUSION", "QUESTION") }),
-  Schema.Struct({ ...NoteFields, kind: Schema.Literal("HYPOTHESIS", "OBSERVATION", "CONCLUSION", "QUESTION") }),
+  Schema.Struct({ ...NoteFields, ...LinkFields, ...StateFields, kind: Schema.Literal("REVISION"), reason: Text(2000) }),
+  Schema.Struct({ ...NoteFields, ...LinkFields, kind: Schema.Literal("REVISION"), reason: Text(2000) }),
+  Schema.Struct({ ...NoteFields, ...LinkFields, ...StateFields, kind: Schema.Literal("HYPOTHESIS", "OBSERVATION", "CONCLUSION", "QUESTION") }),
+  Schema.Struct({ ...NoteFields, ...LinkFields, kind: Schema.Literal("HYPOTHESIS", "OBSERVATION", "CONCLUSION", "QUESTION") }),
 )
 export class AgentInvestigationConflict extends Data.TaggedError("AgentInvestigationConflict")<Record<never, never>> {}
 const Read = Schema.Struct({ investigationId: Schema.UUID, beforeNoteId: Schema.optional(Schema.UUID) })
@@ -37,7 +38,7 @@ const requestKey = (parts: ReadonlyArray<string>) => {
 export const investigationDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "wait_for_investigation", description: "Save a durable follow-up for an investigation: either resumeAfter (ISO timestamp with timezone) or proposalId from this business. Pass the current expectedStateNoteId, or null initially. Saves a waiting condition, not permission or execution. Ready follow-ups surface when chat resumes; background review requires a separate operator-enabled policy. Approval alone is not execution or success.", parametersJsonSchema: JSONSchema.make(Wait) },
   { name: "open_investigation", description: "Save an assistant-authored investigation question under an existing human-authored growth goal. Repeating the same question reuses its investigation. Does not change the goal, grant permission, or approve or execute work.", parametersJsonSchema: JSONSchema.make(Open) },
-  { name: "record_investigation_note", description: "Append an assistant working-memory note. Revisions require a reason. To set workState (OPEN, WAITING_FOR_INPUT, CLOSED), pass expectedStateNoteId from read_investigation, or null when no state note exists; stale changes are refused. CLOSED puts the investigation aside, not proves the goal succeeded. Notes remain unverified. Repeating the same note reuses it. Cannot rewrite history, approve or execute actions.", parametersJsonSchema: JSONSchema.make(Note) },
+  { name: "record_investigation_note", description: "Append an assistant working-memory note. Revisions require a reason. To set workState (OPEN, WAITING_FOR_INPUT, CLOSED), pass expectedStateNoteId from read_investigation, or null when no state note exists; stale changes are refused. CLOSED puts the investigation aside, not proves the goal succeeded. Pass campaignId to link a campaign of this business; the server saves the campaign revision it reads now. For progress on a saved draft or revision, also pass expectedCampaignRevision from that write; a changed revision is refused. Without it, notedRevision means link-time revision only. Reused notes return reused true; change the progress text or expected revision for new work. A link is not approval, delivery or success. Notes remain unverified. Repeating the same note reuses it. Cannot rewrite history, approve or execute actions.", parametersJsonSchema: JSONSchema.make(Note) },
 ]
 
 export const dispatchInvestigation = (ctx: ToolContext, name: string, raw: unknown) => Effect.gen(function*() {
@@ -70,25 +71,32 @@ export const dispatchInvestigation = (ctx: ToolContext, name: string, raw: unkno
   const reason = input.kind === "REVISION" ? input.reason.trim() : null
   const stateInput = "workState" in input ? yield* Schema.decodeUnknown(StateChange)(input) : null
   const state = stateInput ? { value: stateInput.workState, expected: stateInput.expectedStateNoteId?.toLowerCase() ?? null } : null
-  const key = requestKey(["investigation-note:v1", ctx.userId, ctx.businessId, input.investigationId.toLowerCase(), input.kind, note, reason ?? "", state?.value ?? "", state?.expected ?? "", resumeAfter ?? "", proposalId ?? ""])
+  const campaignId = "campaignId" in input && input.campaignId ? input.campaignId.toLowerCase() : null
+  const expectedCampaignRevision = "expectedCampaignRevision" in input ? input.expectedCampaignRevision : undefined
+  if (expectedCampaignRevision !== undefined && !campaignId) return yield* Effect.fail(new AgentInvestigationConflict())
+  const key = requestKey(["investigation-note:v1", ctx.userId, ctx.businessId, input.investigationId.toLowerCase(), input.kind, note, reason ?? "", state?.value ?? "", state?.expected ?? "", resumeAfter ?? "", proposalId ?? "", ...(campaignId ? [campaignId] : []), ...(expectedCampaignRevision !== undefined ? [String(expectedCampaignRevision)] : [])])
   const rows = yield* sql.withTransaction(Effect.gen(function*() {
     const parent = yield* sql`SELECT id FROM growth_investigations WHERE id = ${input.investigationId} AND business_id = ${ctx.businessId} FOR UPDATE`
     if (!parent[0]) return yield* Effect.fail(new AgentNotInScope())
-    const replay = yield* sql`SELECT id FROM growth_investigation_notes WHERE investigation_id = ${input.investigationId} AND business_id = ${ctx.businessId}
+    const replay = yield* sql`SELECT id, campaign_id, campaign_revision, true AS reused FROM growth_investigation_notes WHERE investigation_id = ${input.investigationId} AND business_id = ${ctx.businessId}
       AND request_id = ${key} AND created_by_user_id = ${ctx.userId} AND created_by_actor = 'ASSISTANT'`
     if (replay[0]) return replay
     if (proposalId) {
       const proposal = yield* sql`SELECT id FROM agent_proposals WHERE id = ${proposalId} AND business_id = ${ctx.businessId}`
       if (!proposal[0]) return yield* Effect.fail(new AgentNotInScope())
     }
+    const campaign = campaignId ? (yield* sql`SELECT revision FROM marketing_campaigns WHERE id = ${campaignId} AND business_id = ${ctx.businessId} FOR SHARE`)[0] : null
+    if (campaignId && !campaign) return yield* Effect.fail(new AgentNotInScope())
+    if (expectedCampaignRevision !== undefined && Number(campaign?.["revision"]) !== expectedCampaignRevision) return yield* Effect.fail(new AgentInvestigationConflict())
     if (state) {
       const latest = yield* sql`SELECT id FROM growth_investigation_notes WHERE investigation_id = ${input.investigationId} AND business_id = ${ctx.businessId}
         AND work_state IS NOT NULL ORDER BY sequence DESC LIMIT 1`
       if ((latest[0]?.["id"] ?? null) !== state.expected) return yield* Effect.fail(new AgentInvestigationConflict())
     }
     return yield* sql`INSERT INTO growth_investigation_notes(investigation_id, business_id, request_id, kind, note, created_by_user_id,
-      created_by_actor, origin_provider, origin_model, revision_reason, work_state, resume_after, await_proposal_id)
-    SELECT id, business_id, ${key}, ${input.kind}, ${note}, ${ctx.userId}, 'ASSISTANT', ${ctx.origin?.provider ?? null}, ${ctx.origin?.model ?? null}, ${reason}, ${state?.value ?? null}, ${resumeAfter}::timestamptz, ${proposalId}::uuid
+      created_by_actor, origin_provider, origin_model, revision_reason, work_state, resume_after, await_proposal_id, campaign_id, campaign_revision)
+    SELECT id, business_id, ${key}, ${input.kind}, ${note}, ${ctx.userId}, 'ASSISTANT', ${ctx.origin?.provider ?? null}, ${ctx.origin?.model ?? null}, ${reason}, ${state?.value ?? null}, ${resumeAfter}::timestamptz, ${proposalId}::uuid,
+      ${campaignId}::uuid, ${campaign ? Number(campaign["revision"]) : null}::integer
     FROM growth_investigations WHERE id = ${input.investigationId} AND business_id = ${ctx.businessId}
     ON CONFLICT (investigation_id, request_id) DO UPDATE SET request_id = EXCLUDED.request_id
     WHERE growth_investigation_notes.note = EXCLUDED.note AND growth_investigation_notes.kind = EXCLUDED.kind
@@ -96,13 +104,16 @@ export const dispatchInvestigation = (ctx: ToolContext, name: string, raw: unkno
       AND growth_investigation_notes.work_state IS NOT DISTINCT FROM EXCLUDED.work_state
       AND growth_investigation_notes.resume_after IS NOT DISTINCT FROM EXCLUDED.resume_after
       AND growth_investigation_notes.await_proposal_id IS NOT DISTINCT FROM EXCLUDED.await_proposal_id
+      AND growth_investigation_notes.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id
       AND growth_investigation_notes.created_by_user_id = EXCLUDED.created_by_user_id AND growth_investigation_notes.created_by_actor = 'ASSISTANT'
-    RETURNING id`
+    RETURNING id, campaign_id, campaign_revision, false AS reused`
   }))
   if (!rows[0]) return yield* Effect.fail(new AgentNotInScope())
-  return { summary: "Assistant investigation note saved; interpretation remains unverified", citations: [], data: {
-    investigationId: input.investigationId, noteId: rows[0]["id"], saved: true, actor: "ASSISTANT", verified: false,
+  return { summary: rows[0]["reused"] ? "Existing investigation note reused; no new progress recorded" : "Assistant investigation note saved; interpretation remains unverified", citations: [], data: {
+    investigationId: input.investigationId, noteId: rows[0]["id"], saved: true, reused: rows[0]["reused"], actor: "ASSISTANT", verified: false,
     followUp: waiting ? { resumeAfter, proposalId, backgroundRunScheduled: false } : null,
+    campaign: rows[0]["campaign_id"] ? { campaignId: rows[0]["campaign_id"], notedRevision: rows[0]["campaign_revision"],
+      note: "notedRevision is the campaign revision when this note was first saved. Read current campaign state before acting." } : null,
   } } satisfies AgentToolResult
 })
 
@@ -127,7 +138,7 @@ export const INVESTIGATION_READ_TOOLS: ReadonlyArray<AgentToolDef> = [{
         AND investigation_id = ${input.investigationId} AND business_id = ${businessId}`
       if (!anchor[0]) return yield* Effect.fail(new AgentNotInScope())
     }
-    const notes = yield* sql`SELECT id, kind, work_state, resume_after, await_proposal_id, left(note, 400) AS note, left(revision_reason, 300) AS revision_reason, created_by_actor,
+    const notes = yield* sql`SELECT id, kind, work_state, resume_after, await_proposal_id, campaign_id, campaign_revision, left(note, 400) AS note, left(revision_reason, 300) AS revision_reason, created_by_actor,
       origin_provider, origin_model, created_at, length(note) > 400 AS truncated
       FROM growth_investigation_notes WHERE investigation_id = ${input.investigationId} AND business_id = ${businessId}
       AND (${input.beforeNoteId ?? null}::uuid IS NULL OR sequence <

@@ -6,11 +6,47 @@ import { Effect, JSONSchema, Schema } from "effect"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolDef } from "./agent-tools.js"
 import { decode, json, operatorSessionFor, readJson, Text, type WithSession } from "./record-routes.js"
+import { readCampaignRuns } from "./campaign-engine.js"
 
 const CreateInvestigation = Schema.Struct({ requestId: Schema.UUID, goalId: Schema.UUID, question: Text(2000) })
 const AddNote = Schema.Struct({ requestId: Schema.UUID, kind: Schema.Literal("HYPOTHESIS", "OBSERVATION", "REVISION", "CONCLUSION", "QUESTION"), note: Text(4000) })
 const ReadInput = Schema.Struct({})
 const PRIVATE = { "cache-control": "no-store" }
+
+interface CampaignLink {
+  readonly investigation_id: string; readonly note_id: string; readonly noted_at: Date
+  readonly campaign_id: string; readonly noted_revision: number; readonly current_revision: number
+  readonly title: string | null; readonly status: string | null
+}
+
+const linkedCampaigns = (accountId: string, businessId: string, investigationIds: ReadonlyArray<string>) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const links = investigationIds.length ? yield* sql<CampaignLink>`SELECT DISTINCT ON (n.investigation_id) n.investigation_id, n.id AS note_id, n.created_at AS noted_at,
+      n.campaign_id, n.campaign_revision AS noted_revision, c.revision AS current_revision,
+      left(c.brief->>'title', 200) AS title, c.brief->>'status' AS status
+    FROM growth_investigation_notes n JOIN marketing_campaigns c ON c.id = n.campaign_id AND c.business_id = n.business_id
+    WHERE n.business_id = ${businessId} AND n.investigation_id IN ${sql.in(investigationIds)} AND n.campaign_id IS NOT NULL
+    ORDER BY n.investigation_id, n.sequence DESC` : []
+  type RunRead = Effect.Effect.Success<ReturnType<typeof readCampaignRuns>>["data"]
+  const latestRuns = new Map<string, RunRead | null>()
+  for (const campaignId of new Set(links.map(link => link.campaign_id))) {
+    latestRuns.set(campaignId, yield* readCampaignRuns({ accountId, businessId }, campaignId, 1).pipe(
+      Effect.map(result => result.data),
+      Effect.catchAll(() => Effect.succeed(null)),
+    ))
+  }
+  return new Map(links.map(link => {
+    const read = latestRuns.get(link.campaign_id)
+    const run = read?.runs[0]
+    const currentRevision = read?.currentRevision ?? link.current_revision
+    return [link.investigation_id, {
+      campaignId: link.campaign_id, title: link.title, status: link.status, linkedNoteId: link.note_id, linkedAt: link.noted_at,
+      notedRevision: link.noted_revision, currentRevision, revisionChanged: link.noted_revision !== currentRevision,
+      latestRun: !read ? { status: "UNAVAILABLE", note: "Campaign run evidence could not be read. Do not assume no work exists or repeat an external action." } : run ? { id: run.id, campaignRevision: run.campaignRevision, status: run.status,
+        deliverables: run.tasks.reduce<Record<string, number>>((counts, task) => ({ ...counts, [task.state]: (counts[task.state] ?? 0) + 1 }), {}) } : null,
+    }] as const
+  }))
+})
 
 export const readObjectiveInvestigations = (accountId: string, businessId: string) => Effect.gen(function*() {
   if (!(yield* (yield* BusinessRepository).getScoped(accountId, businessId))) return yield* Effect.fail(new AgentNotInScope())
@@ -41,9 +77,10 @@ export const readObjectiveInvestigations = (accountId: string, businessId: strin
       (COALESCE((SELECT work_state FROM growth_investigation_notes WHERE investigation_id = i.id AND business_id = ${businessId}
       AND work_state IS NOT NULL ORDER BY sequence DESC LIMIT 1), 'OPEN') = 'CLOSED'),
       GREATEST(i.created_at, (SELECT max(created_at) FROM growth_investigation_notes WHERE investigation_id = i.id AND business_id = ${businessId})) DESC, i.id DESC LIMIT 3`
+  const campaigns = yield* linkedCampaigns(accountId, businessId, investigations.map(i => String(i["id"])))
   return { summary: `${investigations.length} investigations read`, citations: [], data: {
-    goal: goals[0] ?? null, investigations,
-    note: "Showing up to three investigations and their four latest notes, shortened to fit. Authorship is explicit; notes are working context, not independently verified evidence, decisions, or completed actions. Use read_investigation for older notes and check sources before making factual claims.",
+    goal: goals[0] ?? null, investigations: investigations.map((i): typeof i & { campaign: ReturnType<typeof campaigns.get> | null } => ({ ...i, campaign: campaigns.get(String(i["id"])) ?? null })),
+    note: "Showing up to three investigations and their four latest notes, shortened to fit. Authorship is explicit; notes are working context, not independently verified evidence, decisions, or completed actions. Use read_investigation for older notes and check sources before making factual claims. campaign is the latest campaign linked by any note, with live state read now: notedRevision is the revision when it was linked, and the latest run status comes from adapter receipts. VERIFYING, WAITING_FOR_APPROVAL or a saved plan is not delivery or success; DELIVERY_OBSERVED is not measured impact.",
   } }
 })
 
@@ -75,7 +112,7 @@ export const objectivesApi = (withSession: WithSession) => {
       const sql = yield* SqlClient.SqlClient
       const investigations = yield* sql`SELECT id, goal_id, question, created_by_actor, origin_provider, origin_model, created_at FROM growth_investigations WHERE id = ${investigationId} AND business_id = ${businessId}`
       if (!investigations[0]) return yield* json(404, { _tag: "NotFound" })
-      const notes = yield* sql`SELECT id, kind, note, work_state, created_by_actor, origin_provider, origin_model, revision_reason, created_at FROM growth_investigation_notes WHERE investigation_id = ${investigationId} AND business_id = ${businessId} ORDER BY sequence DESC LIMIT 50`
+      const notes = yield* sql`SELECT id, kind, note, work_state, campaign_id, campaign_revision, created_by_actor, origin_provider, origin_model, revision_reason, created_at FROM growth_investigation_notes WHERE investigation_id = ${investigationId} AND business_id = ${businessId} ORDER BY sequence DESC LIMIT 50`
       return yield* json(200, { investigation: investigations[0], notes, noteLimit: 50 }, PRIVATE)
     }))),
     HttpRouter.post("/api/businesses/:id/investigations", scoped((session, businessId) => Effect.gen(function*() {

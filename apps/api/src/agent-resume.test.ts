@@ -16,11 +16,24 @@ describe("business resume context", () => {
   })
 
   it("drops whole lower-priority records and retains valid JSON", () => {
-    const text = formatResumeContext({ goal: null, investigations: [{ id: "first", question: "a".repeat(5000) }, { id: "second", question: "b".repeat(5000) }], note: "" })
+    const text = formatResumeContext({ goal: null, investigations: [{ id: "first", question: "a".repeat(5000), campaign: null }, { id: "second", question: "b".repeat(5000), campaign: null }], note: "" })
     expect(text.length).toBeLessThanOrEqual(RESUME_CONTEXT_LIMIT)
     const snapshot = JSON.parse(text.slice(text.indexOf("\n") + 1))
     expect(snapshot.investigations).toHaveLength(1)
     expect(snapshot.investigations[0].id).toBe("first")
     expect(snapshot.omittedInvestigations).toBe(1)
+  })
+
+  it("keeps a linked campaign's live state whole with its investigation", () => {
+    const campaign = { campaignId: "c1", title: "Onboarding", status: "DRAFT", linkedNoteId: "n1", linkedAt: new Date("2026-11-06T00:00:00Z"), notedRevision: 1, currentRevision: 2,
+      revisionChanged: true, latestRun: { id: "r1", campaignRevision: 1, status: "STALE", deliverables: { VERIFYING: 1 } } }
+    const text = formatResumeContext({ goal: null, note: "", investigations: [
+      { id: "first", question: "Why are bookings flat?", campaign },
+      { id: "second", question: "c".repeat(RESUME_CONTEXT_LIMIT), campaign },
+    ] })
+    expect(text.length).toBeLessThanOrEqual(RESUME_CONTEXT_LIMIT)
+    expect(text).toContain("VERIFYING or WAITING_FOR_APPROVAL is not delivery or success")
+    const snapshot = JSON.parse(text.slice(text.indexOf("\n") + 1))
+    expect(snapshot.investigations).toEqual([{ id: "first", question: "Why are bookings flat?", campaign: JSON.parse(JSON.stringify(campaign)) }])
   })
 })

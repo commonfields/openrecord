@@ -70,14 +70,23 @@ describe("actionable marketing work", () => {
     expect(assess(c)).toMatchObject({ items: [], learning: { assurance: "OPERATOR_RECORDED", nextMove: "Test 15 minutes" } })
   })
   it("makes /marketing actionable without exposing unrelated writes", () => {
-    const tools = ["read_marketing_work", "record_campaign_draft", "record_campaign_revision", "record_campaign_run", "prepare_wordpress_change", "prepare_account_action", "forget_memory", "propose_check_run"].map(name => ({ name, description: "", parametersJsonSchema: {} }))
+    const tools = ["read_marketing_work", "record_campaign_draft", "record_campaign_revision", "record_campaign_run", "prepare_wordpress_change", "prepare_account_action", "forget_memory", "propose_check_run",
+      "read_objective_investigations", "read_investigation", "open_investigation", "record_investigation_note", "wait_for_investigation"].map(name => ({ name, description: "", parametersJsonSchema: {} }))
     const names = commandTools("/marketing Work on onboarding", tools).map(t => t.name)
     expect(names).toContain("read_marketing_work")
     expect(names).toContain("record_campaign_revision")
     expect(names).toContain("prepare_account_action")
     expect(names).not.toContain("forget_memory")
     expect(names).not.toContain("propose_check_run")
-    expect(commandTools("/campaign-status", tools).map(t => t.name)).toEqual(["read_marketing_work"])
+    for (const name of ["read_objective_investigations", "read_investigation", "open_investigation", "record_investigation_note"]) expect(names).toContain(name)
+    expect(names).not.toContain("wait_for_investigation")
+    expect(commandTools("/campaign-status", tools).map(t => t.name)).toEqual(["read_marketing_work", "read_objective_investigations"])
+    for (const command of ["/status", "/report", "/campaign", "/campaign-run", "/campaign-review"]) {
+      const allowed = commandTools(command, tools).map(t => t.name)
+      for (const name of ["read_investigation", "open_investigation", "record_investigation_note"]) expect(allowed).not.toContain(name)
+    }
+    expect(MARKETING_OPERATING_POLICY).toContain("record_investigation_note with the campaignId")
+    expect(MARKETING_OPERATING_POLICY).toContain("Do not record notes for read-only assessments")
     expect(MARKETING_OPERATING_POLICY).toContain("For an assessment/status-only request, remain read-only")
     expect(MARKETING_OPERATING_POLICY).toContain("do the permitted work in this turn")
   })
