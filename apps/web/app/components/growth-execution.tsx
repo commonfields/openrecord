@@ -93,7 +93,7 @@ function ConnectForm({ businessId, sites, done }: { businessId: string; sites: R
     </div>
     <div className="grid gap-1"><Label htmlFor="exec-site">Registered website</Label>
       <select id="exec-site" name="siteTargetId" className="h-8 rounded-md border bg-background px-2 text-xs">{sites.map(s => <option key={s.id} value={s.id}>{s.canonicalOrigin}</option>)}</select></div>
-    <div className="grid gap-1"><Label htmlFor="exec-paths">Pages OpenRecord may change (HTML files, or a folder ending in /)</Label><Input id="exec-paths" name="allowedPaths" required placeholder="pricing.html pages/" /></div>
+    <div className="grid gap-1"><Label htmlFor="exec-paths">Files OpenRecord may change (HTML, Markdown/MDX, or a folder ending in /)</Label><Input id="exec-paths" name="allowedPaths" required placeholder="pricing.html content/" /></div>
     {error ? <p role="alert" className="text-destructive">{error}</p> : null}
     <Button size="sm" disabled={busy} className="justify-self-start">{busy ? "Connecting…" : "Connect repository"}</Button>
   </form>

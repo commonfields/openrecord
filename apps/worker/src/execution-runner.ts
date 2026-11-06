@@ -278,6 +278,10 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
     if (op.state !== "VERIFIED") return DONE
     const record = (result: "CHANGE_OBSERVED" | "CHANGE_NOT_OBSERVED" | "INCONCLUSIVE", detail: string, httpStatus: number | null, bodyDigest: string | null) =>
       repo.recordLiveCheck(op.id, op.businessId, { result, httpStatus, detail, bodyDigest })
+    if (op.actionKind === "REPLACE_MARKDOWN") {
+      yield* record("INCONCLUSIVE", "The approved Markdown source merged, but its rendered deployment is not automatically verified. Review the live page separately; a merge is not evidence of deployment or impact.", null, null)
+      return DONE
+    }
     const scope = { canonical_origin: work.siteOrigin, path_prefix: work.sitePathPrefix }
     if (!isInScope(op.liveUrl, scope)) { yield* record("INCONCLUSIVE", "The page is outside the registered website, so it was not fetched", null, null); return DONE }
     const ev = yield* Effect.promise(() => safeFetch(op.liveUrl, {
@@ -300,7 +304,7 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
     }
     // Page edits: the live page must show exactly what was written.
     const edit = executionEdit(op.actionKind, op.actionValue, op.liveUrl)
-    if (!edit || edit.kind === "REMOVE_NOINDEX_META") { yield* record("INCONCLUSIVE", "The stored change could not be read back", ev.status, ev.bodyDigest); return DONE }
+    if (!edit || edit.kind === "REMOVE_NOINDEX_META" || edit.kind === "REPLACE_MARKDOWN") { yield* record("INCONCLUSIVE", "The stored change could not be read back", ev.status, ev.bodyDigest); return DONE }
     const seen = pageEditObserved(html, edit)
     yield* record(seen ? "CHANGE_OBSERVED" : "CHANGE_NOT_OBSERVED",
       seen ? `The live page shows ${pageEditLabel(edit)}` : `The live page does not show ${pageEditLabel(edit)} yet`, ev.status, ev.bodyDigest)

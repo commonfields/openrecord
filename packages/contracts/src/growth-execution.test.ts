@@ -7,10 +7,10 @@ import {
 
 const uuid = "00000000-0000-4000-8000-000000000001"
 describe("connected execution contracts", () => {
-  it("accepts only plain, relative HTML pages and refuses escapes, hidden files and other types", () => {
-    for (const ok of ["index.html", "pages/about.html", "a/b/c/d.htm", "Pricing_2.HTML"]) expect(executionPathProblem(ok), ok).toBeNull()
+  it("accepts plain relative HTML and Markdown sources but refuses escapes and executable/config file extensions", () => {
+    for (const ok of ["index.html", "pages/about.html", "a/b/c/d.htm", "Pricing_2.HTML", "notes.md", "content/post.mdx"]) expect(executionPathProblem(ok), ok).toBeNull()
     const bad: Array<[string, string]> = [["", "PATH_LENGTH"], ["../x.html", "PATH_TRAVERSAL"], ["a/../b.html", "PATH_TRAVERSAL"], ["/abs.html", "PATH_NOT_RELATIVE_FILE"], ["a//b.html", "PATH_TRAVERSAL"],
-      [".github/x.html", "PATH_HIDDEN_SEGMENT"], ["a/.env.html", "PATH_HIDDEN_SEGMENT"], ["notes.md", "PATH_EXTENSION"], ["x.js", "PATH_EXTENSION"], ["a b.html", "PATH_CHARACTERS"], ["a\\b.html", "PATH_CHARACTERS"],
+      [".github/x.html", "PATH_HIDDEN_SEGMENT"], ["a/.env.html", "PATH_HIDDEN_SEGMENT"], ["notes.yaml", "PATH_EXTENSION"], ["x.js", "PATH_EXTENSION"], ["a b.html", "PATH_CHARACTERS"], ["a\\b.html", "PATH_CHARACTERS"],
       ["dir/", "PATH_NOT_RELATIVE_FILE"], ["a/b/c/d/e/f/g/h/i/j/k/l/m.html", "PATH_DEPTH"], ["é.html", "PATH_CHARACTERS"]]
     for (const [path, problem] of bad) expect(executionPathProblem(path), path).toBe(problem)
     expect(allowedExecutionPathProblem("pages/")).toBeNull()
@@ -79,7 +79,8 @@ describe("connected execution contracts", () => {
     expect(decode(AuthorizeExecution, { reviewedPatchSha256: "A".repeat(64), expectedRevision: 1, reason: "r", idempotencyKey: uuid })).toBe(false)
     const connect = { owner: "acme", repository: "site", baseBranch: "main", siteTargetId: uuid, allowedPaths: ["pricing.html"], idempotencyKey: uuid }
     expect(decode(ConnectExecutionTarget, connect)).toBe(true)
-    for (const bad of [{ owner: "a/b" }, { repository: "../x" }, { baseBranch: "a..b" }, { baseBranch: "x.lock" }, { allowedPaths: [] }, { allowedPaths: ["notes.md"] }, { allowedPaths: ["../"] }]) expect(decode(ConnectExecutionTarget, { ...connect, ...bad }), JSON.stringify(bad)).toBe(false)
+    expect(decode(ConnectExecutionTarget, { ...connect, allowedPaths: ["content/post.md", "content/"] })).toBe(true)
+    for (const bad of [{ owner: "a/b" }, { repository: "../x" }, { baseBranch: "a..b" }, { baseBranch: "x.lock" }, { allowedPaths: [] }, { allowedPaths: ["notes.yaml"] }, { allowedPaths: ["../"] }]) expect(decode(ConnectExecutionTarget, { ...connect, ...bad }), JSON.stringify(bad)).toBe(false)
   })
 
   it("renders a minimal reviewable diff of the one-line change", () => {

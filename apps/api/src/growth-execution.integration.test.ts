@@ -69,7 +69,7 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
   type S = Awaited<ReturnType<typeof setup>>
   const makeProvider = () => {
     const owner = `salon-${randomUUID().slice(0, 8)}`, repo = "salon-site"
-    const fixture = fixtureGitHub({ owner, repo, branch: "main", files: { [PAGE]: BEFORE, "about.html": "<html><body>About</body></html>\n", "plain.html": "<html><head><title>x</title></head><body>no directive</body></html>\n" } })
+    const fixture = fixtureGitHub({ owner, repo, branch: "main", files: { [PAGE]: BEFORE, "content/offer.mdx": "# Before\n\nOne offer.\n", "about.html": "<html><body>About</body></html>\n", "plain.html": "<html><head><title>x</title></head><body>no directive</body></html>\n" } })
     return { owner, repo, fixture }
   }
   const connect = (s: S, over: Record<string, unknown> = {}) => s.call(s.a, "POST", `${s.base}/execution-targets`, { owner: s.provider.owner, repository: s.provider.repo, baseBranch: "main", siteTargetId: s.siteId, allowedPaths: ["pricing.html", "plain.html", "pages/"], idempotencyKey: randomUUID(), ...over })
@@ -82,6 +82,27 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
   const targetOf = async (s: S) => (await s.ok<{ target: ExecutionTarget }>(connect(s))).target
   const prepareBody = (t: ExecutionTarget, over: Record<string, unknown> = {}) => ({ targetId: t.id, actionKind: "REMOVE_NOINDEX_META", filePath: PAGE, liveUrl: LIVE, rationale: "TEST remove an accidental noindex", siteFindingId: null, idempotencyKey: randomUUID(), ...over })
   const prepare = (s: S, oid: string, body: unknown) => s.call(s.a, "POST", `${s.base}/opportunities/${oid}/connected-executions`, body)
+
+  it("prepares exact Markdown edits through the current approval flow without provider writes", async () => {
+    const s = await setup(makeProvider()), oid = await opportunity(s)
+    const t = (await s.ok<{ target: ExecutionTarget }>(connect(s, { allowedPaths: ["content/"] }))).target
+    const input = prepareBody(t, { actionKind: "REPLACE_MARKDOWN", filePath: "content/offer.mdx", liveUrl: "https://salon.test/offer", value: { edits: [{ find: "Before", replace: "Better" }] } })
+    expect((await prepare(s, oid, { ...input, actionKind: "SET_TITLE", value: { title: "Wrong source format" } })).status).toBe(422)
+    for (const edits of [[{ find: "missing", replace: "x" }], [{ find: "One offer.", replace: "One offer." }], [{ find: "One offer", replace: "x" }, { find: "offer.", replace: "y" }]]) {
+      expect((await prepare(s, oid, { ...input, value: { edits } })).status).toBe(409)
+    }
+    const first = await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, input))
+    expect(first.operation).toMatchObject({ state: "PREPARED", actionKind: "REPLACE_MARKDOWN", actionValue: { edits: [{ find: "Before", replace: "Better" }] } })
+    expect(first.operation.diff).toContain("-# Before")
+    expect(first.operation.diff).toContain("+# Better")
+    const replay = await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, input))
+    expect(replay.operation.id).toBe(first.operation.id)
+    const path = `${s.base}/connected-executions/${first.operation.id}/authorize`
+    expect((await s.call(s.b, "POST", path, { reviewedPatchSha256: first.operation.patchSha256, expectedRevision: 1, reason: "foreign", idempotencyKey: randomUUID() })).status).toBe(404)
+    const approved = await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", path, { reviewedPatchSha256: first.operation.patchSha256, expectedRevision: 1, reason: "TEST reviewed exact Markdown diff", idempotencyKey: randomUUID() }))
+    expect(approved.operation.state).toBe("AUTHORIZED")
+    expect(s.provider.fixture.writes).toEqual([])
+  })
 
   it("lets the agent prepare page edits it wrote, refusing values that do not fit and canonicals on another site", async () => {
     const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
@@ -221,7 +242,7 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
     const foreign = await s.call(s.b, "POST", `${s.base}/execution-targets`, { owner: provider.owner, repository: provider.repo, baseBranch: "main", siteTargetId: s.siteId, allowedPaths: ["pricing.html"], idempotencyKey: randomUUID() })
     expect(foreign.status).toBe(404)
     // Path hygiene on the connection itself.
-    for (const bad of ["notes.md", "../x.html", ".env", "a/../b.html"]) expect((await connect(s, { repository: "x", allowedPaths: [bad] })).status).toBe(422)
+    for (const bad of ["notes.yaml", "../x.html", ".env", "a/../b.html"]) expect((await connect(s, { repository: "x", allowedPaths: [bad] })).status).toBe(422)
     // A dispatch re-checks the allowlist at that moment: a repository removed after preparation cannot be written.
     const oid = await opportunity(s)
     let op = (await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, prepareBody(t)))).operation

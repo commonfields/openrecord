@@ -195,9 +195,10 @@ suite("connected execution persistence and guards (disposable TEST fixtures)", (
     expect(await sqlError(ev("ASSISTANT", f.session.userId, { approvedPatchSha256: op2.patchSha256, expiresAt: future }))).toContain("execution transition refused")
     expect(await sqlError(ev("EXECUTION_SYSTEM", null, { approvedPatchSha256: op2.patchSha256, expiresAt: future }))).toContain("execution transition refused")
     // An authorization that has expired cannot be dispatched.
-    const soon = new Date(Date.now() + 1_200).toISOString()
-    await pool.query("INSERT INTO growth_execution_events(operation_id,business_id,revision,state,actor,user_id,reason,detail) VALUES($1,$2,2,'AUTHORIZED','OPERATOR',$3,'x',$4::jsonb)", [op2.id, f.businessId, f.session.userId, JSON.stringify({ approvedPatchSha256: op2.patchSha256, expiresAt: soon })])
-    await new Promise(r => setTimeout(r, 1_500))
+    // Derive the short expiry in PostgreSQL, not before a potentially slow round trip.
+    await pool.query("INSERT INTO growth_execution_events(operation_id,business_id,revision,state,actor,user_id,reason,detail) VALUES($1,$2,2,'AUTHORIZED','OPERATOR',$3,'x',jsonb_build_object('approvedPatchSha256',$4::text,'expiresAt',now()+interval '1 second'))", [op2.id, f.businessId, f.session.userId, op2.patchSha256])
+    // Wait on the same database clock (the local VM may pause independently of Node).
+    await pool.query("SELECT pg_sleep(2)")
     await expect(dispatch(f, { ...op2, revision: 2 })).rejects.toMatchObject({ reason: "AuthorizationExpired" })
   })
 
@@ -310,16 +311,17 @@ suite("connected execution persistence and guards (disposable TEST fixtures)", (
     for (const a of attempts) await expect(a()).rejects.toMatchObject({ reason: "GrowthNotFound" })
     // The same repository cannot be connected by another account.
     await expect(exec(r => r.connectTarget(other.session, other.businessId, { owner: f.owner, repository: f.repo, baseBranch: "main", siteTargetId: other.siteId, allowedPaths: ["pricing.html"], idempotencyKey: randomUUID() }))).rejects.toMatchObject({ reason: "RepositoryNotPermitted" })
-    // Neither can OpenRecord's own repository, a foreign site, a non-HTML page nor a traversal.
+    // Neither can OpenRecord's own repository, a foreign site, an unsupported file nor a traversal.
     await expect(exec(r => r.connectTarget(f.session, f.businessId, { owner: "CommonFields", repository: "OpenRecord", baseBranch: "main", siteTargetId: f.siteId, allowedPaths: ["pricing.html"], idempotencyKey: randomUUID() }))).rejects.toMatchObject({ reason: "RepositoryNotPermitted" })
     await expect(exec(r => r.connectTarget(f.session, f.businessId, { owner: "someone", repository: "x", baseBranch: "main", siteTargetId: other.siteId, allowedPaths: ["pricing.html"], idempotencyKey: randomUUID() }))).rejects.toBeTruthy()
-    for (const bad of ["../x.html", ".github/workflows/ci.yml", "notes.md", "/abs.html", "a//b.html"]) {
+    for (const bad of ["../x.html", ".github/workflows/ci.yml", "notes.yaml", "/abs.html", "a//b.html"]) {
       await expect(exec(r => r.connectTarget(f.session, f.businessId, { owner: "someone", repository: "y", baseBranch: "main", siteTargetId: f.siteId, allowedPaths: [bad], idempotencyKey: randomUUID() }))).rejects.toMatchObject({ reason: "InvalidRequest" })
     }
     // A page outside the target's allowed paths, a live page outside the registered site and a mismatched base branch cannot be prepared.
     await expect(prepare(f, await opportunity(f), { filePath: "secret/admin.html" })).rejects.toMatchObject({ reason: "PathNotPermitted" })
     await expect(prepare(f, await opportunity(f), { liveUrl: "https://evil.test/pricing.html" })).rejects.toMatchObject({ reason: "LivePageOutsideSite" })
     await expect(prepare(f, await opportunity(f), { baseBranch: "release" })).rejects.toBeTruthy()
+    await expect(prepare(f, await opportunity(f), { actionKind: "REPLACE_MARKDOWN", actionValue: { edits: [{ find: "old", replace: "new" }] } })).rejects.toBeTruthy()
   })
 
   it("keeps lifecycle, evidence and operations append-only and the transition table in step with the contract", async () => {

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ContentEdits } from "./content-edits.js"
 
 // W7 connected execution. One exact, human-authorized website change is
 // carried out through a provider (GitHub first) and reconciled. Everything in
@@ -19,13 +20,14 @@ const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.f
 // ---- what may be changed ----
 
 /**
- * What one connected change may do to one HTML page. Each is a deterministic
+ * What one connected change may do to one source file. HTML uses a deterministic
  * edit (site-operator page-edits): take out an accidental noindex, or set the
  * page's title, meta description or canonical address, add schema.org JSON-LD,
- * or set one image's alt text. The words are proposed by the agent or a person
+ * or set one image's alt text. Markdown/MDX uses bounded exact replacements.
+ * The words are proposed by the agent or a person
  * and reach the site only through the reviewed, authorized pull request.
  */
-export const ExecutionActionKind = Schema.Literal("REMOVE_NOINDEX_META", "SET_TITLE", "SET_META_DESCRIPTION", "SET_CANONICAL", "ADD_JSON_LD", "SET_IMAGE_ALT")
+export const ExecutionActionKind = Schema.Literal("REMOVE_NOINDEX_META", "SET_TITLE", "SET_META_DESCRIPTION", "SET_CANONICAL", "ADD_JSON_LD", "SET_IMAGE_ALT", "REPLACE_MARKDOWN")
 export type ExecutionActionKind = typeof ExecutionActionKind.Type
 
 const OneLine = (max: number) => Schema.String.pipe(Schema.maxLength(max), Schema.filter(s => s.trim().length > 0 && !/[\r\n]/.test(s)))
@@ -37,6 +39,7 @@ export const ExecutionActionValue = Schema.Struct({
   jsonLd: Schema.optional(Schema.String.pipe(Schema.maxLength(8000))),
   imageSrc: Schema.optional(OneLine(2000)),
   alt: Schema.optional(OneLine(250)),
+  edits: Schema.optional(ContentEdits),
 })
 export type ExecutionActionValue = typeof ExecutionActionValue.Type
 
@@ -47,6 +50,7 @@ export type ExecutionEdit =
   | { readonly kind: "SET_CANONICAL"; readonly url: string }
   | { readonly kind: "ADD_JSON_LD"; readonly json: string }
   | { readonly kind: "SET_IMAGE_ALT"; readonly src: string; readonly alt: string }
+  | { readonly kind: "REPLACE_MARKDOWN"; readonly edits: ContentEdits }
 
 /**
  * The edit a request asks for, or null when its value does not fit the kind:
@@ -59,6 +63,7 @@ export const executionEdit = (kind: ExecutionActionKind, value: ExecutionActionV
   const only = (fields: string) => used === fields
   switch (kind) {
     case "REMOVE_NOINDEX_META": return only("") ? { kind } : null
+    case "REPLACE_MARKDOWN": return only("edits") && v.edits?.length ? { kind, edits: v.edits } : null
     case "SET_TITLE": return only("title") ? { kind, title: v.title!.trim() } : null
     case "SET_META_DESCRIPTION": return only("description") ? { kind, description: v.description!.trim() } : null
     case "ADD_JSON_LD": return only("jsonLd") ? { kind, json: v.jsonLd! } : null
@@ -73,14 +78,14 @@ export const executionEdit = (kind: ExecutionActionKind, value: ExecutionActionV
   }
 }
 
-export const EXECUTION_EXTENSIONS = [".html", ".htm"] as const
+export const EXECUTION_EXTENSIONS = [".html", ".htm", ".md", ".mdx"] as const
 export const EXECUTION_MAX_FILE_BYTES = 256_000
 export const EXECUTION_AUTHORIZATION_HOURS = 24
 /** How long OpenRecord keeps following an unmerged pull request. After that the operation stops, so an abandoned pull request cannot hold the initiative's final decision forever. */
 export const EXECUTION_MERGE_WINDOW_DAYS = 30
 
 /**
- * A repository-relative HTML page an execution may change. Deliberately
+ * A repository-relative HTML or Markdown/MDX source an execution may change. Deliberately
  * narrow: plain segments, no dot-files or dot-directories (so no .github
  * workflows, .env or tool config), no traversal, no absolute paths.
  */
@@ -116,6 +121,10 @@ export const allowedExecutionPathProblem = (entry: string): string | null => {
 }
 export const executionPathAllowed = (path: string, allowed: ReadonlyArray<string>): boolean =>
   executionPathProblem(path) === null && allowed.some(entry => entry.endsWith("/") ? path.startsWith(entry) : path === entry)
+
+/** Content edits never use the HTML transformer, and HTML edits never touch MDX. */
+export const executionKindMatchesPath = (kind: ExecutionActionKind, path: string): boolean =>
+  executionPathProblem(path) === null && (kind === "REPLACE_MARKDOWN" ? /\.mdx?$/i.test(path) : /\.html?$/i.test(path))
 
 /**
  * Repositories OpenRecord may never write to as an execution target,
