@@ -18,7 +18,7 @@ describe("deterministic conversational contract evaluations (not live model accu
     const result = await Effect.runPromise(Effect.either(runConversation({ message: "Explain", history: [], journal,
       model: () => Effect.fail(new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" })), dispatch: () => Effect.die("not called") })))
     expect(result).toMatchObject({ _tag: "Left", left: { reason: "MALFORMED" } })
-    expect(events).toContainEqual({ type: "VERIFICATION", payload: { passed: false, action: "MODEL_FAILED", reason: "MALFORMED", detail: "OUTPUT_LIMIT", step: 1 } })
+    expect(events).toContainEqual({ type: "VERIFICATION", payload: { passed: false, action: "MODEL_FAILED", reason: "MALFORMED", detail: "OUTPUT_LIMIT", httpStatus: null, step: 1 } })
   })
   it.each([
     ["None recorded (`totalActive: 0`).", "None recorded."],
@@ -134,7 +134,13 @@ describe("deterministic conversational contract evaluations (not live model accu
   it("bounds tool calls, oversized results, context and empty responses", async () => {
     const looping: AgentModel = () => Effect.succeed(tool("read_open_issues"))
     const tooMany = await Effect.runPromise(Effect.either(runConversation({ message: "loop", history: [], model: looping, dispatch: () => Effect.succeed(result) })))
-    expect(tooMany._tag).toBe("Left")
+    // Recovery preserves already-read evidence as a partial answer, but must
+    // never treat an endless tool loop as complete or exceed its work budget.
+    expect(tooMany).toMatchObject({ _tag: "Right", right: { outcome: "ANSWERED_WITH_GAPS" } })
+    if (tooMany._tag === "Right") {
+      expect(tooMany.right.gaps).toContain("Budget used up before every check could run")
+      expect(tooMany.right.toolCalls.length).toBeLessThanOrEqual(48)
+    }
     const huge = await Effect.runPromise(runConversation({ message: "read", history: [], model: fixture([tool("read_observation"), text("Narrow the request")]), dispatch: () => Effect.succeed({ ...result, data: "x".repeat(20000) }) }))
     expect(huge.citations).toEqual([])
     expect(huge.toolCalls[0]?.summary).toContain("exceeds")

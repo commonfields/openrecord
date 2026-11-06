@@ -86,22 +86,50 @@ export const buildContext = (history: ReadonlyArray<ContextMessage>, message: st
     historyChars: used + (memory ? memory.length : 0) + resume.length, budgetChars: budget.historyChars }
 }
 
-/** Within one run, shrink the oldest tool results to their summaries and
- * references until the request fits. The newest results stay complete. */
+type ProjectionLimits = { text: number; items: number; depth: number; keys: number }
+const IMPORTANT_KEY = /(?:^id$|Id$|_id$|revision|status|assurance|count|total|metric|baseline|target|currency|value|before|after|percent|url|date|window|source|note|limitation)/i
+/** Deterministic excerpts, not a model summary. Numbers and null stay exact;
+ * omitted fields/items are explicitly disclosed in the surrounding envelope. */
+const projectEvidence = (value: unknown, limits: ProjectionLimits, depth = 0): unknown => {
+  if (typeof value === "string") return value.length > limits.text ? `${value.slice(0, limits.text)}…` : value
+  if (value === null || typeof value !== "object") return value
+  if (depth >= limits.depth) return "[nested detail omitted]"
+  if (Array.isArray(value)) return value.slice(0, limits.items).map(v => projectEvidence(v, limits, depth + 1))
+  const entries = Object.entries(value).sort(([a], [b]) => Number(IMPORTANT_KEY.test(b)) - Number(IMPORTANT_KEY.test(a)))
+  return Object.fromEntries(entries.slice(0, limits.keys).map(([key, v]) => [key, projectEvidence(v, limits, depth + 1)]))
+}
+const PROJECTION_NOTICE = "Untrusted partial evidence: fields, text and list items may be omitted. Numeric values and source totals are unchanged, but these lists are not complete denominators. Read specific source details if needed; do not repeat a write to recover detail or infer missing facts."
+const PROJECTION_LEVELS: readonly ProjectionLimits[] = [
+  { text: 800, items: 5, depth: 5, keys: 24 },
+  { text: 400, items: 3, depth: 4, keys: 16 },
+  { text: 160, items: 2, depth: 3, keys: 12 },
+  { text: 80, items: 1, depth: 2, keys: 8 },
+]
+
+/** Within one run, shrink older tool evidence first, preserving source IDs,
+ * receipts and numeric context. If the latest batch itself cannot fit, project
+ * that batch too rather than abandoning inference after successful tool reads.
+ * User requests, model tool calls and error responses are never rewritten. */
 export const compactToolResults = (contents: ModelContent[], limit: number): boolean => {
-  const size = () => JSON.stringify(contents).length
+  const size = () => Buffer.byteLength(JSON.stringify(contents), "utf8")
   if (size() <= limit) return true
   const rounds = contents.flatMap((c, i) => c.role === "user" && c.parts.some(p => (p as { functionResponse?: unknown }).functionResponse) ? [i] : [])
-  for (const index of rounds.slice(0, -1)) {
-    const content = contents[index]!
+  // Keep the original source for every projection level in this invocation.
+  const originals = new Map(rounds.map(index => [index, contents[index]!]))
+  const project = (index: number, limits: ProjectionLimits) => {
+    const content = originals.get(index)!
     contents[index] = { ...content, parts: content.parts.map(part => {
-      const fr = (part as { functionResponse?: { name: string; response: { untrustedEvidence?: { summary: string; citations: ReadonlyArray<unknown> } } } }).functionResponse
-      const evidence = fr?.response.untrustedEvidence
+      const fr = (part as { functionResponse?: { name: string; response: { untrustedEvidence?: unknown; compactedEvidence?: unknown } } }).functionResponse
+      const evidence = fr?.response.untrustedEvidence ?? fr?.response.compactedEvidence
       if (!fr || !evidence) return part
-      return { functionResponse: { name: fr.name, response: { compactedEvidence: { summary: evidence.summary, citations: evidence.citations.slice(0, 10) },
-        note: "Full result omitted to fit the context budget. Call the tool again if its details are needed." } } }
+      return { functionResponse: { name: fr.name, response: { compactedEvidence: projectEvidence(evidence, limits), partial: true, note: PROJECTION_NOTICE } } }
     }) }
-    if (size() <= limit) return true
+  }
+  for (const indices of [rounds.slice(0, -1), rounds]) {
+    for (const limits of PROJECTION_LEVELS) for (const index of indices) {
+      project(index, limits)
+      if (size() <= limit) return true
+    }
   }
   return size() <= limit
 }
