@@ -9,6 +9,8 @@ export type SetupStep = typeof SetupStep.Type
 
 export const SetupStartInput = Schema.Struct({
   websiteUrl: GrowthUrl,
+  name: Schema.optional(Text(200)),
+  engagement: Schema.optional(Schema.Literal("CLIENT", "DOGFOOD")),
   goalStatement: Schema.optionalWith(Schema.NullOr(Text(1000)), { default: () => null }),
   /** Set up an existing business instead of creating one. */
   businessId: Schema.optionalWith(Schema.NullOr(Schema.UUID), { default: () => null }),
@@ -129,6 +131,7 @@ export const SetupDraft = Schema.Struct({
 export type SetupDraft = typeof SetupDraft.Type
 
 export interface SetupView {
+  readonly autoAdvance?: boolean
   readonly id: string
   readonly businessId: string
   readonly businessName: string

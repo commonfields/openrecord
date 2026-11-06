@@ -2,10 +2,11 @@
 // their existing records and growth data remain available at their routes.
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router"
-import { ChevronRightIcon, FileCheck2Icon, GlobeIcon, LinkIcon, PlusIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, FileCheck2Icon, GlobeIcon, LinkIcon, PlusIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import type { GrowthOpportunity, GrowthProfile } from "@openrecord/contracts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -16,6 +17,7 @@ import { Spinner } from "@/components/spinner"
 import { errorMessage, formatDate, initial, markColor, relativeTime } from "@/lib/format"
 import { Records, type Engagement } from "@/lib/record"
 import { Growth } from "@/lib/growth"
+import { Setup, setupError } from "@/lib/setup"
 import { clientGrowthLine } from "@/lib/growth-stage"
 import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace"
@@ -47,7 +49,6 @@ function useClientGrowth(clients: Array<{ businessId: string }>): Record<string,
 
 export function ClientsPage() {
   const clients = useApi("record-clients", () => Records.list())
-  const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
   const list = useMemo(() => clients.data?.clients ?? [], [clients.data])
   const growth = useClientGrowth(list)
@@ -62,11 +63,7 @@ export function ClientsPage() {
         title="Clients"
         description="Open a client or product to work with its agent and see its progress."
         actions={
-          <><Button size="sm" asChild><Link to="/products/new"><PlusIcon />Add a product</Link></Button>
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            <PlusIcon />
-            New client
-          </Button></>
+          <AddBusinessButton />
         }
       />
 
@@ -92,14 +89,11 @@ export function ClientsPage() {
               <span className="flex size-9 items-center justify-center rounded-lg bg-primary-ink/10 text-primary-ink">
                 <FileCheck2Icon className="size-4" />
               </span>
-              <h2 className="text-sm font-medium">Add your first client</h2>
+              <h2 className="text-sm font-medium">Add your first business</h2>
               <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-                Add a name and website, then open the agent to discuss what the client needs.
+                Add a website to start working with your agent, for a client or your own business.
               </p>
-              <Button size="sm" onClick={() => setOpen(true)}>
-                <PlusIcon />
-                Add your first client
-              </Button>
+              <AddBusinessButton />
             </div>
           </div>
         </Panel>
@@ -130,13 +124,22 @@ export function ClientsPage() {
         </Panel>
       )}
 
-      <NewClientDialog open={open} onOpenChange={setOpen} />
     </div>
   )
 }
 
 const growthComplete = (list: Array<{ businessId: string }>, growth: Record<string, GrowthState | undefined>) =>
   list.length > 0 && list.every((c) => growth[c.businessId]?.done)
+
+function AddBusinessButton() {
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild><Button size="sm"><PlusIcon />Add business<ChevronDownIcon /></Button></DropdownMenuTrigger>
+    <DropdownMenuContent align="start">
+      <DropdownMenuItem asChild><Link to="/start">Client business</Link></DropdownMenuItem>
+      <DropdownMenuItem asChild><Link to="/start?ownership=own">Our business or product</Link></DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
+}
 
 function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Records.list>>["clients"][number]; state: GrowthState | undefined }) {
   const progress = state?.done ? clientGrowthLine({
@@ -197,7 +200,7 @@ function ClientRow({ client: c, state }: { client: Awaited<ReturnType<typeof Rec
   )
 }
 
-function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+export function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const nav = useNavigate()
   const { reloadBusinesses, setActiveBusinessId } = useWorkspace()
   const [name, setName] = useState("")
@@ -209,13 +212,13 @@ function NewClientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
     setBusy(true)
     setError(null)
     try {
-      const { client } = await Records.create({ name: name.trim(), websiteUrl: website.trim(), engagement })
+      const { setup } = await Setup.start({ name: name.trim(), websiteUrl: website.trim(), engagement: engagement === "DOGFOOD" ? "DOGFOOD" : "CLIENT" })
       await reloadBusinesses()
-      setActiveBusinessId(client.businessId)
+      setActiveBusinessId(setup.businessId)
       onOpenChange(false)
-      nav(`/businesses/${client.businessId}/agent`)
+      nav(`/businesses/${setup.businessId}/agent`)
     } catch (e) {
-      setError(errorMessage(e))
+      setError(setupError(e))
     } finally {
       setBusy(false)
     }

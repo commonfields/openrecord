@@ -32,7 +32,7 @@ export const sectionTitles: Record<string, string> = {
   overview: "Agent",
   assay: "Prospect research",
   search: "Website checks",
-  issues: "AI answer issues",
+  issues: "AI answers",
   representations: "Facts on the web",
   truth: "Approved facts",
   checks: "AI answer checks",

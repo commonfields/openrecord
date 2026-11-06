@@ -32,10 +32,10 @@ import { SiteRunPage } from "./routes/site-run"
 import { TruthPage } from "./routes/truth"
 import { ClientGrowthPage } from "./routes/client-growth"
 import { ClientsPage } from "./routes/clients"
-import { NewProductPage } from "./routes/product-new"
 import ClientGrowthMeasurementPage from "./routes/client-growth-measurement"
 import { ClientRecordPage } from "./routes/client"
 import { ClientDiscoveryPage } from "./routes/client-discovery"
+import { AiDiscoveryPage } from "./routes/ai-discovery-page"
 import { ClientDiscoveryReportPage } from "./routes/client-discovery-report"
 import { PublicRecordPage } from "./routes/public-record"
 import { SharedChatPage } from "./routes/shared-chat"
@@ -71,12 +71,13 @@ function App() {
             <Route path="/approvals" element={<ApprovalsPage />} />
             <Route path="/usage" element={<UsagePage />} />
             <Route path="/agent" element={<AgentChat businessId={null} businessName="General chat" />} />
-            <Route path="/products/new" element={<NewProductPage />} />
+            <Route path="/products/new" element={<Navigate to="/start?ownership=own" replace />} />
             <Route path="/clients/:id/growth" element={<ClientGrowthPage />} />
             <Route path="/clients/:id/growth-measurement" element={<ClientGrowthMeasurementPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:id" element={<ClientRecordPage />} />
-            <Route path="/clients/:id/discovery" element={<ClientDiscoveryPage />} />
+            <Route path="/clients/:id/discovery" element={<AiDiscoveryPage />} />
+            <Route path="/clients/:id/discovery/manual" element={<ClientDiscoveryPage />} />
             <Route path="/clients/:id/discovery/report" element={<ClientDiscoveryReportPage />} />
             <Route path="/businesses" element={<Home />} />
             <Route path="/businesses/:id" element={<BusinessLayout />}>

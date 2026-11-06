@@ -26,13 +26,32 @@ const settingsDialog = () => read("../app/components/settings-dialog.tsx")
 const harnessSettings = () => read("../app/components/harness-settings.tsx")
 
 describe("agent workspace presentation", () => {
+  it("keeps restored local chat controls alongside cloud features", () => {
+    const chat = agentChat()
+    const menu = chat.slice(chat.indexOf('{menuOpen ? ('), chat.indexOf('<DropdownMenu>', chat.indexOf('{menuOpen ? (')))
+    expect(menu).not.toContain("c.icon")
+    expect(menu).not.toContain("BookOpenIcon")
+    expect(menu).not.toContain("c.description")
+    expect(chat).toContain("conversationProposals(proposals, messages)")
+    expect(chat).toContain("Accepted drafts · {session.keptDrafts.length} · View")
+    expect(chat).toContain('aria-label="Resize agent panel"')
+    expect(chat).toContain("Agent.pendingRequest(conversationId)")
+    expect(chat).toContain("currentScope.current === scopeKey")
+    expect(chat).toContain("<ChatMarkdown")
+    expect(chat).toContain("<ShareChatDialog")
+    expect(chat).toContain("<SavePlaybookDialog")
+    const create = read("../app/components/create-business-dialog.tsx")
+    expect(create).toContain('DialogTitle className="sr-only"')
+    expect(create).not.toContain("DialogHeader")
+    expect(read("../app/components/setup-flow.tsx")).toContain('aria-label="Start setup"')
+  })
   it("keeps work in the conversation, slows the shimmer, and exposes only supported reasoning levels", () => {
     const chat = agentChat()
     const overview = chat.slice(chat.indexOf("function OverviewAgent("), chat.indexOf("export function AgentWorkspace("))
     expect(overview).not.toContain("<AgentPane")
     expect(overview).not.toContain("const split")
     expect(overview).not.toContain("setFocus")
-    expect(overview).toContain("work={session.hasWork ? <WorkPane")
+    expect(overview).toContain("session.hasWork ? <WorkPane")
     expect(chat).toContain('aria-label="Reasoning effort"')
     expect(chat).toContain("session.reasoningEfforts.length")
     expect(chat).toContain("{ ...selectionField, reasoningEffort }")
@@ -105,7 +124,7 @@ describe("agent workspace presentation", () => {
   it("keeps the narrow composer low and multiline controls at the bottom without a scrollbar", () => {
     const chat = agentChat()
     expect(chat.includes("max-w-6xl")).toBe(false)
-    expect(chat.includes("max-w-(--chat-max-width) shrink-0 pb-2")).toBe(true)
+    expect(chat.includes('max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6"')).toBe(true)
     // The chat box is a raised card: #212121 in dark, control shadow that
     // deepens to the card shadow while you type.
     expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)")).toBe(true)
@@ -125,8 +144,12 @@ describe("agent workspace presentation", () => {
     const overview = chat.slice(chat.indexOf("function OverviewAgent"), chat.indexOf("// ----", chat.indexOf("function OverviewAgent") + 1))
     expect(chat.includes("setWorkspace(true)")).toBe(true)
     expect(chat.includes("const crowded")).toBe(false)
-    expect(overview.includes('aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto"')).toBe(true)
-    expect(overview.includes("max-w-(--chat-max-width) shrink-0 pb-2")).toBe(true)
+    // Empty, loading and historical chats use one thread/composer layout.
+    expect(overview).not.toContain("if (!active)")
+    expect(overview.match(/<Thread session=/g)).toHaveLength(2) // main and read-only helper
+    const thread = chat.slice(chat.indexOf("function Thread("), chat.indexOf("function WorkPane("))
+    expect(thread).toContain('className="min-h-0 flex-1 overflow-y-auto"')
+    expect(thread).toContain("max-w-(--chat-max-width) shrink-0")
     expect(chat.includes("Stored evidence")).toBe(false)
     expect(chat.includes("Approval required")).toBe(false)
   })
@@ -503,7 +526,7 @@ describe("composer model selector and stop control", () => {
     expect(chat).toContain("onCommand={onCommand}")
     const pane = chat.slice(chat.indexOf("function AgentPane("), chat.indexOf("// ---- overview"))
     expect(pane).toContain("onCommand: (c: AgentCommand) => void")
-    expect([...chat.matchAll(/onCommand=\{runCommand\}/g)].length).toBeGreaterThanOrEqual(3)
+    expect([...chat.matchAll(/onCommand=\{runCommand\}/g)].length).toBeGreaterThanOrEqual(2)
   })
 
   it("keeps provider metadata without displaying an attribution line or duplicate chat actions", () => {

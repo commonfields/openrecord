@@ -2,7 +2,7 @@ import { RejectWithReason, recordDecision } from "@/components/decision-reason"
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
-import { ArrowUpIcon, CheckIcon, LoaderCircleIcon, RotateCwIcon, SparklesIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react"
 import type { ChannelCapability, ChannelEntry, ChannelInventory, GrowthOpportunity, SetupView } from "@openrecord/contracts"
 import { ThinkingGlyph } from "@/components/agent-trace"
 import { ChannelMark } from "@/components/channel-mark"
@@ -33,7 +33,7 @@ export function useSetup(businessId: string) {
   // A server response always wins over an older local copy.
   const setup = selectSetup(businessId, latest, override)
   // Poll while the homepage is read and while the agent drafts the brief from it.
-  const discovering = setup?.step === "DISCOVER" || (setup?.step === "CONFIRM" && setup.draft?.status === "RUNNING")
+  const discovering = setup?.step === "DISCOVER" || (setup?.step === "CONFIRM" && (setup.draft?.status === "RUNNING" || setup.draft?.status === "READY")) || setup?.step === "CONNECT" || setup?.step === "PROPOSE"
   const settled = !q.loading
   useEffect(() => { if (settled) setPolling(discovering) }, [settled, discovering])
   return { setup, loading: q.loading && !q.data, error: q.error, set: setOverride, reload: q.reload }
@@ -43,62 +43,30 @@ export function useSetup(businessId: string) {
 const KIND_METRIC = { LEAD: "Leads", SIGNUP: "Signups", PURCHASE: "Purchases", BOOKING: "Bookings" } as const
 type Kind = keyof typeof KIND_METRIC
 
-/** Takes setup forward on the person's behalf once it can: the agent's draft
- * becomes the brief (no facts are approved without the person), then setup
- * moves past channels and asks for a first initiative. Setup only stops for
- * the person when the website couldn't be read or the draft failed. */
-function useSetupAutopilot(setup: SetupView, onChange: (s: SetupView) => void, reload: () => Promise<void>) {
-  const attempted = useRef<string | null>(null)
-  const [stuck, setStuck] = useState(false)
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    const key = `${setup.step}:${setup.revision}:${setup.draft?.status ?? ""}`
-    if (attempted.current === key) return
-    const draft = setup.draft?.status === "READY" ? setup.draft.value : null
-    const run = setup.step === "CONFIRM" && draft && !setup.brief
-      ? () => Setup.confirm(setup.businessId, {
-          expectedRevision: setup.revision,
-          businessName: draft.businessName, category: draft.category, audience: draft.audience,
-          valueProposition: draft.valueProposition, goalStatement: setup.goalStatement?.trim() || draft.goalStatement,
-          conversionKind: draft.conversionKind, metricLabel: draft.metricLabel.trim() || KIND_METRIC[draft.conversionKind],
-          reportingTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", facts: [],
-        })
-      : setup.step === "CONNECT" ? () => Setup.reviewChannels(setup.businessId, setup.revision)
-      : setup.step === "PROPOSE" ? () => Setup.propose(setup.businessId, setup.revision)
-      : null
-    if (!run) return
-    attempted.current = key
-    setStuck(false)
-    run().then(r => onChange(r.setup)).catch(() => setStuck(true))
-  }, [setup, onChange, attempt])
-  const retry = async () => {
-    await reload()
-    attempted.current = null
-    setStuck(false)
-    setAttempt(value => value + 1)
-  }
-  return { stuck, retry }
-}
-
 /** Setup as the agent works through it: one status line, then the first
  * initiative to decide on. */
-export function SetupFlow({ setup, onChange, reload }: { setup: SetupView; onChange: (s: SetupView) => void; reload: () => Promise<void> }) {
+export function SetupFlow({ setup, onChange }: { setup: SetupView; onChange: (s: SetupView) => void; reload: () => Promise<void> }) {
   const host = new URL(setup.websiteUrl).hostname.replace(/^www\./, "")
-  const { stuck, retry } = useSetupAutopilot(setup, onChange, reload)
-  const needsPerson = setup.step === "CONFIRM" && (stuck || setup.discovery.status === "FAILED" || setup.draft?.status === "FAILED" || (!setup.draft && setup.discovery.status === "DONE"))
+  const [resuming, setResuming] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
+  if (setup.autoAdvance === false && setup.step !== "DONE") return <section className="space-y-3 rounded-2xl bg-card p-5 shadow-(--card-shadow)">
+    <p className="text-sm font-medium">Continue setup for {setup.businessName}</p>
+    <p className="text-xs text-muted-foreground">This setup was started before background setup was available. Continue to let it proceed; nothing will be published.</p>
+    {resumeError ? <p role="alert" className="text-xs text-destructive">{resumeError}</p> : null}
+    <Button size="sm" disabled={resuming} onClick={() => {
+      setResuming(true); setResumeError(null)
+      void Setup.start({ businessId: setup.businessId, websiteUrl: setup.websiteUrl }).then(r => onChange(r.setup)).catch(e => setResumeError(setupError(e))).finally(() => setResuming(false))
+    }}>{resuming ? "Continuing…" : "Continue setup"}</Button>
+  </section>
+  const needsPerson = setup.step === "CONFIRM" && (setup.discovery.status === "FAILED" || setup.draft?.status === "FAILED" || (!setup.draft && setup.discovery.status === "DONE"))
   const working = setup.step === "DISCOVER" ? `Your agent is reading ${host}`
     : setup.step === "CONFIRM" ? "Your agent is writing a brief from your website"
     : setup.step === "CONNECT" || setup.step === "PROPOSE" ? "Your agent is looking for a first step"
     : null
   return (
     <section aria-label="Business setup" className="space-y-4 rounded-2xl bg-card p-5 text-left shadow-(--card-shadow)">
-      <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />Setting up {setup.brief?.businessName ?? host}</p>
-      {stuck && setup.step !== "CONFIRM" ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <p role="alert" className="flex-1 text-sm text-destructive">Setup could not continue. Your progress is saved.</p>
-          <Button size="sm" variant="outline" onClick={() => void retry()}>Try again</Button>
-        </div>
-      ) : needsPerson ? <>{stuck ? <p role="alert" className="text-sm text-destructive">The brief could not be saved automatically. Review it and try confirming it below.</p> : null}<ConfirmStep setup={setup} onChange={onChange} /></>
+      <p className="text-xs font-medium">Setting up {setup.brief?.businessName ?? host}</p>
+      {needsPerson ? <ConfirmStep setup={setup} onChange={onChange} />
         : setup.step === "DONE" ? (
           <div className="space-y-4">
             {setup.brief ? <p className="text-xs text-muted-foreground">Your agent saved a brief: {setup.brief.category} for {setup.brief.audience}. Tell it in the chat if anything is wrong.</p> : null}
@@ -110,7 +78,7 @@ export function SetupFlow({ setup, onChange, reload }: { setup: SetupView; onCha
             <span className="thinking">{working}</span>
           </p>
         ) : null}
-      {working && !stuck ? <p className="text-xs text-muted-foreground">Keep this page open while setup advances. You can return to the agent to continue later.</p> : null}
+      {working ? <p className="text-xs text-muted-foreground">Setup continues in the background. You can leave this page and return later.</p> : null}
     </section>
   )
 }
@@ -442,7 +410,7 @@ export function parseStart(text: string): { website: string | null; goal: string
 }
 
 /** Website and goal in one message, the way you'd tell the agent. */
-export function SetupStartForm({ businessId, onStarted, autoFocus, website: known }: { businessId?: string; onStarted: (s: SetupView) => void | Promise<void>; autoFocus?: boolean; website?: string | null }) {
+export function SetupStartForm({ businessId, onStarted, autoFocus, website: known, engagement }: { businessId?: string; onStarted: (s: SetupView) => void | Promise<void>; autoFocus?: boolean; website?: string | null; engagement?: "CLIENT" | "DOGFOOD" }) {
   const id = useId()
   const [text, setText] = useState(known ? `${known.replace(/^https?:\/\//, "").replace(/\/$/, "")} ` : "")
   const [error, setError] = useState<string | null>(null)
@@ -453,7 +421,7 @@ export function SetupStartForm({ businessId, onStarted, autoFocus, website: know
     if (!website) { setError("Add your website address, like acme.com"); return }
     setBusy(true); setError(null)
     try {
-      const r = await Setup.start({ websiteUrl: website, goalStatement: goal || null, businessId: businessId ?? null })
+      const r = await Setup.start({ websiteUrl: website, goalStatement: goal || null, businessId: businessId ?? null, ...(engagement ? { engagement } : {}) })
       await onStarted(r.setup)
     } catch (err) {
       setError(setupError(err))
@@ -463,19 +431,16 @@ export function SetupStartForm({ businessId, onStarted, autoFocus, website: know
   }
   return (
     <form onSubmit={submit} className="text-left" noValidate>
-      <div className="rounded-[14px] bg-card p-2 shadow-(--card-shadow) focus-within:ring-[3px] focus-within:ring-ring">
+      <div className="relative flex min-h-12 items-end gap-3 rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)">
         <Label htmlFor={`${id}-start`} className="sr-only">Your website and what you want to achieve</Label>
-        <Textarea id={`${id}-start`} value={text} onChange={e => setText(e.currentTarget.value)} autoFocus={autoFocus} rows={2}
+        <textarea id={`${id}-start`} value={text} onChange={e => setText(e.currentTarget.value)} autoFocus={autoFocus} rows={1}
           placeholder="acme.com, we want more booked appointments"
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
-          aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : `${id}-hint`}
-          className="min-h-14 resize-none border-0 bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0" />
-        <div className="flex items-center justify-between gap-3 px-2 pb-0.5">
-          <p id={`${id}-hint`} className="text-[0.6875rem] text-muted-foreground">Your agent reads your public website. Nothing is posted or changed.</p>
-          <Button type="submit" size="icon-sm" disabled={busy || !text.trim()} aria-label="Start">
+          aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined}
+          className="field-sizing-content block max-h-48 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-1 text-sm leading-6 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden placeholder:text-muted-foreground" />
+        {text.trim() || busy ? <Button type="submit" size="icon-sm" className="size-8 shrink-0 rounded-full bg-primary text-primary-foreground shadow-none hover:bg-primary/90 disabled:opacity-50" disabled={busy || !text.trim()} aria-label="Start setup">
             {busy ? <LoaderCircleIcon className="animate-spin" /> : <ArrowUpIcon />}
-          </Button>
-        </div>
+          </Button> : null}
       </div>
       {error ? <p id={`${id}-error`} role="alert" className="mt-2 text-xs text-wrong">{error}</p> : null}
     </form>

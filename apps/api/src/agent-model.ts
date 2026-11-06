@@ -4,6 +4,7 @@ import { chatCompletionAnswer, chatCompletionRequest } from "@openrecord/contrac
 export class AgentModelError extends Data.TaggedError("AgentModelError")<{
   readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED"
   readonly detail?: "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY"
+  readonly httpStatus?: number
 }> {}
 
 const bounded = (name: string, fallback: number, max: number) => Config.integer(name).pipe(
@@ -28,7 +29,7 @@ export const agentSettings = Config.all({
   model: Config.string("AGENT_MODEL").pipe(Config.validate({ message: "invalid agent model", validation: m => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(m) })),
   apiKey: Config.redacted("AGENT_API_KEY"),
   baseUrl: Config.string("AGENT_BASE_URL").pipe(Config.withDefault("http://127.0.0.1:8317")),
-  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 2048, 8192),
+  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 8192, 8192),
   timeoutMs: bounded("AGENT_TIMEOUT_MS", 60000, 120000),
 })
 
@@ -82,7 +83,7 @@ const readJson = async (response: Response, max = 256000): Promise<unknown> => {
 const THINKING_GEMINI = /^gemini-(?:2\.5|[3-9])/
 const refuseStatus = async (response: Response) => {
   await response.body?.cancel()
-  throw new AgentModelError({ reason: response.status === 429 ? "RATE_LIMITED" : "UNAVAILABLE" })
+  throw new AgentModelError({ reason: response.status === 429 ? "RATE_LIMITED" : response.status === 401 || response.status === 403 ? "UNCONFIGURED" : "UNAVAILABLE", httpStatus: response.status })
 }
 
 export const configuredAgentModel = Effect.gen(function*() {

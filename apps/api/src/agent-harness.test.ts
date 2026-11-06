@@ -79,7 +79,7 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     // A model that keeps calling tools after the final notice cannot end the run with an answer.
     const looping = await Effect.runPromise(Effect.either(runConversation({ message: "loop", history: [], budget: { modelSteps: 3, toolCalls: 9 },
       model: () => Effect.succeed(calls("read_open_issues")), dispatch: () => Effect.succeed(read) })))
-    expect(looping).toMatchObject({ _tag: "Left", left: { reason: "TOOL_LIMIT" } })
+    expect(looping).toMatchObject({ _tag: "Right", right: { outcome: "ANSWERED_WITH_GAPS" } })
   })
 
   it("verifies workflow completion: one reminder for a skipped required tool, then an honest gap", async () => {

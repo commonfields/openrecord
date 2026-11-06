@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { SetupStartForm } from "@/components/setup-flow"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -9,11 +9,9 @@ export function CreateBusinessDialog({ open, onOpenChange }: { open: boolean; on
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add a business</DialogTitle>
-          <DialogDescription>Tell your agent the website and what you want to achieve. It does the rest.</DialogDescription>
-        </DialogHeader>
+      <DialogContent className="gap-0 bg-transparent p-0 shadow-none [&>button]:sr-only">
+        <DialogTitle className="sr-only">Add a business</DialogTitle>
+        <DialogDescription className="sr-only">Enter a website and optionally a goal to start setup.</DialogDescription>
         <SetupStartForm
           autoFocus
           onStarted={async setup => {

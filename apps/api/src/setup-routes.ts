@@ -56,6 +56,25 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
 export type SetupDrafter<R> = (scope: { readonly accountId: string; readonly userId: string; readonly businessId: string }, setupId: string) => Effect.Effect<DraftState | undefined, SqlError, R>
 const noDraft: SetupDrafter<never> = () => Effect.succeed(undefined)
 
+/** Shared by explicit requests and opted-in background setup; never approves work. */
+export const proposeSetup = (session: Session, businessId: string, revision: number) => Effect.gen(function*() {
+  const setups = yield* SetupRepository
+  return yield* setups.withTransaction(Effect.gen(function*() {
+    const row = yield* setups.lockForPropose(session, businessId, revision)
+    if (row.opportunityId) return row
+    const growth = yield* GrowthRepository
+    const profile = yield* growth.profile(session.accountId, businessId)
+    if (!profile || !row.brief) return yield* Effect.fail(new SetupRefused({ reason: "BriefRequired" }))
+    const fields = firstInitiative({ goalId: profile.primaryGoal.id, brief: row.brief, websiteUrl: row.websiteUrl, signals: row.discovery, readOn: new Date().toISOString().slice(0, 10) })
+    const opportunity = yield* growth.create(session, businessId, "ASSISTANT", {
+      ...fields, ownerUserId: session.userId, initialStatus: "PROPOSED", idempotencyKey: setupKey(row.id, "propose"),
+      evidence: [{ type: "MODEL_SUGGESTION", note: "Suggested by OpenRecord setup from your brief and a public read of your homepage, using fixed rules. A hypothesis for your review: no impact is claimed." }],
+    })
+    yield* setups.linkOpportunity(row.id, opportunity.id)
+    return { ...row, opportunityId: opportunity.id, revision: row.revision + 1 }
+  }))
+})
+
 const viewOf = <D>(session: Session, row: SetupRow, drafts: SetupDrafter<D>) => Effect.gen(function*() {
   const growth = yield* GrowthRepository
   const inventory = yield* channelsFor(session.accountId, row.businessId, row)
@@ -69,7 +88,7 @@ const viewOf = <D>(session: Session, row: SetupRow, drafts: SetupDrafter<D>) => 
   const draft = yield* drafts({ accountId: session.accountId, userId: session.userId, businessId: row.businessId }, row.id)
   return {
     id: row.id, businessId: row.businessId, businessName: row.businessName, websiteUrl: row.websiteUrl, goalStatement: row.goalStatement,
-    step: setupStep(row), revision: row.revision, discovery, brief: row.brief, channelsReviewedAt: row.channelsReviewedAt, inventory,
+    step: setupStep(row), revision: row.revision, autoAdvance: row.autoAdvance, discovery, brief: row.brief, channelsReviewedAt: row.channelsReviewedAt, inventory,
     assessment: settled ? assessSetup(row.discovery, row.discoveryFailure, inventory, profile !== null) : null,
     opportunity,
     ...(draft ? { draft } : {}),
@@ -122,22 +141,6 @@ export const setupApi = <D = never>(withSession: WithSession, drafts: SetupDraft
     HttpRouter.post("/api/businesses/:id/setup/channels", withRevision((session, businessId, revision) => Effect.flatMap(SetupRepository, r => r.reviewChannels(session, businessId, revision)))),
     HttpRouter.post("/api/businesses/:id/setup/retry", withRevision((session, businessId, revision) => Effect.flatMap(SetupRepository, r => r.retry(session, businessId, revision)))),
 
-    HttpRouter.post("/api/businesses/:id/setup/propose", withRevision((session, businessId, revision) => Effect.gen(function*() {
-      const setups = yield* SetupRepository
-      return yield* setups.withTransaction(Effect.gen(function*() {
-        const row = yield* setups.lockForPropose(session, businessId, revision)
-        if (row.opportunityId) return row
-        const growth = yield* GrowthRepository
-        const profile = yield* growth.profile(session.accountId, businessId)
-        if (!profile || !row.brief) return yield* Effect.fail(new SetupRefused({ reason: "BriefRequired" }))
-        const fields = firstInitiative({ goalId: profile.primaryGoal.id, brief: row.brief, websiteUrl: row.websiteUrl, signals: row.discovery, readOn: new Date().toISOString().slice(0, 10) })
-        const opportunity = yield* growth.create(session, businessId, "ASSISTANT", {
-          ...fields, ownerUserId: session.userId, initialStatus: "PROPOSED", idempotencyKey: setupKey(row.id, "propose"),
-          evidence: [{ type: "MODEL_SUGGESTION", note: "Suggested by OpenRecord setup from your confirmed brief and a public read of your homepage, using fixed rules. A hypothesis for your review: no impact is claimed." }],
-        })
-        yield* setups.linkOpportunity(row.id, opportunity.id)
-        return { ...row, opportunityId: opportunity.id, revision: row.revision + 1 }
-      }))
-    }))),
+    HttpRouter.post("/api/businesses/:id/setup/propose", withRevision(proposeSetup)),
   )
 }

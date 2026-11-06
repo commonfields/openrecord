@@ -2,7 +2,7 @@ import { Link } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Panel, PanelHeader } from "@/components/page"
-import { Discovery, discoveryPath, discoveryReportPath, fraction, type Report } from "@/lib/acquisition"
+import { Discovery, discoveryReportPath, fraction, type Report } from "@/lib/acquisition"
 import { useApi } from "@/lib/use-api"
 
 const measured = (value: { n: number; d: number }) => value.d > 0 ? fraction(value) : "not measured"
@@ -35,6 +35,6 @@ export function DiscoverySummary({ report, businessId }: { report: Report; busin
       <p>{referral.aiSessions.toLocaleString()} of {referral.totalSessions.toLocaleString()} sessions · {referral.dateStart} to {referral.dateEnd}. {referral.signups === "SIGNUPS_NOT_MEASURED" ? "Signups not measured." : `${referral.signups.toLocaleString()} signups reported.`}</p>
       <p className="text-muted-foreground">This is a separate data source; it does not show that a sampled AI answer caused a visit or signup.</p>
     </div> : <p>AI-attributed website sessions and signups: not measured.</p>}
-    <div className="flex flex-wrap gap-2"><Button asChild size="sm" variant="outline"><Link to={discoveryReportPath(businessId)}>View evidence report</Link></Button><Button asChild size="sm" variant="ghost"><Link to={discoveryPath(businessId)}>Open AI discovery</Link></Button></div>
+    <div className="flex flex-wrap gap-2"><Button asChild size="sm" variant="outline"><Link to={discoveryReportPath(businessId)}>View evidence report</Link></Button></div>
   </>
 }

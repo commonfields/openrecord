@@ -2,13 +2,13 @@
 // says what the agent does with it and has one button. Google and Meta sign in
 // straight away; Stripe and WordPress open a short form in the row. Managing a
 // connected account opens the same row.
-import { useEffect, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { Link, useLocation, useParams, useSearchParams } from "react-router"
-import { ChevronRightIcon, LoaderCircleIcon } from "lucide-react"
+import { LoaderCircleIcon } from "lucide-react"
 import { AD_PROVIDER_NAME, type ChannelProvider } from "@openrecord/contracts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader, Panel } from "@/components/page"
 import { ChannelMark } from "@/components/channel-mark"
@@ -265,24 +265,18 @@ function MeasurementNote({ inventory }: { inventory: { channels: ReadonlyArray<{
 
 /** Data the agent can use without an account sign-in, kept out of the way. */
 function MoreTools({ businessId }: { businessId: string }) {
-  const [open, setOpen] = useState(false)
-  const { hash } = useLocation()
-  useEffect(() => { if (["#ai-answer-tracking", "#ai-traffic", "#ai-traffic-feed", "#agent-access", "#tool-servers", "#plugins"].includes(hash)) setOpen(true) }, [hash])
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">
-      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md text-sm font-medium outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-        <ChevronRightIcon aria-hidden className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-90")} />
-        More data for the agent
-        <span className="font-normal text-muted-foreground">AI answer tracking, server logs, tool servers and agent access</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-3">
+    <section aria-labelledby="agent-data-heading" className="space-y-3">
+      <div><h2 id="agent-data-heading" className="text-sm font-medium">Data and tools for the agent</h2>
+        <p className="text-xs text-muted-foreground">Manage AI answer tracking, website traffic data, tool servers and access for other agents.</p></div>
+      <div className="space-y-3">
         <AiAnswerTracking businessId={businessId} />
         <AiTrafficUpload businessId={businessId} />
         <LiveTrafficFeed businessId={businessId} />
         <ToolServers businessId={businessId} />
         <PluginsPanel businessId={businessId} />
         <AgentAccess businessId={businessId} />
-      </CollapsibleContent>
-    </Collapsible>
+      </div>
+    </section>
   )
 }

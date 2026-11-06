@@ -348,11 +348,11 @@ function SidebarBody() {
       <nav className={cn("flex flex-1 flex-col gap-5 overflow-y-auto py-4", collapsed ? "px-1.5" : "px-2")}>
         {agent ? <ChatHistory archived={archived} filter={chatFilter} onLeaveArchive={() => setArchived(false)} /> : <>
           <SidebarGroup label="Workspace">
-            <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<InboxIcon />} label="Inbox" count={waiting + (base ? attention : 0)} />
+            <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<InboxIcon />} label="Inbox" count={waiting} />
             {base ? <>
               <SidebarLink to={`${base}/results`} icon={<ChartColumnIcon />} label="Overview" count={attention} />
               <SidebarLink to={`${base}/campaigns`} icon={<BriefcaseIcon />} label="Campaigns" />
-              <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answer issues" />
+              <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answers" count={attention} />
               <SidebarLink to={`${base}/channels`} icon={<PlugIcon />} label="Channels" />
             </> : null}
           </SidebarGroup>
