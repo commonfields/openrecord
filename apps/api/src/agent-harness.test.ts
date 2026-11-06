@@ -158,7 +158,7 @@ describe("agent context builder", () => {
     expect(JSON.stringify(short.contents)).toContain("Stored evidence references")
   })
 
-  it("never compacts the newest tool round", () => {
+  it("keeps the newest tool round complete when older evidence can make room", () => {
     const round = (n: number) => ({ role: "user" as const, parts: [{ functionResponse: { name: "read", response: { untrustedEvidence: { summary: `round ${n}`, citations: [], data: "y".repeat(5000) } } } }] })
     const contents = [{ role: "user" as const, parts: [{ text: "go" }] }, round(1), round(2), round(3)]
     expect(compactToolResults(contents, 8000)).toBe(true)

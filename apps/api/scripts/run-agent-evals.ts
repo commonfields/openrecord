@@ -19,7 +19,9 @@ import { Effect, Layer, ManagedRuntime, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { SqlClient } from "@effect/sql"
 import type { HarnessSelection } from "@openrecord/contracts"
-import { runConversation } from "../src/agent.js"
+import { agentDeclarations, runConversation } from "../src/agent.js"
+import { commandTools } from "../src/agent-execution-policy.js"
+import { memoryJournal } from "../src/agent-run.js"
 import { configuredAgentModel, type AgentModel } from "../src/agent-model.js"
 import { harnessModel } from "../src/harness-model.js"
 import { harnessCatalog } from "../src/harness-store.js"
@@ -52,8 +54,14 @@ const scopeFor = Effect.gen(function*() {
 const main = async () => {
   const regrade = flag("regrade")
   if (regrade) {
-    const report = JSON.parse(readFileSync(regrade, "utf8")) as { model: string; rows: Array<{ id: string; reply: string; tools: string[]; calls?: Array<{ tool: string; args: unknown }> }> }
-    const graded = report.rows.flatMap(r => { const s = SCENARIOS.find(x => x.id === r.id); return s ? [grade(s, r.reply, r.tools, r.calls)] : [] })
+    const report = JSON.parse(readFileSync(regrade, "utf8")) as { model: string; rows: Array<{ id: string; reply: string; tools: string[]; calls?: Array<{ tool: string; args: unknown }>; outcome?: string; error?: string }> }
+    const graded = report.rows.flatMap(r => {
+      const s = SCENARIOS.find(x => x.id === r.id)
+      if (!s) return []
+      const g = grade(s, r.reply, r.tools, r.calls)
+      const incomplete = !!r.error || (r.outcome !== undefined && r.outcome !== "ANSWERED")
+      return [{ ...g, passed: g.passed && !incomplete, failed: [...g.failed, ...(incomplete ? ["run did not complete without gaps"] : [])] }]
+    })
     for (const g of graded) console.log(`${g.passed ? "PASS" : "FAIL"}  ${g.id.padEnd(20)} ${g.passed ? "" : g.failed.join("; ")}`)
     console.log(`\n${report.model}: ${graded.filter(g => g.passed).length}/${graded.length} passed with the current checks`)
     return
@@ -80,16 +88,24 @@ const main = async () => {
   const runLabel = baseline ? `baseline:${label}` : label
   const picked = all("scenario").length ? SCENARIOS.filter(s => all("scenario").includes(s.id)) : SCENARIOS
   const repeat = Math.max(1, Math.min(5, Number(flag("repeat") ?? 1)))
-  const rows: Array<ReturnType<typeof grade> & { ms: number; reply: string; tools: string[]; calls: Array<{ tool: string; args: unknown }>; error?: string }> = []
+  const rows: Array<ReturnType<typeof grade> & { ms: number; reply: string; tools: string[]; calls: Array<{ tool: string; args: unknown }>; outcome?: string; gaps?: readonly string[]; contextCompactions: number; maxRequestBytes: number; modelSteps: number; error?: string }> = []
   console.log(`Running ${picked.length} scenario${picked.length === 1 ? "" : "s"}${repeat > 1 ? ` × ${repeat}` : ""} on ${runLabel}\n`)
   for (const s of picked) for (let n = 0; n < repeat; n++) {
     const started = Date.now()
     const tools: string[] = [], calls: Array<{ tool: string; args: unknown }> = []
-    const run = await runtime.runPromise(runConversation({ message: s.message, history: [], model, ...(baseline ? { system: GENERIC_SYSTEM } : {}),
+    const { journal, events } = memoryJournal()
+    const run = await runtime.runPromise(runConversation({ message: s.message, history: [], model, tools: commandTools(s.message, agentDeclarations), journal, ...(baseline ? { system: GENERIC_SYSTEM } : {}),
       dispatch: (name, args) => Effect.sync(() => { tools.push(name); calls.push({ tool: name, args }); const e = s.evidence[name]; return typeof e === "function" ? e(args) : e ?? notConnected(name) }) }).pipe(Effect.either))
     const reply = run._tag === "Right" ? run.right.reply : ""
-    const g = run._tag === "Right" ? grade(s, reply, tools, calls) : { id: s.id, passed: false, failed: ["model did not answer"], checks: s.checks.length }
-    rows.push({ ...g, ms: Date.now() - started, reply, tools, calls, ...(run._tag === "Left" ? { error: String((run.left as { reason?: string }).reason ?? run.left) } : {}) })
+    const contentGrade = run._tag === "Right" ? grade(s, reply, tools, calls) : { id: s.id, passed: false, failed: ["model did not answer"], checks: s.checks.length }
+    const incomplete = run._tag === "Right" && run.right.outcome !== "ANSWERED"
+    const g = { ...contentGrade, checks: contentGrade.checks + 1, passed: contentGrade.passed && !incomplete,
+      failed: [...contentGrade.failed, ...(incomplete ? ["run ended with gaps"] : [])] }
+    rows.push({ ...g, ms: Date.now() - started, reply, tools, calls,
+      contextCompactions: events.filter(e => e.payload["action"] === "CONTEXT_COMPACTED").length,
+      maxRequestBytes: Math.max(0, ...events.filter(e => e.type === "MODEL_REQUESTED").map(e => Number(e.payload["requestBytes"]) || 0)),
+      modelSteps: events.filter(e => e.type === "MODEL_STEP").length,
+      ...(run._tag === "Left" ? { error: String((run.left as { reason?: string }).reason ?? run.left) } : { outcome: run.right.outcome, gaps: run.right.gaps }) })
     console.log(`${g.passed ? "PASS" : "FAIL"}  ${s.id.padEnd(20)} ${String(Math.round((Date.now() - started) / 1000)).padStart(4)}s  ${g.passed ? "" : g.failed.join("; ")}`)
   }
   const passed = rows.filter(r => r.passed).length, rate = passed / rows.length

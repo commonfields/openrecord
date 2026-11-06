@@ -238,12 +238,27 @@ suite("campaign API isolation, concurrency and audit", () => {
     const before = (await pool.query("SELECT count(*)::int AS n FROM marketing_campaigns WHERE business_id=$1", [businessId])).rows[0].n
     const portfolio = await Effect.runPromise(readMarketingWork(accountId, businessId).pipe(Effect.provide(repos)))
     expect(portfolio.data.campaigns).toHaveLength(10)
-    expect(portfolio.data.work).toHaveLength(30)
+    expect(portfolio.data.work.length).toBeGreaterThan(0)
+    expect(portfolio.data.work.length).toBeLessThanOrEqual(30)
+    expect(Buffer.byteLength(JSON.stringify(portfolio), "utf8")).toBeLessThanOrEqual(16000)
     expect(portfolio.data.moreWorkNotReturned).toBe(true)
     expect(portfolio.data.coverage).toMatchObject({ moreCampaignsNotAssessed: true, fullPortfolio: false })
     const selected = await Effect.runPromise(readMarketingWork(accountId, businessId, { campaignId: oldId }).pipe(Effect.provide(repos)))
     expect(selected.data.campaigns).toHaveLength(1)
     expect(selected.data.campaigns[0]?.campaignId).toBe(oldId)
     expect((await pool.query("SELECT count(*)::int AS n FROM marketing_campaigns WHERE business_id=$1", [businessId])).rows[0].n).toBe(before)
+  })
+  it("keeps multilingual learning and closed-campaign summaries within the tool envelope", async () => {
+    const closed = { ...c, title: "客".repeat(200), audience: "客".repeat(2000), status: "CLOSED", decision: "INCONCLUSIVE",
+      learning: "客".repeat(4000), result: "客".repeat(4000), nextMove: "客".repeat(2000) }
+    const rows = await pool.query("INSERT INTO marketing_campaigns(business_id,created_by_user_id,brief) SELECT $1,$2,$3::jsonb FROM generate_series(1,6) RETURNING id", [businessId, userId, JSON.stringify(closed)])
+    const portfolio = await Effect.runPromise(readMarketingWork(accountId, businessId).pipe(Effect.provide(repos)))
+    expect(Buffer.byteLength(JSON.stringify(portfolio), "utf8")).toBeLessThanOrEqual(16000)
+    expect(portfolio.data.moreLearningNotReturned).toBe(true)
+    const selected = await Effect.runPromise(readMarketingWork(accountId, businessId, { campaignId: rows.rows[0].id }).pipe(Effect.provide(repos)))
+    expect(Buffer.byteLength(JSON.stringify(selected), "utf8")).toBeLessThanOrEqual(16000)
+    expect(selected.data.campaigns[0]).not.toHaveProperty("learning")
+    expect(selected.data.candidateLearning[0]?.campaignId).toBe(rows.rows[0].id)
+    expect((await pool.query("SELECT length(brief->>'learning') AS n FROM marketing_campaigns WHERE id=$1", [rows.rows[0].id])).rows[0].n).toBe(4000)
   })
 })

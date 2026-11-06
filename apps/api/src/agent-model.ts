@@ -3,7 +3,7 @@ import { chatCompletionAnswer, chatCompletionRequest } from "@openrecord/contrac
 
 export class AgentModelError extends Data.TaggedError("AgentModelError")<{
   readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED"
-  readonly detail?: "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY"
+  readonly detail?: "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY" | "LOCAL_REQUEST_LIMIT" | "LOCAL_CONTEXT_LIMIT"
   readonly httpStatus?: number
 }> {}
 
