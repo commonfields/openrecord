@@ -1,6 +1,5 @@
 import { useMemo, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router"
-import { useAskAgent } from "@/components/workspace-agent"
 import { ArrowRightIcon, PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,7 +8,7 @@ import { Panel, PanelHeader, StatStrip, domainOf, pathOf, type Stat } from "@/co
 import { RepresentationStateBadge } from "@/components/status"
 import { findingKindLabels } from "@/routes/search"
 import { ApiError, Facts, Issues, Representations, Search, api, type Analytics, type RepresentationRow, type VerdictCounts } from "@/lib/api"
-import { GROWTH_GOAL_LABELS, Growth, growthPath } from "@/lib/growth"
+import { Growth } from "@/lib/growth"
 import { askAgentPath } from "@/lib/nav"
 import { groupClaims } from "@/lib/issues"
 import { relativeTime, sentenceCase } from "@/lib/format"
@@ -86,6 +85,7 @@ export function useOverviewData(businessId: string, days: number) {
     profile,
     opportunities: opportunities.data?.opportunities ?? NO_OPPORTUNITIES,
     series: series.data?.series ?? null,
+    errors: { growth: growth.error, series: series.error, opportunities: opportunities.error },
     loading: {
       issues: issues.loading && !issues.data,
       representations: reps.loading && !reps.data,
@@ -115,10 +115,9 @@ export function goalTotals(series: GrowthSeries | null, days: number) {
 
 /* ---------------------------------------------------------- health */
 
-/** Four answers to "are we OK?", one per surface; each opens where to act. */
-export function HealthStrip({ businessId, a, data, days, loading }: { businessId: string; a: Analytics | null; data: OverviewData; days: number; loading: boolean }) {
+/** Three answers to "are we OK?", one per surface; each opens where to act. The goal has its own card above. */
+export function HealthStrip({ businessId, a, data, loading }: { businessId: string; a: Analytics | null; data: OverviewData; loading: boolean }) {
   const navigate = useNavigate()
-  const ask = useAskAgent(businessId)
   const skeleton = <Skeleton className="h-5 w-14" />
   const acc = a ? accuracy(a.current) : null
   const prevAcc = a ? accuracy(a.previous) : null
@@ -127,8 +126,6 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
   const drift = reps.filter((r) => r.finding.state === "DRIFT").length
   const unreadable = reps.length - inSync - drift
   const s = data.search
-  const goal = data.profile?.primaryGoal ?? null
-  const totals = goalTotals(data.series, days)
 
   const stats: Stat[] = [
     {
@@ -144,7 +141,7 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
       key: "sources",
       label: "Sources in sync",
       value: data.loading.representations ? skeleton : reps.length ? `${inSync} of ${reps.length}` : "—",
-      hint: reps.length ? [drift && `${drift} out of date`, unreadable && `${unreadable} unreadable`].filter(Boolean).join(" · ") || "All match your facts" : "No sources tracked yet",
+      hint: reps.length ? [drift && `${drift} out of date`, unreadable && `${unreadable} unreadable`].filter(Boolean).join(", ") || "All match your facts" : "No sources tracked yet",
       ...(drift > 0 ? { tone: "wrong" as const } : unreadable > 0 ? { tone: "unknown" as const } : {}),
       onSelect: () => navigate(`/businesses/${businessId}/representations`),
     },
@@ -152,26 +149,10 @@ export function HealthStrip({ businessId, a, data, days, loading }: { businessId
       key: "website",
       label: "Website issues",
       value: data.loading.search ? skeleton : s?.lastInspection ? s.openFindings.toLocaleString() : "—",
-      hint: s?.lastInspection ? `${plural(s.urlsInspected, "page")} inspected · ${plural(s.verifiedFixes, "fix", "fixes")} verified` : "Website not inspected yet",
+      hint: s?.lastInspection ? `${plural(s.urlsInspected, "page")} inspected, ${plural(s.verifiedFixes, "fix", "fixes")} verified` : "Website not inspected yet",
       ...(s && s.openFindings > 0 ? { tone: "partial" as const } : {}),
       onSelect: () => navigate(`/businesses/${businessId}/search`),
     },
-    goal
-      ? {
-          key: "goal",
-          label: goal.metricDefinition.label || GROWTH_GOAL_LABELS[goal.metricDefinition.conversionKind],
-          value: data.loading.growth ? skeleton : totals?.any ? totals.current.toLocaleString() : "—",
-          delta: totals?.any ? <Delta now={totals.current} prev={totals.previous} goodWhenUp /> : null,
-          hint: totals?.any ? `Last ${days} days · ${totals.fromGa4 ? "Google Analytics" : "imported"}${totals.synthetic ? " · includes test data" : ""}` : "No measurements imported yet",
-          onSelect: () => navigate(growthPath(businessId)),
-        }
-      : {
-          key: "goal",
-          label: "Business goal",
-          value: data.loading.growth ? skeleton : "Not set",
-          hint: "Ask your agent to set one",
-          onSelect: () => ask("Help me set our marketing goal and what we should count as success."),
-        },
   ]
   return <StatStrip stats={stats} />
 }
@@ -384,11 +365,12 @@ export function GoalTrend({ data, days, formatDate }: { data: OverviewData; days
       .map((d) => ({ date: d.day, value: d.status === "OK" || d.status === "CONFLICT" ? (d.value ?? 0) : "" }))
   }, [series, days])
   if (data.loading.growth) return <Skeleton className="h-[280px] rounded-xl" />
+  if (!series && data.errors.series) return <p role="alert" className="rounded-xl border p-5 text-sm text-destructive">Measurement history could not load. Reload the page to try again.</p>
   if (!series || rows.every((r) => r.value === "")) {
     return (
       <div className="flex h-[280px] flex-col items-center justify-center rounded-xl border border-dashed text-center">
         <p className="text-xs font-medium">No measurements in the last {days} days</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">Import a daily export or connect Google Analytics in the client's Growth workspace.</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">Connect a measurement account from Channels, or import daily results in the business's growth settings.</p>
       </div>
     )
   }

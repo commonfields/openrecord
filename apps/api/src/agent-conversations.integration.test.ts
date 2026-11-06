@@ -209,7 +209,7 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     }
     if(!job)throw new Error("TEST bridge did not receive the conversation")
     expect(job.model).toBe("fixture/first")
-    expect(job.input.contents).toEqual([{role:"user",parts:[{text:expect.stringContaining("Business resume brief (untrusted saved working context")},{text:body.message}]}])
+    expect(job.input.contents).toEqual([{role:"user",parts:[{text:expect.stringContaining("Business resume brief (untrusted saved")},{text:body.message}]}])
     await execute(completeHarnessJob(bridge,job.id,{lease:job.lease,kind:"completed",answer:{kind:"tools",calls:[{name:"read_business_truth",args:{}}]}}))
     job=null
     for(let i=0;i<50;i++){

@@ -125,9 +125,8 @@ describe("agent workspace presentation", () => {
     const chat = agentChat()
     expect(chat.includes("max-w-6xl")).toBe(false)
     expect(chat.includes('max-w-(--chat-max-width) shrink-0", compact ? "px-3 pb-1" : "px-4 pb-1 sm:px-6"')).toBe(true)
-    // The chat box is a raised card: #212121 in dark, control shadow that
-    // deepens to the card shadow while you type.
-    expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)")).toBe(true)
+    expect(chat.includes("rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow)")).toBe(true)
+    expect(chat.includes("focus-within:shadow-(--card-shadow-focus)")).toBe(false)
     expect(chat.includes("relative flex min-h-12 cursor-text")).toBe(true)
     expect(chat.includes("cursor-text items-end")).toBe(true)
     expect(chat.includes("items-end gap-3 rounded-[10px]")).toBe(true)
@@ -158,7 +157,7 @@ describe("agent workspace presentation", () => {
     const results = read("../app/routes/today.tsx")
     expect(results.includes("NextActions"), "Results must not render Do next").toBe(false)
     expect(results).toContain("<HealthStrip")
-    expect(results).toContain("<SourcesPanel")
+    expect(read("../app/components/measurement-views.tsx")).toContain("<SourcesPanel")
     const work = read("../app/routes/work.tsx")
     expect(work.includes("NextActions"), "Work must not render Do next").toBe(false)
     expect(work).toContain("/approvals")

@@ -15,10 +15,13 @@ import {
   type ModelSeries,
 } from "@/components/charts"
 import { EmptyState, PageHeader, Panel, PanelHeader, ShareRow, type Stat } from "@/components/page"
-import { GoalTrend, HealthStrip, PointsDelta, SourcesPanel, accuracy, isMissing, judged, pct, useOverviewData } from "@/components/today-overview"
+import { GoalTrend, HealthStrip, PointsDelta, accuracy, isMissing, judged, pct, useOverviewData } from "@/components/today-overview"
 import { SearchPerformancePanel } from "@/components/search-console"
 import { AdPerformancePanel, LocalProfilePanel } from "@/components/ad-accounts"
 import { WeeklyBrief } from "@/components/weekly-brief"
+import { GoalProgress } from "@/components/goal-progress"
+import { FunnelMeasurement, GoalEvents, RealtimeAvailability } from "@/components/measurement-views"
+import { OVERVIEW_SECTIONS, overviewPath, overviewSection } from "@/lib/overview-navigation"
 import { useChrome } from "@/components/app-shell"
 import { RevenuePanel } from "@/components/revenue"
 import { SetupCard } from "@/components/setup-card"
@@ -108,7 +111,8 @@ function trailing(values: Array<number | null>, window: number): Array<number | 
 }
 
 export function Today() {
-  const { id = "" } = useParams()
+  const { id = "", section: requestedSection } = useParams()
+  const section = overviewSection(requestedSection)
   const { activeBusiness } = useWorkspace()
   const [params, setParams] = useSearchParams()
   // Results uses the whole screen, so laptops and wide desktops lay it out alike.
@@ -150,11 +154,11 @@ export function Today() {
   return (
     <div className="rise-in space-y-6 pb-4">
       <PageHeader
-        title={activeBusiness?.name ?? "Overview"}
-        description={`Measured search, AI visibility and marketing results for ${activeBusiness?.name ?? "this business"}. Available data depends on your connected accounts.`}
+        title={section.key === "summary" ? activeBusiness?.name ?? "Overview" : section.label}
+        description={section.description}
         actions={
           <>
-            <Select value={String(days)} onValueChange={(v) => setParam("days", v)}>
+            {["summary", "events", "answers"].includes(section.key) ? <Select value={String(days)} onValueChange={(v) => setParam("days", v)}>
               <SelectTrigger className="h-8 w-[9.5rem] text-xs" aria-label="Time range">
                 <CalendarIcon className="size-3.5 text-muted-foreground" />
                 <SelectValue />
@@ -166,30 +170,46 @@ export function Today() {
                   </SelectItem>
                 ))}
               </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm" className="h-8 text-xs" disabled={!a} onClick={() => a && downloadCsv(a, activeBusiness?.name ?? "business")}>
+            </Select> : null}
+            {section.key === "answers" ? <Button variant="outline" size="sm" className="h-8 text-xs" disabled={!a} onClick={() => a && downloadCsv(a, activeBusiness?.name ?? "business")}>
               <DownloadIcon />
-              Export
-            </Button>
-            <Button asChild size="sm" className="h-8 text-xs">
+              Export AI answers
+            </Button> : null}
+            {section.key === "answers" ? <Button asChild size="sm" className="h-8 text-xs">
               <Link to={`/businesses/${id}/checks`}>
                 <RadarIcon />
                 Run a check
               </Link>
-            </Button>
+            </Button> : null}
           </>
         }
       />
 
+      <nav aria-label="Analytics sections" className="flex gap-1 overflow-x-auto border-b pb-2 lg:hidden">
+        {OVERVIEW_SECTIONS.map(item => <Link key={item.key} to={`${overviewPath(id, item.key)}?days=${days}`} aria-current={item.key === section.key ? "page" : undefined} className={cn("shrink-0 rounded-md px-3 py-2 text-sm", item.key === section.key ? "bg-accent font-medium" : "text-muted-foreground")}>{item.label}</Link>)}
+      </nav>
+      {section.key === "summary" ? <>
       <SetupCard businessId={id} />
-      <WeeklyBrief businessId={id} overview={overview} />
-      <HealthStrip businessId={id} a={a} data={overview} days={days} loading={loading} />
-      <RevenuePanel businessId={id} />
-      <SearchPerformancePanel businessId={id} />
-      <AdPerformancePanel businessId={id} />
-      <LocalProfilePanel businessId={id} />
-      <DiscoveryOverview businessId={id} />
+      <GoalProgress businessId={id} data={overview} days={days} />
 
+      <GoalTrend data={overview} days={days} formatDate={shortDate} />
+      <HealthStrip businessId={id} a={a} data={overview} loading={loading} />
+      <details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium">Weekly brief and recommended next step</summary><div className="pt-4"><WeeklyBrief businessId={id} overview={overview} /></div></details>
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <QuestionsCard businessId={id} a={a} loading={loading} days={days} />
+        <AccuracyByModelCard a={a} stats={stats} loading={loading} />
+      </div>
+      </> : null}
+      {section.key === "performance" ? <>
+        <Panel className="space-y-3 p-4"><p className="max-w-prose text-sm text-muted-foreground">Each source below has its own date range and attribution. Results appear when its account is connected. Platform conversions are kept separate.</p><Button asChild size="sm" variant="outline"><Link to={`/businesses/${id}/channels`}>Manage accounts</Link></Button></Panel>
+        <SearchPerformancePanel businessId={id} /><AdPerformancePanel businessId={id} /><LocalProfilePanel businessId={id} />
+      </> : null}
+      {section.key === "revenue" ? <><Panel className="space-y-3 p-4"><p className="max-w-prose text-sm text-muted-foreground">Revenue appears when Stripe is connected. Orders and refunds are reported separately from marketing attribution.</p><Button asChild size="sm" variant="outline"><Link to={`/businesses/${id}/channels#revenue`}>Manage Stripe connection</Link></Button></Panel><RevenuePanel businessId={id} /></> : null}
+      {section.key === "funnel" ? <FunnelMeasurement businessId={id} data={overview} /> : null}
+      {section.key === "events" ? <GoalEvents businessId={id} data={overview} days={days} formatDate={shortDate} /> : null}
+      {section.key === "realtime" ? <RealtimeAvailability businessId={id} /> : null}
+      {section.key === "answers" ? <>
+      <DiscoveryOverview businessId={id} />
       {trend === "goal" ? (
         <section className="space-y-3">
           <div className="min-w-0 max-w-full">
@@ -206,7 +226,6 @@ export function Today() {
         <HeroChart a={a} stats={stats} loading={loading} metric={trend} days={days} switcher={switcher} />
       )}
 
-      <SourcesPanel businessId={id} data={overview} />
 
       <section className="space-y-3">
         <div>
@@ -221,6 +240,7 @@ export function Today() {
           <RecordOutcomesCard businessId={id} />
         </div>
       </section>
+      </> : null}
     </div>
   )
 }
@@ -530,7 +550,7 @@ function AccuracyByModelCard({ a, stats, loading }: { a: Analytics | null; stats
 function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a: Analytics | null; loading: boolean; days: number }) {
   const [tab, setTab] = useState<"questions" | "facts">("questions")
   return (
-    <Panel className="shadow-(--card-shadow-raised)">
+    <Panel className="flex h-[26rem] min-w-0 flex-col overflow-hidden shadow-(--card-shadow-raised)">
       <PanelHeader title="What buyers ask" description="Supported share per question and per approved fact">
         <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
           <Link to={`/businesses/${businessId}/${tab === "questions" ? "checks" : "truth"}`}>
@@ -547,7 +567,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
           </TabsList>
         </Tabs>
       </div>
-      <div className="p-2">
+      <div role="region" aria-label="Buyer questions and facts" tabIndex={0} className="min-h-0 flex-1 overflow-auto overscroll-contain p-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         {loading || !a ? (
           <ListSkeleton />
         ) : tab === "questions" ? (

@@ -1,7 +1,8 @@
-// Channels: every account the agent can work through, as one list. Each row
-// says what the agent does with it and has one button. Google and Meta sign in
-// straight away; Stripe and WordPress open a short form in the row. Managing a
-// connected account opens the same row.
+// Channels: the accounts the agent works through, grouped by what it does
+// with them. Each row says what the agent gets from the account and has one
+// button. Google and Meta sign in straight away; Stripe and WordPress open a
+// short form in the row. Extra data sources and access settings live on their
+// own tab so the accounts stay readable.
 import { useState, type ReactNode } from "react"
 import { Link, useLocation, useParams, useSearchParams } from "react-router"
 import { LoaderCircleIcon } from "lucide-react"
@@ -10,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageHeader, Panel } from "@/components/page"
 import { ChannelMark } from "@/components/channel-mark"
 import { SearchConsoleSetup } from "@/components/search-console"
@@ -36,8 +38,15 @@ const STATE_BADGE: Record<State, { label: string; variant: "supported" | "partia
   choose: { label: "Finish setup", variant: "partial" },
   reconnect: { label: "Reconnect", variant: "wrong" },
   available: null,
-  unavailable: { label: "Setup required", variant: "unknown" },
+  unavailable: { label: "Not available yet", variant: "outline" },
 }
+type Group = "measure" | "ads" | "website"
+const GROUPS: ReadonlyArray<{ key: Group; title: string; description: string }> = [
+  { key: "measure", title: "Measure results", description: "So the agent can tell what is working, from real numbers." },
+  { key: "ads", title: "Ads and listings", description: "The agent reads results and can prepare changes for you to approve." },
+  { key: "website", title: "Your website", description: "The agent drafts page changes and posts; each one waits for your approval." },
+]
+const TOOL_ANCHORS = ["research-connections", "ai-answer-tracking", "ai-traffic", "ai-traffic-feed", "tool-servers", "plugins", "agent-access"]
 
 export function ChannelsPage() {
   const { id = "" } = useParams()
@@ -55,6 +64,8 @@ export function ChannelsPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ row: string; text: string } | null>(null)
   const toggle = (row: string) => setOpen(o => (o === row ? null : row))
+  // Links to a tool section (#plugins, #agent-access, ...) open its tab.
+  const [tab, setTab] = useState(() => params.get("tab") === "tools" || TOOL_ANCHORS.includes(hash.slice(1)) ? "tools" : "accounts")
   const adsCallback = params.get("ads") ? ADS_CALLBACK_COPY[params.get("ads") ?? ""] : null
 
   const signIn = async (row: string, start: () => Promise<{ authorizationUrl: string }>, describe: (e: unknown) => string) => {
@@ -65,7 +76,8 @@ export function ChannelsPage() {
   const statuses = [sc, ads, revenue, wordpress]
   const loading = statuses.some(status => status.loading && !status.data)
   const incomplete = statuses.some(status => status.error && !status.data)
-  const rows: ReactNode[] = []
+  const rows: Record<Group, ReactNode[]> = { measure: [], ads: [], website: [] }
+  const states: State[] = []
 
   // Google Search and Analytics share one Google sign-in.
   if (sc.data) {
@@ -73,7 +85,8 @@ export function ChannelsPage() {
     const readable = s?.connections.filter(c => c.status === "ACTIVE" && c.searchConsole) ?? []
     const upgradable = s?.connections.find(c => c.status === "ACTIVE" && !c.searchConsole) ?? s?.connections.find(c => c.status === "REAUTHORIZATION_REQUIRED")
     const state: State = !s?.configured ? "unavailable" : s.binding ? "connected" : readable.length ? "choose" : upgradable ? "reconnect" : "available"
-    rows.push(
+    states.push(state)
+    rows.measure.push(
       <ChannelRow key="google" row="google" mark="search-console" title="Google Search Console"
         purpose="See which Google searches bring people to your site."
         identity={s?.binding ? siteLabel(s.binding.siteUrl) : upgradable?.googleEmail ?? null}
@@ -86,7 +99,7 @@ export function ChannelsPage() {
       </ChannelRow>,
     )
   } else if (sc.error) {
-    rows.push(<RowError key="google" text="Google Search and Analytics status could not load." onRetry={() => void sc.reload()} />)
+    rows.measure.push(<RowError key="google" text="Google Search and Analytics status could not load." onRetry={() => void sc.reload()} />)
   }
 
   // Google Business Profile, Google Ads and Meta share the ads sign-in flow.
@@ -104,8 +117,9 @@ export function ChannelsPage() {
       const active = signIns.filter(c => c.status === "ACTIVE")
       const expired = signIns.filter(c => c.status === "REAUTHORIZATION_REQUIRED")
       const state: State = !platform.configured ? "unavailable" : bound.length ? "connected" : active.length ? "choose" : expired.length ? "reconnect" : "available"
+      states.push(state)
       const row = provider
-      rows.push(
+      rows.ads.push(
         <ChannelRow key={provider} row={row} mark={provider} title={AD_PROVIDER_NAME[provider]} purpose={PURPOSE[provider]}
           identity={bound.length ? bound.map(b => b.name).join(", ") : null}
           state={state} open={open === row} onToggle={() => toggle(row)}
@@ -117,14 +131,15 @@ export function ChannelsPage() {
       )
     }
   } else if (ads.error) {
-    rows.push(<RowError key="ads" text="Ads and Google listing status could not load." onRetry={() => void ads.reload()} />)
+    rows.ads.push(<RowError key="ads" text="Ads and Google listing status could not load." onRetry={() => void ads.reload()} />)
   }
 
   // Pasted keys: the row opens the short form instead of leaving the app.
   if (revenue.data) {
     const { configured, connection } = revenue.data
     const state: State = !configured ? "unavailable" : connection?.status === "ACTIVE" ? "connected" : connection?.status === "REVOKED" ? "reconnect" : "available"
-    rows.push(
+    states.push(state)
+    rows.measure.push(
       <ChannelRow key="revenue" row="revenue" mark="stripe" title="Stripe" purpose="Revenue and new customers, so results are counted in money."
         identity={connection?.status === "ACTIVE" ? connection.displayName : null}
         state={state} open={open === "revenue"} onToggle={() => toggle("revenue")} onConnect={() => toggle("revenue")}
@@ -133,12 +148,13 @@ export function ChannelsPage() {
       </ChannelRow>,
     )
   } else if (revenue.error) {
-    rows.push(<RowError key="revenue" text="Stripe status could not load." onRetry={() => void revenue.reload()} />)
+    rows.measure.push(<RowError key="revenue" text="Stripe status could not load." onRetry={() => void revenue.reload()} />)
   }
   if (wordpress.data) {
     const { configured, connection } = wordpress.data
     const state: State = !configured ? "unavailable" : connection?.status === "ACTIVE" ? "connected" : connection?.status === "REVOKED" ? "reconnect" : "available"
-    rows.push(
+    states.push(state)
+    rows.website.push(
       <ChannelRow key="wordpress" row="wordpress" mark="wordpress" title="WordPress" purpose="Improve pages and publish posts, with your approval for each change."
         identity={connection?.status === "ACTIVE" ? connection.siteName || connection.siteUrl : null}
         state={state} open={open === "wordpress"} onToggle={() => toggle("wordpress")} onConnect={() => toggle("wordpress")}
@@ -147,51 +163,93 @@ export function ChannelsPage() {
       </ChannelRow>,
     )
   } else if (wordpress.error) {
-    rows.push(<RowError key="wordpress" text="WordPress status could not load." onRetry={() => void wordpress.reload()} />)
+    rows.website.push(<RowError key="wordpress" text="WordPress status could not load." onRetry={() => void wordpress.reload()} />)
   }
 
   const connected = [sc.data?.binding, ...(ads.data?.bindings ?? []), revenue.data?.connection?.status === "ACTIVE", wordpress.data?.connection?.status === "ACTIVE"].filter(Boolean).length
   const profiles = inventory.data?.inventory.channels.filter(c => c.key.startsWith("profile:")) ?? []
 
   return (
-    <div className="rise-in w-full space-y-6 pb-4">
+    <div className="rise-in w-full space-y-5 pb-4">
       <PageHeader title="Channels"
-        description={`Where your agent works for ${name}. Connect an account and finish any account selection to make it available. Nothing is published, posted or spent until you approve it.`} />
+        description={`The accounts your agent uses for ${name}. It reads results from them, and changes nothing until you approve it.`}
+         />
       {adsCallback ? <p role="status" className={cn("text-sm", adsCallback.ok ? "text-muted-foreground" : "text-destructive")}>{adsCallback.text}</p> : null}
 
-      <Panel className="overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-          <h2 className="text-sm font-medium">Accounts</h2>
-          <span className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{loading ? "Checking" : incomplete ? "Some statuses unavailable" : connected ? `${connected} connected` : "None connected yet"}</span>
-          </span>
-        </div>
-        <ul className="divide-y divide-border/60">{rows}{loading ? <li className="p-4"><Skeleton className="h-12 rounded-lg" /></li> : null}</ul>
-      </Panel>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList aria-label="Channels sections">
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="tools">Agent tools</TabsTrigger>
+        </TabsList>
 
-      {profiles.length ? (
-        <Panel className="space-y-3 p-4">
-          <div>
-            <h2 className="text-sm font-medium">Found on your website</h2>
-            <p className="text-xs text-muted-foreground">Profiles your homepage links to. The agent reads them in research; it can't post there.</p>
+        <TabsContent value="accounts" className="space-y-5">
+          <p className="text-xs text-muted-foreground">{loading ? "Checking your accounts." : incomplete ? "Some account statuses could not load." : connected ? `${connected} ${connected === 1 ? "account" : "accounts"} connected.` : states.length && states.every(st => st === "unavailable") ? "None of these can be connected on this OpenRecord workspace yet. Open Why? on a row to see what is missing." : "No accounts connected yet. Start with the one that counts your goal, usually Search Console or Stripe."}</p>
+          {GROUPS.map(g => rows[g.key].length || loading ? (
+            <Panel key={g.key} className="overflow-hidden">
+              <div className="border-b border-border/60 px-4 py-3">
+                <h2 className="text-sm font-medium">{g.title}</h2>
+                <p className="text-xs text-muted-foreground">{g.description}</p>
+              </div>
+              <ul className="divide-y divide-border/60">{rows[g.key]}{loading && !rows[g.key].length ? <li className="p-4"><Skeleton className="h-10 rounded-lg" /></li> : null}</ul>
+            </Panel>
+          ) : null)}
+
+          {profiles.length ? (
+            <Panel className="space-y-3 p-4">
+              <div>
+                <h2 className="text-sm font-medium">Found on your website</h2>
+                <p className="text-xs text-muted-foreground">Profiles your homepage links to. The agent reads them in research but cannot post there.</p>
+              </div>
+              <ul className="flex flex-wrap gap-2">
+                {profiles.map(p => (
+                  <li key={p.key}>
+                    <a href={p.identity?.startsWith("http") ? p.identity : undefined} target="_blank" rel="noreferrer noopener"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-muted/70 px-2.5 py-1 text-xs shadow-(--control-shadow) transition-colors hover:bg-accent">
+                      <ChannelMark channelKey={p.key} className="size-3.5" />{p.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="tools" className="space-y-3">
+          <div className="py-2">
+            <h2 className="text-base font-medium">What would you like to set up?</h2>
+            <p className="mt-1 max-w-prose text-sm text-muted-foreground">These are optional. Start with the accounts tab to measure your results. Open a task below only when you need it.</p>
           </div>
-          <ul className="flex flex-wrap gap-2">
-            {profiles.map(p => (
-              <li key={p.key}>
-                <a href={p.identity?.startsWith("http") ? p.identity : undefined} target="_blank" rel="noreferrer noopener"
-                  className="inline-flex items-center gap-1.5 rounded-full bg-muted/70 px-2.5 py-1 text-xs shadow-(--control-shadow) transition-colors hover:bg-accent">
-                  <ChannelMark channelKey={p.key} className="size-3.5" />{p.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      ) : null}
-
-      <ResearchConnections businessId={id} />
-      <MoreTools businessId={id} />
+          <ToolSetup id="research-connections" title="Give the agent more research sources" description="Add an account you already use for market or competitor research." open={hash === "#research-connections"}>
+            <ResearchConnections businessId={id} />
+          </ToolSetup>
+          <ToolSetup id="ai-answer-tracking" title="Check AI answers on a schedule" description="Choose your buyer questions and how often to check them. Uses your connected AI subscriptions." open={hash === "#ai-answer-tracking"}>
+            <AiAnswerTracking businessId={id} />
+          </ToolSetup>
+          <ToolSetup id="ai-traffic" title="See visits from AI assistants" description="Import a website log to count AI referrals and crawler visits. Ask your website manager for the log." open={hash === "#ai-traffic"}>
+            <AiTrafficUpload businessId={id} />
+          </ToolSetup>
+          <ToolSetup id="plugins" title="Choose guidance for your business" description="Turn on specialist marketing guidance. This does not connect accounts or grant permission to act." open={hash === "#plugins"}>
+            <PluginsPanel businessId={id} />
+          </ToolSetup>
+          <details className="rounded-xl border p-4" open={["#ai-traffic-feed", "#tool-servers", "#agent-access"].includes(hash) || undefined}>
+            <summary className="cursor-pointer text-sm font-medium">Advanced connections for your technical team</summary>
+            <p className="my-3 text-xs text-muted-foreground">You do not need these to use OpenRecord. Keep credentials private and review each connection's access.</p>
+            <div className="space-y-3"><ToolServers businessId={id} /><LiveTrafficFeed businessId={id} /><AgentAccess businessId={id} /></div>
+          </details>
+        </TabsContent>
+      </Tabs>
     </div>
   )
+}
+
+function ToolSetup({ id, title, description, open, children }: { id: string; title: string; description: string; open: boolean; children: ReactNode }) {
+  return <details data-tool={id} open={open || undefined} className="group rounded-xl border bg-card">
+    <summary className="cursor-pointer rounded-xl px-4 py-4 outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <span className="ml-1 text-sm font-medium">{title}</span>
+      <span className="mt-1 block max-w-prose pl-5 text-xs leading-relaxed text-muted-foreground">{description}</span>
+    </summary>
+    <div className="border-t p-3">{children}</div>
+  </details>
 }
 
 function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle, onConnect, busy = false, error = null, children }: {
@@ -199,17 +257,14 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
   onToggle: () => void; onConnect: () => void; busy?: boolean; error?: string | null; children: ReactNode
 }) {
   const badge = STATE_BADGE[state]
-  const unavailableReason = row === "google" ? "Google sign-in must be configured on this server before you can connect your account."
-    : row === "meta" ? "Meta sign-in and secure credential storage must be configured on this server before you can connect."
-      : row === "google_ads" ? "Google Ads sign-in and the required developer access must be configured on this server before you can connect."
-        : row === "google_business" ? "Google sign-in and secure credential storage must be configured on this server before you can connect."
-          : "Secure credential storage must be configured on this server before you can connect."
+  const needs = row === "google" || row === "google_business" ? "Google sign-in" : row === "meta" ? "Meta sign-in" : row === "google_ads" ? "Google Ads access" : "Secure key storage"
+  const unavailableReason = `${needs} is not switched on for this OpenRecord workspace yet, so this account cannot be connected. Whoever runs your OpenRecord can turn it on.`
   // Opens the row instead of signing in when there is something to finish or manage here.
   const action = state === "connected" ? { label: open ? "Done" : "Manage", run: onToggle, variant: "outline" as const }
     : state === "choose" ? { label: open ? "Close" : "Finish setup", run: onToggle, variant: "default" as const }
     : state === "reconnect" ? { label: "Reconnect", run: onConnect, variant: "default" as const }
     : state === "available" ? { label: "Connect", run: onConnect, variant: "default" as const }
-    : { label: open ? "Close" : "Connect", run: onToggle, variant: "outline" as const }
+    : { label: open ? "Close" : "Why?", run: onToggle, variant: "ghost" as const }
   return (
     <li id={row} className="scroll-mt-20">
       <Collapsible open={open} onOpenChange={onToggle}>
@@ -232,7 +287,7 @@ function ChannelRow({ row, mark, title, purpose, identity, state, open, onToggle
         <CollapsibleContent>
           <div className="border-t border-border/60 bg-muted/30 px-4 py-3 sm:pl-15">
             {state === "unavailable"
-              ? <p className="text-xs text-muted-foreground">{unavailableReason} Once configured, you can connect your own account here.</p>
+              ? <p className="text-xs text-muted-foreground">{unavailableReason} Once it is on, you connect your own account here.</p>
               : children}
           </div>
         </CollapsibleContent>
@@ -260,23 +315,5 @@ function MeasurementNote({ inventory }: { inventory: { channels: ReadonlyArray<{
       <span className="min-w-0 flex-1">{ga4.note}</span>
       {ga4.action ? <Button asChild size="sm" variant="outline"><Link to={ga4.action.href}>{ga4.action.label}</Link></Button> : null}
     </p>
-  )
-}
-
-/** Data the agent can use without an account sign-in, kept out of the way. */
-function MoreTools({ businessId }: { businessId: string }) {
-  return (
-    <section aria-labelledby="agent-data-heading" className="space-y-3">
-      <div><h2 id="agent-data-heading" className="text-sm font-medium">Data and tools for the agent</h2>
-        <p className="text-xs text-muted-foreground">Manage AI answer tracking, website traffic data, tool servers and access for other agents.</p></div>
-      <div className="space-y-3">
-        <AiAnswerTracking businessId={businessId} />
-        <AiTrafficUpload businessId={businessId} />
-        <LiveTrafficFeed businessId={businessId} />
-        <ToolServers businessId={businessId} />
-        <PluginsPanel businessId={businessId} />
-        <AgentAccess businessId={businessId} />
-      </div>
-    </section>
   )
 }

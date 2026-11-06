@@ -1308,7 +1308,7 @@ function Composer({
           // The whole box behaves like the input: clicking padding focuses it.
           if (e.target === e.currentTarget) textRef.current?.focus()
         }}
-        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow) transition-shadow focus-within:shadow-(--card-shadow-focus)"
+        className="relative flex min-h-12 cursor-text items-end gap-3 rounded-[10px] bg-card px-3 py-2 shadow-(--control-shadow)"
       >
         {menuOpen ? (
           <ul role="listbox" aria-label="Commands" className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-[10px] bg-card shadow-(--card-shadow) bg-popover p-1 text-left shadow-(--float-shadow-strong)">

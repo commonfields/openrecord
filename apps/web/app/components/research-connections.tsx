@@ -48,7 +48,7 @@ export function ResearchConnections({ businessId }: { businessId: string }) {
             <li key={p.id} className="space-y-2 py-2">
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1"><span className="font-medium">{p.name}</span>{p.paid ? <span className="text-muted-foreground"> (billed to your own account)</span> : p.optional ? <span className="text-muted-foreground"> (optional, raises limits)</span> : null}
-                  <span className="block text-[0.6875rem] text-muted-foreground">{p.endpoints.slice(0, 4).join(", ")}{p.endpoints.length > 4 ? ` and ${p.endpoints.length - 4} more` : ""}</span></span>
+                  <span className="block text-[0.6875rem] text-muted-foreground">{p.connected ? "Available to the agent for research." : "Connect only if your team already uses this account."}</span></span>
                 {p.connected ? (<>
                   <span className="text-[0.6875rem] text-muted-foreground">Connected, ending {p.hint}</span>
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => api(`${base(businessId)}/${p.id}`, { method: "DELETE" }))}>Disconnect</Button>

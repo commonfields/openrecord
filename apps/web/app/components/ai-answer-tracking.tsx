@@ -30,7 +30,8 @@ export function AiAnswerTracking({ businessId }: { businessId: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const s = q.data
-  if (!s || (!s.engines.length && !s.schedule)) return null
+  if (!s) return <Panel className="p-4"><p role={q.error ? "alert" : "status"} className="text-sm text-muted-foreground">{q.error ? "AI answer tracking could not load." : "Loading AI answer tracking…"}</p>{q.error ? <Button size="sm" variant="outline" onClick={() => void q.reload()}>Try again</Button> : null}</Panel>
+  if (!s.engines.length && !s.schedule) return <Panel className="space-y-2 p-4"><h3 className="text-sm font-medium">Connect an AI model first</h3><p className="text-xs text-muted-foreground">Open Settings from your account menu and connect your team's AI subscriptions. Save buyer questions under AI answers, then return here to choose a schedule. Scheduling can use your subscription allowance.</p></Panel>
   const chosen = picked ?? (s.schedule?.engines.map(key) ?? s.engines.slice(0, 1).map(key))
   const asks = Math.min(s.maxAsks, s.questions * chosen.length)
   const act = async (f: () => Promise<unknown>) => {
