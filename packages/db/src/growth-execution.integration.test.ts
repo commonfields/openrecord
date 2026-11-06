@@ -197,7 +197,8 @@ suite("connected execution persistence and guards (disposable TEST fixtures)", (
     // An authorization that has expired cannot be dispatched.
     // Derive the short expiry in PostgreSQL, not before a potentially slow round trip.
     await pool.query("INSERT INTO growth_execution_events(operation_id,business_id,revision,state,actor,user_id,reason,detail) VALUES($1,$2,2,'AUTHORIZED','OPERATOR',$3,'x',jsonb_build_object('approvedPatchSha256',$4::text,'expiresAt',now()+interval '1 second'))", [op2.id, f.businessId, f.session.userId, op2.patchSha256])
-    await new Promise(r => setTimeout(r, 1_500))
+    // Wait on the same database clock (the local VM may pause independently of Node).
+    await pool.query("SELECT pg_sleep(2)")
     await expect(dispatch(f, { ...op2, revision: 2 })).rejects.toMatchObject({ reason: "AuthorizationExpired" })
   })
 
