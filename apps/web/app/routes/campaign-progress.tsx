@@ -35,7 +35,7 @@ export function CampaignsPage() {
     <PageHeader title={selected ? selected.brief.title : "Campaigns"}
       {...(selectedId ? { back: { to: base, label: "Campaigns" } } : {})}
       description={selected ? "Review the plan, saved work and what needs your attention." : "See what is planned, what is blocked and what to discuss with your agent."}
-      actions={<><Button asChild size="sm"><Link to={askAgentPath(id, selected ? `/campaign-run Read campaign ${selected.id} and its latest run. Explain what needs my attention and prepare the next supported step. Do not publish or spend without approval.` : "/campaign")}>{selected ? "Continue with agent" : "Plan with agent"}</Link></Button><Button size="sm" variant="ghost" onClick={() => void query.reload()}>Refresh</Button></>} />
+      actions={<><Button asChild size="sm"><Link to={askAgentPath(id, selected ? `/marketing Work on campaign ${selected.id}. Read its marketing work queue and current proposals, then prepare the next supported step. Do not publish, send or spend without approval.` : "/campaign")}>{selected ? "Continue with agent" : "Plan with agent"}</Link></Button><Button size="sm" variant="ghost" onClick={() => void query.reload()}>Refresh</Button></>} />
     {query.error ? <p role="alert" className="text-sm text-destructive">Campaigns could not refresh. {query.data ? "Showing the last loaded version." : "Try Refresh to load them."}</p> : null}
     {query.loading && !query.data ? <Skeleton className="h-48 rounded-xl" /> : selected ? <CampaignProgress businessId={id} campaign={selected} />
       : selectedId ? !query.error ? <Panel className="p-6 text-sm text-muted-foreground">This campaign is unavailable. <Link to={base} className="underline">See all campaigns</Link></Panel> : null
@@ -64,6 +64,16 @@ export function CampaignProgress({ businessId, campaign }: { businessId: string;
       <div className="grid gap-5 sm:grid-cols-2"><Summary label="Goal" value={b.goal} /><Summary label="Audience" value={b.audience} /><Summary label="Offer" value={b.offer} /><Summary label="Message" value={b.message} /></div>
       <p className="text-xs text-muted-foreground">{campaign.created_by_actor === "ASSISTANT" ? "Agent-prepared plan" : "Saved plan"} · revision {campaign.revision}. Drafts and proposed targets are not approved facts or published work.</p>
     </Panel>
+    <details className="rounded-xl bg-card p-5 shadow-(--card-shadow)"><summary className="cursor-pointer text-sm font-medium">Distribution · {b.distribution?.primaryChannel || "Not planned yet"}</summary>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Summary label="Why this channel" value={b.distribution?.rationale ?? ""} />
+        <Summary label="Distribution motion" value={b.distribution?.motion === "UNSPECIFIED" ? "" : b.distribution?.motion.toLowerCase().replaceAll("_", " ") ?? ""} />
+        <Summary label="Funnel stage" value={b.distribution?.funnelStage === "UNSPECIFIED" ? "" : b.distribution?.funnelStage.toLowerCase() ?? ""} />
+        <Summary label="Destination or audience segment" value={b.distribution?.destination ?? ""} />
+        <Summary label="Cadence" value={b.distribution?.cadence ?? ""} /><Summary label="Proposed budget · not spending approval" value={b.distribution?.budget ?? ""} />
+        <Summary label="Conversion event" value={b.distribution?.conversionEvent ?? ""} /><Summary label="Tracking plan · not verified instrumentation" value={b.distribution?.trackingPlan ?? ""} />
+      </div><p className="mt-4 text-xs text-muted-foreground">Planning only. A destination, cadence or review date does not schedule delivery or verify tracking.</p>
+    </details>
     <CampaignRuns key={`${campaign.id}:${campaign.revision}`} businessId={businessId} campaignId={campaign.id} />
     <Panel><PanelHeader title="Deliverables and handoffs" description="Saved draft content and team-recorded progress. Marking a task done does not verify publication." />
       <ul className="divide-y px-5">{b.tasks.map(t => <li key={t.id} className="space-y-3 py-4">

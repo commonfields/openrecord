@@ -35,4 +35,17 @@ describe("campaign progress view", () => {
     c.brief.tasks = [{ id: "task", title: "Page", channel: "WEBSITE", owner: "", due: "", status: "BLOCKED", note: "No access" }]
     expect(campaignAttention(c).label).toBe("Blocked")
   })
+  it("shows saved distribution without implying authorization, scheduling or verified tracking", () => {
+    const c = campaign()
+    c.brief = { ...c.brief, distribution: { primaryChannel: "Email to consenting trial users", rationale: "Start with existing demand", motion: "OWNED", funnelStage: "ACTIVATION",
+      destination: "Onboarding booking page", cadence: "One welcome email", budget: "Suggested: no paid spend", trackingPlan: "Tagged links and CRM booking event", conversionEvent: "Qualified booking" } }
+    const html = renderToStaticMarkup(<MemoryRouter><CampaignProgress businessId="business" campaign={c} /></MemoryRouter>)
+    expect(html).toContain("Distribution · Email to consenting trial users")
+    expect(html).toContain("Qualified booking")
+    expect(html).toContain("not spending approval")
+    expect(html).toContain("not verified instrumentation")
+    expect(html).toContain("does not schedule delivery")
+    expect(html).not.toMatch(/<input|<textarea|<select/)
+    expect(html).not.toContain("<details open")
+  })
 })

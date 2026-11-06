@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { BusinessRepository } from "@openrecord/db"
-import { CampaignBrief, campaignTransitionError } from "@openrecord/contracts"
+import { CampaignBrief, CampaignDistribution, campaignTransitionError } from "@openrecord/contracts"
 import { Effect, JSONSchema, Schema } from "effect"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import { AgentInvalidInput } from "./agent-tools.js"
@@ -12,6 +12,7 @@ export const CampaignDraftInput = Schema.Struct({
   title: CampaignBrief.fields.title,
   goal: OptionalText(2000), audience: OptionalText(2000), offer: OptionalText(2000), message: OptionalText(2000), hypothesis: OptionalText(2000),
   metric: OptionalText(500), baseline: OptionalText(500), target: OptionalText(500), owner: OptionalText(200), launchDate: OptionalText(10), reviewDate: OptionalText(10),
+  distribution: Schema.optional(CampaignDistribution),
   deliverables: Schema.Array(Schema.Struct({ title: CampaignBrief.fields.title,
     channel: Schema.Literal("WEBSITE", "EMAIL", "PAID", "SOCIAL", "OTHER"), owner: OptionalText(200), due: OptionalText(10),
     content: OptionalText(2000),
@@ -20,7 +21,7 @@ export const CampaignDraftInput = Schema.Struct({
 
 export const campaignDraftDeclarations: ReadonlyArray<ToolDeclaration> = [{
   name: "record_campaign_draft",
-  description: "Save an assistant-authored campaign draft and concrete draft deliverables in the selected business. Use when asked to create/prepare a campaign, including /campaign. Read business context and existing campaigns first. Leave unknown fields empty; label proposed targets/hypotheses as suggestions. Deliverable content is private draft copy or a specific handoff, not published work. All tasks are server-set TODO; never approves, schedules, spends, publishes, sends or marks completion. Identical inputs reuse the existing draft. Return its link. For a requested alternative, save a clearly named new draft; never claim the original was changed.",
+  description: "Save an assistant-authored campaign draft and concrete draft deliverables in the selected business. Use when asked to create/prepare a campaign, including /campaign or /marketing. Read business context and existing campaigns first. Include a distribution plan: one primary channel and rationale, funnel stage, destination, cadence, proposed budget, conversion event and tracking plan. Leave unknown fields empty or UNSPECIFIED; label proposed targets/hypotheses/budgets as suggestions. A saved tracking plan is not verified instrumentation. Deliverable content is private draft copy or a specific handoff, not published work. All tasks are server-set TODO; never approves, schedules, spends, publishes, sends or marks completion. Identical inputs reuse the existing draft. Return its link. For a requested alternative, save a clearly named new draft; never claim the original was changed.",
   parametersJsonSchema: JSONSchema.make(CampaignDraftInput),
 }]
 
@@ -50,6 +51,6 @@ export const draftMarketingCampaign = (ctx: ToolContext, raw: unknown) => Effect
   }))
   return { summary: saved.reused ? "Existing campaign draft reused; nothing launched" : "Campaign and deliverable drafts saved; nothing launched", citations: [],
     data: { campaignId: saved.row["id"], revision: saved.row["revision"], status: saved.row["status"], actor: "ASSISTANT", reused: saved.reused,
-      url: `/businesses/${ctx.businessId}/campaigns`, executed: false,
+      url: `/businesses/${ctx.businessId}/campaigns?campaign=${saved.row["id"]}`, executed: false,
       note: "A private planning draft only. Unknown fields remain empty. Review the brief and use supported proposal tools for external actions; approval and independent verification remain required." } }
 })
