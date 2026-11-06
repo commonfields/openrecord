@@ -35,6 +35,7 @@ describe("agent tool harness", () => {
       "read_issue",
       "read_local_profile",
       "read_marketing_campaigns",
+      "read_marketing_work",
       "read_objective_investigations",
       "read_observation",
       "read_open_issues",

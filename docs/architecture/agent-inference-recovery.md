@@ -115,3 +115,17 @@ expected numbers. Regrading honors recorded incomplete outcomes too.
 5. Coding execution needs a deliberately scoped workspace/sandbox, reviewed
    diffs, tests and approval boundaries. No unrestricted coding or shell tool was
    added to the product agent by this change.
+
+## Full-suite follow-up
+
+Full CI exposed three gaps beyond the targeted context tests: the read-tool
+allowlist omitted `read_marketing_work`, setup's narrow four-tool workflow
+inherited the entire general marketing prompt, and ordinary investigation notes
+ignored requested state changes (only waiting notes carried state).
+
+The follow-up updates the explicit read-only allowlist, gives narrow workflows
+a small shared safety prompt plus their own instructions (without raising the
+16,000-character workflow budget), and honors paired state/expected-state fields
+for ordinary notes. Stale transitions are refused and identical retries do not
+restore old state. Ordinary context-only notes cannot reopen a closed question.
+No historical notes are reinterpreted or backfilled from their prose.

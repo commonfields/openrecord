@@ -95,6 +95,11 @@ suite("objective investigations (disposable PostgreSQL)", () => {
     // A late delivery of the old save must not restore its waiting state.
     await wait()
     expect((await runtime.runPromise(readObjectiveInvestigations(f.accountId, f.businessId))).data.investigations[0]).toMatchObject({ work_state: "OPEN" })
+    const close = { investigationId, expectedStateNoteId: reopened.data.investigations[0]?.["state_note_id"], workState: "CLOSED", kind: "CONCLUSION", note: "Set aside; this is not proof the goal succeeded" }
+    const closed = await runtime.runPromise(dispatchInvestigation(ctx, "record_investigation_note", close))
+    expect((await runtime.runPromise(dispatchInvestigation(ctx, "record_investigation_note", close))).data.noteId).toBe(closed.data.noteId)
+    await runtime.runPromise(dispatchInvestigation(ctx, "record_investigation_note", { investigationId, kind: "OBSERVATION", note: "Historical context only; no state change requested" }))
+    expect((await runtime.runPromise(readObjectiveInvestigations(f.accountId, f.businessId))).data.investigations[0]).toMatchObject({ work_state: "CLOSED", follow_up: null })
   })
 
   it("waits for a scoped proposal decision without treating rejection as execution", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { MCP_PROHIBITED, type DiscoverySignals, type SetupBrief } from "@openrecord/contracts"
-import { AGENT_SYSTEM, agentDeclarations, turnPlan } from "./agent.js"
+import { AGENT_SYSTEM, WORKFLOW_SYSTEM, agentDeclarations, turnPlan } from "./agent.js"
 import { ECC_PIN, FIRST_IMPROVEMENT_TOOLS, SKILLS, selectWorkflow } from "./agent-skills.js"
 import { diagnoseMarketing, type DiagnosisInput } from "./marketing-diagnosis.js"
 
@@ -47,10 +47,13 @@ describe("OpenRecord marketing skill registry (provider-independent contract)", 
     const workflowTools = JSON.stringify(plan.tools).length, allTools = JSON.stringify(agentDeclarations).length
     expect(plan.tools.map(t => t.name)).toEqual([...FIRST_IMPROVEMENT_TOOLS])
     expect(workflowTools).toBeLessThan(allTools / 3)
-    expect(plan.system.startsWith(AGENT_SYSTEM)).toBe(true)
+    expect(plan.system.startsWith(WORKFLOW_SYSTEM)).toBe(true)
+    expect(plan.system).not.toContain("Marketing operating loop:")
+    expect(plan.system).toContain("Only a human may approve")
     expect(plan.system).not.toContain(SKILLS["seo-assessment"].instructions)
     expect(plan.system).not.toContain(SKILLS["answer-accuracy"].instructions)
-    // The bridged harness transport accepts at most 16000 system characters.
+    // Keep this narrow workflow under its own conservative prompt budget;
+    // the transport ceiling is not a reason to inject unrelated guidance.
     expect(plan.system.length).toBeLessThanOrEqual(16000)
     expect(turnPlan(null)).toEqual({ tools: agentDeclarations, system: AGENT_SYSTEM })
   })
