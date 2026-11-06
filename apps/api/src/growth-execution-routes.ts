@@ -10,7 +10,7 @@ import {
 } from "@openrecord/db"
 import {
   AuthorizeExecution, CancelExecution, ConnectExecutionTarget, DispatchExecution, EXECUTION_MAX_FILE_BYTES, PrepareExecution, RequestExecutionCheck,
-  decodeRouteId, diffLines, executionEdit, executionPathAllowed, executionRepositoryDenied, unifiedDiff,
+  applyContentEdits, decodeRouteId, diffLines, executionEdit, executionKindMatchesPath, executionPathAllowed, executionRepositoryDenied, unifiedDiff,
 } from "@openrecord/contracts"
 import {
   GitHubError, GitHubExecution, applyPageEdit, executionPatchSha256, gitBlobSha, githubEffect, sha256Text,
@@ -56,7 +56,7 @@ export const prepareConnectedExecution = (session: Session, businessId: string, 
     if (replay) return replay
     // The value must fit the kind (and a canonical address stay on the page's site) before any provider call.
     const edit = executionEdit(input.actionKind, input.value, input.liveUrl)
-    if (!edit) return yield* refuse("InvalidRequest")
+    if (!edit || !executionKindMatchesPath(input.actionKind, input.filePath)) return yield* refuse("InvalidRequest")
     const target = (yield* repo.targets(session.accountId, businessId)).find(t => t.id === input.targetId)
     if (!target) return yield* refuse("ExecutionTargetNotFound")
     if (!executionRepositoryPermitted(gh.allowed, target.owner, target.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
@@ -71,9 +71,11 @@ export const prepareConnectedExecution = (session: Session, businessId: string, 
     const file = yield* mapped(() => transport.file(target.owner, target.repository, input.filePath, baseCommitSha))
     if (file.kind !== "file") return yield* refuse(file.kind === "missing" ? "PageNotFound" : "PageNotSupported")
     if (Buffer.byteLength(file.content, "utf8") > EXECUTION_MAX_FILE_BYTES) return yield* refuse("PageNotSupported")
+    if (gitBlobSha(file.content) !== file.blobSha) return yield* refuse("PageNotSupported")
     // A deterministic page edit. Anything it cannot do safely (an ambiguous page, a change that changes nothing) is refused, never guessed.
-    const after = applyPageEdit(file.content, edit)
+    const after = edit.kind === "REPLACE_MARKDOWN" ? applyContentEdits(file.content, edit.edits) : applyPageEdit(file.content, edit)
     if (after === null || (edit.kind === "REMOVE_NOINDEX_META" && robotsNoindex.test(after))) return yield* refuse("NotApplicable")
+    if (Buffer.byteLength(after, "utf8") > EXECUTION_MAX_FILE_BYTES) return yield* refuse("PageNotSupported")
     const beforeSha256 = sha256Text(file.content), afterSha256 = sha256Text(after)
     const patchSha256 = executionPatchSha256({ actionKind: input.actionKind, owner: target.owner, repository: target.repository, baseBranch: target.baseBranch, baseCommitSha, filePath: input.filePath, liveUrl: input.liveUrl, beforeSha256, afterSha256 })
     const diff = unifiedDiff(input.filePath, diffLines(file.content, after))

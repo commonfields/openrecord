@@ -72,14 +72,14 @@ export const executionHeadBranch = (operationId: string): string => `openrecord/
 export const EXECUTION_HEAD_BRANCH = /^openrecord\/exec-[a-f0-9-]{36}$/
 
 export const executionPullRequestText = (i: { operationId: string; filePath: string; patchSha256: string; diff: string; rationale: string; liveUrl: string }) => ({
-  title: `Remove noindex from ${i.filePath}`,
+  title: `Apply approved change to ${i.filePath}`,
   body: [
     "This pull request was opened by OpenRecord for a change a person reviewed and authorized.", "",
     `- Page: \`${i.filePath}\``, `- Live URL: ${i.liveUrl}`, `- OpenRecord execution: ${i.operationId}`, `- Approved patch: ${i.patchSha256}`, "",
     `Why: ${i.rationale}`, "", "```diff", i.diff, "```", "",
     "OpenRecord does not merge or deploy. Merging is the repository maintainer's decision. If you change this pull request, OpenRecord will not treat it as the approved change.",
   ].join("\n"),
-  commitMessage: `Remove noindex from ${i.filePath}\n\nOpenRecord execution ${i.operationId}\nApproved patch ${i.patchSha256}`,
+  commitMessage: `Apply approved change to ${i.filePath}\n\nOpenRecord execution ${i.operationId}\nApproved patch ${i.patchSha256}`,
 })
 
 // ---- configuration ----

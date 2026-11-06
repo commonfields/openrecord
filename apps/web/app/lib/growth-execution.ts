@@ -3,7 +3,7 @@
 //   the request, the repository merge, and the live website.
 // "Marketing work completed" is never derived from a provider response, and a
 // merge is never described as the website being live.
-import type { ExecutionFacts, ExecutionOperation, ExecutionState, ExecutionTarget } from "@openrecord/contracts"
+import type { ExecutionFacts, ExecutionOperation, ExecutionState, ExecutionTarget, PrepareExecution } from "@openrecord/contracts"
 import { api, ApiError } from "./api"
 
 const base = (id: string) => `/api/growth/clients/${encodeURIComponent(id)}`
@@ -15,7 +15,7 @@ export const GrowthExecutions = {
   connect: (id: string, input: { owner: string; repository: string; baseBranch: string; siteTargetId: string; allowedPaths: string[]; idempotencyKey: string }) =>
     api<{ target: ExecutionTarget }>(`${base(id)}/execution-targets`, { method: "POST", body: JSON.stringify(input) }),
   list: (id: string, opportunityId: string) => api<{ operations: ExecutionOperation[] }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/connected-executions`),
-  prepare: (id: string, opportunityId: string, input: { targetId: string; actionKind: "REMOVE_NOINDEX_META"; filePath: string; liveUrl: string; rationale: string; siteFindingId: string | null; idempotencyKey: string }) =>
+  prepare: (id: string, opportunityId: string, input: PrepareExecution) =>
     api<{ operation: ExecutionOperation }>(`${base(id)}/opportunities/${encodeURIComponent(opportunityId)}/connected-executions`, { method: "POST", body: JSON.stringify(input) }),
   authorize: (id: string, operationId: string, input: { reviewedPatchSha256: string; expectedRevision: number; reason: string; idempotencyKey: string }) =>
     api<{ operation: ExecutionOperation }>(`${op(id, operationId)}/authorize`, { method: "POST", body: JSON.stringify(input) }),
@@ -83,6 +83,7 @@ export const EXECUTION_ACTION_COPY: Readonly<Record<string, { readonly title: st
   SET_CANONICAL: { title: "New canonical address for", risk: "A wrong canonical can tell search engines to ignore this page. Check it points at the page that should rank." },
   ADD_JSON_LD: { title: "Add structured data to", risk: "Structured data must match what the page shows. Check every fact, price and answer in it is true." },
   SET_IMAGE_ALT: { title: "New image alt text on", risk: "Alt text is read aloud to people using screen readers. Check it describes the image plainly." },
+  REPLACE_MARKDOWN: { title: "Exact content edits in", risk: "Review every replacement and any Markdown/MDX behavior in the diff. Opening or merging a pull request does not prove that the rendered page is deployed." },
 }
 
 export const executionError = (e: unknown): string => {
@@ -92,7 +93,7 @@ export const executionError = (e: unknown): string => {
     ExecutionNotConfigured: "Repository access is not configured on this server.",
     NotApplicable: "OpenRecord can't make this change to the page safely: it is already done, or the page is ambiguous (for example two titles or two canonical links).",
     InvalidRequest: "The change does not fit what was asked for. Check the value, and that a canonical address is on the same website.",
-    PageNotFound: "The page was not found on the base branch.", PageNotSupported: "That page is not a plain HTML file OpenRecord can change.",
+    PageNotFound: "The page was not found on the base branch.", PageNotSupported: "That file is not supported plain text, or exceeds the content size limit.",
     PathNotPermitted: "That page is outside the paths connected for this repository.", LivePageOutsideSite: "The live address is outside the registered website.",
     PatchMismatch: "The change you reviewed is not the change on record. Reload and review again.", StaleExecution: "This changed since you opened it. Reload and review again.",
     InitiativeNotApproved: "The initiative must be approved first.", ExecutionAlreadyOpen: "Another change for this page is still in progress.",

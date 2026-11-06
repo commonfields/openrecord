@@ -60,8 +60,8 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     const profile = await run(Effect.flatMap(GrowthRepository, r => r.registerProduct(session, { name: "TEST Salon", websiteUrl: "https://salon.test", engagement: "CLIENT", ...details, idempotencyKey: randomUUID() })))
     const siteId = String((await pool.query("INSERT INTO site_targets(business_id,root_url,canonical_origin,path_prefix) VALUES($1,'https://salon.test/','https://salon.test','/') RETURNING id", [profile.businessId])).rows[0].id)
     const owner = `salon-${randomUUID().slice(0, 8)}`, repo = "salon-site"
-    const gh = fixtureGitHub({ owner, repo, branch: "main", files: { [PAGE]: BEFORE, "about.html": "<html><body>About</body></html>\n" } })
-    const target = await exec(r => r.connectTarget(session, profile.businessId, { owner, repository: repo, baseBranch: "main", siteTargetId: siteId, allowedPaths: ["pricing.html", "pages/"], idempotencyKey: randomUUID() }))
+    const gh = fixtureGitHub({ owner, repo, branch: "main", files: { [PAGE]: BEFORE, "content/offer.mdx": "# Before\n\nOne offer.\n", "about.html": "<html><body>About</body></html>\n" } })
+    const target = await exec(r => r.connectTarget(session, profile.businessId, { owner, repository: repo, baseBranch: "main", siteTargetId: siteId, allowedPaths: ["pricing.html", "pages/", "content/"], idempotencyKey: randomUUID() }))
     return { session, accountId, businessId: profile.businessId, goalId: profile.primaryGoal.id, siteId, owner, repo, gh, target }
   }
   type F = Awaited<ReturnType<typeof fixture>>
@@ -84,7 +84,7 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
   const authorized = async (f: F, oid?: string, over: Partial<PreparedExecution> = {}) => {
     const id = oid ?? await opportunity(f)
     const p = await plan(f, over)
-    const fp = executionRequestFingerprint({ opportunityId: id, targetId: p.targetId, actionKind: p.actionKind, filePath: p.filePath, liveUrl: p.liveUrl, rationale: p.rationale, siteFindingId: p.siteFindingId })
+    const fp = executionRequestFingerprint({ opportunityId: id, targetId: p.targetId, actionKind: p.actionKind, value: p.actionValue, filePath: p.filePath, liveUrl: p.liveUrl, rationale: p.rationale, siteFindingId: p.siteFindingId })
     let op = await exec(r => r.prepare(f.session, f.businessId, id, fp, p))
     op = await exec(r => r.authorize(f.session, f.businessId, op.id, { reviewedPatchSha256: op.patchSha256, expectedRevision: op.revision, reason: "TEST reviewed the diff", idempotencyKey: randomUUID() }))
     return { oid: id, op }
@@ -110,6 +110,32 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     return cur
   }
   const receipts = async (op: ExecutionOperation) => Number((await pool.query("SELECT count(*) FROM interventions WHERE verification_id=$1", [op.id])).rows[0].count)
+
+  it("delivers approved Markdown bytes once and keeps rendered deployment inconclusive without fetching", async () => {
+    const f = await fixture(), filePath = "content/offer.mdx", before = "# Before\n\nOne offer.\n", after = "# Better\n\nOne offer.\n"
+    const baseCommitSha = (await f.gh.transport.branchHead(f.owner, f.repo, "main"))!
+    const actionValue = { edits: [{ find: "Before", replace: "Better" }] }
+    const patchSha256 = executionPatchSha256({ actionKind: "REPLACE_MARKDOWN", owner: f.owner, repository: f.repo, baseBranch: "main", baseCommitSha, filePath, liveUrl: LIVE, beforeSha256: sha256Text(before), afterSha256: sha256Text(after) })
+    let { op } = await dispatched(f, { actionKind: "REPLACE_MARKDOWN", actionValue, filePath, baseCommitSha, baseBlobSha: gitBlobSha(before), afterBlobSha: gitBlobSha(after), beforeSha256: sha256Text(before), afterSha256: sha256Text(after), afterContent: after, diff: unifiedDiff(filePath, diffLines(before, after)), patchSha256 })
+    let fetched = false
+    const runner = await runnerFor(f, [op.id], { live: { lookup: async () => { fetched = true; throw new Error("must not fetch") }, fetch: async () => { fetched = true; throw new Error("must not fetch") } } })
+    await runner.steps(3)
+    op = await get(f, op)
+    expect(op.state).toBe("AWAITING_MERGE")
+    expect(f.gh.prs).toHaveLength(1)
+    expect(f.gh.branches.get(`openrecord/exec-${op.id}`)!.files.get(filePath)).toBe(after)
+    expect(f.gh.branches.get("main")!.files.get(filePath)).toBe(before)
+    const writes = [...f.gh.writes]
+    f.gh.merge(1, { mergedAt: "2026-11-06T09:30:00.000Z" })
+    op = await settle(f, op, runner, o => o.liveChecks.length > 0)
+    expect(op.state).toBe("VERIFIED")
+    expect(op.liveChecks[0]).toMatchObject({ result: "INCONCLUSIVE", httpStatus: null })
+    expect(executionFacts(op).liveChange).toBe("INCONCLUSIVE")
+    await runner.steps(3)
+    expect(f.gh.writes).toEqual(writes)
+    expect(await receipts(op)).toBe(1)
+    expect(fetched).toBe(false)
+  })
 
   it("Scenario A: one authorized change becomes one pull request, one verified merge and one linked receipt; the live site is a separate fact", async () => {
     const f = await fixture()

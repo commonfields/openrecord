@@ -20,6 +20,14 @@ const merged = { interventionId: id(8), claim: "PR_MERGED" as const, mergedAt: "
 const render = (o: ExecutionOperation) => renderToStaticMarkup(createElement(ExecutionCard, { businessId: id(2), operation: o, reload: async () => {} }))
 
 describe("connected change panel", () => {
+  it("shows Markdown source review without claiming rendered deployment", () => {
+    const html = render(op("PREPARED", { actionKind: "REPLACE_MARKDOWN", actionValue: { edits: [{ find: "Before", replace: "Better" }] }, filePath: "content/offer.mdx", diff: "--- a/content/offer.mdx\n+++ b/content/offer.mdx\n-# Before\n+# Better" }))
+    expect(html).toContain("Exact content edits in")
+    expect(html).toContain("content/offer.mdx")
+    expect(html).toContain("Markdown/MDX behavior")
+    expect(html).toContain("does not prove that the rendered page is deployed")
+    expect(html).toContain("Approve and open pull request")
+  })
   it("keeps the request, the merge and the live site as three separate statements", () => {
     const lines = (o: ExecutionOperation) => executionFactLines(executionFacts(o)).map(l => `${l.label}: ${l.text}`)
     expect(lines(op("PREPARED"))).toEqual(["Request: Not sent to the repository", "Repository merge: Not confirmed", "Live website: Not checked until the merge is confirmed"])

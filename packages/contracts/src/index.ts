@@ -1,6 +1,7 @@
 // Single typed contract shared by apps/api and apps/web.
 export * from "./providers.js"
 export * from "./campaigns.js"
+export * from "./content-edits.js"
 // Derives request/response shapes from Effect Schema (domain package).
 import { Schema } from "effect"
 import { HarnessSelection } from "./harness.js"

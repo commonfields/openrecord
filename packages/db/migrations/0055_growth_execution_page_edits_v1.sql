@@ -7,7 +7,9 @@
 -- replay of 0034 never narrows this again.
 ALTER TABLE growth_execution_operations DROP CONSTRAINT IF EXISTS growth_execution_operations_action_kind_check;
 ALTER TABLE growth_execution_operations ADD CONSTRAINT growth_execution_operations_action_kind_check
-  CHECK (action_kind IN ('REMOVE_NOINDEX_META','SET_TITLE','SET_META_DESCRIPTION','SET_CANONICAL','ADD_JSON_LD','SET_IMAGE_ALT'));
+  -- The runner replays every migration: retain 0078's kind on subsequent runs
+  -- so existing Markdown operations do not prevent the batch reaching 0078.
+  CHECK (action_kind IN ('REMOVE_NOINDEX_META','SET_TITLE','SET_META_DESCRIPTION','SET_CANONICAL','ADD_JSON_LD','SET_IMAGE_ALT','REPLACE_MARKDOWN'));
 ALTER TABLE growth_execution_operations ADD COLUMN IF NOT EXISTS action_value JSONB;
 ALTER TABLE growth_execution_operations DROP CONSTRAINT IF EXISTS growth_execution_operations_action_value_check;
 ALTER TABLE growth_execution_operations ADD CONSTRAINT growth_execution_operations_action_value_check
