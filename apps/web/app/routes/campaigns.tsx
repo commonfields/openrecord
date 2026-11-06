@@ -8,7 +8,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePicker } from "@/components/ui/date-picker"
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { CampaignRuns } from "@/components/campaign-runs"
 import { PageHeader, Panel, PanelHeader } from "@/components/page"
 import { api } from "@/lib/api"
 import { useApi } from "@/lib/use-api"
@@ -88,7 +87,6 @@ export function CampaignManualEditor({ initialCampaign }: { initialCampaign?: Ca
           {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
           {editing.revision > 0 ? <Button asChild variant="outline" className="mt-4"><Link to={askAgentPath(id, `/marketing Work on campaign ${editing.id}. Read its marketing work queue and current revision, then prepare the next permitted step. Preserve existing decisions. Do not publish, send or spend without approval.`)}>Work on this with the agent<ArrowRightIcon /></Link></Button> : <p className="mt-4 text-xs text-muted-foreground">Save the brief first so the agent can read its durable context.</p>}
         </Panel>
-        {editing.revision > 0 ? <CampaignRuns key={`${editing.id}:${editing.revision}`} businessId={id} campaignId={editing.id} /> : null}
         <Panel><PanelHeader title="1. Brief" description="Start with the customer and the business outcome, not a channel." /><div className="grid gap-4 p-5 sm:grid-cols-2">{(["title", "owner", "goal", "audience", "offer", "message", "hypothesis", "launchDate"] as const).map(field)}</div></Panel>
         <details className="rounded-xl bg-card p-5 shadow-(--card-shadow)"><summary className="cursor-pointer text-sm font-medium">Distribution details</summary><p className="mt-3 text-xs text-muted-foreground">One primary channel first. These are planning notes, not approval to spend, scheduled delivery or verified tracking.</p><div className="mt-4 grid gap-4 sm:grid-cols-2">
           {([

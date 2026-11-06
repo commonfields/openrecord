@@ -88,6 +88,7 @@ function App() {
               <Route path="work" element={<WorkPage />} />
               <Route path="campaigns" element={<CampaignsPage />} />
               <Route path="results" element={<ResultsPage />} />
+              <Route path="results/:section" element={<ResultsPage />} />
               <Route path="overview" element={<Overview />} />
               <Route path="truth" element={<TruthPage />} />
               <Route path="facts" element={<Navigate to="../truth" replace />} />

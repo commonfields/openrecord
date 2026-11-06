@@ -15,6 +15,7 @@ import { errorMessage, relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import { AskAgentButton } from "@/components/workspace-agent"
+import { decisionLabel } from "@/lib/decisions"
 
 type InboxItem = { id: string; business: string; businessId?: string; conversationId?: string; kind: string; title: string; summary: string; time: string; detail: ReactNode }
 
@@ -41,9 +42,7 @@ export function ApprovalsPage({ businessId }: { businessId?: string } = {}) {
   const items = (decisions.data?.items ?? []).filter(item => !businessId || item.business.id === businessId)
   const decisionRows: InboxItem[] = items.map(item => ({
     id: decisionId(item), business: item.business.name, businessId: item.business.id, ...(item.conversationId ? { conversationId: item.conversationId } : {}),
-    kind: item.type === "GROWTH_OPPORTUNITY" ? "Proposed work" : item.type === "WORDPRESS_CHANGE" ? "Website change" : item.type === "ACCOUNT_ACTION" ? "Account change" : "Agent proposal",
-    title: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.title : item.type === "WORDPRESS_CHANGE" ? `Website change: ${item.change.targetTitle}` : item.type === "ACCOUNT_ACTION" ? item.action.kind.replaceAll("_", " ") : item.proposal.message,
-    summary: item.type === "GROWTH_OPPORTUNITY" ? item.opportunity.problemStatement : item.type === "WORDPRESS_CHANGE" ? item.change.rationale : item.type === "ACCOUNT_ACTION" ? item.action.rationale : "Agent proposal",
+    ...decisionLabel(item),
     time: relativeTime(item.createdAt),
     detail: item.type === "GROWTH_OPPORTUNITY"
       ? <Panel className="p-5 sm:p-6"><InitiativeDecision businessId={item.business.id} opportunity={item.opportunity} measurement="NONE" onDecided={notifyDecisionsChanged} /></Panel>

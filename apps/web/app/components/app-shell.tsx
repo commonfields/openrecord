@@ -29,6 +29,7 @@ import { NewChatDialog } from "@/components/new-chat-dialog"
 import { CommandPaletteProvider, useCommandPalette } from "@/components/command-palette"
 import { HeaderSlotContext } from "@/components/page"
 import { sectionTitles } from "@/lib/nav"
+import { OVERVIEW_SECTIONS, overviewSection } from "@/lib/overview-navigation"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -350,7 +351,10 @@ function SidebarBody() {
           <SidebarGroup label="Workspace">
             <SidebarLink to={base ? `${base}/inbox` : "/approvals"} icon={<InboxIcon />} label="Inbox" count={waiting} />
             {base ? <>
-              <SidebarLink to={`${base}/results`} icon={<ChartColumnIcon />} label="Overview" count={attention} />
+              <SidebarLink to={`${base}/results`} icon={<ChartColumnIcon />} label="Overview" end />
+              {!collapsed && pathname.startsWith(`${base}/results`) ? <div className="ml-6 space-y-0.5 border-l border-border/70 pl-3" aria-label="Overview sections">
+                {OVERVIEW_SECTIONS.filter(section => section.key !== "summary").map(section => <OverviewLink key={section.key} to={`${base}/results/${section.key}`} label={section.label} />)}
+              </div> : null}
               <SidebarLink to={`${base}/campaigns`} icon={<BriefcaseIcon />} label="Campaigns" />
               <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answers" count={attention} />
               <SidebarLink to={`${base}/channels`} icon={<PlugIcon />} label="Channels" />
@@ -661,6 +665,11 @@ function ViewTabs() {
   )
 }
 
+function OverviewLink({ to, label }: { to: string; label: string }) {
+  const active = useMatch({ path: to, end: true }) !== null
+  return <Link to={to} aria-current={active ? "page" : undefined} className={cn("block rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "text-muted-foreground")}>{label}</Link>
+}
+
 function SidebarLink({ to, icon, label, count, end }: { to: string; icon: ReactNode; label: string; count?: number; end?: boolean }) {
   const { collapsed } = useContext(SidebarStateContext)
   // Resolve active state here: a function className would not survive the
@@ -860,7 +869,9 @@ function Breadcrumbs() {
     crumbs.push({ label: activeBusiness.name, to: `${base}/agent` })
     const section = parts[2] ?? ""
     const detail = parts[3]
-    if (section === "search" && detail === "sites" && parts[5] === "findings" && parts[6]) {
+    if (section === "results" && detail) {
+      crumbs.push({ label: "Overview", to: `${base}/results` }, { label: overviewSection(detail).label })
+    } else if (section === "search" && detail === "sites" && parts[5] === "findings" && parts[6]) {
       crumbs.push({ label: sectionTitles["search"] ?? "Website checks", to: `${base}/search` })
       crumbs.push({ label: "Finding" })
     } else if (section === "search" && detail) {
