@@ -505,7 +505,7 @@ export function ClientDiscoveryPage() {
   if (res.loading && !res.data) return <div className="space-y-4"><Skeleton className="h-14 w-72" /><Skeleton className="h-64 rounded-xl" /></div>
   if (!res.data) {
     return <EmptyState icon={<TriangleAlertIcon />} title="AI Discovery could not load" description={failure(res.error)}
-      action={<Button asChild variant="outline" size="sm"><Link to={`/clients/${id}`}>Client record</Link></Button>} />
+      action={<Button asChild variant="outline" size="sm"><Link to={`/clients/${id}/discovery`}>AI discovery</Link></Button>} />
   }
   const { view, surface, maxAttemptsPerCheck } = res.data
   const set = view.sets.at(-1) ?? null
@@ -523,8 +523,8 @@ export function ClientDiscoveryPage() {
     <div className="space-y-5 pb-4">
       {batchId && !batch ? <p role="alert" className="text-xs text-wrong">The linked measurement is unavailable in this client record.</p> : null}
       <PageHeader
-        back={{ to: `/clients/${id}`, label: view.profile.name }}
-        title="AI Discovery"
+        back={{ to: `/clients/${id}/discovery`, label: "AI discovery" }}
+        title="Manual measurement tools"
         description="Does the measured AI surface mention or recommend this business when a buyer asks for a product or service?"
         meta={<>
           <span>{surfaceLabel}</span>

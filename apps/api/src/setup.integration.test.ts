@@ -4,12 +4,13 @@ import { HttpApp, HttpRouter } from "@effect/platform"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AuthRepositoryLive, RecordRepositoryLive, SetupRepository, type DiscoveryResult } from "@openrecord/db"
+import { AcquisitionRepositoryLive, AuthRepositoryLive, RecordRepositoryLive, SetupRepository, type DiscoveryResult } from "@openrecord/db"
 import type { GrowthOpportunity, SetupView } from "@openrecord/contracts"
 import { extractBusinessSignals } from "@openrecord/site-operator"
 import { growthApi } from "./growth-routes.js"
 import { recordApi } from "./record-routes.js"
 import { setupApi } from "./setup-routes.js"
+import { runSetupPass } from "./setup-scheduler.js"
 import { requireSession, RepoLayers } from "./router.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -24,7 +25,8 @@ const HOSTILE_HOME = `<!doctype html><html><head><title>Lumen Dental | Family de
 suite("agent-native setup (disposable TEST fixtures, no network)", () => {
   let pool: pg.Pool, scope: Scope.CloseableScope, ctx: Context.Context<SetupRepository>
   const repos = Layer.mergeAll(AuthRepositoryLive, RecordRepositoryLive, RepoLayers.GrowthRepositoriesLive, RepoLayers.SetupRepositoryLive,
-    RepoLayers.BusinessRepositoryLive, RepoLayers.FactRepositoryLive)
+    RepoLayers.BusinessRepositoryLive, RepoLayers.FactRepositoryLive, RepoLayers.QuestionRepositoryLive, RepoLayers.DiscoveryScopeRepositoryLive,
+    RepoLayers.ProductReadRepositoryLive, RepoLayers.AgentProposalRepositoryLive, AcquisitionRepositoryLive)
     .pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const router = HttpRouter.concat(HttpRouter.concat(setupApi(run => Effect.flatMap(requireSession, ({ session }) => run(session))), growthApi(run => Effect.flatMap(requireSession, ({ session }) => run(session)))),
     recordApi(run => Effect.flatMap(requireSession, ({ session }) => run(session))))
@@ -68,6 +70,30 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     goalStatement: "More booked visits", conversionKind: "BOOKING", metricLabel: "Booked visits", reportingTimeZone: "UTC",
     facts: [{ predicate: "opening_hours", valueText: "Mon to Fri 8am to 6pm" }], ...extra,
   })
+
+  it("advances opted-in setup without a browser, once, but leaves legacy setup untouched", async () => {
+    const a = await account()
+    const first = await ok<{ setup: SetupView }>(call("POST", "/api/setup", a.cookie, { websiteUrl: `https://${randomUUID()}.test/`, name: "TEST Product", engagement: "DOGFOOD" }))
+    const legacy = await ok<{ setup: SetupView }>(call("POST", "/api/setup", a.cookie, { websiteUrl: `https://${randomUUID()}.test/` }))
+    const profile = await pool.query("SELECT b.name,p.engagement FROM businesses b JOIN record_profiles p ON p.business_id=b.id WHERE b.id=$1", [first.setup.businessId])
+    expect(profile.rows[0]).toMatchObject({ name: "TEST Product", engagement: "DOGFOOD" })
+    expect(first.setup.autoAdvance).toBe(true)
+    await discover(first.setup.businessId, "hostile")
+    await discover(legacy.setup.businessId, "hostile")
+    const draft = { businessName: "TEST Lumen Dental", category: "Family dentistry", audience: "Families nearby", valueProposition: "Same-week appointments", goalStatement: "More booked visits", conversionKind: "BOOKING", metricLabel: "Booked visits", competitors: [] }
+    await pool.query("UPDATE business_setups SET draft_status='READY',draft=$1::jsonb WHERE id=ANY($2::uuid[])", [JSON.stringify(draft), [first.setup.id, legacy.setup.id]])
+    await pool.query("UPDATE business_setups SET auto_advance=false WHERE id=$1", [legacy.setup.id])
+    await Effect.runPromise(Effect.gen(function*() {
+      yield* Effect.all([runSetupPass(a.accountId), runSetupPass(a.accountId)], { concurrency: 2 })
+      yield* runSetupPass(a.accountId)
+    }).pipe(Effect.provide(repos)))
+    const result = await pool.query("SELECT id,brief,opportunity_id FROM business_setups WHERE id=ANY($1::uuid[])", [[first.setup.id, legacy.setup.id]])
+    expect(result.rows.find(r => r.id === first.setup.id).brief.businessName).toBe(draft.businessName)
+    expect(result.rows.find(r => r.id === first.setup.id).opportunity_id).toBeTruthy()
+    expect(result.rows.find(r => r.id === legacy.setup.id)).toMatchObject({ brief: null, opportunity_id: null })
+    const count = await pool.query("SELECT count(*) FROM growth_opportunities WHERE business_id=$1", [first.setup.businessId])
+    expect(Number(count.rows[0].count)).toBe(1)
+  }, 120000)
 
   it("refuses anonymous, foreign and cross-site requests", async () => {
     const a = await account(), b = await account()

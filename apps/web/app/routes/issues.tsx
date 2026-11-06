@@ -11,7 +11,6 @@ import {
   LinkIcon,
   MessageSquareQuoteIcon,
   PenLineIcon,
-  RadarIcon,
   SearchIcon,
   TriangleAlertIcon,
   XIcon,
@@ -26,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Sparkline } from "@/components/charts"
 import { EmptyState, PageHeader, Panel, StatStrip, domainOf, type Stat } from "@/components/page"
 import { ProviderLogo, providerBrand } from "@/components/provider-logo"
+import { DiscoveryOverview } from "@/components/discovery-overview"
 import { IssueStateBadge, issueStateMeta, ProviderChip } from "@/components/status"
 import { Issues, type IssueState, type IssueWithEvidence } from "@/lib/api"
 import {
@@ -110,8 +110,8 @@ export function IssuesPage() {
   return (
     <div className="space-y-4 pb-4">
       <PageHeader
-        title="AI answer issues"
-        description="Review claims that need a verdict, or open a reviewed issue to see its evidence and follow-up. Unreviewed claims are not marked wrong."
+        title="AI answers"
+        description="Review open claims from AI answers. Discovery measurements below are separate from this review queue."
         actions={
           <>
             <Button
@@ -123,16 +123,11 @@ export function IssuesPage() {
               <DownloadIcon />
               Export CSV
             </Button>
-            <Button asChild size="sm">
-              <Link to={`/businesses/${id}/checks`}>
-                <RadarIcon />
-                Run a check
-              </Link>
-            </Button>
           </>
         }
       />
 
+      <DiscoveryOverview businessId={id} />
       <StatStrip stats={stats} />
 
       {!loading && queue.length > 0 && query.state !== "NEEDS_REVIEW" ? (
@@ -191,13 +186,8 @@ export function IssuesPage() {
           <div className="p-4">
             <EmptyState
               icon={<InboxIcon />}
-              title="Inbox is clear"
-              description="Nothing disagrees with your approved facts right now. Run another check to keep an eye on new answers."
-              action={
-                <Button asChild variant="outline" size="sm">
-                  <Link to={`/businesses/${id}/checks`}>Go to checks</Link>
-                </Button>
-              }
+              title="No answers to review"
+              description="When answers are collected and need review, they will appear here."
             />
           </div>
         ) : visible.length === 0 ? (

@@ -7,7 +7,7 @@ const post = <T>(path: string, body: unknown) => api<T>(path, { method: "POST", 
 const base = (businessId: string) => `/api/businesses/${encodeURIComponent(businessId)}`
 
 export const Setup = {
-  start: (input: { websiteUrl: string; goalStatement?: string | null; businessId?: string | null }) =>
+  start: (input: { websiteUrl: string; goalStatement?: string | null; businessId?: string | null; name?: string; engagement?: "CLIENT" | "DOGFOOD" }) =>
     post<{ setup: SetupView; created: boolean }>("/api/setup", input),
   get: (businessId: string) => api<{ setup: SetupView | null }>(`${base(businessId)}/setup`),
   confirm: (businessId: string, input: SetupConfirmInput) => post<{ setup: SetupView }>(`${base(businessId)}/setup/confirm`, input),

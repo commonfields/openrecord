@@ -24,7 +24,6 @@ import {
   PlayIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
-  SparklesIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react"
@@ -1327,7 +1326,6 @@ export function ClientRecordPage() {
   }
   const agentButton = (
     <Button size="sm" variant={agentOpen ? "secondary" : "outline"} aria-pressed={agentOpen} onClick={() => setAgentOpen((v) => !v)}>
-      <SparklesIcon />
       Agent
     </Button>
   )

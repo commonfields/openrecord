@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react"
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode, type TransitionEvent } from "react"
 import { modelBrand, ProviderLogo } from "@/components/provider-logo"
 import { toast } from "sonner"
-import { ArrowUpIcon, BookOpenIcon, BookmarkPlusIcon, CheckIcon, Share2Icon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SparklesIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, BookmarkPlusIcon, CheckIcon, Share2Icon, CopyIcon, CornerDownRightIcon, FileTextIcon, FolderIcon, GlobeIcon, LoaderIcon, MicIcon, PaperclipIcon, PlusIcon, SquareIcon, UsersIcon, XIcon } from "lucide-react"
 import type { HarnessReasoningEffort } from "@openrecord/contracts"
 import { Button } from "@/components/ui/button"
 import { createPortal } from "react-dom"
@@ -35,6 +35,7 @@ import { WordPressChangeById } from "@/components/wordpress"
 import { AccountActionById } from "@/components/account-action"
 import { AgentFollowups } from "@/components/agent-followups"
 import { followupChatEvent, followupModel } from "@/lib/agent-followups"
+import { conversationProposals } from "@/lib/chat-proposals"
 
 /** An entry in the composer's "/" menu: an OpenRecord command or a playbook. */
 type MenuItem = ({ kind: "command" } & (typeof COMMANDS)[number]) | { kind: "playbook"; playbook: Playbook }
@@ -61,6 +62,7 @@ const unavailableText = (e: unknown) => e instanceof ApiError && e.body["reason"
   : "The agent isn't available right now"
 const notSentText = (e: unknown) => e instanceof ApiError && e.status === 409
   ? "Changed in another tab. Reload to continue"
+  : e instanceof ApiError && e.body["reason"] === "RECONNECT_REQUIRED" ? "Connection lost. Your request is saved; reload this chat to reconnect"
   : e instanceof ApiError && e.body["reason"] === "RATE_LIMITED" ? "No reply. This provider reached a usage limit. Choose another model or try again later"
   : e instanceof ApiError && e.body["reason"] === "CONTEXT_LIMIT" ? "No reply. This conversation is too large for the provider. Start a new conversation or shorten the message"
   : e instanceof ApiError && e.body["reason"] === "UNCONFIGURED" ? "Not sent. The agent isn't set up yet"
@@ -113,6 +115,9 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
   const [searchParams] = useSearchParams()
   // The page's chat, unless a pane asks for a specific conversation.
   const requestedConversationId = conversation ?? searchParams.get("chat") ?? undefined
+  const scopeKey = `${businessId}:${requestedConversationId ?? "current"}`
+  const currentScope = useRef(scopeKey)
+  currentScope.current = scopeKey
   const activity = useChatActivity()
   const { responseStyle } = usePreferences().preferences
   const [messages, setMessages] = useState<Message[]>([])
@@ -121,6 +126,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
+  const activeRequestId = useRef<string | null>(null)
   const mounted = useRef(true)
   const [proposals, setProposals] = useState<AgentProposal[]>([])
   // Set when this conversation is a helper session another session started.
@@ -139,11 +145,14 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
   const chooseReasoning = (effort: HarnessReasoningEffort | undefined) => setReasoningChoice(effort && reasoningKey ? { key: reasoningKey, effort } : null)
 
   const refreshProposals = () => { if (businessId !== null) void Agent.proposals(businessId).then(r => { if (mounted.current) setProposals(r.proposals) }).catch(() => {}) }
+  const refreshProposalsRef = useRef(refreshProposals)
+  refreshProposalsRef.current = refreshProposals
 
   useEffect(() => {
     mounted.current = true
     if (!enabled || businessId === "") return () => { mounted.current = false }
     let live = true
+    pending.current = false; activeRequestId.current = null; setBusy(false)
     setMessages([]); setConversationId(undefined); setRevision(0); setReady(false); setFailed(null); setUnavailable(null); setProposals([]); setSessionInfo(null)
     // A fresh session (the agent tab) starts a new chat unless one is named;
     // empty chats stay out of the history until something is sent.
@@ -188,6 +197,8 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
     if (selection.status === "unavailable" || selection.status === "unset") return
     pending.current = true; setBusy(true); setFailed(null)
     const requestId = crypto.randomUUID()
+    activeRequestId.current = requestId
+    const isCurrent = () => mounted.current && currentScope.current === scopeKey
     // The working indicator in the chat history shows which provider is on it.
     // A still-loading catalog sends nothing explicit, so the server's hosted
     // default answers and the fallback logo says so.
@@ -203,7 +214,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
     const poll = () => {
       if (!polling) return
       void Agent.progress(requestId, after).then(p => {
-        if (!polling || !mounted.current || !p.events.length) return
+        if (!polling || !isCurrent() || !p.events.length) return
         after = p.events[p.events.length - 1]!.seq
         progress = progressOf(p.events, progress)
         setMessages(m => m.length && m[m.length - 1]!.pending ? [...m.slice(0, -1), { ...m[m.length - 1]!, progress }] : m)
@@ -214,7 +225,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
     void Agent.send(businessId, text, requestId, revision, conversationId, turnSelection, responseStyle, attachments).then(r => {
       activity.finish(businessId, requestId, true, r.provider, r.title)
       notifyAgentChats()
-      if (!mounted.current) return
+      if (!isCurrent()) return
       setConversationId(r.conversationId); setRevision(r.revision)
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", fresh: true, text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
@@ -224,18 +235,48 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
       if (r.decisions?.length) notifyDecisionsChanged()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
-      if (!mounted.current) return
+      if (!isCurrent()) return
       setMessages(m => m.slice(0, -1))
-      setFailed({ text, attachments, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || e.body["reason"] === "UNCONFIGURED")) })
+      setFailed({ text, attachments, note: notSentText(e), retry: !(e instanceof ApiError && (e.status === 409 || ["UNCONFIGURED", "RECONNECT_REQUIRED", "INTERRUPTED", "CANCELLED"].includes(String(e.body["reason"])))) })
       refreshProposals()
       void Agent.load(businessId, conversationId).then(r => {
-        if (mounted.current && r.conversation && r.conversation.revision > revision) {
+        if (isCurrent() && r.conversation && r.conversation.revision > revision) {
           setConversationId(r.conversation.id); setRevision(r.conversation.revision)
           setMessages(toDisplayMessages(r.conversation.messages))
         }
       }).catch(() => {})
-    }).finally(() => { stopPolling(); pending.current = false; if (mounted.current) setBusy(false) })
+    }).finally(() => { stopPolling(); if (isCurrent()) { pending.current = false; if (activeRequestId.current === requestId) activeRequestId.current = null; setBusy(false) } })
   }
+  // Reloads and history navigation attach to durable work, never resubmit it.
+  useEffect(() => {
+    if (!enabled || !ready || !conversationId || pending.current) return
+    let live = true
+    const controller = new AbortController()
+    void Agent.pendingRequest(conversationId).then(async ({ request }) => {
+      if (!live || pending.current) return
+      if (!request) {
+        const loaded = await Agent.load(businessId, conversationId)
+        if (live && !pending.current && loaded.conversation) { setMessages(toDisplayMessages(loaded.conversation.messages)); setRevision(loaded.conversation.revision) }
+        return
+      }
+      pending.current = true; activeRequestId.current = request.request_id; setBusy(true)
+      setMessages(m => [...m, { id: uid(), role: "user", text: request.message, ...(request.attachments ? { attachments: request.attachments } : {}) }, { id: uid(), role: "agent", text: "", pending: true, progress: initialProgress() }])
+      try {
+        await Agent.waitRequest(request.request_id, controller.signal)
+        if (!live) return
+        const loaded = await Agent.load(businessId, conversationId)
+        if (live && loaded.conversation) { setMessages(toDisplayMessages(loaded.conversation.messages)); setRevision(loaded.conversation.revision); refreshProposalsRef.current() }
+      } catch (error) {
+        if (!live) return
+        const loaded = await Agent.load(businessId, conversationId).catch(() => null)
+        if (live && loaded?.conversation) { setMessages(toDisplayMessages(loaded.conversation.messages)); setRevision(loaded.conversation.revision) }
+        if (live) setFailed({ text: request.message, ...(request.attachments ? { attachments: request.attachments } : {}), note: notSentText(error), retry: false })
+      } finally {
+        if (live) { pending.current = false; activeRequestId.current = null; setBusy(false); notifyAgentChats() }
+      }
+    }).catch(() => {})
+    return () => { live = false; controller.abort() }
+  }, [businessId, conversationId, enabled, ready])
   // While helpers this session started are still working, their results and
   // the turn that follows arrive on the server; pick them up without a reload.
   const helpersWorking = ready && !busy && [...taskStatuses(messages).values()].some(t => t === "RUNNING")
@@ -301,7 +342,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
   // its own once the backend records the cancellation.
   const stopTurn = () => {
     if (!pending.current) return
-    void Agent.cancel(businessId, conversationId).catch(() => {
+    void (activeRequestId.current ? Agent.cancelRequest(activeRequestId.current) : Agent.cancel(businessId, conversationId)).catch(() => {
       if (mounted.current) toast.error("Couldn't stop the agent. Try again.")
     })
   }
@@ -332,8 +373,7 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
 
   // Work the agent produced: proposals to decide on, accepted drafts, and the
   // turns where it read stored evidence.
-  const openProposals = proposals.filter(p => p.status === "PROPOSED")
-  const keptDrafts = proposals.filter(p => p.status === "APPROVED" && p.kind !== "REQUEST_CHECK")
+  const { openProposals, keptDrafts } = conversationProposals(proposals, messages)
   const hasWork = openProposals.length > 0 || keptDrafts.length > 0
 
   return { businessId, conversationId, messages, proposals, openProposals, keptDrafts, hasWork, ready, busy, failed, unavailable, active: messages.length > 0, send, retry, clear, startNew, stopTurn, refreshProposals, catalog, selection, choose, sendable, reasoningEfforts, reasoningEffort, chooseReasoning, sessionInfo, helpersWorking, queued, enqueue, unqueue, sendNow }
@@ -685,10 +725,12 @@ function WorkPane({ session, businessName }: { session: AgentSession; businessNa
         </section>
       ) : null}
       {session.keptDrafts.length ? (
-        <section className="space-y-2" aria-label="Accepted drafts">
-          <h3 className="text-xs font-medium">Accepted drafts · {session.keptDrafts.length}</h3>
-          {session.keptDrafts.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-        </section>
+        <Collapsible className="space-y-2">
+          <CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="text-xs">Accepted drafts · {session.keptDrafts.length} · View</Button></CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2" aria-label="Accepted drafts">
+            {session.keptDrafts.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
+          </CollapsibleContent>
+        </Collapsible>
       ) : null}
     </div>
   )
@@ -704,7 +746,6 @@ function ConversationHeader({ title, onClose, closeLabel = "Close the agent", cl
     <div className={cn("flex shrink-0 items-center gap-2", title ? "h-11 border-b px-4" : "h-12 justify-end px-3")}>
       {title ? (
         <>
-          <span className="flex size-6 items-center justify-center rounded-md bg-primary-ink/10 text-primary-ink"><SparklesIcon className="size-3.5" /></span>
           <span className="min-w-0 flex-1 truncate text-xs font-medium">{title}</span>
         </>
       ) : null}
@@ -750,6 +791,10 @@ export function AgentPane({ open, session, businessName, placeholder, onClose, c
 }) {
   const pane = useSlidePresence(open)
   const { slot, setPane } = usePaneSlot()
+  const [width, setWidth] = useState(50)
+  const [dragging, setDragging] = useState(false)
+  const drag = useRef({ x: 0, width: 50, container: 1 })
+  const clamp = (value: number) => Math.max(30, Math.min(70, value))
   useEffect(() => {
     setPane(open)
     return () => setPane(false)
@@ -761,15 +806,17 @@ export function AgentPane({ open, session, businessName, placeholder, onClose, c
       aria-hidden={!open}
       inert={!open}
       onTransitionEnd={pane.onTransitionEnd}
+      style={{ "--agent-pane-width": `${width}cqw` } as CSSProperties}
       className={cn(
-        "flex h-svh min-w-0 shrink-0 justify-end overflow-hidden transition-[flex-basis,visibility]",
-        SPLIT_MOTION,
-        open ? "visible basis-full lg:basis-1/2" : "invisible basis-0",
+        "relative flex h-svh min-w-0 shrink-0 justify-end overflow-hidden",
+        !dragging && "transition-[flex-basis,visibility]",
+        !dragging && SPLIT_MOTION,
+        open ? "visible basis-full lg:basis-(--agent-pane-width)" : "invisible basis-0",
       )}
     >
       {/* Laid out at its final width and revealed as the pane grows, so it
           slides in from the left rather than reflowing. */}
-      <div className="flex h-full w-[100cqw] shrink-0 flex-col p-2 md:pl-0 lg:w-[50cqw]">
+      <div className="flex h-full w-[100cqw] shrink-0 flex-col p-2 lg:w-(--agent-pane-width)">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-(--panel-shadow)">
           {pane.present ? (
             <>
@@ -779,6 +826,13 @@ export function AgentPane({ open, session, businessName, placeholder, onClose, c
           ) : null}
         </div>
       </div>
+      {open ? <div role="separator" aria-label="Resize agent panel" aria-orientation="vertical" aria-valuemin={30} aria-valuemax={70} aria-valuenow={Math.round(width)} tabIndex={0}
+        className="absolute inset-y-0 right-0 z-20 hidden w-2 cursor-col-resize touch-none outline-none focus-visible:bg-primary-ink/20 lg:block"
+        onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, width, container: slot.parentElement?.getBoundingClientRect().width || 1 }; setDragging(true) }}
+        onPointerMove={event => { if (dragging) setWidth(clamp(drag.current.width + (event.clientX - drag.current.x) / drag.current.container * 100)) }}
+        onPointerUp={event => { event.currentTarget.releasePointerCapture(event.pointerId); setDragging(false) }}
+        onPointerCancel={() => setDragging(false)} onDoubleClick={() => setWidth(50)}
+        onKeyDown={event => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setWidth(value => clamp(value + (event.key === "ArrowLeft" ? -2 : 2))) } }} /> : null}
     </aside>,
     slot,
   )
@@ -823,39 +877,14 @@ function OverviewAgent({ businessId, businessName, onConversationChange = () => 
     return () => setMinimal(false)
   }, [active, setMinimal])
 
-  if (!active) {
-    return (
-      <div className="flex h-full min-h-0 flex-1 flex-col items-center px-4 sm:px-6">
-        <div aria-label="Agent proposals" className="min-h-0 w-full flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-(--chat-max-width) space-y-4 py-6">
-            {businessId ? <SetupInChat businessId={businessId} /> : null}
-            {session.openProposals.map(p => <ProposalCard key={p.id} session={session} businessName={businessName} proposal={p} />)}
-          </div>
-        </div>
-        <div className="w-full max-w-(--chat-max-width) shrink-0 pb-2">
-          <Composer
-            onSend={session.send}
-            onCommand={runCommand}
-            disabled={!session.ready || session.busy}
-            modelBlocked={!session.sendable}
-            placeholder={composerPlaceholder(session, session.unavailable ? `${session.unavailable}. Type / for commands` : "Describe a task or ask a question")}
-            autoFocus
-            session={session}
-            context={chatContext(businessId, businessName)}
-          />
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="relative flex h-full min-h-0">
       {/* With a helper open, the conversation moves left so the card over the
           right half never covers it. */}
       <section aria-label="Conversation" className={cn("flex min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]", helper && "lg:pr-[50%]")}>
-        <Thread session={session} businessName={businessName} placeholder="Reply to the agent, or type / for commands" onCommand={runCommand}
+        <Thread session={session} businessName={businessName} placeholder={active ? "Reply to the agent, or type / for commands" : "Describe a task or ask a question"} onCommand={runCommand}
           context={chatContext(businessId, businessName)}
-          work={session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null} />
+          work={<>{!active && businessId ? <SetupInChat businessId={businessId} /> : null}{session.hasWork ? <WorkPane session={session} businessName={businessName} /> : null}</>} />
       </section>
       {helper ? <HelperPane key={helper} businessId={businessId} businessName={businessName} conversationId={helper} onClose={closeHelper} /> : null}
     </div>
@@ -952,7 +981,7 @@ export function AgentWorkspace({ open, onClose, businessId, businessName, childr
         <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8">
           {open && decisions ? (
             <section aria-label="From the agent" className="mb-4 space-y-2 rounded-xl border border-primary-ink/20 bg-primary-ink/5 p-4 animate-in fade-in duration-300">
-              <p className="flex items-center gap-1.5 text-xs font-medium"><SparklesIcon className="size-3.5 text-primary-ink" />From the agent</p>
+              <p className="text-xs font-medium">From the agent</p>
               <WorkPane session={session} businessName={businessName} />
             </section>
           ) : null}
@@ -1290,12 +1319,9 @@ function Composer({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => choose(c)}
                   onMouseEnter={() => setMenuIndex(i)}
-                  className={cn("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs [&_svg]:size-3.5 [&_svg]:text-muted-foreground", i === menuIndex && "bg-accent")}
+                  className={cn("flex w-full rounded-md px-2.5 py-1.5 text-left text-xs outline-none transition-[background-color,box-shadow] hover:bg-accent hover:shadow-(--control-shadow) hover:text-sidebar-accent-foreground", i === menuIndex && "bg-accent text-sidebar-accent-foreground shadow-(--control-shadow)")}
                 >
-                  {c.kind === "command" ? c.icon : <BookOpenIcon />}
-                  <span className="font-medium">/{c.kind === "command" ? c.key : c.playbook.name}</span>
-                  <span className="truncate text-muted-foreground">{c.kind === "command" ? c.description : c.playbook.title}</span>
-                  {c.kind === "playbook" ? <span className="ml-auto shrink-0 rounded bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">{c.playbook.area}</span> : null}
+                  <span className="truncate font-medium">{c.kind === "command" ? c.key : c.playbook.name}</span>
                 </button>
               </li>
             ))}
@@ -1308,10 +1334,6 @@ function Composer({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top" sideOffset={12}>
-            {onCommand ? COMMANDS.map(c => (
-              <DropdownMenuItem key={c.key} onSelect={() => run(c.key)}>{c.icon}<span>/{c.key}</span><span className="ml-2 text-muted-foreground">{c.description}</span></DropdownMenuItem>
-            )) : null}
-            {onCommand ? <DropdownMenuItem onSelect={() => { setText("/"); requestAnimationFrame(() => textRef.current?.focus()) }}><BookOpenIcon /><span>Playbooks</span><span className="ml-2 text-muted-foreground">SEO, AEO, GEO and your own</span></DropdownMenuItem> : null}
             {onCommand ? <DropdownMenuItem disabled={!text.trim() || text.trim().startsWith("/")} onSelect={() => setSaving(true)}><BookmarkPlusIcon /><span>Save as playbook</span></DropdownMenuItem> : null}
             {onCommand && session?.businessId && session.conversationId && session.active ? <DropdownMenuItem onSelect={() => setSharing(true)}><Share2Icon /><span>Share this chat</span><span className="ml-2 text-muted-foreground">read-only link</span></DropdownMenuItem> : null}
             {onCommand ? <DropdownMenuSeparator /> : null}

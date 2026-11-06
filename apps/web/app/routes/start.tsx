@@ -1,4 +1,4 @@
-import { Navigate, useNavigate } from "react-router"
+import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { SetupStartForm } from "@/components/setup-flow"
 import { useWorkspace } from "@/lib/workspace"
 
@@ -12,16 +12,14 @@ export function RootRedirect() {
 
 export function StartPage() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const { reloadBusinesses, setActiveBusinessId } = useWorkspace()
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4 pb-[12vh]">
       <div className="w-full max-w-xl space-y-6">
-        <div className="space-y-2 text-center">
-          <h1 className="text-2xl font-medium tracking-tight text-balance">What's your website, and what do you want to achieve?</h1>
-          <p className="text-sm text-muted-foreground text-balance">That's all your agent needs. It reads your site, writes the brief, and comes back with a first step for you to approve.</p>
-        </div>
         <SetupStartForm
           autoFocus
+          engagement={params.get("ownership") === "own" ? "DOGFOOD" : "CLIENT"}
           onStarted={async setup => {
             await reloadBusinesses()
             setActiveBusinessId(setup.businessId)

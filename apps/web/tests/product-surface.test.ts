@@ -49,7 +49,7 @@ describe("navigation", () => {
       overview: "Agent",
       assay: "Prospect research",
       search: "Website checks",
-      issues: "AI answer issues",
+      issues: "AI answers",
       representations: "Facts on the web",
       truth: "Approved facts",
       checks: "AI answer checks",
@@ -179,7 +179,7 @@ describe("today analytics labels", () => {
   it("uses reviewer language and honest collection wording", async () => {
     const fs = await import("node:fs")
     const today = fs.readFileSync(new URL("../app/routes/today.tsx", import.meta.url), "utf8")
-    for (const s of ["Answers collected", "Needs review", "Share needing review", "Supported share", "Citations", "Record outcomes", "tracked to a source"]) {
+    for (const s of ["Answers collected", "Needs review", "Share needing review", "Supported share", "Citations", "Recorded outcomes", "tracked to a source"]) {
       expect(today).toContain(s)
     }
     for (const s of ["AI mentions", "Waiting-for-review share", "To review"]) {

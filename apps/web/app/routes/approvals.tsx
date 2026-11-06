@@ -8,13 +8,12 @@ import { InitiativeDecision } from "@/components/setup-flow"
 import { AgentProposalCard, DecisionConversation } from "@/components/agent-chat"
 import { useChrome } from "@/components/app-shell"
 import { WordPressChangeCard } from "@/components/wordpress"
-import { DECISIONS_CHANGED, Decisions, Issues, notifyDecisionsChanged, type DecisionItem, type IssueWithEvidence } from "@/lib/api"
+import { DECISIONS_CHANGED, Decisions, notifyDecisionsChanged, type DecisionItem, type IssueWithEvidence } from "@/lib/api"
 import { occurrenceHref } from "@/lib/issues"
 import { AccountActionCard } from "@/components/account-action"
 import { errorMessage, relativeTime } from "@/lib/format"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
-import { useWorkspace } from "@/lib/workspace"
 import { AskAgentButton } from "@/components/workspace-agent"
 
 type InboxItem = { id: string; business: string; businessId?: string; conversationId?: string; kind: string; title: string; summary: string; time: string; detail: ReactNode }
@@ -22,7 +21,7 @@ type InboxItem = { id: string; business: string; businessId?: string; conversati
 function decisionId(item: DecisionItem) {
   return `${item.type}:${item.type === "AGENT_PROPOSAL" ? item.proposal.id : item.type === "WORDPRESS_CHANGE" ? item.change.id : item.type === "ACCOUNT_ACTION" ? item.action.id : item.opportunity.id}`
 }
-/** One business's inbox: its decisions, plus AI answers waiting for review. */
+/** One business's decisions; AI answer review has its own destination. */
 export function BusinessInboxPage() {
   const { id = "" } = useParams()
   return <ApprovalsPage key={id} businessId={id} />
@@ -31,10 +30,8 @@ export function BusinessInboxPage() {
 /** Everything the agent prepared that needs a person: for one business, or across every business. */
 export function ApprovalsPage({ businessId }: { businessId?: string } = {}) {
   const { setWorkspace } = useChrome()
-  const { activeBusiness } = useWorkspace()
   useEffect(() => { setWorkspace(true); return () => setWorkspace(false) }, [setWorkspace])
   const decisions = useApi("decisions", () => Decisions.list())
-  const issues = useApi(businessId ? `inbox-issues:${businessId}` : null, () => Issues.list(businessId ?? ""))
   const { reload } = decisions
   useEffect(() => {
     const onChange = () => { void reload() }
@@ -56,15 +53,13 @@ export function ApprovalsPage({ businessId }: { businessId?: string } = {}) {
       ? <AccountActionCard businessId={item.business.id} action={item.action} onDone={() => { void reload() }} />
       : <AgentProposalCard businessId={item.business.id} businessName={item.business.name} proposal={item.proposal} onDone={() => { void reload() }} />,
   }))
-  const businessName = activeBusiness && activeBusiness.id === businessId ? activeBusiness.name : "this business"
-  const rows = [...decisionRows, ...(businessId ? (issues.data?.issues ?? []).map(issue => issueInboxItem(businessId, issue, businessName)) : [])]
+  const rows = decisionRows
 
   return (
     <div className="rise-in flex h-full min-h-0 w-full flex-col gap-4 px-4 pt-3 pb-3 sm:px-6 lg:px-10">
-      {businessId && issues.error && !issues.data ? <div className="flex flex-wrap items-center gap-3"><p role="alert" className="flex-1 text-sm text-destructive">AI answer issues could not load. Other decisions may still appear.</p><Button size="sm" variant="outline" onClick={() => void issues.reload()}>Try again</Button></div> : null}
-      {(decisions.loading && !decisions.data) || (businessId && issues.loading && !issues.data) ? <Skeleton className="h-72 rounded-xl" /> : decisions.error && !decisions.data ? (
+      {decisions.loading && !decisions.data ? <Skeleton className="h-72 rounded-xl" /> : decisions.error && !decisions.data ? (
         <div className="flex flex-wrap items-center gap-3"><p role="alert" className="text-sm text-destructive">{errorMessage(decisions.error)}</p><Button size="sm" variant="outline" onClick={() => void reload()}>Try again</Button></div>
-      ) : rows.length ? <DecisionInbox items={rows} /> : businessId && issues.error && !issues.data ? null : (
+      ) : rows.length ? <DecisionInbox items={rows} /> : (
         <EmptyState icon={<InboxIcon />} title="Nothing is waiting on you" description="When the agent needs your decision, it will appear here."
           action={businessId
             ? <AskAgentButton businessId={businessId} variant="outline" className="h-8 text-xs" request="What should we work on next? Check our results and channels and propose the most useful next step for me to approve.">Ask the agent what to do next</AskAgentButton>

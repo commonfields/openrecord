@@ -5,7 +5,7 @@
 // person sends it.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { PanelLeftCloseIcon, SparklesIcon } from "lucide-react"
+import { PanelLeftCloseIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentPane, useAgentSession, type ComposerSeed } from "@/components/agent-chat"
 import { useChrome } from "@/components/app-shell"
@@ -63,7 +63,6 @@ export function WorkspaceAgentProvider({ businessId, businessName, children }: {
           </Button>
         ) : (
           <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => ask()}>
-            <SparklesIcon />
             Ask the agent
           </Button>
         )}
@@ -82,7 +81,6 @@ export function AskAgentButton({ businessId, request, children = "Ask the agent"
   const ask = useAskAgent(businessId)
   return (
     <Button variant={variant} size="sm" className={className ?? "h-7 text-xs"} onClick={() => ask(request)}>
-      <SparklesIcon />
       {children}
     </Button>
   )

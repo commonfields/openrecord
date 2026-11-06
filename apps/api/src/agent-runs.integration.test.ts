@@ -14,6 +14,7 @@ import type { AgentToolDeps } from "./agent-tools.js"
 import { harnessApi } from "./harness-routes.js"
 import { decisionApi } from "./decision-routes.js"
 import { requireSession } from "./router.js"
+import { loadResumeContext } from "./agent-resume.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -62,26 +63,34 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     const failing: ModelResponse[] = [call("propose_check_run", { questionId })]
     const first = await run(sendConversation(scope, { message: "Re-check the opening hours", requestId: randomUUID(), revision: 0 },
       responder(() => failing.length ? Effect.succeed(failing.shift()!) : Effect.fail(new AgentModelError({ reason: "TIMEOUT" })))))
-    expect(first).toMatchObject({ _tag: "Left", left: { reason: "TIMEOUT" } })
+    expect(first).toMatchObject({ _tag: "Right", right: { outcome: "ANSWERED_WITH_GAPS" } })
     const saved = await proposals(scope.businessId)
     expect(saved).toHaveLength(1)
     // The conversation states what happened instead of silently losing the turn.
     const after = await run(loadConversation(scope))
     expect(after._tag === "Right" && after.right).toMatchObject({ revision: 1, messages: [
       { role: "user", text: "Re-check the opening hours" },
-      { role: "agent", run: { status: "FAILED" }, citations: [{ kind: "question", id: questionId }],
+      { role: "agent", run: { status: "COMPLETED", outcome: "ANSWERED_WITH_GAPS" }, citations: [{ kind: "question", id: questionId }],
         toolCalls: [{ tool: "propose_check_run", summary: "Re-check proposed; approval required" }],
         // The saved proposal stays decidable from the note itself.
         decisions: [{ type: "AGENT_PROPOSAL", id: saved[0] }] },
     ] })
     const note = after._tag === "Right" ? after.right!.messages[1]!.text : ""
-    expect(note).toContain("This request timed out before it finished.")
-    expect(note).toContain("Saved for your review before stopping: Re-check proposed; approval required.")
+    expect(note).toContain("partial findings")
+    expect(note).toContain("Prepared for review (not executed): Re-check proposed; approval required")
     const [failed] = await runs(scope.businessId)
-    expect(failed).toMatchObject({ status: "FAILED", failure_reason: "TIMEOUT", model_steps: 1, tool_calls: 1 })
+    expect(failed).toMatchObject({ status: "COMPLETED", outcome: "ANSWERED_WITH_GAPS", failure_reason: null, tool_calls: 1 })
     expect(failed.settled_at).not.toBeNull()
     const journal = await events(failed.id)
-    expect(journal.map(e => e.type)).toEqual(["RUN_STARTED", "CONTEXT_BUILT", "MODEL_REQUESTED", "MODEL_STEP", "TOOL_STARTED", "TOOL_COMPLETED", "MODEL_REQUESTED", "VERIFICATION", "RUN_FINISHED"])
+    expect(journal.filter(e => e.type === "TOOL_STARTED")).toHaveLength(1)
+    expect(journal.some(e => e.payload["action"] === "PARTIAL_FINDINGS_RETURNED")).toBe(true)
+    const findings = await pool.query("SELECT excerpt FROM agent_run_findings WHERE run_id=$1", [failed.id])
+    expect(findings.rows).toHaveLength(1)
+    expect(findings.rows[0].excerpt).toContain(questionId)
+    const resume = await run(loadResumeContext(scope.accountId, scope.businessId, scope.userId))
+    expect(resume._tag === "Right" && resume.right).toContain(questionId)
+    const otherResume = await run(loadResumeContext(scope.accountId, scope.businessId, randomUUID()))
+    expect(otherResume._tag === "Right" && otherResume.right).not.toContain(questionId)
     expect(journal[5]!.payload).toMatchObject({ effect: "propose", receipt: { proposalId: saved[0], status: "PROPOSED", executed: false } })
     // The failed model step is journalled with its reason.
     expect(journal[7]!.payload).toMatchObject({ passed: false, action: "MODEL_FAILED", reason: "TIMEOUT" })
@@ -91,7 +100,7 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     const second = await run(sendConversation(scope, { message: "Please continue", requestId: randomUUID(), revision: 1 },
       responder(input => { context ||= JSON.stringify(input.contents); return Effect.succeed(retry.shift()!) })))
     expect(second._tag).toBe("Right")
-    expect(context).toContain("Saved for your review before stopping")
+    expect(context).toContain("Prepared for review (not executed)")
     expect(await proposals(scope.businessId)).toEqual(saved)
     const done = (await runs(scope.businessId))[1]
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "ANSWERED" })

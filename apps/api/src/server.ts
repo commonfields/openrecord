@@ -12,6 +12,7 @@ import { answerScheduler } from "./research/answer-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
 import { agentRequestWorker } from "./agent-request-queue.js"
 import { withAgentWorkerRuntime } from "./agent-worker-runtime.js"
+import { setupScheduler } from "./setup-scheduler.js"
 
 // Only what the API consumes: requiring unused keys (session secret,
 // worker path) at boot would be a regression for dev and deploy.
@@ -37,10 +38,11 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const Tracking = Layer.effectDiscard(Effect.forkDaemon(trackingScheduler.pipe(Effect.delay("45 seconds"))))
     // Approved AI answer tracking on the team's own subscriptions.
     const AnswerTracking = Layer.effectDiscard(Effect.forkDaemon(answerScheduler.pipe(Effect.delay("60 seconds"))))
+    const Setup = Layer.scopedDiscard(Effect.forkScoped(setupScheduler))
     const AgentRequests = config.agentRequestWorkerEnabled
       ? Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", agentRequestWorker)))
       : Layer.empty
-    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking, AgentRequests).pipe(
+    const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking, Setup, AgentRequests).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     )

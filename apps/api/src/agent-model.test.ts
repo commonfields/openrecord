@@ -27,7 +27,7 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
   it("uses a dedicated model, preserves tool signatures and records observed usage", async () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
       expect(_url).toContain("/fixture-model:generateContent")
-      expect(JSON.parse(String(init.body))).toMatchObject({ generationConfig: { maxOutputTokens: 2048 } })
+      expect(JSON.parse(String(init.body))).toMatchObject({ generationConfig: { maxOutputTokens: 8192 } })
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ thoughtSignature: "fixture-signature", functionCall: { name: "read_business_truth", args: {} } }] }, finishReason: "STOP" }], modelVersion: "observed-fixture", usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 3 } }))
     })
     vi.stubGlobal("fetch", fetch)
@@ -39,7 +39,7 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
     const fetch = vi.fn(async () => new Response("sensitive provider detail", { status }))
     vi.stubGlobal("fetch", fetch)
     const out = await invoke()
-    expect(out).toMatchObject({ _tag: "Left", left: { reason: status === 429 ? "RATE_LIMITED" : "UNAVAILABLE" } })
+    expect(out).toMatchObject({ _tag: "Left", left: { reason: status === 429 ? "RATE_LIMITED" : status === 401 ? "UNCONFIGURED" : "UNAVAILABLE", httpStatus: status } })
     expect(JSON.stringify(out)).not.toContain("sensitive")
     expect(fetch).toHaveBeenCalledTimes(1)
   })
@@ -70,7 +70,7 @@ describe("CLIProxyAPI assistant transport (local HTTP fixtures only)", () => {
     const fetch = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("http://127.0.0.1:8317/v1/chat/completions")
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer TEST-client-key")
-      expect(JSON.parse(String(init.body))).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 2048, tools: [{ type: "function", function: { name: "read_open_issues" } }] })
+      expect(JSON.parse(String(init.body))).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 8192, tools: [{ type: "function", function: { name: "read_open_issues" } }] })
       return new Response(JSON.stringify({ model: "claude-sonnet-5-5-observed", usage: { prompt_tokens: 9, completion_tokens: 2, total_tokens: 11 },
         choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "read_open_issues", arguments: "{}" } }] } }] }))
     })
@@ -82,7 +82,7 @@ describe("CLIProxyAPI assistant transport (local HTTP fixtures only)", () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "Two issues." } }] })))
     expect(await call()).toMatchObject({ _tag: "Right", right: { candidates: [{ content: { parts: [{ text: "Two issues." }] } }] } })
   })
-  it.each([[429, "RATE_LIMITED"], [401, "UNAVAILABLE"]])("redacts proxy error %s", async (status, reason) => {
+  it.each([[429, "RATE_LIMITED"], [401, "UNCONFIGURED"]])("redacts proxy error %s", async (status, reason) => {
     vi.stubGlobal("fetch", async () => new Response("secret upstream detail", { status }))
     const out = await call()
     expect(out).toMatchObject({ _tag: "Left", left: { reason } })

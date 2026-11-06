@@ -57,7 +57,7 @@ describe("AI Discovery agency report", () => {
   })
   it("keeps referral evidence separate and says signups are not measured", () => {
     expect(html).toContain("AI referral evidence (GA4)")
-    expect(html).toContain("SIGNUPS_NOT_MEASURED")
+    expect(html).toContain("Not measured")
     expect(html).toContain("chatgpt.com / referral")
   })
   it("shows the exact answer with an evidence link and digest", () => {

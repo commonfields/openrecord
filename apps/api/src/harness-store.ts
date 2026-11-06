@@ -15,6 +15,7 @@ export class HarnessRefused extends Data.TaggedError("HarnessRefused")<{
   readonly reason:
     | "NOT_FOUND"
     | "UNAVAILABLE"
+    | "TIMEOUT"
     | "MODEL_UNAVAILABLE"
     | "PAIR_EXPIRED"
     | "UNAUTHENTICATED"
@@ -298,7 +299,7 @@ export const invokeHarness = (
         }
         yield* Effect.sleep("150 millis")
       }
-      return yield* fail("UNAVAILABLE")
+      return yield* fail("TIMEOUT")
     }).pipe(
       Effect.ensuring(
         sql`UPDATE agent_harness_jobs SET status='CANCELLED',lease=NULL,input='{}',result=NULL,completed_at=now()

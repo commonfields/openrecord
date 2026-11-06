@@ -18,6 +18,7 @@ export interface RunEvent { readonly type: RunEventType; readonly payload: Recor
  * cannot be recorded must not continue. */
 export interface RunJournal {
   readonly record: (type: RunEventType, payload: Record<string, unknown>) => Effect.Effect<void, AgentModelError>
+  readonly checkpoint?: (finding: { invocationId: string; tool: string; summary: string; excerpt: string }) => Effect.Effect<void, AgentModelError>
 }
 export const noJournal: RunJournal = { record: () => Effect.void }
 export const memoryJournal = () => {
@@ -36,6 +37,10 @@ const bounded = (payload: Record<string, unknown>) => {
 }
 
 export const sqlJournal = (sql: SqlClient.SqlClient, runId: string): RunJournal => ({
+  checkpoint: finding => sql`INSERT INTO agent_run_findings(run_id,invocation_id,tool,summary,excerpt)
+    SELECT id,${finding.invocationId},${finding.tool.slice(0, 100)},${finding.summary.slice(0, 500)},${finding.excerpt.slice(0, 2000)} FROM agent_runs
+    WHERE id=${runId} AND status='RUNNING' ON CONFLICT DO NOTHING`.pipe(
+      Effect.asVoid, Effect.mapError(() => new AgentModelError({ reason: "UNAVAILABLE" }))),
   record: (type, payload) => sql`WITH bumped AS (
       UPDATE agent_runs SET next_seq = next_seq + 1,
         model_steps = model_steps + ${type === "MODEL_STEP" ? 1 : 0}, tool_calls = tool_calls + ${type === "TOOL_STARTED" ? 1 : 0}
