@@ -357,11 +357,10 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     f = await fixture(); const oid = await opportunity(f); const p = await plan(f)
     const fp = executionRequestFingerprint({ opportunityId: oid, targetId: p.targetId, actionKind: p.actionKind, filePath: p.filePath, liveUrl: p.liveUrl, rationale: p.rationale, siteFindingId: null })
     let prepared = await exec(r => r.prepare(f.session, f.businessId, oid, fp, p))
-    await pool.query("INSERT INTO growth_execution_events(operation_id,business_id,revision,state,actor,user_id,reason,detail) VALUES($1,$2,2,'AUTHORIZED','OPERATOR',$3,'x',$4::jsonb)",
-      [prepared.id, f.businessId, f.session.userId, JSON.stringify({ approvedPatchSha256: prepared.patchSha256, expiresAt: new Date(Date.now() + 1_500).toISOString() })])
+    await exec(r => r.authorize(f.session, f.businessId, prepared.id, { reviewedPatchSha256: prepared.patchSha256, expectedRevision: 1, reason: "TEST reviewed", idempotencyKey: randomUUID() }))
     prepared = await exec(r => r.dispatch(f.session, f.businessId, prepared.id, { expectedRevision: 2, idempotencyKey: randomUUID() }))
-    await new Promise(r => setTimeout(r, 1_800))
-    runner = await runnerFor(f, [prepared.id]); await runner.once()
+    // Advance the runner's injectable clock, not a short real-time authorization.
+    runner = await runnerFor(f, [prepared.id], { now: () => Date.now() + 25 * 3_600_000 }); await runner.once()
     op = await get(f, prepared)
     expect(op.state).toBe("BLOCKED"); expect(op.events.at(-1)!.detail["code"]).toBe("AUTHORIZATION_EXPIRED"); expect(f.gh.writes).toEqual([])
     // the provider is not configured at all: the operation is refused, never simulated
