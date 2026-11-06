@@ -9,6 +9,12 @@ integrity. Contributions that keep the evidence honest are most welcome — see 
 > [README](README.md#the-openrecord-cli-is-a-separate-legacy-tool). Most contributions target the
 > monorepo.
 
+Platform direction: finish and validate the web product first. The legacy Tauri
+app was removed on 2026-11-06. A future native desktop client will start fresh
+with Rust + Rune and reuse current product APIs; do not revive the legacy CLI
+backend or start desktop implementation yet. Older engineering assays mentioning
+retained Tauri describe historical scope, not the current direction.
+
 ## Maintaining the legacy CLI
 
 Everything below this line documents the frozen Rust CLI for maintainers. Skip it unless you are
