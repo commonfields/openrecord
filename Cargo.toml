@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-# tauri-app lives in tauri-app/src-tauri/ and manages its own workspace.
 
 [workspace.metadata.dist]
 cargo-dist-version = "0.22.0"

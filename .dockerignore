@@ -12,7 +12,6 @@ coverage
 .turbo
 .DS_Store
 apps/web/dist
-tauri-app
 target
 Formula
 research

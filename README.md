@@ -72,6 +72,16 @@ Open [localhost:3000](http://localhost:3000). Live model calls and account conne
 
 The API does not reload itself when server code changes. Restart it after changing API code. The web development server reloads frontend changes.
 
+## Platform direction
+
+The web app is the current implementation priority. Complete and validate its
+workflows before starting a new desktop client.
+
+The legacy Tauri desktop app was removed on 2026-11-06. The future native desktop
+app will start fresh with **Rust + Rune**, not Tauri or GPUI. Desktop development
+has not started; this is a direction, not a shipped capability. It should reuse
+the current product APIs and approval boundaries, not the legacy CLI runtime.
+
 ## The Rust CLI
 
 This repository also contains an older Rust CLI in [`src/`](src). It is separate from the web app and doesn't share its data or authentication. The CLI has different features and scoring rules, so use the web app instructions above if you want to try the current product.
