@@ -11,9 +11,10 @@ import { Channels, type SetupView } from "@/lib/setup"
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 
-export type AgentCommand = "setup" | "status" | "plan" | "report" | "campaign" | "campaign-status" | "campaign-run" | "campaign-review"
+export type AgentCommand = "setup" | "status" | "plan" | "report" | "marketing" | "campaign" | "campaign-status" | "campaign-run" | "campaign-review"
 
 export const COMMANDS: ReadonlyArray<{ readonly key: AgentCommand; readonly description: string; readonly icon: ReactNode }> = [
+  { key: "marketing", description: "Find the marketing blocker and work on the next step", icon: <CompassIcon /> },
   { key: "setup", description: "Understand and configure this business", icon: <CompassIcon /> },
   { key: "status", description: "Current work, channels and blockers", icon: <ListChecksIcon /> },
   { key: "plan", description: "What to do next, most important first", icon: <ClipboardListIcon /> },

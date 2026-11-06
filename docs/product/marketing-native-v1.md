@@ -36,6 +36,11 @@ Draft readiness checks presence, not independent marketing quality.
 
 ## Next increments
 
+The first agent-native work-queue and structured distribution increment is
+described in [marketing-agent-operating-loop.md](marketing-agent-operating-loop.md).
+It makes the gaps actionable through existing tools; it does not close the
+verified measurement, delivery breadth, scheduling or collaboration gaps below.
+
 1. Independent content, brand and tracking review with deliverable acceptance.
 2. More campaign-bound proposal/receipt adapters, preserving exact approval.
 3. Verified tracking, source-bound outcomes and opt-in budgeted review scheduling.

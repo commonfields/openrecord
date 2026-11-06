@@ -6,9 +6,9 @@ import { PgClient } from "@effect/sql-pg"
 import { AuthRepositoryLive, BusinessRepositoryLive } from "@openrecord/db"
 import pg from "pg"
 import { readFileSync } from "node:fs"
-import { campaignsApi } from "./campaigns.js"
+import { campaignsApi, readMarketingWork } from "./campaigns.js"
 import { campaignDraftDeclarations, draftMarketingCampaign } from "./campaign-agent.js"
-import { runConversation } from "./agent.js"
+import { agentDeclarations, runConversation } from "./agent.js"
 import type { AgentModel } from "./agent-model.js"
 import { memoryJournal } from "./agent-run.js"
 import { dispatchCampaignRun } from "./campaign-engine.js"
@@ -46,6 +46,47 @@ suite("campaign API isolation, concurrency and audit", () => {
     }
   })
   afterAll(async () => { await web.dispose(); await pool.end() })
+  it("assesses scoped marketing work, persists distribution and preserves approval boundaries through the agent loop", async () => {
+    const id = randomUUID(), taskId = randomUUID()
+    const brief: CampaignBrief = { ...c, title: "TEST Actionable marketing", goal: "Qualified bookings", audience: "Existing trials", offer: "Guided onboarding", tasks: [
+      { id: taskId, title: "Welcome email", channel: "EMAIL", owner: "Founder", due: "2026-11-07", status: "TODO", note: "" },
+    ] }
+    expect((await call("POST", cookie, { id, revision: 0, brief })).status).toBe(200)
+    const assess = (campaignId: string, account = accountId) => Effect.runPromise(readMarketingWork(account, businessId, { campaignId }).pipe(Effect.provide(repos)))
+    const first = await assess(id)
+    expect(first.data.work.find(w => w.key === "distribution")).toMatchObject({ campaignId: id, revision: 1, kind: "AGENT_WORK" })
+    expect(first.data.coverage.assessedLimit).toBe(10)
+    await expect(assess(id, foreignAccountId)).rejects.toThrow()
+    await expect(assess(randomUUID())).rejects.toThrow()
+    const distribution = { primaryChannel: "Email to consenting trial users", rationale: "Reach existing interest before buying traffic", motion: "OWNED", funnelStage: "ACTIVATION",
+      destination: "Onboarding booking page", cadence: "One welcome email", budget: "Suggested: no paid spend", trackingPlan: "Tagged links and CRM booking event; not yet verified", conversionEvent: "Qualified booking" }
+    const revision = { campaignId: id, expectedRevision: 1, reason: "User requested marketing preparation", changes: { distribution }, taskUpdates: [{ taskId, content: "Subject: Want a hand? Book a guided onboarding session." }] }
+    const steps = [{ name: "read_marketing_work", args: { campaignId: id } }, { name: "record_campaign_revision", args: revision }, { name: "read_marketing_work", args: { campaignId: id } }]
+    let step = 0
+    const model: AgentModel = input => {
+      expect(input.system).toContain("Marketing operating loop")
+      const next = steps[step++]
+      return Effect.succeed({ candidates: [{ content: { role: "model", parts: next ? [{ functionCall: next }] : [{ text: "Saved the distribution plan and email draft. Sending remains a manual handoff; tracking is not verified." }] }, finishReason: "STOP" }] })
+    }
+    const reply = await Effect.runPromise(runConversation({ message: `/marketing Prepare the next step for campaign ${id}`, history: [], model,
+      tools: agentDeclarations.filter(t => ["read_marketing_work", "record_campaign_revision"].includes(t.name)),
+      dispatch: (name, args) => name === "read_marketing_work"
+        ? readMarketingWork(accountId, businessId, args as { campaignId: string }).pipe(Effect.provide(repos))
+        : reviseCampaign({ accountId, businessId, userId }, args).pipe(Effect.provide(repos)),
+    }))
+    expect(reply.toolCalls.map(t => t.tool)).toEqual(steps.map(s => s.name))
+    expect(reply.decisions).toEqual([])
+    const row = (await pool.query("SELECT brief,revision FROM marketing_campaigns WHERE id=$1", [id])).rows[0]
+    expect(row.revision).toBe(2)
+    expect(row.brief).toMatchObject({ distribution, goal: brief.goal, offer: brief.offer, audience: brief.audience, status: "DRAFT", result: "", decision: "UNDECIDED" })
+    expect(row.brief.tasks[0]).toMatchObject({ id: taskId, note: revision.taskUpdates[0]!.content, status: "TODO" })
+    const after = await assess(id)
+    expect(after.data.work.some(w => w.key === "distribution" || w.key === "drafts")).toBe(false)
+    expect(after.data.work.find(w => w.key === "measurement-evidence")?.kind).toBe("CAPABILITY_GAP")
+    expect((await pool.query("SELECT count(*)::int AS n FROM marketing_campaign_runs WHERE campaign_id=$1", [id])).rows[0].n).toBe(0)
+    const repeat = await Effect.runPromise(reviseCampaign({ accountId, businessId, userId }, revision).pipe(Effect.provide(repos)))
+    expect(repeat.data.reused).toBe(true)
+  })
   it("edits the existing draft conversationally without overwriting other work or replaying writes", async () => {
     const id = randomUUID(), taskId = randomUUID(), doneId = randomUUID()
     const brief: CampaignBrief = { ...c, title: "Conversational edit", audience: "Original audience", offer: "Keep this offer", tasks: [
@@ -189,5 +230,20 @@ suite("campaign API isolation, concurrency and audit", () => {
     expect(events.find(e => e.type === "TOOL_COMPLETED")?.payload["effect"]).toBe("record")
     const rows = await pool.query("SELECT brief->>'status' AS status FROM marketing_campaigns WHERE business_id=$1 AND brief->>'title'=$2", [businessId, input.title])
     expect(rows.rows).toEqual([{ status: "DRAFT" }])
+  })
+  it("bounds portfolio work and can still assess an older explicitly selected campaign", async () => {
+    const oldId = randomUUID()
+    await pool.query("INSERT INTO marketing_campaigns(id,business_id,created_by_user_id,brief,updated_at) VALUES($1,$2,$3,$4::jsonb,now()-interval '2 days')", [oldId, businessId, userId, JSON.stringify({ ...c, title: "TEST Older campaign" })])
+    await pool.query("INSERT INTO marketing_campaigns(business_id,created_by_user_id,brief) SELECT $1,$2,$3::jsonb FROM generate_series(1,101)", [businessId, userId, JSON.stringify({ ...c, title: "TEST Portfolio limit" })])
+    const before = (await pool.query("SELECT count(*)::int AS n FROM marketing_campaigns WHERE business_id=$1", [businessId])).rows[0].n
+    const portfolio = await Effect.runPromise(readMarketingWork(accountId, businessId).pipe(Effect.provide(repos)))
+    expect(portfolio.data.campaigns).toHaveLength(10)
+    expect(portfolio.data.work).toHaveLength(30)
+    expect(portfolio.data.moreWorkNotReturned).toBe(true)
+    expect(portfolio.data.coverage).toMatchObject({ moreCampaignsNotAssessed: true, fullPortfolio: false })
+    const selected = await Effect.runPromise(readMarketingWork(accountId, businessId, { campaignId: oldId }).pipe(Effect.provide(repos)))
+    expect(selected.data.campaigns).toHaveLength(1)
+    expect(selected.data.campaigns[0]?.campaignId).toBe(oldId)
+    expect((await pool.query("SELECT count(*)::int AS n FROM marketing_campaigns WHERE business_id=$1", [businessId])).rows[0].n).toBe(before)
   })
 })

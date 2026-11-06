@@ -398,8 +398,8 @@ export function ChatItem({ c, active }: { c: MergedChat; active: boolean }) {
       {shown.length ? (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex shrink-0 items-center -space-x-1" role="img" aria-label={`Providers: ${shown.join(", ")}`}>
-              {shown.map(p => <span key={p} className="flex size-4 items-center justify-center rounded-full bg-sidebar ring-1 ring-sidebar"><ProviderLogo bare provider={p} className="size-3.5" /></span>)}
+            <span className="flex shrink-0 items-center gap-1" role="img" aria-label={`Providers: ${shown.join(", ")}`}>
+              {shown.map(p => <ProviderLogo key={p} bare provider={p} className="size-3.5" />)}
             </span>
           </TooltipTrigger>
           <TooltipContent side="right">{shown.length > 1 ? `Models used here: ${shown.join(", ")}` : c.working ? "This provider is answering" : "Provider used for the last reply"}</TooltipContent>

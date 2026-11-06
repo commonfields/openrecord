@@ -2,6 +2,15 @@ import { Schema } from "effect"
 
 const Text = (max: number) => Schema.String.pipe(Schema.maxLength(max))
 const Required = (max: number) => Text(max).pipe(Schema.filter(s => s.trim().length > 0))
+/** Planning context only: a budget here never authorizes spend or verifies tracking. */
+export const CampaignDistribution = Schema.Struct({
+  primaryChannel: Text(200), rationale: Text(1000),
+  motion: Schema.Literal("UNSPECIFIED", "OWNED", "EARNED", "PAID", "PRODUCT_LED", "HYBRID"),
+  funnelStage: Schema.Literal("UNSPECIFIED", "AWARENESS", "CONSIDERATION", "CONVERSION", "ACTIVATION", "RETENTION", "EXPANSION", "REFERRAL"),
+  destination: Text(1000), cadence: Text(500), budget: Text(500),
+  trackingPlan: Text(2000), conversionEvent: Text(500),
+})
+export type CampaignDistribution = typeof CampaignDistribution.Type
 export const CampaignTask = Schema.Struct({
   id: Schema.UUID, title: Required(300), owner: Text(200), due: Text(10),
   channel: Schema.Literal("WEBSITE", "EMAIL", "PAID", "SOCIAL", "OTHER"),
@@ -16,6 +25,7 @@ export const CampaignBrief = Schema.Struct({
   tasks: Schema.Array(CampaignTask).pipe(Schema.maxItems(100)),
   result: Text(4000), decision: Schema.Literal("UNDECIDED", "KEEP", "CHANGE", "STOP", "INCONCLUSIVE"),
   learning: Text(4000), nextMove: Text(2000),
+  distribution: Schema.optional(CampaignDistribution),
 })
 export type CampaignBrief = typeof CampaignBrief.Type
 export type CampaignTask = typeof CampaignTask.Type

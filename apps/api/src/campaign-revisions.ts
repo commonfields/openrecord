@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { BusinessRepository } from "@openrecord/db"
-import { CampaignBrief, campaignTransitionError } from "@openrecord/contracts"
+import { CampaignBrief, CampaignDistribution, campaignTransitionError } from "@openrecord/contracts"
 import { Data, Effect, JSONSchema, Schema } from "effect"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
@@ -17,6 +17,7 @@ const Changes = Schema.Struct({
   title: Schema.optional(CampaignBrief.fields.title), goal: Schema.optional(Text(2000)), audience: Schema.optional(Text(2000)), offer: Schema.optional(Text(2000)),
   message: Schema.optional(Text(2000)), hypothesis: Schema.optional(Text(2000)), metric: Schema.optional(Text(500)), baseline: Schema.optional(Text(500)),
   target: Schema.optional(Text(500)), owner: Schema.optional(Text(200)), launchDate: Schema.optional(Text(10)), reviewDate: Schema.optional(Text(10)),
+  distribution: Schema.optional(CampaignDistribution),
 })
 export const CampaignRevisionInput = Schema.Struct({
   campaignId: Schema.UUID, expectedRevision: Schema.Int.pipe(Schema.greaterThanOrEqualTo(1)), reason: Required(1000),
@@ -33,7 +34,7 @@ const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(
 
 export const campaignRevisionDeclarations: ReadonlyArray<ToolDeclaration> = [{
   name: "record_campaign_revision",
-  description: "Apply an explicitly requested edit to an existing DRAFT campaign, not a new alternative. Read its current ID, revision and tasks first; pass expectedRevision and a plain reason. Patch only requested fields; unspecified values and task IDs are preserved. Can edit unfinished draft tasks or add deliverables, not remove tasks, mark completion, change campaign stage/results/decisions, approve or publish. Active/review/closed campaigns, completed tasks, stale revisions and campaigns with linked delivery proposals are refused. A successful edit makes old runs stale. Identical retries reuse the recorded revision and never overwrite later edits.",
+  description: "Apply a requested edit or requested next-step preparation to an existing DRAFT campaign, not a new alternative. Read its current ID, revision and tasks first; pass expectedRevision and a plain reason. Patch only requested fields; unspecified values and task IDs are preserved. Distribution is replaced as a whole, so preserve its unchanged values when refining one part; its budget is not spending authority. Can edit unfinished draft tasks or add deliverables, not remove tasks, mark completion, change campaign stage/results/decisions, approve or publish. Active/review/closed campaigns, completed tasks, stale revisions and campaigns with linked delivery proposals are refused. A successful edit makes old runs stale. Identical retries reuse the recorded revision and never overwrite later edits.",
   parametersJsonSchema: JSONSchema.make(CampaignRevisionInput),
 }]
 
@@ -81,6 +82,6 @@ export const reviseCampaign = (ctx: ToolContext, raw: unknown) => Effect.gen(fun
     return { revision, currentRevision: revision, reused: false }
   }))
   return { summary: saved.reused ? "Previous campaign edit reused; no later work overwritten" : "Existing campaign draft updated; previous runs are now stale", citations: [],
-    data: { campaignId: input.campaignId, ...saved, actor: "ASSISTANT", executed: false,
+    data: { campaignId: input.campaignId, ...saved, actor: "ASSISTANT", executed: false, url: `/businesses/${ctx.businessId}/campaigns?campaign=${input.campaignId}`,
       note: "Only planning content changed. Read the current campaign before another edit or run; no approval, delivery, measurement or human decision was changed." } }
 })

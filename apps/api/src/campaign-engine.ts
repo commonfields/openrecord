@@ -47,10 +47,11 @@ export function campaignRunReport(snapshot: CampaignBrief, currentRevision: numb
     note: "Pinned internal preparation playbook v1, inspired by pstack's plan/review/verify discipline; no remote skill loading. No external call, publication or spending is performed by these run tools. Linked-change receipts describe adapter outcomes, not content alignment, whole-campaign completion or causal business impact. Human-attested task completion is not adapter verification. Resume by reading this run and current adapter state; never replay a publication from chat history." }
 }
 
-const scope = (ctx: ToolContext) => Effect.gen(function*() {
+type CampaignScope = Pick<ToolContext, "accountId" | "businessId">
+const scope = (ctx: CampaignScope) => Effect.gen(function*() {
   if (!(yield* (yield* BusinessRepository).getScoped(ctx.accountId, ctx.businessId))) return yield* Effect.fail(new AgentNotInScope())
 })
-export const readCampaignRuns = (ctx: ToolContext, campaignId: string) => Effect.gen(function*() {
+export const readCampaignRuns = (ctx: CampaignScope, campaignId: string) => Effect.gen(function*() {
   yield* scope(ctx)
   const sql = yield* SqlClient.SqlClient
   const campaigns = yield* sql`SELECT revision FROM marketing_campaigns WHERE business_id=${ctx.businessId} AND id=${campaignId}`
