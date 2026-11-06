@@ -51,13 +51,13 @@ type CampaignScope = Pick<ToolContext, "accountId" | "businessId">
 const scope = (ctx: CampaignScope) => Effect.gen(function*() {
   if (!(yield* (yield* BusinessRepository).getScoped(ctx.accountId, ctx.businessId))) return yield* Effect.fail(new AgentNotInScope())
 })
-export const readCampaignRuns = (ctx: CampaignScope, campaignId: string) => Effect.gen(function*() {
+export const readCampaignRuns = (ctx: CampaignScope, campaignId: string, limit: 1 | 5 = 5) => Effect.gen(function*() {
   yield* scope(ctx)
   const sql = yield* SqlClient.SqlClient
   const campaigns = yield* sql`SELECT revision FROM marketing_campaigns WHERE business_id=${ctx.businessId} AND id=${campaignId}`
   if (!campaigns[0]) return yield* Effect.fail(new AgentNotInScope())
   const runs = yield* sql`SELECT id,campaign_revision,snapshot,playbook_version,created_at,cancelled_at FROM marketing_campaign_runs
-    WHERE business_id=${ctx.businessId} AND campaign_id=${campaignId} ORDER BY campaign_revision DESC LIMIT 5`
+    WHERE business_id=${ctx.businessId} AND campaign_id=${campaignId} ORDER BY campaign_revision DESC LIMIT ${limit}`
   const reports = []
   for (const run of runs) {
     const brief = yield* Schema.decodeUnknown(CampaignBrief)(run["snapshot"])
@@ -68,7 +68,7 @@ export const readCampaignRuns = (ctx: CampaignScope, campaignId: string) => Effe
     reports.push({ id: run["id"], campaignRevision: run["campaign_revision"], playbookVersion: run["playbook_version"], createdAt: run["created_at"],
       ...report, status: run["cancelled_at"] ? "CANCELLED" : report.status })
   }
-  return { summary: `${reports.length} durable campaign runs read`, citations: [], data: { campaignId, runs: reports } }
+  return { summary: `${reports.length} durable campaign runs read`, citations: [], data: { campaignId, currentRevision: Number(campaigns[0]["revision"]), runs: reports } }
 })
 
 export const campaignRunDeclarations: ReadonlyArray<ToolDeclaration> = [
