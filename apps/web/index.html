@@ -1,15 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
     <title>OpenRecord</title>
+    <!-- Paint the document canvas before the app stylesheet or React loads. -->
+    <style>
+      html { background-color: #f9f9f9; color-scheme: light; }
+      html.dark { background-color: #1a1a1a; color-scheme: dark; }
+    </style>
     <script>
       // Apply the saved theme before first paint so dark mode never flashes light.
       try {
         var p = JSON.parse(localStorage.getItem("openrecord:preferences") || "{}")
-        var t = p.theme || "system"
-        if (t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.classList.add("dark")
+        var t = p && (p.theme === "light" || p.theme === "system" || p.theme === "dark") ? p.theme : "dark"
+        document.documentElement.classList.toggle("dark", t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches))
       } catch (e) {}
     </script>
   </head>

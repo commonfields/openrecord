@@ -21,7 +21,7 @@ export type Preferences = {
 }
 
 export const defaultPreferences: Preferences = {
-  theme: "system",
+  theme: "dark",
   dateLocale: "system",
   landingView: "agent",
   defaultProvider: "mock",
@@ -39,7 +39,10 @@ function load(): Preferences {
   try {
     const raw = window.localStorage.getItem(KEY)
     if (!raw) return defaultPreferences
-    return { ...defaultPreferences, ...(JSON.parse(raw) as Partial<Preferences>) }
+    const saved = JSON.parse(raw) as Partial<Preferences> | null
+    const theme = saved?.theme
+    return { ...defaultPreferences, ...saved,
+      theme: theme === "light" || theme === "dark" || theme === "system" ? theme : defaultPreferences.theme }
   } catch {
     return defaultPreferences
   }
