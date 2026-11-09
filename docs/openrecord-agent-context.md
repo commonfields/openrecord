@@ -451,23 +451,17 @@ destructive.
 
 Implemented as designed. The operator's conditions:
 
-- **Stricter link rule against existing data.** The query below counts the
-  links the new rule would have rejected. On the local dev database it found
-  0 links in total, and there were no campaign runs or WordPress changes
-  either. Run it on every deployed database before merge. A count above 0 is
-  a data decision for the operator. Migration 0083 changes no existing link
-  either way; the rule applies only to new inserts.
-
-  ```sql
-  SELECT count(*) FILTER (WHERE w.created_at < r.created_at) AS change_before_run,
-         count(*) FILTER (WHERE w.decided_at IS NOT NULL AND w.decided_at <= d.created_at) AS decided_before_link,
-         count(*) FILTER (WHERE w.objective_goal_id IS DISTINCT FROM c.objective_goal_id) AS objective_mismatch,
-         count(*) AS links
-  FROM marketing_campaign_deliveries d
-  JOIN marketing_campaign_runs r ON r.id = d.run_id AND r.business_id = d.business_id
-  JOIN marketing_campaigns c ON c.id = r.campaign_id AND c.business_id = r.business_id
-  JOIN wordpress_changes w ON w.id = d.wordpress_change_id;
-  ```
+- **Stricter link rule against existing data.** The read-only script
+  `scripts/m2-premerge-link-check.sql` counts the existing links the new rule
+  would refuse if they were made today: the change was prepared before the
+  run, was decided before the link, has a different objective from the
+  campaign, is linked by more than one deliverable, or belongs to another
+  business. It lists the rows behind any non-zero count by id only, and runs
+  before or after 0082 and 0083. The file header has the command for the
+  hosted pilot. On the local dev database it found 0 links in total. Run it
+  on every deployed database before merge. A count above 0 is a data
+  decision for the operator. Migration 0083 changes no existing link either
+  way; the rule applies only to new inserts.
 
 - **Auditable binding.** Each binding row records who (`bound_by_user_id`),
   as which actor (`ASSISTANT` or `OPERATOR`), through which model
