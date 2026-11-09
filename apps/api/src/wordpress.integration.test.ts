@@ -116,6 +116,10 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     expect((await other.call("GET", `/changes/${changeId}`)).status).toBe(404)
     const approved = await (await f.call("POST", `/changes/${changeId}/approve`, {})).json() as { change: { status: string; liveCheck: { observed: boolean } } }
     expect(approved.change).toMatchObject({ status: "PUBLISHED", liveCheck: { observed: true } })
+    // published_at is written by the publish statement itself, after the read-back.
+    const times = (await pool.query("SELECT decided_at, published_at FROM wordpress_changes WHERE id=$1", [changeId])).rows[0]
+    expect(times.published_at).toBeInstanceOf(Date)
+    expect(times.published_at.getTime()).toBeGreaterThanOrEqual(times.decided_at.getTime())
     expect(wp.state.posts.get("pages/7")!.title).toBe("Wedding DJs in Bali")
     expect((await f.call("POST", `/changes/${changeId}/approve`, {})).status).toBe(409)
 

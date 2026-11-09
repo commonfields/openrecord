@@ -382,3 +382,154 @@ cases.
   schemas) is reduced first. The prompt is the bigger fixed cost.
 - The manifests, the deny-by-default filter and the replay harness remain as
   the gate for that decision.
+
+## M2 design: deliverable to outcome binding (approved 2026-11-09 with conditions, implemented locally)
+
+Target chain, every link a structured row and never prose: approved revision,
+then verified delivery, then predeclared measurement, then observed outcome.
+Scope is campaign `WEBSITE` deliverables delivered through WordPress.
+Repository page changes already follow the opportunity chain. Account actions
+have no campaign link and stay out of M2.
+
+### Gaps on the current code
+
+1. **Delivery links are model-dependent.** `record_campaign_delivery`
+   (`campaign-engine.ts`) checks business and task scope only.
+   Reproduction (`campaign-delivery-binding.integration.test.ts`): a
+   WordPress change published 30 days before the campaign existed, with
+   unrelated content, is accepted. The run then reports the deliverable as
+   `DELIVERY_OBSERVED`, even while the run itself is `BLOCKED`.
+2. **No campaign to measurement relation.** Predeclared plans
+   (`growth_measurement_plans`) and the descriptive evaluation
+   (`evaluateGrowthOutcome`) exist only for approved growth opportunities.
+3. **No delivery time.** `wordpress_changes` records `decided_at`, but not
+   when publication succeeded. A plan's timing cannot be checked against
+   actual delivery.
+
+### Proposed design
+
+- **D1 Delivery binding** (closes gap 1).
+  - Accept a link only if the change is still `PROPOSED` and undecided, was
+    created no earlier than the run, and has the same objective as the
+    campaign (M1 lineage).
+  - Store a digest of the change's exact `after_values` at link time.
+  - Once linked, the change's prepared values become immutable.
+  - The operator's approval of that exact change, shown beside the
+    deliverable, is what accepts the deliverable revision. Content
+    correspondence is a human judgment at approval, not string equality.
+    Draft copy and WordPress block markup rarely match byte for byte.
+  - Effect on today's behaviour: links to already approved or published
+    changes are refused, and the agent policy says link before approval.
+    This tightens a check; it changes no one's authority.
+- **D2 Measurement binding** (closes gap 2). A new append-only row binds a
+  campaign run deliverable to an `APPROVED` growth opportunity of the same
+  goal and to that opportunity's plan. The plan must be declared before the
+  binding.
+  - It reuses the W3 plan guards and the W4 evaluation rules instead of
+    duplicating them in a campaign-level plan table.
+  - The agent may record the binding: it is an internal write that grants
+    nothing. Opportunity approval and plan declaration stay operator-only.
+- **D3 Delivery time** (closes gap 3). Add `published_at` to
+  `wordpress_changes`, set when the adapter records `PUBLISHED`. Plan timing
+  is `PRE_DECLARED` only when `declared_at` precedes `published_at`.
+- **D4 Outcome read.** A read-only `read_campaign_outcome` walks the chain.
+  - States: `NOT_BOUND`, `AWAITING_APPROVAL`, `APPROVED_VALUES_CHANGED`,
+    `AWAITING_DELIVERY`, `DELIVERY_UNVERIFIED`, `AWAITING_OBSERVATION_WINDOW`,
+    `OBSERVED`.
+  - `OBSERVED` carries the existing descriptive evaluation (comparable or
+    not, coverage, caveats) with the WordPress publication as the action.
+  - It never reports lift, attribution or success. "Unproven" is a valid
+    result.
+  - Keep, revert or extend decisions remain operator decisions on the
+    opportunity.
+
+All changes are additive: one new table, one new column, one new read tool,
+and one tightened refusal. There is no new dependency and nothing is
+destructive.
+
+### M2 as built (migration 0083, `campaign-outcome.ts`)
+
+Implemented as designed. The operator's conditions:
+
+- **Stricter link rule against existing data.** The query below counts the
+  links the new rule would have rejected. On the local dev database it found
+  0 links in total, and there were no campaign runs or WordPress changes
+  either. Run it on every deployed database before merge. A count above 0 is
+  a data decision for the operator. Migration 0083 changes no existing link
+  either way; the rule applies only to new inserts.
+
+  ```sql
+  SELECT count(*) FILTER (WHERE w.created_at < r.created_at) AS change_before_run,
+         count(*) FILTER (WHERE w.decided_at IS NOT NULL AND w.decided_at <= d.created_at) AS decided_before_link,
+         count(*) FILTER (WHERE w.objective_goal_id IS DISTINCT FROM c.objective_goal_id) AS objective_mismatch,
+         count(*) AS links
+  FROM marketing_campaign_deliveries d
+  JOIN marketing_campaign_runs r ON r.id = d.run_id AND r.business_id = d.business_id
+  JOIN marketing_campaigns c ON c.id = r.campaign_id AND c.business_id = r.business_id
+  JOIN wordpress_changes w ON w.id = d.wordpress_change_id;
+  ```
+
+- **Auditable binding.** Each binding row records who (`bound_by_user_id`),
+  as which actor (`ASSISTANT` or `OPERATOR`), through which model
+  (`origin_provider`, `origin_model`), what (run, deliverable, opportunity,
+  plan) and when (`bound_at`). Rows are append-only: no delete, no truncate,
+  no edit.
+- **Operator-dissolvable binding.** The only permitted update is a single
+  dissolution through
+  `POST /api/businesses/:id/campaign-measurement-bindings/:bindingId/dissolve`
+  with a reason. It records `dissolved_by_user_id`, `dissolved_at` and
+  `dissolution_reason`. The route needs a signed-in member and refuses a
+  foreign origin. The agent has no dissolve tool.
+- **`published_at`.** It is set by the same `UPDATE` that records
+  `PUBLISHED` after the adapter's read-back. A trigger refuses it on insert,
+  refuses any other write, and refuses any later change. No tool input
+  carries it.
+- **M1 decision C is superseded for new links.** A change and a campaign
+  under different goal versions are now refused at link time
+  (`ObjectiveMismatch`). `objectiveMismatch` in `readObjectiveWork` can now
+  appear only on links created before 0083.
+
+Double-binding behaviour. Nothing is ever silently overwritten.
+
+| Attempt | Result |
+| --- | --- |
+| The same delivery link again, even after approval | Reused |
+| A different change for an already linked deliverable | `DeliverableAlreadyLinked` |
+| One change for a second deliverable, in any run | `ChangeAlreadyLinked` (also a unique index) |
+| The same measurement binding again (same request, or same opportunity and plan) | Reused, `reused: true` |
+| A different opportunity or plan for a deliverable with an active binding | `MeasurementAlreadyBound`, with the existing binding id |
+| Several deliverables bound to one plan | Allowed |
+| Binding after the deliverable's change was decided | `DeliveryAlreadyDecided` |
+| Binding to a plan that is not the opportunity's latest | `PlanNotLatest` |
+| Binding to an unapproved opportunity | `OpportunityNotApproved` |
+| Rebinding after an operator dissolution | A new audited row; history keeps both |
+| Dissolving twice | 409 `AlreadyDissolved` |
+
+Outcome reasons are reported next to the seven approved states:
+
+- `DELIVERY_UNVERIFIED` covers `CHANGE_REJECTED`, `CHANGE_FAILED`,
+  `CHANGE_UNDONE`, `LIVE_CHECK_NOT_OBSERVED` and
+  `LEGACY_LINK_WITHOUT_PINNED_VALUES`.
+- `AWAITING_DELIVERY` covers `NO_DELIVERY_LINK` and `PUBLISHING`.
+
+`OBSERVED` also reports `planPredeclared` and `windowsStraddleDelivery`, so a
+weak reading is visible rather than hidden.
+
+**Rollback** (no existing column or row is changed by 0083):
+
+```sql
+DROP TABLE marketing_campaign_measurement_bindings;
+DROP TRIGGER marketing_campaign_delivery_guard ON marketing_campaign_deliveries;
+DROP TRIGGER marketing_campaign_delivery_append ON marketing_campaign_deliveries;
+DROP TRIGGER wordpress_changes_linked_immutable ON wordpress_changes;
+DROP TRIGGER wordpress_changes_published_at ON wordpress_changes;
+DROP INDEX marketing_campaign_deliveries_one_change;
+ALTER TABLE marketing_campaign_deliveries DROP COLUMN prepared_digest;
+ALTER TABLE wordpress_changes DROP COLUMN published_at;
+DROP FUNCTION guard_campaign_measurement_binding(), guard_campaign_delivery_link(),
+  protect_linked_wordpress_change(), guard_wordpress_published_at(),
+  wordpress_prepared_digest(jsonb);
+```
+
+Then deploy the previous API. Dropping the binding table loses the binding
+history, so export it first if it matters.

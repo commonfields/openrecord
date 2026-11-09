@@ -102,6 +102,8 @@ export interface WordPressChange {
   readonly status: "PROPOSED" | "PUBLISHING" | "PUBLISHED" | "REJECTED" | "FAILED" | "UNDONE"; readonly proposedBy: "ASSISTANT" | "OPERATOR"
   readonly failure: string | null; readonly publishedLink: string | null; readonly liveCheck: { readonly status: number | null; readonly observed: boolean | null } | null
   readonly createdAt: string; readonly decidedAt: string | null
+  /** When OpenRecord recorded the verified publication; set by the publish statement only. */
+  readonly publishedAt: string | null
 }
 const toChange = (r: Record<string, unknown>): WordPressChange => ({
   id: String(r["id"]), kind: r["kind"] as ChangeKind, postType: r["post_type"] === "posts" ? "posts" : "pages",
@@ -111,6 +113,7 @@ const toChange = (r: Record<string, unknown>): WordPressChange => ({
   failure: (r["failure"] as string | null) ?? null, publishedLink: (r["published_link"] as string | null) ?? null,
   liveCheck: (r["live_check"] as WordPressChange["liveCheck"]) ?? null,
   createdAt: new Date(r["created_at"] as string).toISOString(), decidedAt: r["decided_at"] ? new Date(r["decided_at"] as string).toISOString() : null,
+  publishedAt: r["published_at"] ? new Date(r["published_at"] as string).toISOString() : null,
 })
 export const listChanges = (accountId: string, businessId: string, status: string | null) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -187,8 +190,9 @@ export const publishChange = (session: Session, businessId: string, id: string) 
     const check = yield* readPost(site, change.postType, written.id)
     if (!stored(check, change.after)) return yield* fail(change.kind === "SET_SEO" ? "SeoNotWritable" : "NotStoredAsApproved")
     const live = yield* liveCheck(check.link, change.after)
-    yield* sql`UPDATE wordpress_changes SET status = 'PUBLISHED', published_post_id = ${written.id}, published_link = ${check.link},
-      live_check = ${JSON.stringify(live)}::jsonb WHERE id = ${id}`
+    // The publication record and its time are one statement; published_at is never taken from input.
+    yield* sql`UPDATE wordpress_changes SET status = 'PUBLISHED', published_at = now(), published_post_id = ${written.id}, published_link = ${check.link},
+      live_check = ${JSON.stringify(live)}::jsonb WHERE id = ${id} AND status = 'PUBLISHING'`
     return written.id
   }).pipe(Effect.catchAll(e => e instanceof WordPressRefused && (e.reason === "ChangedSincePrepared" || e.reason === "SeoNotWritable" || e.reason === "NotStoredAsApproved")
     ? Effect.fail(e)

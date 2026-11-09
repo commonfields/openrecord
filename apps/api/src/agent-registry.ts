@@ -26,6 +26,7 @@ import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
 import { decisionFeedbackDeclarations, dispatchDecisionFeedback } from "./decision-feedback.js"
 import { campaignDraftDeclarations, draftMarketingCampaign } from "./campaign-agent.js"
 import { campaignRunDeclarations, dispatchCampaignRun } from "./campaign-engine.js"
+import { campaignOutcomeDeclarations, dispatchCampaignOutcome } from "./campaign-outcome.js"
 import { campaignRevisionDeclarations, reviseCampaign } from "./campaign-revisions.js"
 import { accountActionDeclarations, dispatchAccountAction } from "./account-actions.js"
 
@@ -63,6 +64,9 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
   ...campaignRunDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: declaration.name.startsWith("read_") ? "read" : "record",
     replay: declaration.name.startsWith("read_") ? "safe" : "deduplicated", scope: "general",
     run: (ctx, args) => dispatchCampaignRun(ctx, declaration.name, args) })),
+  ...campaignOutcomeDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: declaration.name.startsWith("read_") ? "read" : "record",
+    replay: declaration.name.startsWith("read_") ? "safe" : "deduplicated", scope: "general",
+    run: (ctx, args) => dispatchCampaignOutcome(ctx, declaration.name, args) })),
   ...campaignDraftDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => draftMarketingCampaign(ctx, args) })),
   ...executionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
@@ -149,7 +153,8 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
   if (tag === "CampaignRevisionRefused") return { ...toolFailure("REFUSED"), guidance: "Read the current campaign. Edits require its current revision, DRAFT stage, unfinished tasks and no linked delivery proposals. Do not overwrite stale content or retry unchanged inputs. Explain the blocker or offer a separately named alternative." }
-  if (tag === "CampaignRunRefused") return { ...toolFailure("REFUSED"), guidance: "The campaign run is stale, cancelled, too large or has a conflicting delivery link. Read its current run and brief. Do not replay external work, replace links or retry unchanged inputs." }
+  if (tag === "CampaignMeasurementRefused") return { ...toolFailure("REFUSED"), guidance: `Refused: ${(e as { reason?: string }).reason ?? "unknown"}${(e as { bindingId?: string }).bindingId ? ` (existing binding ${(e as { bindingId?: string }).bindingId})` : ""}. Read read_campaign_outcome and the opportunity's plan. A bound deliverable is never rebound silently; only an operator can dissolve a binding. Do not retry unchanged inputs.` }
+  if (tag === "CampaignRunRefused") return { ...toolFailure("REFUSED"), guidance: `Refused: ${(e as { reason?: string }).reason ?? "unknown"}. The campaign run is stale, cancelled, too large or has a conflicting delivery link, or the change is not a pending change prepared for this run. Read its current run and brief. Do not replay external work, replace links or retry unchanged inputs.` }
   if (tag === "AgentInvestigationConflict") return { ...toolFailure("REFUSED"), guidance: "The investigation state changed. Read read_investigation for its current state_note_id before deciding whether a new state change is still appropriate. Do not blindly retry." }
   if (tag === "GrowthExecutionRefused") {
     const reason = (e as { readonly reason?: string }).reason
