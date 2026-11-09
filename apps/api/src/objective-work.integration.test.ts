@@ -114,18 +114,19 @@ suite("objective work lineage (disposable PostgreSQL)", () => {
     const v2Campaign = String((await runtime.runPromise(draftMarketingCampaign(ctx, { ...draft, title: "Demo campaign" }))).data.campaignId)
     expect(await lineage("marketing_campaigns", v2Campaign)).toBe(v2)
     expect(await lineage("marketing_campaigns", v1Campaign)).toBe(f.goalId)
-    // A change prepared under v2, delivered for the v1 campaign: reported, not refused.
-    const v2Change = await wordpressChange(f, v2)
+    // A change prepared under v2 cannot be linked as delivery of the v1 campaign (0083 refuses it; links created before 0083 are reported as objectiveMismatch).
     const runId = String((await runtime.runPromise(dispatchCampaignRun(ctx, "record_campaign_run", { campaignId: v1Campaign }))).data.runs[0]!.id)
+    const v2Change = await wordpressChange(f, v2)
     const taskId = String((await pool.query("SELECT brief->'tasks'->0->>'id' AS id FROM marketing_campaigns WHERE id=$1", [v1Campaign])).rows[0].id)
-    await runtime.runPromise(dispatchCampaignRun(ctx, "record_campaign_delivery", { runId, taskId, wordpressChangeId: v2Change }))
+    const refused = await runtime.runPromise(Effect.either(dispatchCampaignRun(ctx, "record_campaign_delivery", { runId, taskId, wordpressChangeId: v2Change })))
+    expect(Either.isLeft(refused) && (refused.left as { reason?: string }).reason).toBe("ObjectiveMismatch")
     await wordpressChange({ ...f }, null) // legacy or unknown: never recovered
 
     const recovered = await work(f.businessId)
     expect(recovered).toMatchObject({ goalId: v2, goalVersion: 2 })
     expect(recovered.campaigns.map(c => [c["id"], c["currentObjective"], c["goalVersion"]])).toEqual([[v2Campaign, true, 2], [v1Campaign, false, 1]])
     expect(recovered.wordpressChanges.map(c => [c["id"], c["currentObjective"], c["campaignId"] ?? null, c["objectiveMismatch"]]))
-      .toEqual([[v2Change, true, v1Campaign, true], [v1Change, false, null, false]])
+      .toEqual([[v2Change, true, null, false], [v1Change, false, null, false]])
     const resume = await runtime.runPromise(loadResumeContext(f.accountId, f.businessId))
     for (const id of [v1Campaign, v2Campaign, v1Change, v2Change]) expect(resume).toContain(id)
   })

@@ -19,6 +19,8 @@ const META: Readonly<Record<string, Meta>> = {
   record_campaign_run: { ns: "work", title: "Start or resume a campaign run", not: "Not for editing the brief, approving, publishing or spending.", evidence: ["receipt"] },
   read_campaign_runs: { ns: "work", title: "Read campaign runs and delivery state", not: "Not for the campaign brief itself (read_marketing_campaigns).", evidence: ["none"] },
   record_campaign_delivery: { ns: "work", title: "Link a WordPress change to a campaign deliverable", not: "Not for preparing the change (prepare_wordpress_change) or claiming it was published.", evidence: ["receipt"] },
+  record_campaign_measurement: { ns: "measurement", title: "Bind a website deliverable to a predeclared plan", not: "Not after the deliverable's change was approved, and not for declaring a plan (operators declare plans).", evidence: ["receipt"] },
+  read_campaign_outcome: { ns: "measurement", title: "Read a campaign deliverable's chain to its outcome", not: "Not as proof of lift or attribution; not for run state alone (read_campaign_runs).", evidence: ["none"] },
   read_marketing_campaigns: { ns: "work", title: "Read saved campaigns", not: "Not for run or delivery state (read_campaign_runs).", evidence: ["none"] },
   read_marketing_work: { ns: "work", title: "Read the marketing work queue and blockers", not: "Not for one campaign's full brief (read_marketing_campaigns).", evidence: ["none"] },
   read_connected_execution_targets: { ns: "web", title: "List connected repositories for page changes", not: "Not for WordPress sites (read_wordpress_content).", evidence: ["none"] },

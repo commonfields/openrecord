@@ -74,7 +74,7 @@ export const readCampaignRuns = (ctx: CampaignScope, campaignId: string, limit: 
 export const campaignRunDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "record_campaign_run", description: "Start or resume the pinned, bounded preparation playbook for a saved campaign. Persists its exact revision and returns per-deliverable blockers and next moves. Same campaign revision reuses the run. Does not call providers, approve, spend, publish or mark a task done. Read before preparing any external change; stop on STALE and start a run of the current revision.", parametersJsonSchema: JSONSchema.make(CampaignInput) },
   { name: "read_campaign_runs", description: "Read durable campaign runs and recompute current status from scoped WordPress adapter records. Detects changed campaign revisions, pending approvals, failures and observed live changes. A linked receipt is not proof the entire campaign shipped or caused results.", parametersJsonSchema: JSONSchema.make(CampaignInput) },
-  { name: "record_campaign_delivery", description: "Link one existing WordPress change to a WEBSITE deliverable of a current campaign run. Read the change and confirm the target/content match first. The server verifies business and task scope; it never approves, publishes or trusts an agent's success claim. Repeating the same link is safe; replacing a link or linking stale runs is refused.", parametersJsonSchema: JSONSchema.make(LinkInput) },
+  { name: "record_campaign_delivery", description: "Link one WordPress change you prepared for this run, still awaiting the operator's decision, to a WEBSITE deliverable of a current campaign run, before it is approved. Read the change and confirm the target/content match first. The server pins the change's exact prepared values, refuses changes already approved or published, prepared before the run, under another objective, or already linked elsewhere, and verifies business and task scope; it never approves, publishes or trusts an agent's success claim. Repeating the same link is safe; replacing a link or linking stale runs is refused.", parametersJsonSchema: JSONSchema.make(LinkInput) },
 ]
 
 export const dispatchCampaignRun = (ctx: ToolContext, name: string, raw: unknown) => Effect.gen(function*() {
@@ -110,13 +110,26 @@ export const dispatchCampaignRun = (ctx: ToolContext, name: string, raw: unknown
     const brief = yield* Schema.decodeUnknown(CampaignBrief)(run["snapshot"])
     const task: CampaignTask | undefined = brief.tasks.find(t => t.id === input.taskId)
     if (!task || task.channel !== "WEBSITE") return yield* refuse("UnsupportedDeliverable")
-    const change = (yield* sql`SELECT id FROM wordpress_changes WHERE id=${input.wordpressChangeId} AND business_id=${ctx.businessId} AND account_id=${ctx.accountId}`)[0]
+    const change = (yield* sql`SELECT w.id,w.status,w.decided_at,(w.created_at >= r.created_at) AS prepared_for_run,
+        (w.objective_goal_id IS NOT DISTINCT FROM c.objective_goal_id) AS same_objective
+      FROM wordpress_changes w JOIN marketing_campaign_runs r ON r.id=${input.runId} AND r.business_id=w.business_id
+      JOIN marketing_campaigns c ON c.id=r.campaign_id AND c.business_id=r.business_id
+      WHERE w.id=${input.wordpressChangeId} AND w.business_id=${ctx.businessId} AND w.account_id=${ctx.accountId} FOR UPDATE OF w`)[0]
     if (!change) return yield* Effect.fail(new AgentNotInScope())
-    const links = yield* sql`SELECT task_id,wordpress_change_id FROM marketing_campaign_deliveries WHERE run_id=${input.runId}
-      AND (task_id=${input.taskId} OR wordpress_change_id=${input.wordpressChangeId})`
-    if (links.some(l => l["task_id"] !== input.taskId || l["wordpress_change_id"] !== input.wordpressChangeId)) return yield* refuse("DeliveryAlreadyLinked")
-    yield* sql`INSERT INTO marketing_campaign_deliveries(business_id,run_id,task_id,wordpress_change_id,linked_by_user_id)
-      VALUES (${ctx.businessId},${input.runId},${input.taskId},${input.wordpressChangeId},${ctx.userId}) ON CONFLICT (run_id,task_id) DO NOTHING`
+    // Replay first: the same link is reused even after the change was later approved. Any other overlap is refused, never replaced.
+    const links = yield* sql`SELECT run_id,task_id,wordpress_change_id FROM marketing_campaign_deliveries
+      WHERE (run_id=${input.runId} AND task_id=${input.taskId}) OR (wordpress_change_id=${input.wordpressChangeId} AND (run_id=${input.runId} OR prepared_digest IS NOT NULL))`
+    const same = (l: Record<string, unknown>) => l["run_id"] === input.runId && l["task_id"] === input.taskId && l["wordpress_change_id"] === input.wordpressChangeId
+    if (links.some(same)) return String(run["campaign_id"])
+    if (links.some(l => l["run_id"] === input.runId && l["task_id"] === input.taskId)) return yield* refuse("DeliverableAlreadyLinked")
+    if (links.length) return yield* refuse("ChangeAlreadyLinked")
+    // Only a change still awaiting its decision can become this deliverable: the operator's approval then accepts it.
+    if (change["status"] !== "PROPOSED" || change["decided_at"]) return yield* refuse("ChangeAlreadyDecided")
+    if (change["prepared_for_run"] !== true) return yield* refuse("ChangePreparedBeforeRun")
+    if (change["same_objective"] !== true) return yield* refuse("ObjectiveMismatch")
+    yield* sql`INSERT INTO marketing_campaign_deliveries(business_id,run_id,task_id,wordpress_change_id,linked_by_user_id,prepared_digest)
+      SELECT ${ctx.businessId},${input.runId},${input.taskId},w.id,${ctx.userId},wordpress_prepared_digest(w.after_values)
+      FROM wordpress_changes w WHERE w.id=${input.wordpressChangeId} AND w.business_id=${ctx.businessId}`
     return String(run["campaign_id"])
   }))
   return yield* readCampaignRuns(ctx, campaignId)

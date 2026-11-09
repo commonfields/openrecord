@@ -27,7 +27,7 @@ brief then shows that campaign's live state next to the investigation.
 | Campaign delivery verification | Partial. WordPress receipt and live-check state is derived separately from campaign impact. | `campaignRunReport` |
 | Opportunity approval and execution | Implemented for supported site changes. An approved opportunity still needs exact change authorization before dispatch. | `growth-execution-routes.ts`, `growth_execution_events` |
 | Opportunity observation and review | Implemented. Live checks, measurement plans and observed metric evaluations remain separate from operator KEEP, REVERT, EXTEND or INCONCLUSIVE decisions. | `growth_execution_live_checks`, `growth-measurement-routes.ts`, `growth-routes.ts` |
-| Campaign-bound outcome measurement | Missing. | |
+| Campaign-bound outcome measurement | Implemented by 0083 for WEBSITE deliverables delivered through WordPress. Descriptive only. | `record_campaign_measurement`, `read_campaign_outcome`; see `docs/openrecord-agent-context.md` (M2) |
 | Keep, change or stop decision | Human only. The agent recommends and never saves it. | |
 | Continuing without a person in the chat | Missing. Wake-ups are opt-in and read-only. `/marketing` works only inside a turn. | |
 | Email and social sending, member assignment | Missing. | |
