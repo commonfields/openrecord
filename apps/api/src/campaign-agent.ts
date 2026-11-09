@@ -42,8 +42,10 @@ export const draftMarketingCampaign = (ctx: ToolContext, raw: unknown) => Effect
     yield* sql`SELECT id FROM businesses WHERE id=${ctx.businessId} AND account_id=${ctx.accountId} FOR UPDATE`
     const existing = yield* sql`SELECT id,revision,brief->>'status' AS status FROM marketing_campaigns WHERE business_id=${ctx.businessId} AND draft_key=${key}`
     if (existing[0]) return { row: existing[0], reused: true }
-    const rows = yield* sql`INSERT INTO marketing_campaigns(business_id,created_by_user_id,created_by_actor,draft_key,brief)
-      VALUES (${ctx.businessId},${ctx.userId},'ASSISTANT',${key},${JSON.stringify(brief)}::jsonb) RETURNING id,revision,brief->>'status' AS status`
+    // Lineage is written by the server in the creating statement, never from model input.
+    const rows = yield* sql`INSERT INTO marketing_campaigns(business_id,created_by_user_id,created_by_actor,draft_key,brief,objective_goal_id)
+      VALUES (${ctx.businessId},${ctx.userId},'ASSISTANT',${key},${JSON.stringify(brief)}::jsonb,
+        (SELECT primary_goal_id FROM growth_profiles WHERE business_id=${ctx.businessId})) RETURNING id,revision,brief->>'status' AS status`
     const row = rows[0]!
     yield* sql`INSERT INTO marketing_campaign_revisions(campaign_id,revision,actor_user_id,actor,brief)
       VALUES (${row["id"]},1,${ctx.userId},'ASSISTANT',${JSON.stringify(brief)}::jsonb)`

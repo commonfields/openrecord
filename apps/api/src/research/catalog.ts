@@ -41,7 +41,7 @@ const SYNONYMS: Readonly<Record<string, string>> = {
 const STOP = new Set("a an and are as at be by can do does for from get has have how i in is it its me my of on or our say says see show that the their them they this to us was we what when where which who why will with you your about into than then there these those".split(" "))
 /** Lowercase words without filler, reduced to a rough stem so "advertise", "advertising" and "ads" meet. */
 const stem = (w: string) => w.length > 4 ? w.replace(/(ings?|ers?|ed|es|s|e)$/, "") : w
-const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1 && !STOP.has(t)).map(stem)
+export const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1 && !STOP.has(t)).map(stem)
 
 /** Capabilities ranked for a need, best first. */
 export const findCapabilities = (query: string, platform?: string, limit = 8) => {

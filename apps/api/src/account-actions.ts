@@ -174,9 +174,10 @@ export const prepareAction = (scope: { accountId: string; userId: string; busine
   const plan = input.kind === "REPLY_TO_REVIEW" ? yield* planReply(scope, input) : yield* planAds(scope, input)
   const key = createHash("sha256").update(JSON.stringify(["account-action-v1", scope.businessId, scope.userId, input.kind, plan.bindingId, plan.target, plan.before, plan.after])).digest("hex")
   const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`INSERT INTO account_actions(business_id, account_id, binding_id, provider, kind, target, before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key)
+  const rows = yield* sql`INSERT INTO account_actions(business_id, account_id, binding_id, provider, kind, target, before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key, objective_goal_id)
     VALUES (${scope.businessId}, ${scope.accountId}, ${plan.bindingId}, ${providerOf(input.kind)}, ${input.kind}, ${JSON.stringify(plan.target)}::jsonb,
-      ${JSON.stringify(plan.before)}::jsonb, ${JSON.stringify(plan.after)}::jsonb, ${input.rationale.trim()}, 'PROPOSED', ${actor}, ${scope.userId}, ${key})
+      ${JSON.stringify(plan.before)}::jsonb, ${JSON.stringify(plan.after)}::jsonb, ${input.rationale.trim()}, 'PROPOSED', ${actor}, ${scope.userId}, ${key},
+      (SELECT primary_goal_id FROM growth_profiles WHERE business_id = ${scope.businessId}))
     ON CONFLICT (business_id, request_key) DO UPDATE SET request_key = EXCLUDED.request_key RETURNING *`
   return toAction(rows[0]!)
 })

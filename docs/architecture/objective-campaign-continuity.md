@@ -20,7 +20,8 @@ brief then shows that campaign's live state next to the investigation.
 | Investigation to opportunity | Partial. Opportunities reference a goal, but have no structured investigation link. Assistant proposals remain hypotheses. | `growth_opportunities.goal_id`, `propose_growth_opportunity` |
 | Opportunity to campaign | Missing. The two persisted work chains have no structured link. | |
 | Campaign draft, revision and run | Implemented. | `record_campaign_draft`, `record_campaign_revision`, `record_campaign_run` |
-| Investigation to campaign link | Implemented by 0081. | `campaignId` on `record_investigation_note` |
+| Investigation to campaign link | Implemented by 0081. Optional explanatory context. | `campaignId` on `record_investigation_note` |
+| Objective to work link | Implemented by 0082. Written by the server when the work is created. | `objective_goal_id` on campaigns, WordPress changes and account actions; `readObjectiveWork` |
 | Resume in a fresh conversation | Partial. Top three investigations, the latest linked campaign, and its latest run only. | `readObjectiveInvestigations`, `loadResumeContext` |
 | Campaign approval and execution | Partial. Exact WordPress changes require operator approval. Run links grant no authority. Other campaign channels remain handoffs. | `wordpress_changes`, `record_campaign_delivery` |
 | Campaign delivery verification | Partial. WordPress receipt and live-check state is derived separately from campaign impact. | `campaignRunReport` |
@@ -90,10 +91,36 @@ replay-safe. A link inherits all three without new machinery.
   and to link saved campaign work with one note. Read-only assessments record
   nothing.
 
+## Objective lineage (0082)
+
+The note link above depends on the model. Migration 0082 adds a link that
+does not. `marketing_campaigns`, `wordpress_changes` and `account_actions` gain
+a nullable `objective_goal_id`. The creating `INSERT` fills it from
+`growth_profiles.primary_goal_id` in the same statement:
+`draftMarketingCampaign`, the operator campaign create route, `prepareChange`
+and `prepareAction`. Deliverables live in the campaign brief and runs
+reference their campaign, so both inherit it.
+
+- Null means the objective was unknown (no growth profile) or the row predates
+  0082. There is no backfill and nothing is guessed.
+- The model cannot supply it: tool inputs reject unknown properties.
+- `(objective_goal_id, business_id)` references `growth_goals(id, business_id)`,
+  so a row can name only a goal of its own business.
+- A trigger refuses any later change, including adding a link to a null row.
+- `readObjectiveWork` recovers the work by business and goal: the current
+  goal version first, earlier versions labelled `currentObjective: false`,
+  and at most 10 of each kind. `readObjectiveInvestigations` returns it as
+  `objectiveWork`, and the resume brief includes up to 5 of each.
+- A WordPress change delivered for a campaign created under a different goal
+  version is reported as `objectiveMismatch`, not refused.
+- Investigation notes are unchanged and remain explanatory context only.
+
 ## Limitations
 
-- Linking depends on the model following the policy. The server does not
-  require a note after saved campaign work, and no live-model eval checks it.
+- Which investigation a piece of work advances still depends on the model
+  following the policy. The server does not require a note after saved
+  campaign work, and no live-model eval checks it. Which objective the work
+  falls under no longer depends on the model (0082).
 - Each investigation shows only its latest linked campaign. A later link to a
   different campaign replaces it in the summary, and history keeps both.
 - `VERIFYING`, `WAITING_FOR_APPROVAL` and a saved plan are not delivery or

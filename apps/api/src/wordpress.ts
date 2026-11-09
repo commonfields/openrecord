@@ -147,10 +147,11 @@ export const prepareChange = (scope: { accountId: string; userId: string; busine
   const key = changeKey(["wordpress-change-v1", scope.businessId, scope.userId, input.kind, input.postType, input.postId ?? null, plan.after, current?.modified ?? null])
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`INSERT INTO wordpress_changes(business_id, account_id, kind, post_type, post_id, target_title, target_link, target_modified,
-      before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key)
+      before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key, objective_goal_id)
     VALUES (${scope.businessId}, ${scope.accountId}, ${input.kind}, ${input.postType}, ${input.postId ?? null},
       ${(current?.title ?? input.title ?? "").slice(0, 300)}, ${current?.link ?? null}, ${current?.modified ?? null},
-      ${JSON.stringify(plan.before)}::jsonb, ${JSON.stringify(plan.after)}::jsonb, ${input.rationale.trim()}, 'PROPOSED', ${actor}, ${scope.userId}, ${key})
+      ${JSON.stringify(plan.before)}::jsonb, ${JSON.stringify(plan.after)}::jsonb, ${input.rationale.trim()}, 'PROPOSED', ${actor}, ${scope.userId}, ${key},
+      (SELECT primary_goal_id FROM growth_profiles WHERE business_id = ${scope.businessId}))
     ON CONFLICT (business_id, request_key) DO UPDATE SET request_key = EXCLUDED.request_key RETURNING *`
   return toChange(rows[0]!)
 }))

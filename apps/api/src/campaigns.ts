@@ -122,7 +122,7 @@ export const campaignsApi = (withSession: WithSession) => {
       const brief = JSON.stringify(input.brief)
       const rows = yield* sql.withTransaction(Effect.gen(function*() {
         const saved = input.revision === 0
-          ? yield* sql`INSERT INTO marketing_campaigns(id,business_id,created_by_user_id,brief) VALUES (${input.id},${id},${session.userId},${brief}::jsonb) ON CONFLICT DO NOTHING RETURNING id, revision, brief, updated_at`
+          ? yield* sql`INSERT INTO marketing_campaigns(id,business_id,created_by_user_id,brief,objective_goal_id) VALUES (${input.id},${id},${session.userId},${brief}::jsonb,(SELECT primary_goal_id FROM growth_profiles WHERE business_id=${id})) ON CONFLICT DO NOTHING RETURNING id, revision, brief, updated_at`
           : yield* sql`UPDATE marketing_campaigns SET brief=${brief}::jsonb,revision=revision+1,updated_at=now() WHERE id=${input.id} AND business_id=${id} AND revision=${input.revision} RETURNING id,revision,brief,updated_at`
         if (saved[0]) yield* sql`INSERT INTO marketing_campaign_revisions(campaign_id,revision,actor_user_id,brief) VALUES (${input.id},${saved[0]["revision"]},${session.userId},${brief}::jsonb)`
         return saved
