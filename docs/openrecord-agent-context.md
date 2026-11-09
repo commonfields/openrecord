@@ -342,3 +342,43 @@ Next steps, each to be measured on held-out real turns with a time split:
    miss is recoverable inside the turn.
 4. Write eval cases for the 31 disabled capabilities before any gating.
 5. Try embedding ranking only if it beats these numbers.
+
+## M1.5 increment 2: step replay with a time split (2026-11-09)
+
+Added `capabilities/step-replay.ts`. It replays recorded dev turns step by
+step: each step is routed on the person's message plus the summaries of tools
+completed before that model request. The router (`keyword-v2`) weights that
+context at half. Run data is passed in as a file and is not stored in the
+repository.
+
+- **Split:** the 40 earlier runs (2026-10-28 to 2026-11-01) are used to learn
+  the core set; the 40 later runs (2026-11-01 to 2026-11-09) are evaluated.
+- **Labels:** the tools the agent actually called. That is an upper bound on
+  need, not ground truth.
+
+| Configuration (later 40 runs) | Recall | Runs fully covered | Model steps per run | Schema bytes per run |
+| --- | --- | --- | --- | --- |
+| Today's `commandTools` | 0.957 | n/a | 4.63 | 342,702 |
+| keyword-v1 equivalent (first message, fixed core, gated) | 0.442 | 3 | 4.63 | about 59,000 |
+| Learned core (10 tools used in at least 25% of earlier runs), sticky, ungated, k=15 | 0.789 | 9 | 4.63 | 169,307 |
+| The same, k=30 | 0.882 | 10 | 4.63 | 244,191 |
+| The same, k=10, plus a find-and-load fallback (oracle query: the missing tool's title) | 1.000 (upper bound) | 40 | 6.70 | 242,574 |
+| The fallback, gated by eval cases | 0.638 | 7 | 7.46 | about 242,000 |
+
+**Verdict.** At 73 tools, no routed configuration matches today's coverage
+without paying for it. Without a fallback it misses 12 to 21% of the tools
+used. With the optimistic fallback it saves about 29% of schema bytes but
+adds about 2 model round trips per conversation, a 45% increase. Gating by
+eval cases makes everything worse until the 31 uncovered capabilities have
+cases.
+
+**Recommendation:**
+
+- Keep `commandTools` for the agent's 73 tools.
+- Keep the two-tier find-then-run pattern where scale needs it: the 2,204
+  research capabilities already use it.
+- Revisit routing when the registered tool count or schema bytes grow
+  materially, or when the system prompt (about 50 KB, larger than the
+  schemas) is reduced first. The prompt is the bigger fixed cost.
+- The manifests, the deny-by-default filter and the replay harness remain as
+  the gate for that decision.

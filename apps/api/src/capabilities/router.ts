@@ -1,13 +1,17 @@
 import { tokens } from "../research/catalog.js"
 import { isEnabled, type CapabilityManifest, type SideEffect } from "./manifest.js"
 
-export const ROUTER_VERSION = "keyword-v1"
+export const ROUTER_VERSION = "keyword-v2"
 /** Loaded every step: orientation reads that most turns need. */
 export const CORE_CAPABILITIES = ["read_business_truth", "read_growth_goal", "read_objective_investigations", "read_proposals", "read_decision_feedback"] as const
 export const DEFAULT_K = 10
 
 export interface RouteInput {
   readonly text: string
+  /** What the step has seen so far (recent tool result summaries). Counts half as much as the person's words. */
+  readonly context?: string
+  /** Core set to load every step; defaults to CORE_CAPABILITIES. */
+  readonly core?: ReadonlyArray<string>
   /** Side effects permitted for this turn. Deny by default: anything not listed is filtered out. */
   readonly allowedSideEffects: ReadonlyArray<SideEffect>
   /** Capabilities unavailable for this business now (no connection, no credit), by id. */
@@ -44,10 +48,10 @@ export const makeRouter = (manifests: ReadonlyArray<CapabilityManifest>) => {
       if (reason) filtered.push({ id: m.id, reason })
       return reason === null
     })
-    const core = CORE_CAPABILITIES.filter(id => known.has(id) && pass.some(x => x.m.id === id))
-    const words = tokens(input.text)
-    const scored = pass.filter(x => !core.includes(x.m.id as typeof CORE_CAPABILITIES[number])).map(x => {
-      const score = words.reduce((s, t) => s + (x.id.includes(t) ? 4 : 0) + (x.title.includes(t) ? 3 : 0) + (x.text.includes(t) ? 1 : 0), 0)
+    const core = (input.core ?? CORE_CAPABILITIES).filter(id => known.has(id) && pass.some(x => x.m.id === id))
+    const terms = [...tokens(input.text).map(t => ({ t, w: 1 })), ...tokens(input.context ?? "").map(t => ({ t, w: 0.5 }))]
+    const scored = pass.filter(x => !core.includes(x.m.id)).map(x => {
+      const score = terms.reduce((s, { t, w }) => s + w * ((x.id.includes(t) ? 4 : 0) + (x.title.includes(t) ? 3 : 0) + (x.text.includes(t) ? 1 : 0)), 0)
       return { id: x.m.id, score }
     }).filter(c => c.score > 0).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
     return { routerVersion: ROUTER_VERSION, core, selected: scored.slice(0, input.k ?? DEFAULT_K).map(c => c.id), candidates: scored, filtered }

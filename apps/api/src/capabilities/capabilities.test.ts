@@ -5,6 +5,7 @@ import { isEnabled } from "./manifest.js"
 import { CORE_CAPABILITIES, makeRouter } from "./router.js"
 import { ROUTING_CASES } from "./routing-cases.js"
 import { routingReport } from "./routing-eval.js"
+import { coreFromUsage, stepReplayReport } from "./step-replay.js"
 
 describe("capability manifests (M1.5, shadow only)", () => {
   it("describes every registered agent tool exactly once, with no stale metadata", () => {
@@ -55,5 +56,30 @@ describe("capability router (M1.5, shadow only)", () => {
     const report = routingReport(CAPABILITY_MANIFESTS, declarations, ROUTING_CASES)
     expect(report.recall).toBeGreaterThanOrEqual(0.95)
     expect(report.meanRoutedBytes).toBeLessThan(report.meanBaselineBytes / 2)
+  })
+})
+
+describe("step replay evaluator (M1.5, offline)", () => {
+  const run = (id: string, steps: Array<{ context?: string[]; tools: string[] }>) => ({ id, startedAt: "2026-11-01T00:00:00Z", text: "Prepare a WordPress change", steps: steps.map(s => ({ context: s.context ?? [], tools: s.tools })) })
+  const runs = [
+    run("a", [{ tools: ["read_growth_goal", "prepare_wordpress_change"] }, { context: ["read_reviews: 2 reviews"], tools: ["read_reviews"] }]),
+    run("b", [{ tools: ["read_growth_goal", "retired_tool"] }]),
+  ]
+  const base = { k: 10, core: ["read_growth_goal"], sticky: false, fallback: "none", ignoreGating: false, contextWindow: 6 } as const
+
+  it("counts recorded calls of known capabilities only and routes each step on its own context", () => {
+    const r = stepReplayReport(CAPABILITY_MANIFESTS, runs, base)
+    expect(r).toMatchObject({ runs: 2, steps: 3, calls: 4, directRecall: 1, runsFullyCovered: 2, extraModelStepsPerRun: 0 })
+    const noContext = stepReplayReport(CAPABILITY_MANIFESTS, runs, { ...base, contextWindow: 0, k: 1 })
+    expect(noContext.directRecall).toBe(0.75)
+    expect(noContext.topMisses).toEqual([["read_reviews", 1]])
+  })
+
+  it("learns the core set from usage share, and the find fallback costs a model step", () => {
+    expect(coreFromUsage(runs, new Set(CAPABILITY_MANIFESTS.map(m => m.id)), 1)).toEqual(["read_growth_goal"])
+    const r = stepReplayReport(CAPABILITY_MANIFESTS, runs, { ...base, core: [], k: 0, fallback: "find" })
+    expect(r.directRecall).toBe(0)
+    expect(r.recallWithFallback).toBeGreaterThan(0)
+    expect(r.extraModelStepsPerRun).toBeGreaterThan(0)
   })
 })
