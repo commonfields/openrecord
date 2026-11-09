@@ -300,3 +300,45 @@ How it maps onto what exists:
 - third-party registries;
 - automatic capability authoring;
 - any new external effect.
+
+## M1.5 increment 1: manifests and router in shadow (2026-11-09)
+
+Built: `apps/api/src/capabilities/`.
+
+- `manifest.ts`: the manifest schema.
+- `catalog.ts`: one manifest per registered agent tool, 73 in all, each with
+  hand-written `whenNotToUse`, namespace, cost and latency.
+- `router.ts`: a deterministic, deny-by-default keyword router.
+- `routing-cases.ts` and `routing-eval.ts`: routing cases, and an offline
+  comparison with `commandTools`.
+
+Nothing is wired into live turns. The agent still receives exactly the tools
+it received before.
+
+Results:
+
+| Measure | Value |
+| --- | --- |
+| Authored routing cases (43, in-distribution, written alongside the manifests) | recall 1.0 at k=5, 10 and 15. Mean schema bytes 18,439 at k=10, against 79,043 for today's tool set. One avoid violation (`prepare_page_change` on a WordPress task). |
+| Capabilities with eval cases | 42 of 73. Disabled-by-default would hide the other 31, including `run_research` and `read_competitors`. |
+| Real dev turns (80 runs with tool calls, 741 tool uses; tools the agent actually called, routed on the user message alone) | Tool recall 0.41 (k=10, gated) to 0.54 (k=15, all enabled). Runs fully covered: 5 to 10 of 80. |
+
+**Verdict: keyword-v1 fails the switch gate. Do not replace `commandTools`.**
+
+Why real turns fail:
+
+- Short replies ("yes"), system notices and multi-step briefs carry little
+  text.
+- The agent reads broadly across reports.
+- A single selection made from the first message cannot anticipate later
+  steps.
+- Called tools are an upper bound on need, not ground truth.
+
+Next steps, each to be measured on held-out real turns with a time split:
+
+1. Route per step, on the last user message plus the latest tool results.
+2. Derive the core set from usage frequency in the earlier half of the turns.
+3. Add the planned `find_capabilities` and `load_capability` tools, so a
+   miss is recoverable inside the turn.
+4. Write eval cases for the 31 disabled capabilities before any gating.
+5. Try embedding ranking only if it beats these numbers.
