@@ -124,6 +124,9 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     expect(Either.getOrThrow(read).summary).toBe("2 Google reviews read")
     const prepared = Either.getOrThrow(await agent("prepare_account_action", { kind: "REPLY_TO_REVIEW", reviewId: "r1", reply: "Sorry for the wait, Ana. We now text when we run late; call us to rebook.", rationale: "Unanswered two-star review about waiting." }))
     const actionId = String((prepared.data as { accountActionId: string }).accountActionId)
+    const objectiveOf = async () => (await pool.query("SELECT a.objective_goal_id, p.primary_goal_id FROM account_actions a JOIN growth_profiles p ON p.business_id=a.business_id WHERE a.id=$1", [actionId])).rows[0]
+    const linked = await objectiveOf()
+    expect(linked.objective_goal_id).toBe(linked.primary_goal_id)
     expect(writes).toEqual([])
     const inbox = await ok<{ items: Array<{ type: string; action?: { id: string } }> }>(call(a, "GET", "/api/decisions"))
     expect(inbox.items).toEqual(expect.arrayContaining([expect.objectContaining({ type: "ACCOUNT_ACTION", action: expect.objectContaining({ id: actionId }) })]))
@@ -133,6 +136,7 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     expect((await web.handler(new Request(approvalPath, { method: "POST", headers: { cookie: `or_session=${a.cookie}`, origin: "https://hostile.example", "content-type": "application/json" }, body: "{}" }))).status).toBe(403)
     const approvals = await Promise.all([0, 1].map(() => call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/approve`)))
     expect(approvals.map(r => r.status).sort()).toEqual([200, 409])
+    expect((await objectiveOf()).objective_goal_id).toBe(linked.primary_goal_id)
     const done = await approvals.find(r => r.status === 200)!.json()
     expect(done).toMatchObject({ action: { status: "DONE", result: { observed: { reply: "Sorry for the wait, Ana. We now text when we run late; call us to rebook." } } } })
     expect((await call(a, "POST", `/api/businesses/${biz}/account-actions/${actionId}/approve`)).status).toBe(409)

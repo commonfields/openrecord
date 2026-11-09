@@ -16,6 +16,7 @@ import { RepoLayers, requireSession } from "./router.js"
 import { WebAccess, type WebAccessService } from "./web-access.js"
 import { dispatchToolSpec } from "./agent-registry.js"
 import { WordPressHttp, wordpressApi } from "./wordpress.js"
+import { seedObjective } from "./objective-work.test-support.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -105,6 +106,9 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     expect(prepared._tag).toBe("Right")
     const changeId = (prepared as { right: { data: { wordpressChangeId: string } } }).right.data.wordpressChangeId
     expect(((await tool(f.ctx, "prepare_wordpress_change", args)) as { right: { data: { wordpressChangeId: string } } }).right.data.wordpressChangeId).toBe(changeId)
+    // No growth profile: the objective is unknown, so no lineage is recorded.
+    const objectiveOf = async (id: string) => (await pool.query("SELECT objective_goal_id FROM wordpress_changes WHERE id=$1", [id])).rows[0].objective_goal_id
+    expect(await objectiveOf(changeId)).toBeNull()
     expect(wp.state.posts.get("pages/7")!.title).toBe("Wedding DJs")
 
     expect((await f.call("POST", `/changes/${changeId}/approve`, {}, "https://hostile.example")).status).toBe(403)
@@ -119,9 +123,12 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     expect(undone.change.status).toBe("UNDONE")
     expect(wp.state.posts.get("pages/7")!.title).toBe("Wedding DJs")
 
+    expect(await objectiveOf(changeId)).toBeNull()
     // Edited in WordPress after the change was prepared: refused, not overwritten.
+    const goalId = await seedObjective(pool, f.businessId, f.userId, "More bookings")
     const stale = await tool(f.ctx, "prepare_wordpress_change", { kind: "ADD_FAQ", postType: "pages", postId: 7, faq: [{ question: "Do you travel?", answer: "Yes, across Bali." }], rationale: "TEST FAQ" })
     const staleId = (stale as { right: { data: { wordpressChangeId: string } } }).right.data.wordpressChangeId
+    expect(await objectiveOf(staleId)).toBe(goalId)
     wp.state.posts.get("pages/7")!.content = "<p>Edited by a person in WordPress.</p>"
     wp.state.posts.get("pages/7")!.modified = "2026-10-31T09:00:00"
     expect((await f.call("POST", `/changes/${staleId}/approve`, {})).status).toBe(409)
