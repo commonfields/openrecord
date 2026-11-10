@@ -636,7 +636,7 @@ impl Client {
 
     /// Stops the turn in flight; the request settles on its own after this.
     pub fn cancel(&self, business: &str, conversation: &str) -> ApiResult<()> {
-        self.post::<Value>(&format!("/api/businesses/{}/agent/cancel", enc(business)), json!({ "conversationId": conversation })).map(|_| ())
+        self.post::<Value>(&format!("{}/cancel", crate::api::agent_base(business)), json!({ "conversationId": conversation })).map(|_| ())
     }
 
     /// Archives a chat the person is done with, or brings it back.

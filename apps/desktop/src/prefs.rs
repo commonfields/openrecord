@@ -17,17 +17,17 @@ pub enum ThemePref {
 pub enum ChatWidth {
     #[default]
     Comfortable,
+    /// "Full" was retired, on the web too: a saved full width reads as Wide.
+    #[serde(alias = "full")]
     Wide,
-    Full,
 }
 
 impl ChatWidth {
-    /// The chat column's widest, as `--chat-max-width` (48rem, 72rem, the whole panel).
+    /// The chat column's widest, as `--chat-max-width` (48rem or 72rem).
     pub fn max(self) -> f32 {
         match self {
             ChatWidth::Comfortable => 768.0,
             ChatWidth::Wide => 1152.0,
-            ChatWidth::Full => 4000.0,
         }
     }
 }
@@ -135,6 +135,9 @@ mod tests {
     fn missing_fields_take_defaults() {
         let p: Prefs = serde_json::from_str(r#"{ "theme": "dark", "chat_width": "wide" }"#).unwrap();
         assert_eq!((p.theme, p.chat_width, p.enter_to_send, p.response_style), (ThemePref::Dark, ChatWidth::Wide, true, Style::Friendly));
+        // The retired "full" width reads as Wide.
+        let full: Prefs = serde_json::from_str(r#"{ "chat_width": "full" }"#).unwrap();
+        assert_eq!(full.chat_width, ChatWidth::Wide);
         assert!(p.dark(false));
         assert!(!Prefs::default().dark(false));
     }

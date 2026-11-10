@@ -303,7 +303,7 @@ fn general(s: &App, t: &Theme) -> El {
                     t,
                     "Chat width",
                     Some("How wide messages and the composer can grow on large windows.".into()),
-                    Some(choice(t, "chat-width", s.prefs.chat_width, &[(ChatWidth::Comfortable, "Comfortable"), (ChatWidth::Wide, "Wide"), (ChatWidth::Full, "Full")], |s, v| s.set_pref(|p| p.chat_width = v))),
+                    Some(choice(t, "chat-width", s.prefs.chat_width, &[(ChatWidth::Comfortable, "Comfortable"), (ChatWidth::Wide, "Wide")], |s, v| s.set_pref(|p| p.chat_width = v))),
                 ))
                 .child(el().w_full().h(1.0).fill(t.border))
                 .child(setting(

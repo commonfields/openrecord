@@ -62,7 +62,7 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
 
     let agent = s.view == View::Agent;
     let tools = {
-        let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat", false).on_press(|s: &mut App| s.new_chat());
+        let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat", false).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx));
         let refresh = icon_button(t, "refresh", &icons::REFRESH_CW, "Refresh", false).on_press(|s: &mut App| s.refresh());
         if open {
             row().w_full().center_y().justify_between().child(refresh).child(new_chat)
@@ -332,19 +332,26 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         .pin(None, Some(0.0), Some(6.0), Some(0.0))
         .w(24.0)
         .radius(6.0)
-        .fill(if active { t.sidebar_accent } else { t.sidebar })
         .center()
         .role("button")
         .label(if archived { "Restore chat" } else { "Archive chat" })
         .help(if archived { "Restore chat" } else { "Archive chat" })
         .cursor(Cursor::Pointer)
         .group_opacity(0.0, 1.0)
+        .hover(t.sidebar.alpha(0.8))
         .on_press(move |s: &mut App| s.archive_chat(&id, !archived))
         .child(ico(if archived { &icons::ARCHIVE_RESTORE } else { &icons::ARCHIVE }, 14.0, t.muted_foreground));
+    // The web's row: on hover its background eases to the sidebar accent at 70% over
+    // 200 milliseconds and its right padding opens for the archive button, so the
+    // title stops short of it; the open chat keeps the accent with the control shadow.
+    let hover_key = format!("chat:{}", c.id);
+    let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
+    let hk = hover_key.clone();
     let mut r = row()
         .key(format!("chat-{}", c.id))
         .w_full()
-        .px(8.0)
+        .pl(8.0)
+        .pr(if hovered { 36.0 } else { 8.0 })
         .py(6.0)
         .gap(10.0)
         .radius(8.0)
@@ -354,17 +361,29 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         .checked(active)
         .focusable(true)
         .cursor(Cursor::Pointer)
-        .hover(t.hover_tint)
         .hover_group()
-        .motion(CONTROL)
+        .on_hover_change(move |s: &mut App, inside, _tx| {
+            if inside {
+                s.row_hover = Some(hk.clone());
+            } else if s.row_hover.as_deref() == Some(hk.as_str()) {
+                s.row_hover = None;
+            }
+        })
+        .motion(rune::Spring::new(0.2, 0.0))
         .on_press(move |s: &mut App| s.open_chat(&chat))
         .child(business_mark(t, Some(&c.business_name), 28.0, 8.0))
         .child(col().grow(1.0).min_w(0.0).child(label(title, if active { type_::SM_13.lh(20.0) } else { type_::SM_13 }, t.foreground).truncate()).child(sub))
         .child(logos)
         .child(archive);
-    if active {
-        r = shadows(r.fill(t.sidebar_accent), &t.control_shadow);
-    }
+    let fill = if active {
+        t.sidebar_accent
+    } else if hovered {
+        t.sidebar_accent.alpha(0.7)
+    } else {
+        t.sidebar_accent.alpha(0.0)
+    };
+    let list: Vec<rune::Shadow> = t.control_shadow.iter().map(|x| rune::Shadow { color: if active { x.color } else { x.color.alpha(0.0) }, ..*x }).collect();
+    r = shadows(r.fill(fill), &list);
     r
 }
 
@@ -394,6 +413,7 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
     if let Some(b) = s.active_business() {
         h = h.child(tabs(s, t)).child(el().w(1.0).h(16.0).mx(4.0).fill(t.border));
         let here = match s.view {
+            View::Agent if s.general => "General chat",
             View::Agent => "Agent",
             View::Workspace => s.page.label(),
         };

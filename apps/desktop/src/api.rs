@@ -430,8 +430,8 @@ impl Client {
             conversation: Option<Conversation>,
         }
         let path = match id {
-            Some(id) => format!("/api/businesses/{}/agent/conversation?conversationId={}", enc(business), enc(id)),
-            None => format!("/api/businesses/{}/agent/conversation", enc(business)),
+            Some(id) => format!("{}/conversation?conversationId={}", agent_base(business), enc(id)),
+            None => format!("{}/conversation", agent_base(business)),
         };
         Ok(self.get::<R>(&path)?.conversation)
     }
@@ -442,13 +442,13 @@ impl Client {
         struct R {
             conversation: Conversation,
         }
-        let path = format!("/api/businesses/{}/agent/conversation", enc(business));
+        let path = format!("{}/conversation", agent_base(business));
         Ok(self.post::<R>(&path, json!({ "conversationId": id }))?.conversation)
     }
 
     /// Queues a turn and returns once the API has accepted it.
     pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, out: &crate::chat::Outgoing) -> ApiResult<()> {
-        let path = format!("/api/businesses/{}/agent/requests", enc(business));
+        let path = format!("{}/requests", agent_base(business));
         let mut body = json!({ "message": out.message, "requestId": request_id, "revision": revision, "conversationId": conversation });
         if let Some(sel) = &out.selection {
             body["selection"] = sel.clone();
@@ -456,6 +456,8 @@ impl Client {
         if let Some(style) = &out.style {
             body["style"] = json!(style);
         }
+        // This app draws generated views, so the agent may answer with ```ui blocks.
+        body["surfaces"] = json!(["ui"]);
         if !out.attachments.is_empty() {
             body["attachments"] = json!(out.attachments.iter().map(|a| json!({ "name": a.name, "type": a.kind, "text": a.text })).collect::<Vec<_>>());
         }
@@ -503,6 +505,19 @@ impl Client {
     }
 
     /// The playbooks the "/" menu offers: built-in ones and the account's own.
+    /// The account's client records: businesses seen from the agency side, by their own names.
+    pub fn clients(&self) -> ApiResult<Vec<(String, String)>> {
+        let v: Value = self.get("/api/record/clients")?;
+        Ok(v.get("clients")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| Some((c.get("businessId")?.as_str()?.to_string(), c.get("name")?.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     pub fn playbooks(&self, business: Option<&str>) -> ApiResult<Vec<crate::chat::Playbook>> {
         #[derive(Deserialize)]
         struct R {
@@ -630,6 +645,12 @@ fn campaign(v: &Value) -> Campaign {
         goal: first(v, &[&["goal"], &["objective"], &["plan", "goal"]]),
         updated_at: s(v, &["updatedAt"]).or_else(|| s(v, &["createdAt"])),
     }
+}
+
+/// Where a chat's agent routes live: a business's, or `/api/agent` for a
+/// general chat (an empty business id).
+pub fn agent_base(business: &str) -> String {
+    if business.is_empty() { "/api/agent".into() } else { format!("/api/businesses/{}/agent", enc(business)) }
 }
 
 /// Percent-encodes a path or query component.

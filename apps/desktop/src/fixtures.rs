@@ -383,6 +383,46 @@ pub fn agent_failed(s: &mut App) {
     s.turn = Turn::Failed { message: "And what does setup take for a team of five?".into(), error: "The provider didn't answer. Your message was kept.".into() };
 }
 
+/// "Start a new chat" with one client record.
+pub fn new_chat(s: &mut App) {
+    agent(s);
+    s.new_chat = Some(crate::state::NewChat { query: rune::TextEdit::new(""), clients: Load::Ready(vec![("c9".into(), "Harbor Dental".into())]) });
+}
+
+/// A reply with a generated view: metrics, a plan, progress, a table and buttons.
+pub fn agent_ui(s: &mut App) {
+    agent(s);
+    let view = r#"{"title":"Pricing page plan","root":"r","elements":[
+        {"id":"r","type":"column","gap":"md","children":["m","plan","t","acts"]},
+        {"id":"m","type":"row","children":["m1","m2","m3"]},
+        {"id":"m1","type":"metric","label":"Trial sign-ups","value":184,"trend":"up","hint":"Last 30 days"},
+        {"id":"m2","type":"metric","label":"Answers that guess pricing","value":"3 of 5","trend":"down"},
+        {"id":"m3","type":"metric","label":"Conversion","value":"3.1%","trend":"flat"},
+        {"id":"plan","type":"card","title":"Next steps","children":["l","p","b1"]},
+        {"id":"l","type":"list","items":[{"title":"Publish the pricing and setup page","detail":"Plans, prices and a one-day setup, from your approved facts","tone":"good"},{"title":"Fix the FAQ answer on integrations","detail":"Two assistants say Salesforce isn't supported","tone":"bad"},{"title":"Re-check AI answers next week","tone":"info"}]},
+        {"id":"p","type":"progress","label":"Setup complete","value":0.6,"hint":"Search Console is not connected yet"},
+        {"id":"b1","type":"badge","text":"Waiting for your approval","tone":"warn"},
+        {"id":"t","type":"table","columns":["Assistant","Says","Correct"],"rows":[["ChatGPT","From $49 a month","No"],["Gemini","From $39 a month","Yes"],["Perplexity","Not stated","Unknown"]]},
+        {"id":"acts","type":"row","gap":"sm","children":["a1","a2"]},
+        {"id":"a1","type":"button","label":"Draft the page","action":{"type":"ask","prompt":"Draft the pricing and setup page from our approved facts."}},
+        {"id":"a2","type":"button","label":"Open the current pricing","action":{"type":"open","url":"https://northstar.example/pricing"}}
+    ]}"#;
+    let text = format!("Here is the plan for the pricing page.\n\n```ui\n{view}\n```\n");
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.push(msg(json!({ "role": "user", "text": "Show me the plan for the pricing page." })));
+        c.messages.push(msg(json!({ "role": "agent", "text": text })));
+    }
+}
+
+/// A ```ui block the validator refuses: it shows as code.
+pub fn agent_ui_invalid(s: &mut App) {
+    agent(s);
+    let text = "This view could not be drawn.\n\n```ui\n{\"root\":\"r\",\"elements\":[{\"id\":\"r\",\"type\":\"script\",\"src\":\"x\"}]}\n```\n";
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.push(msg(json!({ "role": "agent", "text": text })));
+    }
+}
+
 pub fn agent_empty(s: &mut App) {
     workspace(s);
     s.view = View::Agent;

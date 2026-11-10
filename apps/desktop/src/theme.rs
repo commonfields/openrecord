@@ -170,18 +170,20 @@ impl Theme {
         Theme {
             dark: true,
             background: hex("#1a1a1a"),
-            foreground: hex("#eeeeee"),
+            // Softer than the web's #eeeeee and #b5b5b5: text drawn natively reads brighter
+            // than the browser's at the same value, so dark mode steps both down.
+            foreground: hex("#e3e3e3"),
             card: hex("#212121"),
             popover: hex("#212121"),
             primary: hex("#ffffff"),
             primary_foreground: hex("#202020"),
             primary_ink: oklch(0.8, 0.09, 266.0),
-            muted_foreground: hex("#b5b5b5"),
+            muted_foreground: hex("#a6a6a6"),
             accent: hex("#292929"),
             border,
             ring: oklcha(0.8, 0.09, 266.0, 0.45),
             sidebar: hex("#141414"),
-            sidebar_foreground: hex("#b5b5b5"),
+            sidebar_foreground: hex("#a6a6a6"),
             sidebar_accent: hex("#292929"),
             control: hex("#2a2a2a"),
             wrong: oklch(0.74, 0.15, 25.0),

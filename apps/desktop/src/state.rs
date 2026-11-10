@@ -231,6 +231,12 @@ impl SavePlaybook {
     }
 }
 
+/// The "Start a new chat" dialog: a search and the account's client records.
+pub struct NewChat {
+    pub query: TextEdit,
+    pub clients: Load<Vec<(String, String)>>,
+}
+
 /// The "Share this chat" dialog.
 pub struct ShareChat {
     pub conversation: String,
@@ -309,6 +315,14 @@ pub struct App {
     pub followup_confirm: Option<crate::followups::Model>,
     pub followup_saving: bool,
     pub followup_error: Option<String>,
+    /// The menu row under the pointer (model picker and reasoning), for its eased highlight.
+    pub row_hover: Option<String>,
+    /// The next loaded conversation was opened, not answered: it lands as it is, without animation.
+    pub settle_next: bool,
+    /// The chat on screen has no business: a general chat (`/api/agent`).
+    pub general: bool,
+    /// "Start a new chat", while it is open.
+    pub new_chat: Option<NewChat>,
     /// The reasoning effort picked for a model (`value`, effort); it applies only to that model.
     pub reasoning: Option<(String, String)>,
     /// A reply that just arrived, revealed word by word (its text, and when the reveal began),
@@ -420,6 +434,10 @@ impl App {
             reveal: None,
             reveal_next: false,
             reasoning: None,
+            general: false,
+            settle_next: false,
+            new_chat: None,
+            row_hover: None,
             playbooks: Vec::new(),
             followups: Load::Idle,
             followups_open: false,
@@ -817,14 +835,46 @@ impl App {
             if let Some(a) = &self.answer {
                 self.net.answer(b.clone(), a.claim.clone());
             }
-            if let Some(chat) = self.chat_id.clone() {
-                self.net.conversation(b, chat);
+        }
+        if let (Some(scope), Some(chat)) = (self.chat_scope(), self.chat_id.clone()) {
+            self.net.conversation(scope, chat);
+        }
+    }
+
+    /// Whose agent the chat on screen talks to: the business's, or `""` for a general chat.
+    pub fn chat_scope(&self) -> Option<String> {
+        if self.general { Some(String::new()) } else { self.active.clone() }
+    }
+
+    /// Opens "Start a new chat".
+    pub fn open_new_chat(&mut self, tx: &mut Tx) {
+        self.menu = None;
+        self.new_chat = Some(NewChat { query: TextEdit::new(""), clients: Load::Loading });
+        self.net.clients();
+        tx.focus("new-chat-search", false);
+    }
+
+    /// Starts an empty chat about a business, or a general one (`None`).
+    pub fn start_chat(&mut self, business: Option<String>) {
+        self.new_chat = None;
+        match business {
+            Some(b) => {
+                if self.active.as_deref() != Some(b.as_str()) {
+                    self.select_business(&b);
+                }
+                self.new_chat();
+                self.view = View::Agent;
+            }
+            None => {
+                self.new_chat();
+                self.general = true;
             }
         }
     }
 
     pub fn new_chat(&mut self) {
         self.view = View::Agent;
+        self.general = false;
         self.chat_id = None;
         self.conversation = Load::Idle;
         self.turn = Turn::Idle;
@@ -836,12 +886,15 @@ impl App {
                 self.select_business(&b);
             }
         }
+        // A chat without a business is a general chat.
+        self.general = chat.business_id.is_none();
         self.view = View::Agent;
         self.chat_id = Some(chat.id.clone());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
-        if let Some(b) = self.active.clone() {
-            self.net.conversation(b, chat.id.clone());
+        self.settle_next = true;
+        if let Some(scope) = self.chat_scope() {
+            self.net.conversation(scope, chat.id.clone());
         }
     }
 
@@ -1004,15 +1057,16 @@ impl App {
         self.chat_id = Some(id.to_string());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
+        self.settle_next = true;
         self.open_logs.clear();
         self.open_sources.clear();
-        if let Some(b) = self.active.clone() {
-            self.net.conversation(b, id.to_string());
+        if let Some(scope) = self.chat_scope() {
+            self.net.conversation(scope, id.to_string());
         }
     }
 
     pub fn stop_turn(&mut self) {
-        let (Some(b), Some(c)) = (self.active.clone(), self.chat_id.clone()) else { return };
+        let (Some(b), Some(c)) = (self.chat_scope(), self.chat_id.clone()) else { return };
         if let Turn::Working { stopping, .. } = &mut self.turn {
             *stopping = true;
             self.net.cancel(b, c);
@@ -1065,7 +1119,7 @@ impl App {
 
     /// What the "/" menu lists for the text typed, unless Escape shut it for this text.
     pub fn menu_entries(&self) -> Vec<crate::chat::MenuEntry> {
-        if self.active.is_none() {
+        if self.active.is_none() || self.general {
             return Vec::new();
         }
         crate::chat::menu_entries(&self.composer.text, &self.playbooks)
@@ -1256,7 +1310,7 @@ impl App {
     }
 
     fn dispatch(&mut self, text: String, tx: &mut Tx) {
-        let Some(business) = self.active.clone() else { return };
+        let Some(business) = self.chat_scope() else { return };
         let conversation = match (&self.chat_id, self.conversation.ready()) {
             (Some(id), Some(c)) if &c.id == id => Some((id.clone(), c.revision)),
             _ => None,
@@ -1278,6 +1332,11 @@ impl App {
         let mut changed = !replies.is_empty();
         for r in replies {
             self.apply(r, tx);
+        }
+        // While a turn runs, the thinking glyph steps every 220 milliseconds and the clock ticks.
+        if matches!(self.turn, Turn::Working { .. }) && !self.prefs.reduce_motion {
+            tx.wake_after(std::time::Duration::from_millis(220));
+            changed = true;
         }
         // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.
         if let Some((text, started)) = &self.reveal {
@@ -1396,8 +1455,12 @@ impl App {
             Reply::Issues(b, r) if here(self, &b) => self.issues = to_load(self.failed(r)),
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
-            Reply::Conversation(b, r) if here(self, &b) => match self.failed(r) {
+            Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
                 Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
+                    // A chat opened from the history shows as it is: no message slides in.
+                    if std::mem::take(&mut self.settle_next) {
+                        tx.settle();
+                    }
                     if std::mem::take(&mut self.reveal_next) {
                         if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
                             self.reveal = Some((m.text.clone(), std::time::Instant::now()));
@@ -1415,7 +1478,7 @@ impl App {
                 Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
                 Err(e) => self.conversation = Load::Failed(e),
             },
-            Reply::TurnQueued { business, conversation, request: id } if here(self, &business) => {
+            Reply::TurnQueued { business, conversation, request: id } if self.chat_scope().as_deref() == Some(business.as_str()) => {
                 if self.chat_id.is_none() {
                     self.chat_id = Some(conversation);
                 }
@@ -1455,7 +1518,7 @@ impl App {
             }
             Reply::TurnDone { business, conversation, result } => {
                 self.net.chats();
-                if !here(self, &business) || self.chat_id.as_deref().is_some_and(|c| c != conversation) {
+                if self.chat_scope().as_deref() != Some(business.as_str()) || self.chat_id.as_deref().is_some_and(|c| c != conversation) {
                     return;
                 }
                 match self.failed(result) {
@@ -1578,6 +1641,12 @@ impl App {
                         Err(e) if e.is_empty() => {}
                         Err(e) => a.action_error = Some(format!("Couldn't record the action. {e}")),
                     }
+                }
+            }
+            Reply::Clients(r) => {
+                let r = self.failed(r);
+                if let Some(n) = &mut self.new_chat {
+                    n.clients = to_load(r);
                 }
             }
             Reply::Playbooks(b, r) if b == self.active => {

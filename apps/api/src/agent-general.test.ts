@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { runConversation } from "./agent.js"
+import { UI_INSTRUCTION, runConversation } from "./agent.js"
 import type { AgentModel } from "./agent-model.js"
 
 describe("general chat tool boundary", () => {
@@ -38,5 +38,16 @@ describe("general chat tool boundary", () => {
     expect(systems[0]).not.toMatch(/asked for (concise|detailed) answers/)
     expect(systems[1]).toContain("asked for concise answers")
     expect(systems[2]).toContain("asked for detailed answers")
+  })
+  it("describes generated views only to a client that draws them", async () => {
+    const systems: string[] = []
+    const model: AgentModel = input => {
+      systems.push(input.system ?? "")
+      return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ text: "Hello" }] }, finishReason: "STOP" }] })
+    }
+    for (const surfaces of [undefined, ["ui"] as const])
+      await Effect.runPromise(runConversation({ message: "Hi", history: [], model, tools: [], system: "General chat", surfaces, dispatch: () => Effect.die("No tools") }))
+    expect(systems[0]).not.toContain("language ui")
+    expect(systems[1]).toContain(UI_INSTRUCTION)
   })
 })

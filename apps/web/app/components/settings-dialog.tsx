@@ -277,7 +277,6 @@ function GeneralSection() {
               <SelectContent align="end">
                 <SelectItem value="comfortable">Comfortable</SelectItem>
                 <SelectItem value="wide">Wide</SelectItem>
-                <SelectItem value="full">Full</SelectItem>
               </SelectContent>
             </Select>
           </Row>
