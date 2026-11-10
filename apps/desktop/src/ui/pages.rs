@@ -351,16 +351,10 @@ fn campaigns(s: &App, t: &Theme) -> El {
     col().w_full().gap(24.0).child(header).child(body)
 }
 
-fn tone(t: &Theme, state: &str) -> (Color, Color, &'static str) {
-    match state {
-        "WRONG" => (t.wrong, t.wrong_soft, "Wrong"),
-        "PARTIAL" => (t.partial, t.partial_soft, "Partially correct"),
-        "UNKNOWN" => (t.unknown, t.unknown_soft, "Not enough information"),
-        _ => (t.review, t.review_soft, "Needs review"),
-    }
-}
-
 fn ai_answers(s: &App, t: &Theme) -> El {
+    if let Some(a) = &s.answer {
+        return crate::ui::answer::view(s, t, a);
+    }
     let header = page_header(t, "AI answers", "Review open claims from AI answers. Each one shows what the assistant said and the question that drew it.");
     let body = match &s.issues {
         Load::Ready(list) => {
@@ -393,10 +387,17 @@ fn ai_answers(s: &App, t: &Theme) -> El {
 }
 
 fn issue_row(t: &Theme, i: &Issue, rule: bool) -> El {
-    let (ink, soft, name) = tone(t, &i.state);
+    let (ink, soft, name) = crate::ui::answer::tone(t, &i.state);
     let model = i.observed_model.clone().unwrap_or_else(|| i.provider.clone());
+    let claim = i.claim_id.clone();
     let mut r = col()
         .key(format!("issue-{}", i.claim_id))
+        .role("button")
+        .label(format!("Open the claim {}", i.claim_text))
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .hover(t.hover_tint)
+        .on_press(move |s: &mut App| s.open_answer(&claim))
         .w_full()
         .px(18.0)
         .py(16.0)
@@ -408,7 +409,8 @@ fn issue_row(t: &Theme, i: &Issue, rule: bool) -> El {
                 .center_y()
                 .child(status_chip(name, ink, soft))
                 .child(el().grow(1.0))
-                .child(label(model, type_::XS, t.muted_foreground)),
+                .child(label(model, type_::XS, t.muted_foreground))
+                .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground)),
         )
         .child(label(format!("“{}”", i.claim_text), type_::SM_MEDIUM, t.foreground).wrap());
     if let Some(q) = &i.question_prompt {

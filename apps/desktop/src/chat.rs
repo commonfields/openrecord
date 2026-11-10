@@ -261,6 +261,120 @@ pub fn command_matches(text: &str) -> Vec<(&'static str, &'static str)> {
     COMMANDS.iter().filter(|(k, _)| k.starts_with(&rest)).copied().collect()
 }
 
+/// How much of a reply that just arrived shows: word by word on an ease-out,
+/// fast for short answers and at most about two seconds for long ones
+/// (`RevealReply` in `agent-chat.tsx`). `None` once it is whole.
+pub fn reveal_prefix(text: &str, elapsed: std::time::Duration) -> Option<String> {
+    let mut words: Vec<&str> = Vec::new();
+    let mut start = 0;
+    let mut in_space = None;
+    for (i, c) in text.char_indices() {
+        let space = c.is_whitespace();
+        if in_space.is_some_and(|w| w != space) {
+            words.push(&text[start..i]);
+            start = i;
+        }
+        in_space = Some(space);
+    }
+    if start < text.len() {
+        words.push(&text[start..]);
+    }
+    let total = words.len();
+    let duration = (total as f64 * 7.0).clamp(450.0, 2200.0);
+    let k = (elapsed.as_secs_f64() * 1000.0 / duration).min(1.0);
+    if k >= 1.0 {
+        return None;
+    }
+    let shown = ((1.0 - (1.0 - k).powi(2)) * total as f64).ceil().max(1.0) as usize;
+    (shown < total).then(|| words[..shown].concat())
+}
+
+/// A saved prompt the "/" menu offers after the commands: built-in SEO, AEO
+/// and GEO playbooks and the account's own (`components/playbooks.tsx`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Playbook {
+    pub name: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub area: String,
+    #[serde(default)]
+    pub built_in: bool,
+}
+
+/// One entry in the composer's "/" menu.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuEntry {
+    /// An OpenRecord command: it runs at once.
+    Command(&'static str, &'static str),
+    /// A playbook: its prompt is typed in for the person to read, then send.
+    Playbook(Playbook),
+}
+
+impl MenuEntry {
+    pub fn id(&self) -> String {
+        match self {
+            MenuEntry::Command(n, _) => format!("c:{n}"),
+            MenuEntry::Playbook(p) => format!("p:{}", p.name),
+        }
+    }
+    pub fn name(&self) -> &str {
+        match self {
+            MenuEntry::Command(n, _) => n,
+            MenuEntry::Playbook(p) => &p.name,
+        }
+    }
+}
+
+/// Playbooks matching "/..." typed in the composer: by name first, then by title.
+pub fn playbook_matches<'a>(text: &str, list: &'a [Playbook]) -> Vec<&'a Playbook> {
+    let t = text.trim();
+    let Some(rest) = t.strip_prefix('/') else { return Vec::new() };
+    if !rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Vec::new();
+    }
+    let q = rest.to_lowercase();
+    let mut out: Vec<&Playbook> = list.iter().filter(|p| p.name.starts_with(&q)).collect();
+    if q.len() > 1 {
+        out.extend(list.iter().filter(|p| !p.name.starts_with(&q) && (p.name.contains(&q) || p.title.to_lowercase().contains(&q))));
+    }
+    out
+}
+
+/// The "/" menu for what is typed: OpenRecord's commands, then playbooks.
+pub fn menu_entries(text: &str, playbooks: &[Playbook]) -> Vec<MenuEntry> {
+    let mut out: Vec<MenuEntry> = command_matches(text).into_iter().map(|(n, d)| MenuEntry::Command(n, d)).collect();
+    out.extend(playbook_matches(text, playbooks).into_iter().map(|p| MenuEntry::Playbook(p.clone())));
+    out
+}
+
+/// A playbook's prompt as typed for this business.
+pub fn playbook_text(p: &Playbook, business: Option<&str>) -> String {
+    p.prompt.replace("{business}", business.filter(|b| !b.is_empty()).unwrap_or("this business"))
+}
+
+/// A playbook command name from a title: lowercase words joined by hyphens, starting with a letter.
+pub fn slug(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-').trim_start_matches(|c: char| !c.is_ascii_lowercase());
+    out.chars().take(40).collect::<String>().trim_end_matches('-').to_string()
+}
+
+/// A valid playbook command: 2 to 40 lowercase letters, digits or hyphens, starting with a letter.
+pub fn valid_command(n: &str) -> bool {
+    (2..=40).contains(&n.len()) && n.starts_with(|c: char| c.is_ascii_lowercase()) && n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 /// The tool icon the web draws for a tool (`toolIcon` in `agent-trace.tsx`).
 pub fn tool_icon(tool: &str) -> &'static rune::Icon {
     use crate::icons as i;
@@ -392,10 +506,6 @@ impl Progress {
             Phase::Thinking => self.thought.trim().lines().filter(|l| !l.trim().is_empty()).last().map(|l| l.trim().to_string()).unwrap_or_else(|| "Thinking".into()),
         }
     }
-
-    pub fn working(&self) -> bool {
-        self.phase != Phase::Thinking || self.trace.iter().any(|a| matches!(a, Activity::Tool { .. }))
-    }
 }
 
 // ---- Models -----------------------------------------------------------------
@@ -412,6 +522,10 @@ pub struct ModelOption {
     pub instance: Option<String>,
     /// The brand whose logo it shows.
     pub brand: String,
+    /// The hosted model's provider ("gemini"); empty for a connection's model.
+    pub vendor: String,
+    /// The reasoning efforts the provider reports for this model (Codex, OpenCode and Claude only).
+    pub efforts: Vec<String>,
 }
 
 impl ModelOption {
@@ -440,7 +554,7 @@ pub fn model_options(catalog: &Value) -> Vec<ModelOption> {
     let mut out = Vec::new();
     if let Some(h) = catalog.get("hosted").filter(|h| !h.is_null()) {
         let (provider, model) = (h.get("provider").and_then(Value::as_str).unwrap_or(""), h.get("model").and_then(Value::as_str).unwrap_or(""));
-        out.push(ModelOption { value: "hosted".into(), name: model.into(), provider: "hosted".into(), instance: None, brand: crate::brands::model_brand(model, provider) });
+        out.push(ModelOption { value: "hosted".into(), name: model.into(), provider: "hosted".into(), instance: None, brand: crate::brands::model_brand(model, provider), vendor: provider.into(), efforts: Vec::new() });
     }
     let instances = catalog.get("instances").and_then(Value::as_array).cloned().unwrap_or_default();
     for driver in DRIVERS {
@@ -462,11 +576,29 @@ pub fn model_options(catalog: &Value) -> Vec<ModelOption> {
                     provider: driver.into(),
                     instance: Some(st("name").into()),
                     brand: crate::brands::model_brand(id, driver),
+                    vendor: String::new(),
+                    efforts: if matches!(driver, "codex" | "opencode" | "claude") {
+                        m.get("reasoningEfforts").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
                 });
             }
         }
     }
     out
+}
+
+/// A reasoning effort as the composer names it.
+pub fn effort_label(e: &str) -> String {
+    match e {
+        "xhigh" => "Extra high".into(),
+        "none" => "Off".into(),
+        _ => {
+            let mut c = e.chars();
+            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        }
+    }
 }
 
 /// The model chosen last, kept between launches as the web keeps it in the browser.
@@ -528,6 +660,38 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playbooks_follow_commands_in_the_menu() {
+        let p = |n: &str, t: &str| Playbook { name: n.into(), title: t.into(), prompt: "Audit {business}".into(), area: "SEO".into(), built_in: true };
+        let list = vec![p("seo-audit", "Search audit and the first fix"), p("schema-kit", "Structured data"), p("status-page", "x")];
+        let names: Vec<String> = menu_entries("/s", &list).iter().map(|e| e.name().to_string()).collect();
+        assert_eq!(names, ["setup", "status", "seo-audit", "schema-kit", "status-page"]);
+        // Past one letter, a title match counts too.
+        let names: Vec<String> = menu_entries("/audit", &list).iter().map(|e| e.name().to_string()).collect();
+        assert_eq!(names, ["seo-audit"]);
+        assert!(menu_entries("/seo audit", &list).is_empty());
+        assert_eq!(playbook_text(&list[0], Some("Northstar")), "Audit Northstar");
+        assert_eq!(playbook_text(&list[0], None), "Audit this business");
+    }
+
+    #[test]
+    fn replies_reveal_word_by_word() {
+        use std::time::Duration;
+        let text = "one two three four five six seven eight nine ten";
+        let early = reveal_prefix(text, Duration::from_millis(50)).unwrap();
+        assert!(early.len() < text.len() && text.starts_with(&early));
+        assert_eq!(reveal_prefix(text, Duration::from_millis(500)), None, "short replies finish in 450ms");
+    }
+
+    #[test]
+    fn playbook_names_are_slugs() {
+        assert_eq!(slug("Monthly SEO report!"), "monthly-seo-report");
+        assert_eq!(slug("2026 plan"), "plan");
+        assert!(valid_command("monthly-seo"));
+        assert!(!valid_command("9lives"));
+        assert!(!valid_command("a"));
+    }
 
     #[test]
     fn commands_match_what_is_typed() {

@@ -280,6 +280,5 @@ pub mod type_ {
     pub const BASE: TextStyle = TextStyle::new(16.0, 400.0).lh(24.0);
     pub const BASE_MEDIUM: TextStyle = TextStyle::new(16.0, 500.0).lh(24.0);
     pub const TITLE: TextStyle = TextStyle::new(18.0, 600.0).lh(22.0);
-    pub const LG: TextStyle = TextStyle::new(17.0, 400.0).lh(26.0);
     pub const COUNT: TextStyle = TextStyle::new(10.0, 500.0).lh(14.0).features("'tnum' 1");
 }

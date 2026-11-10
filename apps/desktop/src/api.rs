@@ -182,6 +182,98 @@ pub struct Issue {
     pub collected_at: Option<String>,
     #[serde(default)]
     pub state: String,
+    #[serde(default)]
+    pub observation_id: String,
+    /// The reviewer's verdict, when the claim has one.
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// The approved facts the verdict was linked to.
+    #[serde(default)]
+    pub facts: Vec<IssueFact>,
+    /// The sources the answer cited.
+    #[serde(default)]
+    pub citation_evidence: Vec<CitationEvidence>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct IssueFact {
+    pub id: String,
+    #[serde(default)]
+    pub predicate: String,
+    #[serde(default, rename = "valueText")]
+    pub value_text: String,
+    #[serde(default)]
+    pub version: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct CitationEvidence {
+    #[serde(default)]
+    pub uri: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub attributed: bool,
+}
+
+/// An approved fact a verdict can link to.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Fact {
+    pub id: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub predicate: String,
+    #[serde(default)]
+    pub value_text: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub version: i64,
+}
+
+/// An action recorded against an issue: a hand-kept log that changes no verdict.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Intervention {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub performed_at: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub supersedes_id: Option<String>,
+}
+
+/// A read-only link to a chat.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Share {
+    pub id: String,
+    #[serde(default)]
+    pub hint: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub last_viewed_at: Option<String>,
+    #[serde(default)]
+    pub active: bool,
+}
+
+/// One AI answer's claim with what reviewing it needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnswerDetail {
+    pub issue: Issue,
+    /// The business's active approved facts.
+    pub facts: Vec<Fact>,
+    pub actions: Vec<Intervention>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -390,6 +482,86 @@ impl Client {
         Ok(self.get::<R>(&format!("/api/businesses/{}/issues", enc(business)))?.issues)
     }
 
+    /// One claim, the facts a verdict can link, and the actions recorded for it.
+    /// The facts and actions are best effort: the claim shows without them.
+    pub fn answer(&self, business: &str, claim: &str) -> ApiResult<(AnswerDetail, bool)> {
+        let issue: Issue = self.get(&format!("/api/businesses/{}/issues/{}", enc(business), enc(claim)))?;
+        #[derive(Deserialize)]
+        struct F {
+            facts: Vec<Fact>,
+        }
+        #[derive(Deserialize)]
+        struct A {
+            interventions: Vec<Intervention>,
+        }
+        let facts = self.get::<F>(&format!("/api/businesses/{}/facts", enc(business)));
+        let actions = self.get::<A>(&format!("/api/businesses/{}/issues/{}/interventions", enc(business), enc(claim)));
+        let complete = facts.is_ok() && actions.is_ok();
+        let facts = facts.map(|f| f.facts.into_iter().filter(|f| f.status == "ACTIVE").collect()).unwrap_or_default();
+        let actions = actions.map(|a| a.interventions).unwrap_or_default();
+        Ok((AnswerDetail { issue, facts, actions }, complete))
+    }
+
+    /// The playbooks the "/" menu offers: built-in ones and the account's own.
+    pub fn playbooks(&self, business: Option<&str>) -> ApiResult<Vec<crate::chat::Playbook>> {
+        #[derive(Deserialize)]
+        struct R {
+            playbooks: Vec<crate::chat::Playbook>,
+        }
+        let path = match business {
+            Some(b) => format!("/api/playbooks?businessId={}", enc(b)),
+            None => "/api/playbooks".into(),
+        };
+        Ok(self.get::<R>(&path)?.playbooks)
+    }
+
+    /// Saves (or replaces) one of the account's playbooks; `None` deletes it.
+    pub fn change_playbook(&self, name: &str, save: Option<(&str, &str)>) -> ApiResult<()> {
+        let path = format!("/api/playbooks/{}", enc(name));
+        match save {
+            Some((title, prompt)) => self.call::<Value>("PUT", &path, Some(json!({ "title": title, "prompt": prompt }))),
+            None => self.call::<Value>("DELETE", &path, None),
+        }
+        .map(|_| ())
+    }
+
+    fn shares_path(business: &str, conversation: &str) -> String {
+        format!("/api/businesses/{}/agent/conversations/{}/shares", enc(business), enc(conversation))
+    }
+
+    /// The read-only links made for a chat.
+    pub fn shares(&self, business: &str, conversation: &str) -> ApiResult<Vec<Share>> {
+        #[derive(Deserialize)]
+        struct R {
+            shares: Vec<Share>,
+        }
+        Ok(self.get::<R>(&Self::shares_path(business, conversation))?.shares)
+    }
+
+    /// Makes a read-only link that lasts fourteen days; returns its path on the web app.
+    pub fn create_share(&self, business: &str, conversation: &str) -> ApiResult<String> {
+        #[derive(Deserialize)]
+        struct R {
+            path: String,
+        }
+        Ok(self.post::<R>(&Self::shares_path(business, conversation), json!({ "days": 14 }))?.path)
+    }
+
+    pub fn revoke_share(&self, business: &str, conversation: &str, id: &str) -> ApiResult<()> {
+        self.call::<Value>("DELETE", &format!("{}/{}", Self::shares_path(business, conversation), enc(id)), None).map(|_| ())
+    }
+
+    /// Records a reviewer's verdict on a claim, linked to the facts it touches.
+    pub fn judge(&self, claim: &str, verdict: &str, facts: &[String], notes: Option<&str>) -> ApiResult<()> {
+        self.post::<Value>("/api/judgments", json!({ "claimId": claim, "verdict": verdict, "factIds": facts, "notes": notes })).map(|_| ())
+    }
+
+    /// Logs an action taken for an issue.
+    pub fn record_action(&self, business: &str, claim: &str, kind: &str, target: &str, notes: Option<&str>) -> ApiResult<()> {
+        let path = format!("/api/businesses/{}/issues/{}/interventions", enc(business), enc(claim));
+        self.post::<Value>(&path, json!({ "type": kind, "target": target, "notes": notes })).map(|_| ())
+    }
+
     pub fn channels(&self, business: &str) -> ApiResult<Vec<Channel>> {
         #[derive(Deserialize)]
         struct Inventory {
@@ -575,6 +747,16 @@ mod live {
         let issues = c.issues(b).expect("issues");
         let channels = c.channels(b).expect("channels");
         let campaigns = c.campaigns(b).expect("campaigns");
+        for i in issues.iter().take(5) {
+            let (d, complete) = c.answer(b, &i.claim_id).expect("answer detail");
+            assert!(complete, "facts and actions for {}", i.claim_id);
+            eprintln!("answer {}: state {}, verdict {:?}, {} linked facts, {} sources, {} active facts, {} actions", i.claim_id, d.issue.state, d.issue.verdict, d.issue.facts.len(), d.issue.citation_evidence.len(), d.facts.len(), d.actions.len());
+        }
+        let books = c.playbooks(Some(b)).expect("playbooks");
+        assert!(books.iter().any(|p| p.built_in), "built-in playbooks");
+        eprintln!("playbooks: {:?}", books.iter().map(|p| p.name.as_str()).collect::<Vec<_>>());
+        let f = c.followups(b).expect("follow-ups");
+        eprintln!("follow-ups: {:?}, {} reviews", f.policy, f.wakes.len());
         let decisions = c.decisions().expect("decisions");
         let chats = c.chats().expect("chats");
         for days in crate::insights::PERIODS {
@@ -601,6 +783,10 @@ mod live {
             }
         }
         eprintln!("messages: {} steps, {} sources, {} decisions, {} with a model", parts.0, parts.1, parts.2, parts.3);
+        if let Some(chat) = chats.iter().find(|ch| ch.business_id.is_some()) {
+            let shares = c.shares(chat.business_id.as_deref().unwrap(), &chat.id).expect("shares");
+            eprintln!("shares for {}: {}", chat.id, shares.len());
+        }
         eprintln!("archived chats: {}", c.archived_chats().expect("archived chats").len());
         let me = c.identity().expect("identity");
         assert!(!me.account_id.is_empty());

@@ -78,6 +78,7 @@ pub enum Menu {
     Businesses,
     Account,
     Model,
+    Reasoning,
     ChatFilter,
 }
 
@@ -146,6 +147,100 @@ impl SettingsPage {
     }
 }
 
+/// A reviewer's verdict on a claim, as the web's review form offers them.
+pub const VERDICTS: [(&str, &str, &str); 4] = [
+    ("SUPPORTED", "Supported", "Matches your approved facts"),
+    ("CONTRADICTED", "Wrong", "Disagrees with an approved fact"),
+    ("PARTIAL", "Partially correct", "Some of it is right, some is not"),
+    ("INSUFFICIENT_EVIDENCE", "Not enough information", "No approved fact covers it"),
+];
+
+/// What can be recorded as done for an issue (`interventionTypes`).
+pub const ACTION_KINDS: [(&str, &str); 6] = [
+    ("SOURCE_UPDATED", "Source updated"),
+    ("SOURCE_PUBLISHED", "Source published"),
+    ("THIRD_PARTY_CORRECTION_REQUESTED", "Correction requested"),
+    ("KNOWLEDGE_BASE_UPDATED", "Knowledge base updated"),
+    ("STRUCTURED_DATA_UPDATED", "Structured data updated"),
+    ("OTHER", "Other"),
+];
+
+/// The AI answer open on its own page, and its review and action forms.
+pub struct AnswerView {
+    pub claim: String,
+    pub detail: Load<crate::api::AnswerDetail>,
+    /// The facts or actions did not load; the claim still shows.
+    pub partial: bool,
+    /// The review form is open (always, until the claim has a verdict).
+    pub reviewing: bool,
+    pub verdict: Option<&'static str>,
+    pub facts: std::collections::BTreeSet<String>,
+    pub notes: TextEdit,
+    pub judging: bool,
+    pub error: Option<String>,
+    /// The record-an-action form.
+    pub recording: bool,
+    pub action_kind: usize,
+    pub action_target: TextEdit,
+    pub action_notes: TextEdit,
+    pub saving_action: bool,
+    pub action_error: Option<String>,
+}
+
+impl AnswerView {
+    pub fn fixture(claim: String) -> AnswerView {
+        AnswerView::new(claim)
+    }
+
+    fn new(claim: String) -> AnswerView {
+        AnswerView {
+            claim,
+            detail: Load::Loading,
+            partial: false,
+            reviewing: false,
+            verdict: None,
+            facts: Default::default(),
+            notes: TextEdit::new(""),
+            judging: false,
+            error: None,
+            recording: false,
+            action_kind: 0,
+            action_target: TextEdit::new(""),
+            action_notes: TextEdit::new(""),
+            saving_action: false,
+            action_error: None,
+        }
+    }
+}
+
+/// The "Save as playbook" dialog.
+pub struct SavePlaybook {
+    pub title: TextEdit,
+    /// The command; empty means the title's slug.
+    pub name: TextEdit,
+    pub prompt: TextEdit,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+impl SavePlaybook {
+    /// The command it saves as: the one typed, or the title's slug.
+    pub fn command(&self) -> String {
+        let typed = crate::chat::slug(&self.name.text);
+        if typed.is_empty() { crate::chat::slug(&self.title.text) } else { typed }
+    }
+}
+
+/// The "Share this chat" dialog.
+pub struct ShareChat {
+    pub conversation: String,
+    pub shares: Load<Vec<crate::api::Share>>,
+    /// A link just made: shown once.
+    pub link: Option<String>,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
 /// What the AI discovery chart plots (the web's `metric` URL parameter).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)] // Partial and needs-review are reachable by link on the web, not by tab.
@@ -183,6 +278,8 @@ pub struct App {
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
+    /// The AI answer open from the AI answers list.
+    pub answer: Option<AnswerView>,
     /// The Overview section on screen and its period in days.
     pub section: Section,
     pub days: u32,
@@ -198,10 +295,34 @@ pub struct App {
     pub catalog: Load<Vec<crate::chat::ModelOption>>,
     pub agent_model: Option<String>,
     pub model_filter: Option<String>,
+    /// The "/" menu: the playbooks it offers and the highlighted entry.
+    pub playbooks: Vec<crate::chat::Playbook>,
+    pub command_index: usize,
+    /// The composer's "+" menu and the dialogs it opens.
+    pub chat_actions: bool,
+    pub save_playbook: Option<SavePlaybook>,
+    pub share: Option<ShareChat>,
+    /// Automatic follow-ups for the business on screen, and their dialog.
+    pub followups: Load<crate::followups::Followups>,
+    pub followups_open: bool,
+    /// The model the confirmation would allow, while it asks.
+    pub followup_confirm: Option<crate::followups::Model>,
+    pub followup_saving: bool,
+    pub followup_error: Option<String>,
+    /// The reasoning effort picked for a model (`value`, effort); it applies only to that model.
+    pub reasoning: Option<(String, String)>,
+    /// A reply that just arrived, revealed word by word (its text, and when the reveal began),
+    /// and whether the next loaded conversation brings one.
+    pub reveal: Option<(String, std::time::Instant)>,
+    pub reveal_next: bool,
+    /// The model picker's search, while it is open.
+    pub model_query: Option<TextEdit>,
     /// Finished replies whose work log is open, and copied messages.
-    pub open_logs: std::collections::BTreeSet<usize>,
+    pub open_logs: std::collections::BTreeSet<(usize, usize)>,
     pub open_sources: std::collections::BTreeSet<usize>,
     pub copied: Option<usize>,
+    /// Chart replies switched to their table view (`msg-part` keys).
+    pub visual_tables: std::collections::BTreeSet<String>,
     /// Messages waiting for the turn under way, and files for the next message.
     pub queued: Vec<String>,
     pub attachments: Vec<crate::chat::Attachment>,
@@ -283,6 +404,7 @@ impl App {
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
+            answer: None,
             section: Section::Summary,
             days: 30,
             metric: Metric::Accuracy,
@@ -294,9 +416,24 @@ impl App {
             catalog: Load::Idle,
             agent_model: crate::chat::stored_model(),
             model_filter: None,
+            model_query: None,
+            reveal: None,
+            reveal_next: false,
+            reasoning: None,
+            playbooks: Vec::new(),
+            followups: Load::Idle,
+            followups_open: false,
+            followup_confirm: None,
+            followup_saving: false,
+            followup_error: None,
+            command_index: 0,
+            chat_actions: false,
+            save_playbook: None,
+            share: None,
             open_logs: Default::default(),
             open_sources: Default::default(),
             copied: None,
+            visual_tables: Default::default(),
             queued: Vec::new(),
             attachments: Vec::new(),
             attach_error: None,
@@ -454,6 +591,7 @@ impl App {
         self.issues = Load::Idle;
         self.channels = Load::Idle;
         self.campaigns = Load::Idle;
+        self.answer = None;
         self.insights = Load::Idle;
         self.memory = Load::Idle;
         self.new_chat();
@@ -462,6 +600,9 @@ impl App {
             self.view = View::Workspace;
             self.page = Page::Overview;
         }
+        self.net.playbooks(Some(id.to_string()));
+        self.followups = Load::Loading;
+        self.net.followups(id.to_string());
         self.load_business();
     }
 
@@ -527,6 +668,7 @@ impl App {
     pub fn show_page(&mut self, page: Page) {
         self.view = View::Workspace;
         self.page = page;
+        self.answer = None;
         self.load_page();
     }
 
@@ -563,6 +705,108 @@ impl App {
         }
     }
 
+    // ---- AI answers -------------------------------------------------------
+
+    /// Opens one AI answer's claim on its own page.
+    pub fn open_answer(&mut self, claim: &str) {
+        let Some(b) = self.active.clone() else { return };
+        self.view = View::Workspace;
+        self.page = Page::AiAnswers;
+        self.answer = Some(AnswerView::new(claim.to_string()));
+        self.net.answer(b, claim.to_string());
+    }
+
+    pub fn close_answer(&mut self) {
+        self.answer = None;
+        self.load_page();
+    }
+
+    /// The claim before or after the open one in the list (`-1` or `1`).
+    pub fn neighbour_answer(&self, step: i32) -> Option<String> {
+        let list = self.issues.ready()?;
+        let at = list.iter().position(|i| Some(&i.claim_id) == self.answer.as_ref().map(|a| &a.claim))? as i32;
+        list.get(usize::try_from(at + step).ok()?).map(|i| i.claim_id.clone())
+    }
+
+    pub fn start_review(&mut self) {
+        if let Some(a) = &mut self.answer {
+            a.reviewing = true;
+            a.error = None;
+            // Start from the verdict and facts it has, so a change is one click.
+            if let Some(d) = a.detail.ready() {
+                a.verdict = d.issue.verdict.as_deref().and_then(|v| VERDICTS.iter().find(|x| x.0 == v)).map(|x| x.0);
+                a.facts = d.issue.facts.iter().map(|f| f.id.clone()).collect();
+            }
+        }
+    }
+
+    pub fn cancel_review(&mut self) {
+        if let Some(a) = &mut self.answer {
+            a.reviewing = false;
+            a.verdict = None;
+            a.facts.clear();
+            a.notes.clear();
+            a.error = None;
+        }
+    }
+
+    pub fn pick_verdict(&mut self, v: &'static str) {
+        if let Some(a) = &mut self.answer {
+            a.verdict = Some(v);
+        }
+    }
+
+    pub fn toggle_verdict_fact(&mut self, id: &str) {
+        if let Some(a) = &mut self.answer
+            && !a.facts.remove(id)
+        {
+            a.facts.insert(id.to_string());
+        }
+    }
+
+    pub fn record_verdict(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        let Some(a) = &mut self.answer else { return };
+        let Some(v) = a.verdict else { return };
+        if a.judging {
+            return;
+        }
+        a.judging = true;
+        a.error = None;
+        let notes = a.notes.text.trim().to_string();
+        self.net.judge(b, a.claim.clone(), v.to_string(), a.facts.iter().cloned().collect(), (!notes.is_empty()).then_some(notes));
+    }
+
+    pub fn toggle_record_action(&mut self, tx: &mut Tx) {
+        if let Some(a) = &mut self.answer {
+            a.recording = !a.recording;
+            a.action_error = None;
+            if a.recording {
+                tx.focus("action-target", false);
+            }
+        }
+    }
+
+    pub fn pick_action_kind(&mut self, i: usize) {
+        if let Some(a) = &mut self.answer {
+            a.action_kind = i;
+        }
+    }
+
+    pub fn save_action(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        let Some(a) = &mut self.answer else { return };
+        let target = a.action_target.text.trim().to_string();
+        if target.is_empty() || a.saving_action {
+            return;
+        }
+        a.saving_action = true;
+        a.action_error = None;
+        let notes = a.action_notes.text.trim().to_string();
+        let kind = ACTION_KINDS[a.action_kind % ACTION_KINDS.len()].0.to_string();
+        self.net.record_action(b, a.claim.clone(), kind, target, (!notes.is_empty()).then_some(notes));
+    }
+
     /// Fetches everything on screen again: the account's lists, the business's
     /// counts, the page and the open chat.
     pub fn refresh(&mut self) {
@@ -570,6 +814,9 @@ impl App {
         if let Some(b) = self.active.clone() {
             self.net.overview(b.clone());
             self.load_page();
+            if let Some(a) = &self.answer {
+                self.net.answer(b.clone(), a.claim.clone());
+            }
             if let Some(chat) = self.chat_id.clone() {
                 self.net.conversation(b, chat);
             }
@@ -613,6 +860,30 @@ impl App {
         }
     }
 
+    /// The effort the next turn asks for: the one picked for this model, if it still offers it.
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        let m = self.chosen_model()?;
+        let (key, effort) = self.reasoning.as_ref()?;
+        (key == &m.value && m.efforts.contains(effort)).then_some(effort.as_str())
+    }
+
+    pub fn choose_reasoning(&mut self, effort: Option<String>) {
+        self.menu = None;
+        self.reasoning = match (effort, self.chosen_model()) {
+            (Some(e), Some(m)) => Some((m.value.clone(), e)),
+            _ => None,
+        };
+    }
+
+    /// The turn's `selection`: the model, with its reasoning effort when one is picked.
+    pub fn turn_selection(&self) -> Option<serde_json::Value> {
+        let mut sel = self.chosen_model()?.selection()?;
+        if let Some(e) = self.reasoning_effort() {
+            sel["reasoningEffort"] = serde_json::json!(e);
+        }
+        Some(sel)
+    }
+
     pub fn choose_agent_model(&mut self, value: String) {
         crate::chat::store_model(&value);
         self.agent_model = Some(value);
@@ -622,6 +893,7 @@ impl App {
     pub fn open_model_menu(&mut self) {
         self.menu = Some(Menu::Model);
         self.model_filter = None;
+        self.model_query = None;
         self.net.catalog();
     }
 
@@ -755,6 +1027,7 @@ impl App {
             return;
         }
         self.composer.clear();
+        self.command_index = 0;
         if matches!(self.turn, Turn::Working { .. }) {
             self.queued.push(text);
             return;
@@ -788,8 +1061,179 @@ impl App {
         }
     }
 
+    // ---- The "/" menu and the "+" menu ---------------------------------------
+
+    /// What the "/" menu lists for the text typed, unless Escape shut it for this text.
+    pub fn menu_entries(&self) -> Vec<crate::chat::MenuEntry> {
+        if self.active.is_none() {
+            return Vec::new();
+        }
+        crate::chat::menu_entries(&self.composer.text, &self.playbooks)
+    }
+
+    /// Runs a command, or types a playbook's prompt in for the person to read and send.
+    pub fn choose_entry(&mut self, id: &str, tx: &mut Tx) {
+        let Some(e) = self.menu_entries().into_iter().find(|e| e.id() == id) else { return };
+        self.command_index = 0;
+        match e {
+            crate::chat::MenuEntry::Command(n, _) => self.run_command(n, tx),
+            crate::chat::MenuEntry::Playbook(p) => {
+                let name = self.active_business().map(|b| b.name.clone());
+                self.composer.replace_text(&crate::chat::playbook_text(&p, name.as_deref()));
+                tx.focus("composer-input", false);
+            }
+        }
+    }
+
+    /// The composer's keys while the "/" menu is open: arrows move, Tab completes,
+    /// Return chooses and Escape shuts it.
+    pub fn composer_key(&mut self, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
+        let entries = self.menu_entries();
+        if entries.is_empty() || ev.mods.cmd || ev.mods.ctrl || ev.mods.alt {
+            return false;
+        }
+        let n = entries.len();
+        let at = self.command_index.min(n - 1);
+        match ev.key {
+            rune::Key::Down => self.command_index = (at + 1) % n,
+            rune::Key::Up => self.command_index = (at + n - 1) % n,
+            rune::Key::Tab => {
+                self.composer.replace_text(&format!("/{}", entries[at].name()));
+                self.command_index = 0;
+            }
+            rune::Key::Enter if !ev.mods.shift => {
+                let id = entries[at].id();
+                self.choose_entry(&id, tx);
+            }
+            // Escape clears what was typed, as the web composer does.
+            rune::Key::Escape => {
+                self.composer.clear();
+                self.command_index = 0;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    // ---- Follow-ups ---------------------------------------------------------
+
+    /// The composer's model, as follow-ups would run on it.
+    pub fn followup_model(&self) -> Option<crate::followups::Model> {
+        if self.model_unavailable() {
+            return None;
+        }
+        let mut m = self.chosen_model().and_then(crate::followups::Model::of)?;
+        if let (Some(sel), Some(e)) = (m.selection.as_mut(), self.reasoning_effort()) {
+            sel["reasoningEffort"] = serde_json::json!(e);
+        }
+        Some(m)
+    }
+
+    pub fn open_followups(&mut self) {
+        self.followups_open = true;
+        self.followup_confirm = None;
+        self.followup_error = None;
+        self.refresh_followups();
+    }
+
+    pub fn refresh_followups(&mut self) {
+        if let Some(b) = self.active.clone() {
+            self.followups = match &self.followups {
+                Load::Ready(v) => Load::Ready(v.clone()),
+                _ => Load::Loading,
+            };
+            self.net.followups(b);
+        }
+    }
+
+    /// Asks before allowing reviews on the composer's model.
+    pub fn confirm_followups(&mut self) {
+        self.followup_confirm = self.followup_model();
+    }
+
+    pub fn allow_followups(&mut self) {
+        let (Some(b), Some(c), Some(m)) = (self.active.clone(), self.chat_id.clone(), self.followup_confirm.clone()) else { return };
+        if self.followup_saving || matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let grant = self.followups.ready().and_then(|f| f.grant()).map(str::to_string);
+        self.followup_saving = true;
+        self.followup_error = None;
+        self.net.configure_followups(b, Some((c, grant, m)));
+    }
+
+    pub fn pause_followups(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        if self.followup_saving {
+            return;
+        }
+        self.followup_saving = true;
+        self.followup_error = None;
+        self.net.configure_followups(b, None);
+    }
+
+    pub fn open_save_playbook(&mut self, tx: &mut Tx) {
+        self.chat_actions = false;
+        // A playbook is for every business: this business's name becomes {business}.
+        let mut prompt = self.composer.text.trim().to_string();
+        if let Some(b) = self.active_business().map(|b| b.name.clone()).filter(|b| !b.is_empty()) {
+            prompt = prompt.replace(&b, "{business}");
+        }
+        self.save_playbook = Some(SavePlaybook { title: TextEdit::new(""), name: TextEdit::new(""), prompt: TextEdit::new(&prompt), busy: false, error: None });
+        tx.focus("playbook-title", false);
+    }
+
+    pub fn submit_playbook(&mut self) {
+        let business = self.active.clone();
+        let Some(f) = &mut self.save_playbook else { return };
+        let name = f.command();
+        let prompt = f.prompt.text.trim().to_string();
+        if f.busy || prompt.is_empty() {
+            return;
+        }
+        if !crate::chat::valid_command(&name) {
+            f.error = Some("The command needs 2 to 40 lowercase letters, digits or hyphens, starting with a letter.".into());
+            return;
+        }
+        let title = f.title.text.trim().to_string();
+        f.busy = true;
+        f.error = None;
+        self.net.change_playbook(business, name.clone(), Some((if title.is_empty() { name } else { title }, prompt)));
+    }
+
+    pub fn delete_playbook(&mut self, name: &str) {
+        self.playbooks.retain(|p| p.name != name);
+        self.net.change_playbook(self.active.clone(), name.to_string(), None);
+    }
+
+    pub fn open_share(&mut self) {
+        self.chat_actions = false;
+        let (Some(b), Some(c)) = (self.active.clone(), self.chat_id.clone()) else { return };
+        self.share = Some(ShareChat { conversation: c.clone(), shares: Load::Loading, link: None, busy: false, error: None });
+        self.net.shares(b, c, false, None);
+    }
+
+    pub fn create_share(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        let Some(sh) = &mut self.share else { return };
+        if sh.busy {
+            return;
+        }
+        sh.busy = true;
+        sh.error = None;
+        self.net.shares(b, sh.conversation.clone(), true, None);
+    }
+
+    pub fn revoke_share(&mut self, id: &str) {
+        let Some(b) = self.active.clone() else { return };
+        let Some(sh) = &mut self.share else { return };
+        sh.link = None;
+        self.net.shares(b, sh.conversation.clone(), false, Some(id.to_string()));
+    }
+
     /// Picks a text file to send with the next message.
     pub fn attach(&mut self, tx: &mut Tx) {
+        self.chat_actions = false;
         if self.attachments.len() >= crate::chat::MAX_FILES {
             self.attach_error = Some("You can attach up to three files.".into());
             return;
@@ -817,8 +1261,10 @@ impl App {
             (Some(id), Some(c)) if &c.id == id => Some((id.clone(), c.revision)),
             _ => None,
         };
+        // The live steps' open lines belong to the turn before.
+        self.open_logs.retain(|(i, _)| *i != usize::MAX);
         self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
-        let out = crate::chat::Outgoing { message: text, selection: self.chosen_model().and_then(|m| m.selection()), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
+        let out = crate::chat::Outgoing { message: text, selection: self.turn_selection(), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
         self.attach_error = None;
         self.net.send(business, conversation, out);
         tx.scroll_to_bottom("transcript");
@@ -829,11 +1275,53 @@ impl App {
     /// Applies the replies that have landed; true when anything changed.
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
         let replies = self.net.take();
-        let changed = !replies.is_empty();
+        let mut changed = !replies.is_empty();
         for r in replies {
             self.apply(r, tx);
         }
+        // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.
+        if let Some((text, started)) = &self.reveal {
+            if crate::chat::reveal_prefix(text, started.elapsed()).is_some() {
+                tx.wake_after(std::time::Duration::from_millis(40));
+                changed = true;
+            } else {
+                self.reveal = None;
+                changed = true;
+            }
+        }
         changed
+    }
+
+    /// The prefix of a reply still being revealed, or `None` once it is whole.
+    pub fn revealing(&self, text: &str) -> Option<String> {
+        let (t, started) = self.reveal.as_ref()?;
+        if t != text {
+            return None;
+        }
+        crate::chat::reveal_prefix(text, started.elapsed())
+    }
+
+    /// Sends the message of a failed turn again.
+    pub fn retry(&mut self, tx: &mut Tx) {
+        if let Turn::Failed { message, .. } = &self.turn {
+            let m = message.clone();
+            self.turn = Turn::Idle;
+            if !m.is_empty() {
+                self.dispatch(m, tx);
+            }
+        }
+    }
+
+    /// Approves a decision from the chat card that shows it.
+    pub fn approve_in_chat(&mut self, key: &str) {
+        self.decision = Some(key.to_string());
+        self.approve_decision();
+    }
+
+    /// Opens the decline reason on a chat card.
+    pub fn decline_in_chat(&mut self, key: &str, tx: &mut Tx) {
+        self.select_decision(key);
+        self.start_decline(tx);
     }
 
     fn signed_out(&mut self, message: Option<String>) {
@@ -910,6 +1398,11 @@ impl App {
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
             Reply::Conversation(b, r) if here(self, &b) => match self.failed(r) {
                 Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
+                    if std::mem::take(&mut self.reveal_next) {
+                        if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
+                            self.reveal = Some((m.text.clone(), std::time::Instant::now()));
+                        }
+                    }
                     self.conversation = Load::Ready(c);
                     tx.scroll_to_bottom("transcript");
                     // The reply is in and the revision current: the next queued message goes.
@@ -968,6 +1461,8 @@ impl App {
                 match self.failed(result) {
                     Ok(()) => {
                         self.turn = Turn::Idle;
+                        // The reply is revealed word by word once it loads.
+                        self.reveal_next = rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
                         self.chat_id = Some(conversation.clone());
                         self.net.conversation(business, conversation);
                     }
@@ -1019,6 +1514,134 @@ impl App {
                         self.decision_error = Some((key, message));
                         self.net.decisions();
                     }
+                }
+            }
+            Reply::Answer(b, claim, r) if here(self, &b) => {
+                let r = self.failed(r);
+                if let Some(a) = self.answer.as_mut().filter(|a| a.claim == claim) {
+                    match r {
+                        Ok((d, complete)) => {
+                            a.partial = !complete;
+                            if d.issue.verdict.is_none() && !a.reviewing {
+                                a.reviewing = true;
+                            }
+                            a.detail = Load::Ready(d);
+                        }
+                        Err(e) if e.is_empty() => {}
+                        // A refresh that fails keeps what is on screen.
+                        Err(e) if a.detail.ready().is_some() => self.notice = Some(e),
+                        Err(e) => a.detail = Load::Failed(e),
+                    }
+                }
+            }
+            Reply::Answer(..) => {}
+            Reply::Judged { claim, verdict, result } => {
+                let r = self.failed(result);
+                let business = self.active.clone();
+                if let Some(a) = self.answer.as_mut().filter(|a| a.claim == claim) {
+                    a.judging = false;
+                    match r {
+                        Ok(()) => {
+                            a.reviewing = false;
+                            a.verdict = None;
+                            a.facts.clear();
+                            a.notes.clear();
+                            if let Some(b) = business {
+                                self.net.answer(b, claim);
+                            }
+                            self.notice = Some(if verdict == "SUPPORTED" {
+                                "Verdict recorded. Supported claims leave the AI answers list.".into()
+                            } else {
+                                "Verdict recorded. The claim stays in AI answers until it is fixed.".into()
+                            });
+                        }
+                        Err(e) if e.is_empty() => {}
+                        Err(e) => a.error = Some(format!("Couldn't record the verdict. {e}")),
+                    }
+                }
+            }
+            Reply::ActionRecorded { claim, result } => {
+                let r = self.failed(result);
+                let business = self.active.clone();
+                if let Some(a) = self.answer.as_mut().filter(|a| a.claim == claim) {
+                    a.saving_action = false;
+                    match r {
+                        Ok(()) => {
+                            a.recording = false;
+                            a.action_target.clear();
+                            a.action_notes.clear();
+                            if let Some(b) = business {
+                                self.net.answer(b, claim);
+                            }
+                            self.notice = Some("Action recorded. Recheck the AI later to compare.".into());
+                        }
+                        Err(e) if e.is_empty() => {}
+                        Err(e) => a.action_error = Some(format!("Couldn't record the action. {e}")),
+                    }
+                }
+            }
+            Reply::Playbooks(b, r) if b == self.active => {
+                if let Ok(list) = self.failed(r) {
+                    self.playbooks = list;
+                }
+            }
+            Reply::Playbooks(..) => {}
+            Reply::PlaybookChanged { saved, result } => match (self.failed(result), saved) {
+                (Ok(()), Some(name)) => {
+                    self.save_playbook = None;
+                    self.notice = Some(format!("Saved. Type /{name} in any business's chat to use it."));
+                }
+                (Ok(()), None) => {}
+                (Err(e), _) if e.is_empty() => {}
+                (Err(_), Some(name)) => {
+                    if let Some(f) = &mut self.save_playbook {
+                        f.busy = false;
+                        f.error = Some(format!("/{name} could not be saved. It may already be an OpenRecord command or playbook; choose another name."));
+                    }
+                }
+                (Err(_), None) => self.notice = Some("The playbook could not be deleted. Try again.".into()),
+            },
+            Reply::Followups { business, changed, result } if here(self, &business) => {
+                if changed {
+                    self.followup_saving = false;
+                }
+                match result {
+                    Ok(f) => {
+                        self.followups = Load::Ready(f);
+                        if changed {
+                            self.followup_confirm = None;
+                            self.net.chats();
+                        }
+                    }
+                    Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),
+                    // A lost answer is not proof the change failed: ask for a fresh read.
+                    Err(e) => {
+                        self.followup_confirm = None;
+                        let m = crate::followups::error_message(&e);
+                        if changed || self.followups.ready().is_some() {
+                            self.followup_error = Some(m);
+                        } else {
+                            self.followups = Load::Failed(m);
+                        }
+                    }
+                }
+            }
+            Reply::Followups { .. } => {}
+            Reply::Shares { conversation, created, list } => {
+                let list = self.failed(list);
+                let created = created.map(|r| self.failed(r));
+                let api = std::env::var(API_ENV).unwrap_or_else(|_| DEFAULT_API.into());
+                if let Some(sh) = self.share.as_mut().filter(|sh| sh.conversation == conversation) {
+                    sh.busy = false;
+                    match created {
+                        Some(Ok(path)) => sh.link = Some(format!("{}{path}", crate::ui::web_url(&api))),
+                        Some(Err(e)) if !e.is_empty() => sh.error = Some("That didn't work. Try again.".into()),
+                        _ => {}
+                    }
+                    sh.shares = match list {
+                        Ok(l) => Load::Ready(l),
+                        Err(e) => Load::Failed(e),
+                    };
                 }
             }
             Reply::Insights(b, days, r) if here(self, &b) && days == self.days => self.insights = to_load(self.failed(r)),

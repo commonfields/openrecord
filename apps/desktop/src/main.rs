@@ -12,6 +12,7 @@ mod brands;
 mod chat;
 mod decisions;
 mod fixtures;
+mod followups;
 mod format;
 mod icons;
 mod insights;
@@ -21,6 +22,7 @@ mod settings;
 mod state;
 mod theme;
 mod ui;
+mod visual;
 
 use rune::{AppSpec, Chrome, KeyEvent, Tx, Waker};
 
@@ -84,8 +86,19 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent", fixtures::agent),
     ("agent-empty", fixtures::agent_empty),
     ("agent-log", fixtures::agent_open_log),
+    ("agent-chart", fixtures::agent_chart),
+    ("agent-chart-table", fixtures::agent_chart_table),
+    ("agent-chart-top", fixtures::agent_chart_top),
     ("agent-working", fixtures::agent_working),
     ("agent-models", fixtures::agent_models),
+    ("agent-models-many", fixtures::agent_models_many),
+    ("agent-commands", fixtures::agent_commands),
+    ("agent-actions", fixtures::agent_actions),
+    ("agent-save-playbook", fixtures::agent_save_playbook),
+    ("agent-share", fixtures::agent_share),
+    ("agent-followups", fixtures::agent_followups),
+    ("agent-reasoning", fixtures::agent_reasoning),
+    ("agent-failed", fixtures::agent_failed),
     ("agent-compose", fixtures::agent_compose),
     ("agent-archived", fixtures::agent_archived),
     ("settings-general", fixtures::settings_general),
@@ -106,6 +119,8 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
     ("ai-answers", fixtures::ai_answers),
+    ("ai-answer", fixtures::ai_answer),
+    ("ai-answer-review", fixtures::ai_answer_review),
     ("channels", fixtures::channels),
     ("collapsed", fixtures::collapsed),
     ("business-menu", fixtures::business_menu),

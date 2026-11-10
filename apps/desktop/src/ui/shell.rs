@@ -397,7 +397,8 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
             View::Agent => "Agent",
             View::Workspace => s.page.label(),
         };
-        let sub = (s.view == View::Workspace && s.page == Page::Overview && s.section != Section::Summary).then(|| s.section.label());
+        let answer = s.view == View::Workspace && s.page == Page::AiAnswers && s.answer.is_some();
+        let sub = if answer { Some("Answer") } else { (s.view == View::Workspace && s.page == Page::Overview && s.section != Section::Summary).then(|| s.section.label()) };
         h = h.child(
             row()
                 .key("breadcrumbs")
@@ -415,7 +416,13 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
                 )
                 .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7)))
                 .children(sub.is_some().then(|| {
-                    label(here, type_::XS, t.muted_foreground).key("crumb-page").cursor(Cursor::Pointer).on_press(|s: &mut App| s.show_section(Section::Summary))
+                    label(here, type_::XS, t.muted_foreground).key("crumb-page").cursor(Cursor::Pointer).on_press(|s: &mut App| {
+                        if s.answer.is_some() {
+                            s.close_answer()
+                        } else {
+                            s.show_section(Section::Summary)
+                        }
+                    })
                 }))
                 .children(sub.is_some().then(|| ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7))))
                 .child(label(sub.unwrap_or(here), type_::XS_MEDIUM, t.foreground).truncate()),
@@ -548,6 +555,7 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             Some(m.role("menu").anchored("account-menu", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
         }
         Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
+        Menu::Reasoning => Some(crate::ui::agent::reasoning_menu(s, t)),
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),
     }
 }
