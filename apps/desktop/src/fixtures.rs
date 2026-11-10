@@ -1,8 +1,11 @@
 //! Made-up workspace data for headless scenes (`--scene NAME`), so every
 //! screen can be rendered and checked without a server.
 
-use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview, ToolCall};
-use crate::state::{App, Load, Menu, Page, Screen, View};
+use serde_json::json;
+
+use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview};
+use crate::insights::{self, Analytics, Insights, Report, Section, Source, Verdicts};
+use crate::state::{App, Load, Menu, Page, Screen, Turn, View};
 
 fn business(id: &str, name: &str) -> Business {
     Business { id: id.into(), name: name.into() }
@@ -45,7 +48,7 @@ fn workspace(s: &mut App) {
     s.screen = Screen::Workspace;
     s.account_email = Some("demo@northstar.test".into());
     s.chats = vec![
-        chat("c1", &a, "Next step for the pricing page", 12, false),
+        ChatSummary { providers: vec!["gemini".into(), "claude".into()], ..chat("c1", &a, "Next step for the pricing page", 12, false) },
         chat("c2", &b, "Weekly brief", 60 * 26, false),
         chat("c3", &a, "Why ChatGPT gets our integrations wrong", 60 * 50, false),
         chat("c4", &c, "Draft the FAQ for new clients", 60 * 24 * 4, false),
@@ -53,45 +56,179 @@ fn workspace(s: &mut App) {
     s.businesses = vec![a, b, c];
     s.active = Some("b-northstar".into());
     s.overview = Load::Ready(Overview { completed: 6, last_checked: ago(60 * 3), unreviewed: 1, needs_attention: 4 });
-    s.decisions = vec![Decision {
-        kind: "GROWTH_OPPORTUNITY".into(),
-        business_id: "b-northstar".into(),
-        business_name: "Northstar Analytics".into(),
-        title: "Publish a transparent pricing and onboarding guide".into(),
-        detail: "Three of five checked answers guess at pricing. One page with verified prices and setup steps gives assistants something true to quote.".into(),
-        created_at: ago(90),
-    }];
+    s.decisions = decisions();
+}
+
+fn decisions() -> Vec<Decision> {
+    let northstar = json!({ "id": "b-northstar", "name": "Northstar Analytics" });
+    let items = [
+        json!({ "type": "GROWTH_OPPORTUNITY", "business": northstar, "createdAt": ago(90), "conversationId": "c1", "opportunity": {
+            "id": "o1", "title": "Publish a transparent pricing and onboarding guide", "status": "PROPOSED", "revision": 2,
+            "problemStatement": "Three of five checked answers guess at pricing. One page with verified prices and setup steps gives assistants something true to quote.",
+            "proposedChange": "One public page with each plan's price, what it includes, and the setup steps, built only from approved facts.",
+            "expectedMechanism": "Assistants quote pages that state prices plainly, so answers stop guessing and buyers arrive with the right expectations.",
+            "uncertainty": "How quickly assistants pick up a new page varies from days to weeks.",
+            "source": "Brief", "evidence": [{ "type": "MODEL_SUGGESTION" }] } }),
+        json!({ "type": "WORDPRESS_CHANGE", "business": northstar, "createdAt": ago(60 * 5), "change": {
+            "id": "w1", "kind": "SET_SEO", "postType": "pages", "targetTitle": "Pricing", "targetLink": "https://northstar.test/pricing", "status": "PROPOSED",
+            "rationale": "The search title doesn't say what Northstar does, so the pricing page rarely shows for plan questions.",
+            "before": { "meta": { "_yoast_wpseo_title": "Pricing - Northstar", "_yoast_wpseo_metadesc": "" } },
+            "after": { "meta": { "_yoast_wpseo_title": "Northstar Analytics pricing: plans from $49 a month", "_yoast_wpseo_metadesc": "Compare Northstar's three plans, what each includes, and how setup works." } } } }),
+        json!({ "type": "AGENT_PROPOSAL", "business": northstar, "createdAt": ago(60 * 26), "proposal": {
+            "id": "p1", "kind": "REQUEST_CHECK", "status": "PROPOSED", "questionId": "q1", "message": "Re-check \"Does Northstar integrate with Snowflake?\" now that the integrations page lists it." } }),
+    ];
+    items.iter().filter_map(crate::decisions::parse).collect()
 }
 
 pub fn signin(s: &mut App) {
     s.screen = Screen::SignIn;
 }
 
+fn chat_messages() -> Vec<Message> {
+    let m = |v: serde_json::Value| serde_json::from_value::<Message>(v).expect("fixture message");
+    vec![
+        m(json!({ "role": "user", "text": "What should we work on next? Check our results and channels and propose the most useful next step for me to approve." })),
+        m(json!({
+            "role": "agent",
+            "text": "The most useful next step is **a public pricing and onboarding guide**, built only from your approved facts.\n\n- AI assistants guessed at pricing in 3 of the 5 answers checked this week.\n- Your website has no page that states plans or setup time.\n- Search Console is not connected, so I can't yet see which queries reach you.\n\nI saved it to your inbox as an idea to approve. Once you approve, I'll draft the page and set a baseline to measure against.",
+            "activity": [
+                { "kind": "thought", "text": "Start from what was approved and what the latest AI answers got wrong.", "ms": 2100 },
+                { "kind": "tool", "tool": "read_results", "text": "2 approved ideas, 2 not done yet" },
+                { "kind": "tool", "tool": "read_business_truth", "text": "8 approved facts read" },
+                { "kind": "tool", "tool": "read_search_performance", "text": "Search Console is not connected", "failed": true },
+                { "kind": "tool", "tool": "propose_growth_opportunity", "text": "Saved an idea to approve" }
+            ],
+            "durationMs": 23000,
+            "citations": [
+                { "kind": "web", "id": "https://northstar.example/pricing", "text": "Northstar pricing" },
+                { "kind": "truth", "id": "f1", "text": "Monthly price: from 49 USD" }
+            ],
+            "decisions": [{ "type": "GROWTH_OPPORTUNITY", "id": "o1" }],
+            "inference": { "provider": "hosted", "requestedModel": "gemini-3-flash" },
+            "run": { "id": "r1", "status": "COMPLETED", "gaps": ["Search Console data"] }
+        })),
+        m(json!({ "role": "user", "text": "Ask a helper to research how competitors explain their onboarding." })),
+        m(json!({
+            "role": "agent",
+            "text": "I started a research helper. It reads public onboarding pages and reports back here.",
+            "activity": [{ "kind": "tool", "tool": "start_session", "text": "Started a research helper" }],
+            "durationMs": 6000,
+            "tasks": [{ "id": "t1", "sessionId": "s2", "title": "How others explain onboarding", "role": "researcher", "status": "RUNNING", "model": "claude-sonnet-5-5" }],
+            "inference": { "provider": "claude", "requestedModel": "claude-sonnet-5-5" }
+        })),
+    ]
+}
+
 pub fn agent(s: &mut App) {
     workspace(s);
     s.view = View::Agent;
     s.chat_id = Some("c1".into());
-    s.conversation = Load::Ready(Conversation {
-        id: "c1".into(),
-        title: Some("Next step for the pricing page".into()),
-        revision: 2,
-        messages: vec![
-            Message {
-                role: "user".into(),
-                text: "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.".into(),
-                tool_calls: vec![],
-            },
-            Message {
-                role: "agent".into(),
-                text: "The most useful next step is **a public pricing and onboarding guide**, built only from your approved facts.\n\n- AI assistants guessed at pricing in 3 of the 5 answers checked this week.\n- Your website has no page that states plans or setup time.\n- Search Console is not connected, so I can't yet see which queries reach you.\n\nI saved it to your inbox as an idea to approve. Once you approve, I'll draft the page and set a baseline to measure against.".into(),
-                tool_calls: vec![
-                    ToolCall { tool: "read_results".into(), summary: "2 approved ideas, 2 not done yet".into() },
-                    ToolCall { tool: "read_business_truth".into(), summary: "8 approved facts read".into() },
-                    ToolCall { tool: "read_search_performance".into(), summary: "Search Console is not connected".into() },
-                ],
-            },
-        ],
-    });
+    s.catalog = Load::Ready(models());
+    s.agent_model = Some("i1:claude-sonnet-5-5".into());
+    s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages(), session: None });
+}
+
+/// The models the composer offers in scenes.
+fn models() -> Vec<crate::chat::ModelOption> {
+    crate::chat::model_options(&json!({
+        "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+        "instances": [
+            { "id": "i1", "driver": "claude", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }] },
+            { "id": "i2", "driver": "codex", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "gpt-5", "name": "GPT-5" }] }
+        ]
+    }))
+}
+
+pub fn agent_open_log(s: &mut App) {
+    agent(s);
+    s.open_logs.insert(1);
+    s.open_sources.insert(1);
+}
+
+pub fn agent_working(s: &mut App) {
+    agent(s);
+    let mut progress = crate::chat::Progress::default();
+    let ev = |seq, kind: &str, payload: serde_json::Value| crate::chat::RunEvent { seq, kind: kind.into(), payload };
+    progress.apply(&[
+        ev(1, "MODEL_STEP", json!({ "thought": "The helper should look at public pages only.", "toolCalls": [{}] })),
+        ev(2, "TOOL_STARTED", json!({ "tool": "read_web_pages", "label": "Reading 4 pages" })),
+        ev(3, "TOOL_COMPLETED", json!({ "tool": "read_web_pages", "summary": "Read 4 onboarding pages" })),
+        ev(4, "TOOL_STARTED", json!({ "tool": "search_web", "label": "Searching the web for setup guides" })),
+    ]);
+    s.turn = Turn::Working {
+        message: "And what does setup take for a team of five?".into(),
+        request: Some("q1".into()),
+        progress,
+        started: std::time::Instant::now() - std::time::Duration::from_secs(14),
+        stopping: false,
+    };
+}
+
+/// Typing a command while a turn runs, with two messages queued, a file attached and memory nearly full.
+pub fn agent_compose(s: &mut App) {
+    agent_working(s);
+    if let Load::Ready(c) = &mut s.conversation {
+        if let Some(m) = c.messages.last_mut() {
+            m.context = Some(crate::chat::ContextUse { history_chars: 92_000, budget_chars: 100_000, verbatim: 6, compacted: 4, omitted: 0 });
+        }
+    }
+    s.queued = vec!["Then draft the FAQ from the approved facts.".into(), "And send me the weekly brief.".into()];
+    s.attachments = vec![crate::chat::Attachment { name: "pricing-notes.md".into(), kind: "text/markdown".into(), text: "# Pricing\n\nStarter 49\nTeam 149\n".into() }];
+    s.composer = rune::TextEdit::new("/camp");
+}
+
+pub fn agent_archived(s: &mut App) {
+    agent(s);
+    s.show_archived = true;
+    s.archived = Load::Ready(vec![chat("c9", &business("b-acme", "Acme Outdoors"), "Old launch checklist", 60 * 24 * 12, false)]);
+}
+
+fn settings(s: &mut App, page: crate::state::SettingsPage) {
+    agent(s);
+    s.settings = Some(page);
+}
+
+pub fn settings_general(s: &mut App) {
+    settings(s, crate::state::SettingsPage::General);
+}
+
+pub fn settings_agent(s: &mut App) {
+    settings(s, crate::state::SettingsPage::Agent);
+    s.memory = Load::Ready(
+        serde_json::from_value(json!([
+            { "id": "n1", "kind": "PREFERENCE", "text": "Write in plain English, no jargon.", "source": "OPERATOR", "createdAt": "2026-11-02T10:00:00Z" },
+            { "id": "n2", "kind": "DECISION", "text": "Pricing page comes before the comparison pages.", "source": "ASSISTANT", "createdAt": "2026-11-08T15:30:00Z" }
+        ]))
+        .unwrap(),
+    );
+    s.providers = Load::Ready(
+        serde_json::from_value(json!({
+            "bridges": [{ "id": "b1", "name": "This Mac", "online": true, "managed": true }, { "id": "b2", "name": "Studio iMac", "online": false }],
+            "instances": [
+                { "id": "i1", "bridgeId": "b1", "localId": "l1", "driver": "claude", "name": "Claude Code", "enabled": true, "installed": true, "version": "2.4.1", "auth": "authenticated", "state": "ready",
+                  "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }, { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5" }], "disabledModels": ["claude-haiku-5-5"] },
+                { "id": "i2", "bridgeId": "b1", "localId": "l2", "driver": "codex", "name": "Codex", "enabled": true, "installed": true, "version": "1.9.0", "auth": "unauthenticated", "state": "ready", "models": [{ "id": "gpt-5", "name": "GPT-5" }] },
+                { "id": "i3", "bridgeId": "b1", "driver": "opencode", "name": "OpenCode", "enabled": false, "installed": true, "auth": "authenticated", "state": "ready", "models": [{ "id": "a", "name": "A" }, { "id": "b", "name": "B" }] },
+                { "id": "i4", "bridgeId": "b1", "driver": "cursor", "name": "Cursor", "installed": false, "models": [] }
+            ],
+            "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+            "local": true
+        }))
+        .unwrap(),
+    );
+    s.open_models.insert("i1".into());
+}
+
+pub fn settings_account(s: &mut App) {
+    settings(s, crate::state::SettingsPage::Account);
+    s.identity = Load::Ready(crate::settings::Identity { user_id: "8f1c2d0e-user".into(), account_id: "41a7b9c3-account".into() });
+}
+
+pub fn agent_models(s: &mut App) {
+    agent(s);
+    s.menu = Some(Menu::Model);
 }
 
 pub fn agent_empty(s: &mut App) {
@@ -109,8 +246,169 @@ pub fn inbox(s: &mut App) {
     page(s, Page::Inbox);
 }
 
+pub fn inbox_wordpress(s: &mut App) {
+    page(s, Page::Inbox);
+    s.decision = Some("WORDPRESS_CHANGE:w1".into());
+}
+
+pub fn inbox_check(s: &mut App) {
+    page(s, Page::Inbox);
+    s.decision = Some("AGENT_PROPOSAL:p1".into());
+    s.models = Load::Ready(vec!["openai/gpt-5".into(), "anthropic/claude-sonnet-5-5".into(), "google/gemini-3-pro".into()]);
+    s.model = Some("openai/gpt-5".into());
+}
+
+pub fn inbox_decline(s: &mut App) {
+    page(s, Page::Inbox);
+    s.declining = true;
+    s.decline_reason.replace_text("We're changing prices next month");
+}
+
 pub fn overview(s: &mut App) {
     page(s, Page::Overview);
+    s.insights = Load::Ready(insights());
+}
+
+fn section(s: &mut App, sec: Section) {
+    overview(s);
+    s.section = sec;
+}
+
+pub fn overview_answers(s: &mut App) {
+    section(s, Section::Answers);
+}
+
+pub fn overview_performance(s: &mut App) {
+    section(s, Section::Performance);
+}
+
+pub fn overview_revenue(s: &mut App) {
+    section(s, Section::Revenue);
+}
+
+pub fn overview_funnel(s: &mut App) {
+    section(s, Section::Funnel);
+}
+
+pub fn overview_answers_split(s: &mut App) {
+    section(s, Section::Answers);
+    s.metric = crate::state::Metric::Answers;
+    s.split = true;
+}
+
+pub fn overview_answers_hover(s: &mut App) {
+    section(s, Section::Answers);
+    s.chart_hover = Some(("hero-trend".into(), 20));
+}
+
+pub fn overview_answers_share(s: &mut App) {
+    section(s, Section::Answers);
+    s.metric = crate::state::Metric::Wrong;
+    s.split = true;
+}
+
+pub fn overview_events(s: &mut App) {
+    section(s, Section::Events);
+}
+
+fn insights() -> Insights {
+    let day = |i: i64| crate::format::iso_date(crate::format::now() - (30 - i) * 86_400);
+    // A deterministic, gently rising month of checks.
+    let wave = |i: i64, k: i64| ((i * 7 + k * 3) % 5) as i64;
+    let daily: Vec<insights::Day> = (0..31)
+        .map(|i| insights::Day {
+            date: day(i),
+            checks: 2,
+            v: Verdicts { supported: 1 + wave(i, 0) / 2 + i / 10, wrong: wave(i, 1) / 3, partial: wave(i, 2) / 4, unknown: wave(i, 3) / 4, unreviewed: if i > 27 { 1 } else { 0 } },
+        })
+        .collect();
+    let total = |f: fn(&Verdicts) -> i64| daily.iter().map(|d| f(&d.v)).sum::<i64>();
+    let current = Verdicts { supported: total(|v| v.supported), wrong: total(|v| v.wrong), partial: total(|v| v.partial), unknown: total(|v| v.unknown), unreviewed: total(|v| v.unreviewed) };
+    let analytics = Analytics {
+        checks: 62,
+        answers: current.total(),
+        failed: 1,
+        previous: Verdicts { supported: 31, wrong: 14, partial: 5, unknown: 6, unreviewed: 0 },
+        prev_answers: 56,
+        current,
+        providers: vec![
+            insights::Provider { name: "openai".into(), answers: 41, prev_answers: 30, v: Verdicts { supported: 28, wrong: 6, partial: 3, unknown: 4, unreviewed: 0 } },
+            insights::Provider { name: "claude".into(), answers: 36, prev_answers: 26, v: Verdicts { supported: 29, wrong: 3, partial: 2, unknown: 1, unreviewed: 1 } },
+            insights::Provider { name: "gemini".into(), answers: 22, prev_answers: 0, v: Verdicts { supported: 12, wrong: 6, partial: 2, unknown: 2, unreviewed: 0 } },
+            insights::Provider { name: "perplexity".into(), answers: 14, prev_answers: 12, v: Verdicts { supported: 9, wrong: 2, partial: 1, unknown: 1, unreviewed: 0 } },
+            insights::Provider { name: "deepseek".into(), answers: 6, prev_answers: 4, v: Verdicts { supported: 3, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
+        ],
+        provider_daily: (0..31)
+            .flat_map(|i| {
+                [("openai", 1 + wave(i, 0) / 2), ("claude", 1 + wave(i, 1) / 3), ("gemini", wave(i, 2) / 2), ("perplexity", wave(i, 3) / 3), ("deepseek", wave(i, 4) / 4)]
+                    .into_iter()
+                    .filter(|(_, n)| *n > 0)
+                    .map(move |(p, n)| (day(i), p.to_string(), n))
+            })
+            .collect(),
+        questions: vec![
+            insights::Question { prompt: "How much does Northstar cost?".into(), checks: 12, last_checked: ago(60 * 3), v: Verdicts { supported: 5, wrong: 5, partial: 1, unknown: 1, unreviewed: 0 } },
+            insights::Question { prompt: "Does Northstar integrate with Snowflake?".into(), checks: 10, last_checked: ago(60 * 26), v: Verdicts { supported: 7, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
+            insights::Question { prompt: "Is Northstar SOC 2 compliant?".into(), checks: 8, last_checked: ago(60 * 50), v: Verdicts { supported: 8, wrong: 0, partial: 0, unknown: 0, unreviewed: 0 } },
+        ],
+        facts: vec![
+            insights::FactRow { predicate: "monthly_price".into(), value: "From 49 USD a month".into(), v: Verdicts { supported: 6, wrong: 5, partial: 1, unknown: 0, unreviewed: 0 } },
+            insights::FactRow { predicate: "integration".into(), value: "Snowflake, BigQuery and Postgres".into(), v: Verdicts { supported: 9, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
+        ],
+        citations: 48,
+        attributed: 17,
+        prev_citations: 35,
+        citation_days: (0..31).map(|i| (day(i), 1 + wave(i, 2) / 2, wave(i, 4) / 3)).collect(),
+        daily,
+    };
+    let reports = |r: Report| Source::Reports(vec![r]);
+    let m = |l: &str, v: &str, d: Option<f64>| insights::Metric { label: l.into(), value: v.into(), delta: d };
+    Insights {
+        days: 30,
+        analytics: Ok(analytics),
+        goal: Ok(Some(insights::Goal {
+            statement: "More trial sign-ups from people who asked an assistant about pricing.".into(),
+            label: "Trial sign-ups".into(),
+            event_name: Some("sign_up".into()),
+            counting: "EVENT_COUNT".into(),
+            time_zone: Some("America/New_York".into()),
+            points: (0..61).map(|i| (crate::format::iso_date(crate::format::now() - (61 - i) * 86_400), (8 + (i * 5) % 7 + i / 6) as f64)).collect(),
+            source: Some("GA4_AGGREGATE_EXPORT".into()),
+        })),
+        initiatives: vec![
+            insights::Initiative { title: "Publish a transparent pricing and onboarding guide".into(), status: "APPROVED".into(), progress: "NOT_STARTED".into() },
+            insights::Initiative { title: "Answer the questions buyers ask AI assistants".into(), status: "APPROVED".into(), progress: "EXECUTED".into() },
+        ],
+        health: insights::Health { sources: 5, in_sync: 4, drift: 1, inspected: true, open_findings: 3, urls_inspected: 12, verified_fixes: 1 },
+        discovery: Ok(Some(insights::Discovery {
+            period: Some(("ChatGPT search".into(), "38 of 40".into(), "21 of 38".into(), "9 of 38".into(), "2026-10-27 to 2026-11-09".into())),
+            referral: Some("412 of 9,830 sessions, 2026-10-01 to 2026-10-31. 23 signups reported.".into()),
+            limitations: vec![],
+        })),
+        search: reports(Report {
+            title: "Google Search".into(),
+            subtitle: "sc-domain:northstar.test, 2026-10-12 to 2026-11-08".into(),
+            metrics: vec![m("Clicks", "1,284", Some(0.18)), m("Impressions", "48,210", Some(0.09)), m("Click-through rate", "3%", Some(0.08)), m("Average position", "11.4", None)],
+            table: Some((
+                vec!["Top queries".into(), "Clicks".into(), "Impressions".into(), "CTR".into()],
+                vec![
+                    vec!["northstar analytics".into(), "402".into(), "1,980".into(), "20%".into()],
+                    vec!["northstar pricing".into(), "131".into(), "860".into(), "15%".into()],
+                    vec!["snowflake dashboard tool".into(), "44".into(), "5,120".into(), "1%".into()],
+                ],
+            )),
+            note: None,
+        }),
+        ads: Source::NotConnected("Connect Google Ads or Meta on the web to see spend, clicks and conversions.".into()),
+        local: Source::NotConnected("Connect a Google Business Profile on the web to see calls, direction requests and reviews.".into()),
+        revenue: reports(Report {
+            title: "Stripe: Northstar Analytics".into(),
+            subtitle: "2026-10-12 to 2026-11-08".into(),
+            metrics: vec![m("Revenue (USD)", "$18,420.00", Some(0.12)), m("Paying customers", "214", Some(0.05)), m("New customers", "19", Some(-0.1))],
+            table: None,
+            note: None,
+        }),
+    }
 }
 
 pub fn campaigns(s: &mut App) {

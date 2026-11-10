@@ -1,8 +1,12 @@
 //! The window's view: sign in, or the workspace shell around the page on screen.
 
 mod agent;
+mod charts;
+mod discovery;
+mod overview;
 mod pages;
 mod shell;
+mod settings;
 mod signin;
 pub mod widgets;
 
@@ -21,7 +25,10 @@ fn kit(t: &Theme) -> Kit {
 }
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let t = Theme::get(cx.system_dark());
+    let t = Theme::get(s.prefs.dark(cx.system_dark()));
+    if s.prefs.reduce_motion {
+        cx.reduced_motion(true);
+    }
     let k = kit(&t);
     let screen = match s.screen {
         Screen::Restoring => signin::restoring(&t),
@@ -32,6 +39,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if s.screen == Screen::Workspace {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
+        }
+        if let Some(page) = s.settings {
+            layers.extend(settings::view(s, &t, &k, page));
         }
     }
     rune_kit::root(screen.fill(t.sidebar), layers)

@@ -22,6 +22,28 @@ pub fn parse_iso(s: &str) -> Option<i64> {
     Some(days * 86400 + h * 3600 + mi * 60 + se)
 }
 
+/// "2026-11-10" for seconds since the epoch (civil from days, Howard Hinnant's algorithm).
+pub fn iso_date(t: i64) -> String {
+    let z = t.div_euclid(86400) + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// "Nov 6" for a "2026-11-06" day, for chart axes.
+pub fn short_day(iso: &str) -> String {
+    let (Some(m), Some(d)) = (iso.get(5..7).and_then(|m| m.parse::<usize>().ok()), iso.get(8..10).and_then(|d| d.parse::<u32>().ok())) else {
+        return iso.to_string();
+    };
+    format!("{} {d}", MONTHS.get(m.wrapping_sub(1)).copied().unwrap_or("?"))
+}
+
 pub fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
@@ -34,6 +56,14 @@ pub fn date(iso: &str) -> String {
         return "Unknown".into();
     };
     format!("{} {d}, {y}", MONTHS.get(m.wrapping_sub(1)).copied().unwrap_or("?"))
+}
+
+/// "Nov 6, 2026 at 14:05 UTC".
+pub fn date_time(iso: &str) -> String {
+    match iso.get(11..16) {
+        Some(hm) => format!("{} at {hm} UTC", date(iso)),
+        None => date(iso),
+    }
 }
 
 /// "5 minutes ago", "yesterday", "in 2 hours", then a date past 30 days.

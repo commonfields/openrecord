@@ -7,10 +7,17 @@
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
 mod api;
+mod brand_marks;
+mod brands;
+mod chat;
+mod decisions;
 mod fixtures;
 mod format;
 mod icons;
+mod insights;
 mod net;
+mod prefs;
+mod settings;
 mod state;
 mod theme;
 mod ui;
@@ -31,6 +38,22 @@ fn poll(s: &mut App, _clock: f64, tx: &mut Tx) -> bool {
 fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if s.screen != state::Screen::Workspace {
         return false;
+    }
+    if ev.is_command(',') {
+        s.open_settings(state::SettingsPage::General);
+        return true;
+    }
+    if s.settings.is_some() {
+        if ev.key == rune::Key::Escape {
+            s.settings = None;
+            return true;
+        }
+        return false;
+    }
+    // With "Send with Enter" off, ⌘Return sends.
+    if ev.key == rune::Key::Enter && ev.mods.cmd && !s.prefs.enter_to_send && s.view == state::View::Agent {
+        s.send_message(tx);
+        return true;
     }
     if ev.is_command('b') {
         s.sidebar_open = !s.sidebar_open;
@@ -60,8 +83,27 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("signin", fixtures::signin),
     ("agent", fixtures::agent),
     ("agent-empty", fixtures::agent_empty),
+    ("agent-log", fixtures::agent_open_log),
+    ("agent-working", fixtures::agent_working),
+    ("agent-models", fixtures::agent_models),
+    ("agent-compose", fixtures::agent_compose),
+    ("agent-archived", fixtures::agent_archived),
+    ("settings-general", fixtures::settings_general),
+    ("settings-agent", fixtures::settings_agent),
+    ("settings-account", fixtures::settings_account),
     ("inbox", fixtures::inbox),
+    ("inbox-wordpress", fixtures::inbox_wordpress),
+    ("inbox-check", fixtures::inbox_check),
+    ("inbox-decline", fixtures::inbox_decline),
     ("overview", fixtures::overview),
+    ("overview-answers", fixtures::overview_answers),
+    ("overview-answers-split", fixtures::overview_answers_split),
+    ("overview-answers-hover", fixtures::overview_answers_hover),
+    ("overview-answers-share", fixtures::overview_answers_share),
+    ("overview-performance", fixtures::overview_performance),
+    ("overview-revenue", fixtures::overview_revenue),
+    ("overview-funnel", fixtures::overview_funnel),
+    ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
     ("ai-answers", fixtures::ai_answers),
     ("channels", fixtures::channels),

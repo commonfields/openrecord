@@ -73,6 +73,54 @@ pub struct Message {
     pub text: String,
     #[serde(default, rename = "toolCalls")]
     pub tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub activity: Vec<crate::chat::Activity>,
+    #[serde(default)]
+    pub citations: Vec<crate::chat::Citation>,
+    #[serde(default)]
+    pub decisions: Vec<crate::chat::DecisionRef>,
+    #[serde(default)]
+    pub tasks: Vec<crate::chat::TaskRef>,
+    #[serde(default)]
+    pub run: Option<crate::chat::RunRef>,
+    #[serde(default, rename = "durationMs")]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub inference: Option<crate::chat::Inference>,
+    #[serde(default)]
+    pub origin: Option<crate::chat::Origin>,
+    #[serde(default)]
+    pub attachments: Vec<crate::chat::Attachment>,
+    #[serde(default)]
+    pub context: Option<crate::chat::ContextUse>,
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Message {
+        Message {
+            role: "user".into(),
+            text: text.into(),
+            tool_calls: Vec::new(),
+            activity: Vec::new(),
+            citations: Vec::new(),
+            decisions: Vec::new(),
+            tasks: Vec::new(),
+            run: None,
+            duration_ms: None,
+            inference: None,
+            origin: None,
+            attachments: Vec::new(),
+            context: None,
+        }
+    }
+
+    /// The work log: the recorded steps, or for older replies the tools it ran.
+    pub fn work_log(&self) -> Vec<crate::chat::Activity> {
+        if !self.activity.is_empty() {
+            return self.activity.clone();
+        }
+        self.tool_calls.iter().map(|c| crate::chat::Activity::Tool { tool: c.tool.clone(), text: c.summary.clone(), failed: false }).collect()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -92,6 +140,9 @@ pub struct Conversation {
     pub revision: i64,
     #[serde(default)]
     pub messages: Vec<Message>,
+    /// Set on a helper session: the session that started it.
+    #[serde(default)]
+    pub session: Option<crate::chat::SessionInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
@@ -157,16 +208,7 @@ pub struct Campaign {
     pub updated_at: Option<String>,
 }
 
-/// One decision waiting on the signed-in person.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Decision {
-    pub kind: String,
-    pub business_id: String,
-    pub business_name: String,
-    pub title: String,
-    pub detail: String,
-    pub created_at: Option<String>,
-}
+pub use crate::decisions::Decision;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AgentJob {
@@ -208,7 +250,7 @@ impl Client {
         }
     }
 
-    fn call<T: DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> ApiResult<T> {
+    pub(crate) fn call<T: DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> ApiResult<T> {
         let mut req = self.agent.request(method, &format!("{}{}", self.base, path)).set("Accept", "application/json");
         if let Some(s) = self.session() {
             req = req.set("Cookie", &format!("{SESSION_COOKIE}={s}"));
@@ -241,11 +283,11 @@ impl Client {
         res.into_json::<T>().map_err(|e| ApiError::Decode(e.to_string()))
     }
 
-    fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
+    pub(crate) fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
         self.call("GET", path, None)
     }
 
-    fn post<T: DeserializeOwned>(&self, path: &str, body: Value) -> ApiResult<T> {
+    pub(crate) fn post<T: DeserializeOwned>(&self, path: &str, body: Value) -> ApiResult<T> {
         self.call("POST", path, Some(body))
     }
 
@@ -313,9 +355,18 @@ impl Client {
     }
 
     /// Queues a turn and returns once the API has accepted it.
-    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, message: &str) -> ApiResult<()> {
+    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, out: &crate::chat::Outgoing) -> ApiResult<()> {
         let path = format!("/api/businesses/{}/agent/requests", enc(business));
-        let body = json!({ "message": message, "requestId": request_id, "revision": revision, "conversationId": conversation });
+        let mut body = json!({ "message": out.message, "requestId": request_id, "revision": revision, "conversationId": conversation });
+        if let Some(sel) = &out.selection {
+            body["selection"] = sel.clone();
+        }
+        if let Some(style) = &out.style {
+            body["style"] = json!(style);
+        }
+        if !out.attachments.is_empty() {
+            body["attachments"] = json!(out.attachments.iter().map(|a| json!({ "name": a.name, "type": a.kind, "text": a.text })).collect::<Vec<_>>());
+        }
         self.post::<Value>(&path, body).map(|_| ())
     }
 
@@ -360,7 +411,30 @@ impl Client {
     pub fn decisions(&self) -> ApiResult<Vec<Decision>> {
         let v: Value = self.get("/api/decisions")?;
         let list = v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
-        Ok(list.iter().map(decision).collect())
+        Ok(list.iter().filter_map(crate::decisions::parse).collect())
+    }
+
+    /// Approves or declines one decision, then records the verdict for the
+    /// agent, as the web cards do. The record is best effort.
+    pub fn decide(&self, d: &Decision, approve: bool, model: Option<&str>, reason: Option<&str>) -> ApiResult<()> {
+        let (path, body) = if approve { d.approve_call(model) } else { d.decline_call(reason) };
+        self.post::<Value>(&path, body)?;
+        let (path, body) = d.feedback(approve, reason);
+        let _ = self.post::<Value>(&path, body);
+        Ok(())
+    }
+
+    /// The measurement models a re-check can run on: 9Router's, when it is enabled.
+    pub fn models(&self) -> ApiResult<Vec<String>> {
+        let v: Value = self.get("/api/providers")?;
+        let list = v.get("providers").and_then(Value::as_array).cloned().unwrap_or_default();
+        Ok(list
+            .iter()
+            .find(|p| p.get("id").and_then(Value::as_str) == Some("9router") && p.get("enabled").and_then(Value::as_bool) == Some(true))
+            .and_then(|p| p.get("models"))
+            .and_then(Value::as_array)
+            .map(|m| m.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default())
     }
 }
 
@@ -383,34 +457,6 @@ fn campaign(v: &Value) -> Campaign {
         stage: first(v, &[&["stage"], &["status"]]),
         goal: first(v, &[&["goal"], &["objective"], &["plan", "goal"]]),
         updated_at: s(v, &["updatedAt"]).or_else(|| s(v, &["createdAt"])),
-    }
-}
-
-fn decision(v: &Value) -> Decision {
-    let kind = first(v, &[&["type"]]);
-    let (title, detail) = match kind.as_str() {
-        "AGENT_PROPOSAL" => (
-            first(v, &[&["proposal", "title"], &["proposal", "summary"]]),
-            first(v, &[&["proposal", "rationale"], &["proposal", "summary"]]),
-        ),
-        "GROWTH_OPPORTUNITY" => (
-            first(v, &[&["opportunity", "title"]]),
-            first(v, &[&["opportunity", "hypothesis"], &["opportunity", "summary"]]),
-        ),
-        "WORDPRESS_CHANGE" => (
-            first(v, &[&["change", "title"], &["change", "summary"]]),
-            first(v, &[&["change", "rationale"]]),
-        ),
-        "ACCOUNT_ACTION" => (first(v, &[&["action", "kind"]]).replace('_', " ").to_lowercase(), first(v, &[&["action", "rationale"]])),
-        _ => (String::new(), String::new()),
-    };
-    Decision {
-        kind,
-        business_id: first(v, &[&["business", "id"]]),
-        business_name: first(v, &[&["business", "name"]]),
-        title: if title.is_empty() { "A decision is waiting".into() } else { title },
-        detail,
-        created_at: s(v, &["createdAt"]),
     }
 }
 
@@ -507,11 +553,6 @@ mod tests {
         assert_eq!(&id[14..15], "4");
     }
 
-    #[test]
-    fn decisions_read_each_kind() {
-        let d = decision(&json!({ "type": "GROWTH_OPPORTUNITY", "business": { "id": "b", "name": "Cueup" }, "opportunity": { "title": "Pricing guide" } }));
-        assert_eq!((d.title.as_str(), d.business_name.as_str()), ("Pricing guide", "Cueup"));
-    }
 }
 
 /// Against a running dev API with the demo seed:
@@ -536,6 +577,13 @@ mod live {
         let campaigns = c.campaigns(b).expect("campaigns");
         let decisions = c.decisions().expect("decisions");
         let chats = c.chats().expect("chats");
+        for days in crate::insights::PERIODS {
+            let i = c.insights(b, days).expect("insights");
+            assert!(i.analytics.is_ok(), "analytics for {days} days: {:?}", i.analytics);
+            if days == 30 {
+                eprintln!("insights: analytics {:?}, goal {:?}, {} initiatives, health {:?}, search {:?}", i.analytics.as_ref().map(|a| (a.checks, a.daily.len())), i.goal.as_ref().map(Option::is_some), i.initiatives.len(), i.health, i.search);
+            }
+        }
         eprintln!(
             "{} businesses, overview {overview:?}, {} issues, {} channels, {} campaigns, {} decisions, {} chats",
             businesses.len(), issues.len(), channels.len(), campaigns.len(), decisions.len(), chats.len()
@@ -544,6 +592,31 @@ mod live {
             let conv = c.conversation(chat.business_id.as_deref().unwrap(), Some(&chat.id)).expect("conversation").expect("exists");
             eprintln!("chat {:?}: {} messages, revision {}", conv.title, conv.messages.len(), conv.revision);
         }
+        // Every chat's messages decode with their steps, sources and decisions.
+        let mut parts = (0, 0, 0, 0);
+        for chat in chats.iter().filter(|ch| ch.business_id.is_some()).take(10) {
+            let conv = c.conversation(chat.business_id.as_deref().unwrap(), Some(&chat.id)).expect("conversation");
+            for m in conv.iter().flat_map(|cv| cv.messages.iter()) {
+                parts = (parts.0 + m.activity.len(), parts.1 + m.citations.len(), parts.2 + m.decisions.len(), parts.3 + usize::from(m.inference.is_some()));
+            }
+        }
+        eprintln!("messages: {} steps, {} sources, {} decisions, {} with a model", parts.0, parts.1, parts.2, parts.3);
+        eprintln!("archived chats: {}", c.archived_chats().expect("archived chats").len());
+        let me = c.identity().expect("identity");
+        assert!(!me.account_id.is_empty());
+        let notes = c.memory(b).expect("memory");
+        let cat = c.providers().expect("providers");
+        eprintln!(
+            "settings: {} memory notes, {} computers, providers {:?}",
+            notes.len(),
+            cat.bridges.len(),
+            cat.instances.iter().map(|i| (i.name.as_str(), i.status(), i.model_count())).collect::<Vec<_>>()
+        );
+        let models = c.catalog().expect("catalog");
+        eprintln!("models: {:?}", models.iter().map(|m| (&m.value, &m.name, &m.brand)).collect::<Vec<_>>());
+        // An unknown request has an empty journal, not an error.
+        let events = c.progress(&uuid(), 0);
+        eprintln!("progress for an unknown request: {:?}", events.as_ref().map(Vec::len));
         c.signout().expect("signout");
         assert_eq!(c.me(), Err(ApiError::Unauthorized));
     }

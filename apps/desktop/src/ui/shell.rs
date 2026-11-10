@@ -7,6 +7,7 @@ use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, col, el, row};
 use crate::api::ChatSummary;
 use crate::format;
 use crate::icons;
+use crate::insights::Section;
 use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico, icon_button, label};
@@ -147,7 +148,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             Page::Inbox => (&icons::INBOX, s.waiting() as i64),
             Page::Overview => (&icons::CHART_COLUMN, 0),
             Page::Campaigns => (&icons::BRIEFCASE, 0),
-            Page::AiAnswers => (&icons::CIRCLE_ALERT, s.attention()),
+            Page::AiAnswers => (&icons::CIRCLE_ALERT, if s.prefs.show_issue_count { s.attention() } else { 0 }),
             Page::Channels => (&icons::PLUG, 0),
         };
         let mut link = row()
@@ -163,7 +164,12 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(move |s: &mut App| s.show_page(page))
+            .on_press(move |s: &mut App| {
+                if page == Page::Overview {
+                    s.section = Section::Summary;
+                }
+                s.show_page(page)
+            })
             .child(ico(i, 14.0, if active { t.primary_ink } else { t.muted_foreground }));
         if open {
             link = link.w_full().px(8.0).child(
@@ -185,6 +191,33 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
         }
         links = links.child(link);
+        // The Overview's sections, under it while it is open, as on the web.
+        if open && active && page == Page::Overview {
+            let mut sub = col().grow(1.0).min_w(0.0).pl(10.0).gap(1.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border);
+            for sec in Section::ALL.into_iter().filter(|x| *x != Section::Summary) {
+                let on = s.section == sec;
+                sub = sub.child(
+                    row()
+                        .key(format!("nav-section-{}", sec.key()))
+                        .w_full()
+                        .h(30.0)
+                        .px(8.0)
+                        .radius(6.0)
+                        .center_y()
+                        .role("link")
+                        .label(sec.label())
+                        .checked(on)
+                        .focusable(true)
+                        .cursor(Cursor::Pointer)
+                        .hover(t.hover_tint)
+                        .motion(CONTROL)
+                        .fill(if on { t.sidebar_accent } else { rune::Color::TRANSPARENT })
+                        .on_press(move |s: &mut App| s.show_section(sec))
+                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.sidebar_foreground })),
+                );
+            }
+            links = links.child(row().w_full().pl(22.0).child(sub));
+        }
     }
     let mut c = col().w_full();
     if open {
@@ -202,59 +235,53 @@ fn chat_history(s: &App, t: &Theme) -> El {
         return col().w_full().items_center().child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press(|s: &mut App| s.sidebar_open = true));
     }
     let now = format::now();
-    let shown: Vec<&ChatSummary> = if s.show_all_chats { s.chats.iter().collect() } else { s.chats.iter().take(CHATS_SHOWN).collect() };
-    let mut header = row().w_full().px(8.0).pb(6.0).center_y().child(label("Chats", type_::SM_MEDIUM, t.muted_foreground));
-    if !s.chats.is_empty() {
-        header = header.child(el().grow(1.0)).child(label(s.chats.len().to_string(), type_::XS2.features("'tnum' 1"), t.muted_foreground));
+    let archived = s.show_archived;
+    let source: Vec<&ChatSummary> = if archived { s.archived.ready().map(|l| l.iter().collect()).unwrap_or_default() } else { s.chats.iter().collect() };
+    // With a business filter on, other businesses' chats drop out of the list and its count.
+    let all: Vec<&ChatSummary> = source.into_iter().filter(|c| s.chat_filter.as_ref().is_none_or(|f| c.business_id.as_ref() == Some(f))).collect();
+    let shown: Vec<&ChatSummary> = if s.show_all_chats || archived { all.clone() } else { all.iter().take(CHATS_SHOWN).copied().collect() };
+
+    let mut header = row().w_full().px(8.0).pb(6.0).gap(4.0).center_y();
+    if archived {
+        header = header.child(
+            row()
+                .key("leave-archive")
+                .size(20.0, 20.0)
+                .radius(4.0)
+                .center()
+                .role("button")
+                .label("Back to chats")
+                .cursor(Cursor::Pointer)
+                .on_press(|s: &mut App| s.show_archived = false)
+                .child(ico(&icons::ARROW_LEFT, 14.0, t.muted_foreground)),
+        );
     }
+    header = header.child(label(if archived { "Archived" } else { "Chats" }, type_::SM_MEDIUM, t.muted_foreground));
+    if !all.is_empty() {
+        header = header.child(label(all.len().to_string(), type_::XS2.features("'tnum' 1"), t.muted_foreground).pl(4.0));
+    }
+    let filtered = s.chat_filter.as_ref().and_then(|f| s.businesses.iter().find(|b| &b.id == f)).map(|b| b.name.clone());
+    header = header
+        .child(el().grow(1.0))
+        .child(
+            icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some())
+                .size(24.0, 24.0)
+                .on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)),
+        )
+        .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).size(24.0, 24.0).on_press(|s: &mut App| s.toggle_archived()));
+
     let mut list = col().w_full().gap(2.0);
-    if s.chats.is_empty() {
-        list = list.child(label("No chats yet. Open a business and ask its agent.", type_::SM_13, t.muted_foreground).px(8.0).py(4.0).wrap());
+    if archived && matches!(s.archived, crate::state::Load::Loading) && shown.is_empty() {
+        list = list.child(label("Loading archived chats…", type_::SM_13, t.muted_foreground).px(8.0).py(4.0));
+    } else if shown.is_empty() {
+        let empty = if archived { "No archived chats. Archive a chat you are done with to keep this list short." } else { "No chats yet. Open a business and ask its agent." };
+        list = list.child(label(empty, type_::SM_13, t.muted_foreground).px(8.0).py(4.0).wrap());
     }
     for c in shown {
-        let active = s.chat_id.as_deref() == Some(c.id.as_str());
-        let chat = c.clone();
-        let title = c.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
-        let sub = if c.working {
-            row()
-                .gap(6.0)
-                .center_y()
-                .child(el().size(6.0, 6.0).radius(3.0).fill(t.working))
-                .child(label("Working", type_::XS2.lh(16.0), t.working))
-        } else {
-            label(format!("{}, {}", c.business_name, format::relative(c.updated_at.as_deref(), now)), type_::XS2.lh(16.0), t.muted_foreground).truncate()
-        };
-        let mut r = row()
-            .key(format!("chat-{}", c.id))
-            .w_full()
-            .px(8.0)
-            .py(6.0)
-            .gap(10.0)
-            .radius(8.0)
-            .center_y()
-            .role("link")
-            .label(format!("{title}, {}", c.business_name))
-            .checked(active)
-            .focusable(true)
-            .cursor(Cursor::Pointer)
-            .hover(t.hover_tint)
-            .motion(CONTROL)
-            .on_press(move |s: &mut App| s.open_chat(&chat))
-            .child(business_mark(t, Some(&c.business_name), 28.0, 8.0))
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .child(label(title, if active { type_::SM_13.lh(20.0) } else { type_::SM_13 }, t.foreground).truncate())
-                    .child(sub),
-            );
-        if active {
-            r = shadows(r.fill(t.sidebar_accent), &t.control_shadow);
-        }
-        list = list.child(r);
+        list = list.child(chat_row(s, t, c, archived, now));
     }
-    if s.chats.len() > CHATS_SHOWN {
-        let text_ = if s.show_all_chats { "Show fewer".to_string() } else { format!("Show all {}", s.chats.len()) };
+    if !archived && all.len() > CHATS_SHOWN {
+        let text_ = if s.show_all_chats { "Show fewer".to_string() } else { format!("Show all {}", all.len()) };
         list = list.child(
             row()
                 .key("show-all-chats")
@@ -271,6 +298,93 @@ fn chat_history(s: &App, t: &Theme) -> El {
     col().w_full().child(header).child(list)
 }
 
+/// One history row: the business's mark, the title over where and when (or
+/// that it is working), the logos of the models that answered, and on hover
+/// the archive button.
+fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El {
+    let active = s.chat_id.as_deref() == Some(c.id.as_str());
+    let chat = c.clone();
+    let title = c.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
+    let sub = if c.working {
+        row().gap(6.0).center_y().child(el().size(6.0, 6.0).radius(3.0).fill(t.working)).child(label("Working", type_::XS2.lh(16.0), t.working))
+    } else {
+        label(format!("{}, {}", c.business_name, format::relative(c.updated_at.as_deref(), now)), type_::XS2.lh(16.0), t.muted_foreground).truncate()
+    };
+    let mut logos = row().gap(4.0).center_y();
+    let mut providers: Vec<&String> = Vec::new();
+    for p in &c.providers {
+        if !providers.contains(&p) {
+            providers.push(p);
+        }
+    }
+    let shown = &providers[providers.len().saturating_sub(3)..];
+    for p in shown {
+        logos = logos.child(crate::brands::mark(t, p, 14.0));
+    }
+    if !shown.is_empty() {
+        let names: Vec<String> = shown.iter().map(|p| crate::brands::brand(p).0).collect();
+        logos = logos.help(if names.len() > 1 { format!("Models used here: {}", names.join(", ")) } else { "Provider used for the last reply".into() });
+    }
+    let id = c.id.clone();
+    // Over the row's right end, shown on hover, so it takes no room from the title.
+    let archive = row()
+        .key(format!("archive-{}", c.id))
+        .pin(None, Some(0.0), Some(6.0), Some(0.0))
+        .w(24.0)
+        .radius(6.0)
+        .fill(if active { t.sidebar_accent } else { t.sidebar })
+        .center()
+        .role("button")
+        .label(if archived { "Restore chat" } else { "Archive chat" })
+        .help(if archived { "Restore chat" } else { "Archive chat" })
+        .cursor(Cursor::Pointer)
+        .group_opacity(0.0, 1.0)
+        .on_press(move |s: &mut App| s.archive_chat(&id, !archived))
+        .child(ico(if archived { &icons::ARCHIVE_RESTORE } else { &icons::ARCHIVE }, 14.0, t.muted_foreground));
+    let mut r = row()
+        .key(format!("chat-{}", c.id))
+        .w_full()
+        .px(8.0)
+        .py(6.0)
+        .gap(10.0)
+        .radius(8.0)
+        .center_y()
+        .role("link")
+        .label(format!("{title}, {}", c.business_name))
+        .checked(active)
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .hover(t.hover_tint)
+        .hover_group()
+        .motion(CONTROL)
+        .on_press(move |s: &mut App| s.open_chat(&chat))
+        .child(business_mark(t, Some(&c.business_name), 28.0, 8.0))
+        .child(col().grow(1.0).min_w(0.0).child(label(title, if active { type_::SM_13.lh(20.0) } else { type_::SM_13 }, t.foreground).truncate()).child(sub))
+        .child(logos)
+        .child(archive);
+    if active {
+        r = shadows(r.fill(t.sidebar_accent), &t.control_shadow);
+    }
+    r
+}
+
+/// The business filter for the chat history.
+fn chat_filter_menu(s: &App, t: &Theme) -> El {
+    let mut m = menu(t, "chat-filter-menu", 240.0).child(label("Filter chats", type_::XS, t.muted_foreground).px(8.0).py(6.0));
+    m = m.child(menu_row(t, "filter-all".into(), ico(&icons::MESSAGES_SQUARE, 16.0, t.muted_foreground), "All businesses", s.chat_filter.is_none()).on_press(|s: &mut App| {
+        s.chat_filter = None;
+        s.menu = None;
+    }));
+    for b in &s.businesses {
+        let id = b.id.clone();
+        m = m.child(menu_row(t, format!("filter-{}", b.id), business_mark(t, Some(&b.name), 24.0, 6.0), &b.name, s.chat_filter.as_deref() == Some(b.id.as_str())).on_press(move |s: &mut App| {
+            s.chat_filter = Some(id.clone());
+            s.menu = None;
+        }));
+    }
+    m.role("menu").anchored("chat-filter", Side::Right, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None)
+}
+
 /// The header across the top of the content panel.
 pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> El {
     let toggle = icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if s.sidebar_open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false)
@@ -283,6 +397,7 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
             View::Agent => "Agent",
             View::Workspace => s.page.label(),
         };
+        let sub = (s.view == View::Workspace && s.page == Page::Overview && s.section != Section::Summary).then(|| s.section.label());
         h = h.child(
             row()
                 .key("breadcrumbs")
@@ -299,7 +414,11 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
                         .truncate(),
                 )
                 .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7)))
-                .child(label(here, type_::XS_MEDIUM, t.foreground).truncate()),
+                .children(sub.is_some().then(|| {
+                    label(here, type_::XS, t.muted_foreground).key("crumb-page").cursor(Cursor::Pointer).on_press(|s: &mut App| s.show_section(Section::Summary))
+                }))
+                .children(sub.is_some().then(|| ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7))))
+                .child(label(sub.unwrap_or(here), type_::XS_MEDIUM, t.foreground).truncate()),
         );
     }
     h = h.child(el().grow(1.0));
@@ -414,6 +533,7 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             let m = menu(t, "account-menu-list", width)
                 .child(head)
                 .child(separator(t))
+                .child(menu_row(t, "open-settings".into(), ico(&icons::SETTINGS, 16.0, t.muted_foreground), "Settings", false).help_keys(["⌘", ","]).on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::General)))
                 .child(menu_row(t, "open-web".into(), ico(&icons::EXTERNAL_LINK, 16.0, t.muted_foreground), "Open in the browser", false).on_press_tx(move |s: &mut App, tx| {
                     s.menu = None;
                     let _ = tx.open_url(&web_url(&api));
@@ -427,11 +547,13 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             let side = if s.sidebar_open { Side::Top } else { Side::Right };
             Some(m.role("menu").anchored("account-menu", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
         }
+        Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
+        Menu::ChatFilter => Some(chat_filter_menu(s, t)),
     }
 }
 
 /// The web app for an API address: the dev server serves it on :3000 beside the API on :3001.
-fn web_url(api: &str) -> String {
+pub(crate) fn web_url(api: &str) -> String {
     if let Ok(web) = std::env::var("OPENRECORD_WEB_URL") {
         return web;
     }

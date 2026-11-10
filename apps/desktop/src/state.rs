@@ -3,6 +3,7 @@
 use rune::{TextEdit, Tx};
 
 use crate::api::{ApiError, ApiResult, Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview};
+use crate::insights::{Insights, Section};
 use crate::net::{Net, Reply};
 
 /// Something loaded from the API for the business on screen.
@@ -76,6 +77,8 @@ impl Page {
 pub enum Menu {
     Businesses,
     Account,
+    Model,
+    ChatFilter,
 }
 
 /// The turn the composer sent, while it runs.
@@ -83,8 +86,77 @@ pub enum Menu {
 pub enum Turn {
     Idle,
     /// Sent and not yet answered; the message shows at once.
-    Working { message: String },
+    Working {
+        message: String,
+        /// The request, once the API accepted it, and what its run is doing.
+        request: Option<String>,
+        progress: crate::chat::Progress,
+        started: std::time::Instant,
+        /// Stop was pressed; the turn settles on its own.
+        stopping: bool,
+    },
     Failed { message: String, error: String },
+}
+
+/// A section of Settings (`SettingsSection`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    General,
+    Agent,
+    Checks,
+    Shortcuts,
+    Account,
+    Privacy,
+    About,
+}
+
+impl SettingsPage {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Agent => "Agent",
+            Self::Checks => "Checks",
+            Self::Shortcuts => "Keyboard shortcuts",
+            Self::Account => "Account",
+            Self::Privacy => "Privacy and data",
+            Self::About => "About",
+        }
+    }
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::General => "Appearance, language and how the app opens.",
+            Self::Agent => "How the chat box behaves, and which agent it talks to.",
+            Self::Checks => "Defaults for running buyer questions against AI providers.",
+            Self::Shortcuts => "Move around OpenRecord without the mouse.",
+            Self::Account => "Your sign-in details and current session.",
+            Self::Privacy => "What leaves this app, and what is kept.",
+            Self::About => "Version and build information.",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Agent => "agent",
+            Self::Checks => "checks",
+            Self::Shortcuts => "shortcuts",
+            Self::Account => "account",
+            Self::Privacy => "privacy",
+            Self::About => "about",
+        }
+    }
+}
+
+/// What the AI discovery chart plots (the web's `metric` URL parameter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Partial and needs-review are reachable by link on the web, not by tab.
+pub enum Metric {
+    Accuracy,
+    Wrong,
+    Partial,
+    Unreviewed,
+    Answers,
+    Checks,
+    Goal,
 }
 
 pub struct App {
@@ -111,11 +183,63 @@ pub struct App {
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
+    /// The Overview section on screen and its period in days.
+    pub section: Section,
+    pub days: u32,
+    /// The AI discovery chart: which metric, trend or split, and which models.
+    pub metric: Metric,
+    pub split: bool,
+    pub hidden_models: std::collections::BTreeSet<String>,
+    pub model_focus: Option<String>,
+    pub all_models: bool,
+    /// The chart and day under the pointer.
+    pub chart_hover: Option<(String, usize)>,
+    /// The models the composer offers, the one picked, and the picker's filter.
+    pub catalog: Load<Vec<crate::chat::ModelOption>>,
+    pub agent_model: Option<String>,
+    pub model_filter: Option<String>,
+    /// Finished replies whose work log is open, and copied messages.
+    pub open_logs: std::collections::BTreeSet<usize>,
+    pub open_sources: std::collections::BTreeSet<usize>,
+    pub copied: Option<usize>,
+    /// Messages waiting for the turn under way, and files for the next message.
+    pub queued: Vec<String>,
+    pub attachments: Vec<crate::chat::Attachment>,
+    pub attach_error: Option<String>,
+    /// The chat history: archived chats instead of live ones, and one business only.
+    pub show_archived: bool,
+    pub archived: Load<Vec<ChatSummary>>,
+    pub chat_filter: Option<String>,
+    /// Settings, when open, and what it shows.
+    pub settings: Option<SettingsPage>,
+    pub prefs: crate::prefs::Prefs,
+    pub identity: Load<crate::settings::Identity>,
+    pub memory: Load<Vec<crate::settings::Note>>,
+    pub memory_kind: usize,
+    pub memory_text: TextEdit,
+    pub providers: Load<crate::settings::Catalog>,
+    pub open_models: std::collections::BTreeSet<String>,
+    pub pairing: Load<crate::settings::Pairing>,
+    pub settings_error: Option<String>,
+    pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
     pub conversation: Load<Conversation>,
     pub composer: TextEdit,
     pub turn: Turn,
+
+    /// The decision open in the inbox (its `key`); the first one when unset.
+    pub decision: Option<String>,
+    /// The decline reason field is open for the open decision.
+    pub declining: bool,
+    pub decline_reason: TextEdit,
+    /// A decision whose approve or decline call is in flight.
+    pub deciding: Option<String>,
+    /// Why the last decision call failed, for the decision it was about.
+    pub decision_error: Option<(String, String)>,
+    /// Re-check measurement models, loaded when a re-check is opened.
+    pub models: Load<Vec<String>>,
+    pub model: Option<String>,
 
     /// The last failure the shell itself hit, shown in a toast.
     pub notice: Option<String>,
@@ -159,10 +283,48 @@ impl App {
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
+            section: Section::Summary,
+            days: 30,
+            metric: Metric::Accuracy,
+            split: false,
+            hidden_models: Default::default(),
+            model_focus: None,
+            all_models: false,
+            chart_hover: None,
+            catalog: Load::Idle,
+            agent_model: crate::chat::stored_model(),
+            model_filter: None,
+            open_logs: Default::default(),
+            open_sources: Default::default(),
+            copied: None,
+            queued: Vec::new(),
+            attachments: Vec::new(),
+            attach_error: None,
+            show_archived: false,
+            archived: Load::Idle,
+            chat_filter: None,
+            settings: None,
+            prefs: crate::prefs::Prefs::load(),
+            identity: Load::Idle,
+            memory: Load::Idle,
+            memory_kind: 0,
+            memory_text: TextEdit::new(""),
+            providers: Load::Idle,
+            open_models: Default::default(),
+            pairing: Load::Idle,
+            settings_error: None,
+            insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
             composer: TextEdit::new(""),
             turn: Turn::Idle,
+            decision: None,
+            declining: false,
+            decline_reason: TextEdit::new(""),
+            deciding: None,
+            decision_error: None,
+            models: Load::Idle,
+            model: None,
             notice: None,
         }
     }
@@ -185,7 +347,72 @@ impl App {
         }
     }
 
+    /// The inbox's decisions: the business on screen's, or every business's.
+    pub fn inbox(&self) -> Vec<&Decision> {
+        self.decisions.iter().filter(|d| self.active.as_ref().is_none_or(|b| &d.business_id == b)).collect()
+    }
+
+    /// The decision open in the inbox.
+    pub fn open_decision(&self) -> Option<&Decision> {
+        let list = self.inbox();
+        self.decision.as_ref().and_then(|k| list.iter().find(|d| &d.key == k).copied()).or_else(|| list.first().copied())
+    }
+
     // ---- Actions --------------------------------------------------------
+
+    pub fn select_decision(&mut self, key: &str) {
+        if self.decision.as_deref() != Some(key) {
+            self.decision = Some(key.to_string());
+            self.declining = false;
+            self.decline_reason.clear();
+        }
+        self.load_models();
+    }
+
+    /// Fetches the re-check models the first time a re-check is open.
+    fn load_models(&mut self) {
+        let is_check = self.open_decision().is_some_and(|d| d.act == crate::decisions::Act::Check);
+        if is_check && matches!(self.models, Load::Idle | Load::Failed(_)) {
+            self.models = Load::Loading;
+            self.net.models();
+        }
+    }
+
+    pub fn choose_model(&mut self, model: &str) {
+        self.model = Some(model.to_string());
+    }
+
+    pub fn approve_decision(&mut self) {
+        let Some(d) = self.open_decision().cloned() else { return };
+        if self.deciding.is_some() || d.blocked(self.model.as_deref()).is_some() {
+            return;
+        }
+        self.decision_error = None;
+        self.deciding = Some(d.key.clone());
+        let model = (d.act == crate::decisions::Act::Check).then(|| self.model.clone()).flatten();
+        self.net.decide(d, true, model, None);
+    }
+
+    pub fn start_decline(&mut self, tx: &mut Tx) {
+        self.declining = true;
+        tx.focus("decline-reason", false);
+    }
+
+    pub fn cancel_decline(&mut self) {
+        self.declining = false;
+        self.decline_reason.clear();
+    }
+
+    pub fn confirm_decline(&mut self) {
+        let Some(d) = self.open_decision().cloned() else { return };
+        if self.deciding.is_some() {
+            return;
+        }
+        let reason = self.decline_reason.text.trim().to_string();
+        self.decision_error = None;
+        self.deciding = Some(d.key.clone());
+        self.net.decide(d, false, None, (!reason.is_empty()).then_some(reason));
+    }
 
     pub fn start(&mut self) {
         if self.screen == Screen::Restoring {
@@ -227,7 +454,14 @@ impl App {
         self.issues = Load::Idle;
         self.channels = Load::Idle;
         self.campaigns = Load::Idle;
+        self.insights = Load::Idle;
+        self.memory = Load::Idle;
         self.new_chat();
+        // A business opens on the agent or its Overview, as the person chose.
+        if self.prefs.landing == crate::prefs::Landing::Today {
+            self.view = View::Workspace;
+            self.page = Page::Overview;
+        }
         self.load_business();
     }
 
@@ -245,6 +479,51 @@ impl App {
         }
     }
 
+    pub fn show_section(&mut self, section: Section) {
+        self.section = section;
+        if self.page != Page::Overview || self.view != View::Workspace {
+            self.show_page(Page::Overview);
+        }
+    }
+
+    pub fn set_metric(&mut self, m: Metric) {
+        self.metric = m;
+        // Checks have no split; the split of answers is per model.
+        if m == Metric::Checks || m == Metric::Goal {
+            self.split = false;
+        }
+        self.chart_hover = None;
+    }
+
+    pub fn set_split(&mut self, split: bool) {
+        self.split = split;
+        self.chart_hover = None;
+    }
+
+    /// Hides or shows one model; hiding the last one shows them all again.
+    pub fn toggle_model(&mut self, key: &str, total: usize) {
+        if !self.hidden_models.remove(key) {
+            self.hidden_models.insert(key.to_string());
+        }
+        if self.hidden_models.len() >= total {
+            self.hidden_models.clear();
+        }
+        if self.hidden_models.contains(key) && self.model_focus.as_deref() == Some(key) {
+            self.model_focus = None;
+        }
+    }
+
+    pub fn set_days(&mut self, days: u32) {
+        if self.days == days {
+            return;
+        }
+        self.days = days;
+        if let Some(id) = self.active.clone() {
+            self.insights = Load::Loading;
+            self.net.insights(id, days);
+        }
+    }
+
     pub fn show_page(&mut self, page: Page) {
         self.view = View::Workspace;
         self.page = page;
@@ -259,10 +538,15 @@ impl App {
             return;
         }
         match self.page {
-            Page::Inbox => self.net.decisions(),
+            Page::Inbox => {
+                self.net.decisions();
+                self.load_models();
+            }
             Page::Overview => {
                 self.overview = keep_or_load(&self.overview);
-                self.net.overview(id);
+                self.net.overview(id.clone());
+                self.insights = keep_or_load(&self.insights);
+                self.net.insights(id, self.days);
             }
             Page::Campaigns => {
                 self.campaigns = keep_or_load(&self.campaigns);
@@ -314,19 +598,229 @@ impl App {
         }
     }
 
-    pub fn send_message(&mut self, tx: &mut Tx) {
-        let text = self.composer.text.trim().to_string();
-        if text.is_empty() || matches!(self.turn, Turn::Working { .. }) {
+    /// The model the next turn uses: the one picked if it's still offered,
+    /// otherwise the first offered (the hosted default when there is one).
+    pub fn chosen_model(&self) -> Option<&crate::chat::ModelOption> {
+        let list = self.catalog.ready()?;
+        self.agent_model.as_ref().and_then(|v| list.iter().find(|o| &o.value == v)).or_else(|| list.first())
+    }
+
+    /// The picked model is gone from the catalog: never re-routed silently.
+    pub fn model_unavailable(&self) -> bool {
+        match (self.catalog.ready(), &self.agent_model) {
+            (Some(list), Some(v)) if v != "hosted" => !list.iter().any(|o| &o.value == v),
+            _ => false,
+        }
+    }
+
+    pub fn choose_agent_model(&mut self, value: String) {
+        crate::chat::store_model(&value);
+        self.agent_model = Some(value);
+        self.menu = None;
+    }
+
+    pub fn open_model_menu(&mut self) {
+        self.menu = Some(Menu::Model);
+        self.model_filter = None;
+        self.net.catalog();
+    }
+
+    /// Stops the turn running in this chat.
+    // ---- Settings ---------------------------------------------------------
+
+    pub fn open_settings(&mut self, page: SettingsPage) {
+        self.menu = None;
+        self.settings = Some(page);
+        self.settings_error = None;
+        self.load_settings(page);
+    }
+
+    pub fn show_settings(&mut self, page: SettingsPage) {
+        self.settings = Some(page);
+        self.settings_error = None;
+        self.load_settings(page);
+    }
+
+    fn load_settings(&mut self, page: SettingsPage) {
+        match page {
+            SettingsPage::Account => {
+                self.identity = keep_or_load(&self.identity);
+                self.net.identity();
+            }
+            SettingsPage::Agent => {
+                self.providers = keep_or_load(&self.providers);
+                self.net.providers();
+                if let Some(b) = self.active.clone() {
+                    self.memory = keep_or_load(&self.memory);
+                    self.net.memory(b);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Changes a preference and saves it.
+    pub fn set_pref(&mut self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
+        f(&mut self.prefs);
+        self.prefs.save();
+    }
+
+    pub fn add_memory(&mut self) {
+        let text = self.memory_text.text.trim().to_string();
+        let Some(b) = self.active.clone() else { return };
+        if text.is_empty() {
             return;
         }
+        let kind = crate::settings::NOTE_KINDS[self.memory_kind % crate::settings::NOTE_KINDS.len()].0.to_string();
+        self.memory_text.clear();
+        self.net.change_memory(b, Some((kind, text)), None);
+    }
+
+    pub fn forget_memory(&mut self, id: &str) {
+        if let Some(b) = self.active.clone() {
+            if let Load::Ready(list) = &mut self.memory {
+                list.retain(|n| n.id != id);
+            }
+            self.net.change_memory(b, None, Some(id.to_string()));
+        }
+    }
+
+    pub fn change_provider(&mut self, change: crate::net::ProviderChange) {
+        self.settings_error = None;
+        // Switches answer at once; the reload confirms them.
+        if let Load::Ready(cat) = &mut self.providers {
+            match &change {
+                crate::net::ProviderChange::Enable(id, on) => cat.instances.iter_mut().filter(|i| &i.id == id).for_each(|i| i.enabled = *on),
+                crate::net::ProviderChange::Model(id, m, on) => cat.instances.iter_mut().filter(|i| &i.id == id).for_each(|i| {
+                    i.disabled_models.retain(|x| x != m);
+                    if !on {
+                        i.disabled_models.push(m.clone());
+                    }
+                }),
+                _ => {}
+            }
+        }
+        self.net.change_provider(change);
+    }
+
+    pub fn new_pairing(&mut self) {
+        self.pairing = Load::Loading;
+        self.net.pair("Another computer".into());
+    }
+
+    pub fn toggle_archived(&mut self) {
+        self.show_archived = !self.show_archived;
+        if self.show_archived {
+            self.archived = keep_or_load(&self.archived);
+            self.net.archived_chats();
+        }
+    }
+
+    /// Archives a chat, or restores an archived one.
+    pub fn archive_chat(&mut self, id: &str, archived: bool) {
+        if archived {
+            self.chats.retain(|c| c.id != id);
+        } else if let Load::Ready(list) = &mut self.archived {
+            list.retain(|c| c.id != id);
+        }
+        self.net.archive(id.to_string(), archived);
+    }
+
+    /// Opens another session of this business, such as a helper, in the chat.
+    pub fn open_session(&mut self, id: &str) {
+        self.view = View::Agent;
+        self.chat_id = Some(id.to_string());
+        self.turn = Turn::Idle;
+        self.conversation = Load::Loading;
+        self.open_logs.clear();
+        self.open_sources.clear();
+        if let Some(b) = self.active.clone() {
+            self.net.conversation(b, id.to_string());
+        }
+    }
+
+    pub fn stop_turn(&mut self) {
+        let (Some(b), Some(c)) = (self.active.clone(), self.chat_id.clone()) else { return };
+        if let Turn::Working { stopping, .. } = &mut self.turn {
+            *stopping = true;
+            self.net.cancel(b, c);
+        }
+    }
+
+    /// Sends what the composer holds, or queues it while a turn runs: it
+    /// goes out when the agent finishes, as the web composer queues follow-ups.
+    pub fn send_message(&mut self, tx: &mut Tx) {
+        let text = self.composer.text.trim().to_string();
+        if text.is_empty() || self.model_unavailable() {
+            return;
+        }
+        self.composer.clear();
+        if matches!(self.turn, Turn::Working { .. }) {
+            self.queued.push(text);
+            return;
+        }
+        self.dispatch(text, tx);
+    }
+
+    /// Sends a slash command at once (or queues it behind the turn under way).
+    pub fn run_command(&mut self, name: &str, tx: &mut Tx) {
+        self.composer.clear();
+        let text = format!("/{name}");
+        if matches!(self.turn, Turn::Working { .. }) {
+            self.queued.push(text);
+        } else {
+            self.dispatch(text, tx);
+        }
+    }
+
+    /// Sends a queued message now: the turn under way stops, and this one goes next.
+    pub fn send_queued_now(&mut self, i: usize) {
+        if i < self.queued.len() {
+            let m = self.queued.remove(i);
+            self.queued.insert(0, m);
+            self.stop_turn();
+        }
+    }
+
+    pub fn unqueue(&mut self, i: usize) {
+        if i < self.queued.len() {
+            self.queued.remove(i);
+        }
+    }
+
+    /// Picks a text file to send with the next message.
+    pub fn attach(&mut self, tx: &mut Tx) {
+        if self.attachments.len() >= crate::chat::MAX_FILES {
+            self.attach_error = Some("You can attach up to three files.".into());
+            return;
+        }
+        let options = rune::FileDialogOptions { title: "Attach a file".into(), ..Default::default() }.filter("Text", &["txt", "md", "markdown", "csv", "json", "html", "htm", "xml", "yaml", "yml", "log", "tsv"]);
+        tx.open_file(options, |s: &mut App, answer, _tx| match answer {
+            Ok(Some(path)) => {
+                let used = s.attachments.iter().map(|a| a.text.chars().count()).sum();
+                match crate::chat::read_attachment(&path, used) {
+                    Ok(a) => {
+                        s.attachments.push(a);
+                        s.attach_error = None;
+                    }
+                    Err(e) => s.attach_error = Some(e),
+                }
+            }
+            Ok(None) => {}
+            Err(e) => s.attach_error = Some(e.0),
+        });
+    }
+
+    fn dispatch(&mut self, text: String, tx: &mut Tx) {
         let Some(business) = self.active.clone() else { return };
         let conversation = match (&self.chat_id, self.conversation.ready()) {
             (Some(id), Some(c)) if &c.id == id => Some((id.clone(), c.revision)),
             _ => None,
         };
-        self.composer.clear();
-        self.turn = Turn::Working { message: text.clone() };
-        self.net.send(business, conversation, text);
+        self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
+        let out = crate::chat::Outgoing { message: text, selection: self.chosen_model().and_then(|m| m.selection()), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
+        self.attach_error = None;
+        self.net.send(business, conversation, out);
         tx.scroll_to_bottom("transcript");
     }
 
@@ -418,16 +912,53 @@ impl App {
                 Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
                     self.conversation = Load::Ready(c);
                     tx.scroll_to_bottom("transcript");
+                    // The reply is in and the revision current: the next queued message goes.
+                    if matches!(self.turn, Turn::Idle) && !self.queued.is_empty() {
+                        let next = self.queued.remove(0);
+                        self.dispatch(next, tx);
+                    }
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
                 Err(e) => self.conversation = Load::Failed(e),
             },
-            Reply::TurnQueued { business, conversation } if here(self, &business) => {
+            Reply::TurnQueued { business, conversation, request: id } if here(self, &business) => {
                 if self.chat_id.is_none() {
                     self.chat_id = Some(conversation);
                 }
+                if let Turn::Working { request, .. } = &mut self.turn {
+                    *request = Some(id);
+                }
                 self.net.chats();
+            }
+            Reply::Progress { request: id, events } => {
+                if let Turn::Working { request: Some(r), progress, .. } = &mut self.turn {
+                    if *r == id {
+                        progress.apply(&events);
+                    }
+                }
+            }
+            Reply::Catalog(r) => self.catalog = to_load(self.failed(r)),
+            Reply::ArchivedChats(r) => self.archived = to_load(self.failed(r)),
+            Reply::Identity(r) => self.identity = to_load(self.failed(r)),
+            Reply::Memory(b, r) if here(self, &b) => self.memory = to_load(self.failed(r)),
+            Reply::Memory(..) => {}
+            Reply::Providers(r) => {
+                let r = self.failed(r);
+                // A failed refresh keeps the list it had and says it may be stale.
+                match (&self.providers, r) {
+                    (Load::Ready(_), Err(e)) => self.settings_error = Some(format!("The list may be stale ({e}).")),
+                    (_, r) => self.providers = to_load(r),
+                }
+            }
+            Reply::Pairing(r) => self.pairing = to_load(self.failed(r)),
+            Reply::SettingFailed(e) => self.settings_error = Some(e),
+            Reply::Archived { archived, result, .. } => {
+                if let Err(e) = self.failed(result) {
+                    if !e.is_empty() {
+                        self.notice = Some(if archived { "Couldn't archive the chat. Try again." } else { "Couldn't restore the chat. Try again." }.into());
+                    }
+                }
             }
             Reply::TurnDone { business, conversation, result } => {
                 self.net.chats();
@@ -441,15 +972,62 @@ impl App {
                         self.net.conversation(business, conversation);
                     }
                     Err(e) if e.is_empty() => {}
+                    // Stopped on purpose: what the run said so far reloads with the chat.
+                    Err(_) if matches!(self.turn, Turn::Working { stopping: true, .. }) => {
+                        self.turn = Turn::Idle;
+                        self.net.conversation(business, conversation);
+                    }
                     Err(error) => {
                         let message = match &self.turn {
-                            Turn::Working { message } => message.clone(),
+                            Turn::Working { message, .. } => message.clone(),
                             _ => String::new(),
                         };
                         self.turn = Turn::Failed { message, error };
                         if !conversation.is_empty() {
                             self.net.conversation(business, conversation);
                         }
+                    }
+                }
+            }
+            Reply::Decided { key, approved, result } => {
+                self.deciding = None;
+                let done = self.decisions.iter().find(|d| d.key == key).map(|d| d.done(approved));
+                match result {
+                    Ok(()) => {
+                        let list = self.inbox();
+                        let at = list.iter().position(|d| d.key == key);
+                        let next = at.and_then(|i| list.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| list.get(j)))).map(|d| d.key.clone());
+                        self.decisions.retain(|d| d.key != key);
+                        if self.decision.as_deref() == Some(key.as_str()) || self.decision.is_none() {
+                            self.decision = next;
+                        }
+                        self.declining = false;
+                        self.decline_reason.clear();
+                        self.notice = done.map(str::to_string);
+                        self.net.decisions();
+                    }
+                    Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),
+                    Err(e) => {
+                        let message = match &e {
+                            ApiError::Status(_, body) => crate::decisions::refusal(body).map(str::to_string),
+                            _ => None,
+                        }
+                        .unwrap_or_else(|| match e {
+                            ApiError::Status(409, _) => "This changed since it was prepared. It was reloaded; check it before deciding again.".into(),
+                            other => other.message(),
+                        });
+                        self.decision_error = Some((key, message));
+                        self.net.decisions();
+                    }
+                }
+            }
+            Reply::Insights(b, days, r) if here(self, &b) && days == self.days => self.insights = to_load(self.failed(r)),
+            Reply::Insights(..) => {}
+            Reply::Models(r) => {
+                self.models = to_load(self.failed(r));
+                if let (Load::Ready(list), None) = (&self.models, &self.model) {
+                    if list.len() == 1 {
+                        self.model = list.first().cloned();
                     }
                 }
             }
@@ -467,16 +1045,17 @@ impl App {
         self.screen = Screen::Workspace;
         self.signin_error = None;
         self.net.workspace();
+        self.net.catalog();
     }
 
     /// The messages the transcript shows: the loaded conversation, plus the
     /// message a running or failed turn sent, until the reload carries it.
     pub fn transcript(&self) -> Vec<Message> {
         let mut list = self.conversation.ready().map(|c| c.messages.clone()).unwrap_or_default();
-        if let Turn::Working { message } | Turn::Failed { message, .. } = &self.turn {
+        if let Turn::Working { message, .. } | Turn::Failed { message, .. } = &self.turn {
             let already = list.iter().rev().find(|m| m.role == "user").is_some_and(|m| &m.text == message);
             if !already && !message.is_empty() {
-                list.push(Message { role: "user".into(), text: message.clone(), tool_calls: Vec::new() });
+                list.push(Message::user(message.clone()));
             }
         }
         list
