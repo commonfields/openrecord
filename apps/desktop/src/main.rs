@@ -12,6 +12,7 @@ mod brands;
 mod channel_marks;
 mod chat;
 mod decisions;
+mod dictation;
 mod fixtures;
 mod followups;
 mod format;
@@ -45,6 +46,11 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if ev.is_command(',') {
         s.open_settings(state::SettingsPage::General);
+        return true;
+    }
+    // Escape closes a helper opened beside the conversation, as on the web.
+    if s.settings.is_none() && s.helper.is_some() && ev.key == rune::Key::Escape {
+        s.helper = None;
         return true;
     }
     if s.settings.is_some() {
@@ -102,6 +108,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-failed", fixtures::agent_failed),
     ("new-chat", fixtures::new_chat),
     ("agent-ui", fixtures::agent_ui),
+    ("agent-helper", fixtures::agent_helper),
+    ("agent-work", fixtures::agent_work),
+    ("agent-diagram", fixtures::agent_diagram),
     ("agent-ui-invalid", fixtures::agent_ui_invalid),
     ("agent-compose", fixtures::agent_compose),
     ("agent-archived", fixtures::agent_archived),

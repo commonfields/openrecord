@@ -76,6 +76,8 @@ pub struct Prefs {
     pub show_issue_count: bool,
     pub response_style: Style,
     pub enter_to_send: bool,
+    /// The composer's microphone, for macOS dictation.
+    pub voice_input: bool,
     pub default_provider: String,
 }
 
@@ -89,6 +91,7 @@ impl Default for Prefs {
             show_issue_count: true,
             response_style: Style::Friendly,
             enter_to_send: true,
+            voice_input: true,
             default_provider: "mock".into(),
         }
     }

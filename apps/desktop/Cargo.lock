@@ -2053,6 +2053,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "openrecord-desktop"
 version = "0.1.0"
 dependencies = [
+ "objc2 0.6.5",
  "rune",
  "rune-kit",
  "serde",
@@ -2661,8 +2662,17 @@ dependencies = [
  "pulldown-cmark",
  "rune",
  "rune-highlights",
+ "rune-mermaid",
  "rune-motion",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "rune-mermaid"
+version = "0.0.1"
+source = "git+https://github.com/anomalyco/rune?rev=1ea05bc7aed6711212e838cbc63b6aca9d97f6c3#1ea05bc7aed6711212e838cbc63b6aca9d97f6c3"
+dependencies = [
+ "rune",
 ]
 
 [[package]]

@@ -365,12 +365,20 @@ fn agent(s: &App, t: &Theme, k: &Kit) -> El {
             "composer-prefs",
             "Composer",
             None,
-            vec![setting(
-                t,
-                "Send with Return",
-                Some("When off, Return adds a new line and ⌘ Return sends.".into()),
-                Some(switch(t, "pref-enter", "Send with Return", s.prefs.enter_to_send, |s| s.set_pref(|p| p.enter_to_send = !p.enter_to_send))),
-            )],
+            vec![
+                setting(
+                    t,
+                    "Send with Return",
+                    Some("When off, Return adds a new line and ⌘ Return sends.".into()),
+                    Some(switch(t, "pref-enter", "Send with Return", s.prefs.enter_to_send, |s| s.set_pref(|p| p.enter_to_send = !p.enter_to_send))),
+                ),
+                setting(
+                    t,
+                    "Voice input",
+                    Some("Show the microphone button. Speech is turned into text by macOS dictation.".into()),
+                    Some(switch(t, "pref-voice", "Voice input", s.prefs.voice_input, |s| s.set_pref(|p| p.voice_input = !p.voice_input))),
+                ),
+            ],
         ))
         .children(s.active_business().map(|b| memory(s, t, k, &b.name)))
         .child(connection(s, t))

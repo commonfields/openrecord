@@ -56,7 +56,13 @@ to a release. The app opened from Finder talks to `http://localhost:3001`.
   metrics, lists, tables, progress, badges, charts, and "ask" or "open"
   buttons). `src/surface.rs` validates the whole block (budgets, depth, ids,
   reachability, https-only links) before it is drawn inside a "Generated view"
-  frame; a refused block shows as code. Needs an API with the `surfaces` field. The agent's
+  frame; a refused block shows as code. Needs an API with the `surfaces` field.
+  Mermaid diagrams (flowcharts, sequence and state diagrams) draw natively
+  through Rune's renderer.
+- Also as on the web: the work pane under a chat (proposals waiting for a
+  decision, accepted drafts with their text), helper sessions opened beside
+  the conversation, commands from plain phrases ("what's next?"), files
+  dropped on the composer, and the microphone for macOS dictation. The agent's
   skills are chosen by the server for each turn, so the desktop gets them as
   the web does.
 - Workspace: Inbox (approve or decline every kind of decision), the Overview
@@ -77,7 +83,7 @@ Every screen has a scene built from fixture data, with no network:
 ```sh
 cargo build
 ./target/debug/openrecord-desktop --snap agent.png --scene agent [--theme dark] [--chrome]
-# scenes: signin agent agent-empty agent-ui agent-ui-invalid new-chat agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
+# scenes: signin agent agent-empty agent-helper agent-work agent-diagram agent-ui agent-ui-invalid new-chat agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
 ```
 
 `--chrome` draws the traffic lights and reports any element under them.

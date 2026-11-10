@@ -289,6 +289,36 @@ pub fn reveal_prefix(text: &str, elapsed: std::time::Duration) -> Option<String>
     (shown < total).then(|| words[..shown].concat())
 }
 
+/// A sentence that means one of OpenRecord's commands (`parseCommand` on the
+/// web): exact phrasings only, so a message that merely mentions a word goes
+/// to the agent as it is.
+pub fn phrase_command(text: &str) -> Option<&'static str> {
+    let t = text.trim().to_lowercase().replace('\u{2019}', "'");
+    let t = t.trim_end_matches(['?', '.', '!']).trim().to_string();
+    let setup = {
+        let rest = t.strip_prefix("let's ").or_else(|| t.strip_prefix("lets ")).unwrap_or(&t);
+        ["set up", "setup", "onboard"].iter().any(|h| match rest.strip_prefix(h) {
+            Some("") => true,
+            Some(tail) => ["my", "this", "the"].iter().any(|d| ["business", "company", "workspace"].iter().any(|w| tail == format!(" {d} {w}"))),
+            None => false,
+        })
+    };
+    if setup {
+        return Some("setup");
+    }
+    let one_of = |list: &[&str]| list.contains(&t.as_str());
+    if one_of(&["status", "what's the status", "whats the status", "where are we", "show status", "show the status", "show me status", "show me the status"]) {
+        return Some("status");
+    }
+    if one_of(&["plan", "what should i do next", "what should we do next", "what's next", "whats next", "next step", "next steps"]) {
+        return Some("plan");
+    }
+    if one_of(&["report", "show report", "show the report", "show me report", "show me the report", "show results", "show the results", "show me results", "show me the results", "how are we doing"]) {
+        return Some("report");
+    }
+    None
+}
+
 /// A saved prompt the "/" menu offers after the commands: built-in SEO, AEO
 /// and GEO playbooks and the account's own (`components/playbooks.tsx`).
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -682,6 +712,16 @@ mod tests {
         let early = reveal_prefix(text, Duration::from_millis(50)).unwrap();
         assert!(early.len() < text.len() && text.starts_with(&early));
         assert_eq!(reveal_prefix(text, Duration::from_millis(500)), None, "short replies finish in 450ms");
+    }
+
+    #[test]
+    fn exact_phrases_run_commands() {
+        assert_eq!(phrase_command("What's next?"), Some("plan"));
+        assert_eq!(phrase_command("Let's set up this business"), Some("setup"));
+        assert_eq!(phrase_command("how are we doing"), Some("report"));
+        assert_eq!(phrase_command("Where are we?"), Some("status"));
+        assert_eq!(phrase_command("What's next for the pricing page?"), None);
+        assert_eq!(phrase_command("setup the ads account"), None);
     }
 
     #[test]

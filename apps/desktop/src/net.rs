@@ -49,6 +49,10 @@ pub enum Reply {
     Judged { claim: String, verdict: String, result: ApiResult<()> },
     /// An action was recorded for a claim (or the call failed).
     ActionRecorded { claim: String, result: ApiResult<()> },
+    /// A business's agent proposals, for the work pane.
+    Proposals(String, ApiResult<Vec<crate::api::Proposal>>),
+    /// A helper session opened beside the conversation.
+    Helper(String, ApiResult<Option<crate::api::Conversation>>),
     /// The account's client records, for "Start a new chat".
     Clients(ApiResult<Vec<(String, String)>>),
     /// The "/" menu's playbooks for a business.
@@ -203,6 +207,20 @@ impl Net {
         self.spawn(move |c, send| {
             let result = c.record_action(&business, &claim, &kind, &target, notes.as_deref());
             send(Reply::ActionRecorded { claim, result });
+        });
+    }
+
+    pub fn proposals(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.proposals(&business);
+            send(Reply::Proposals(business, r));
+        });
+    }
+
+    pub fn helper(&self, business: String, id: String) {
+        self.spawn(move |c, send| {
+            let r = c.conversation(&business, Some(&id));
+            send(Reply::Helper(id, r));
         });
     }
 

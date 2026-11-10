@@ -252,6 +252,47 @@ pub struct Intervention {
     pub supersedes_id: Option<String>,
 }
 
+/// A proposal the agent saved (`/agent/proposals`): the work pane lists the
+/// ones a chat's replies made, and shows accepted drafts with their text.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Proposal {
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub payload: Option<ProposalPayload>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalPayload {
+    #[serde(default)]
+    pub generated_at: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub references: Vec<crate::chat::Citation>,
+}
+
+impl Proposal {
+    /// A draft the person keeps once accepted (`conversationProposals` on the web).
+    pub fn is_draft(&self) -> bool {
+        matches!(self.kind.as_str(), "DRAFT_SOURCE_ACTION" | "PREPARE_CLIENT_REPORT" | "PROPOSE_QUESTION_SET")
+    }
+
+    pub fn draft_name(&self) -> &'static str {
+        match self.kind.as_str() {
+            "PREPARE_CLIENT_REPORT" => "Private client report",
+            "PROPOSE_QUESTION_SET" => "Buyer-question proposal",
+            _ => "Source action hypothesis",
+        }
+    }
+}
+
 /// A read-only link to a chat.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -505,6 +546,15 @@ impl Client {
     }
 
     /// The playbooks the "/" menu offers: built-in ones and the account's own.
+    /// The proposals the agent saved for a business.
+    pub fn proposals(&self, business: &str) -> ApiResult<Vec<Proposal>> {
+        #[derive(Deserialize)]
+        struct R {
+            proposals: Vec<Proposal>,
+        }
+        Ok(self.get::<R>(&format!("/api/businesses/{}/agent/proposals", enc(business)))?.proposals)
+    }
+
     /// The account's client records: businesses seen from the agency side, by their own names.
     pub fn clients(&self) -> ApiResult<Vec<(String, String)>> {
         let v: Value = self.get("/api/record/clients")?;
