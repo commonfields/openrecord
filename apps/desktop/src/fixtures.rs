@@ -170,6 +170,23 @@ pub fn overview_funnel(s: &mut App) {
     section(s, Section::Funnel);
 }
 
+pub fn overview_answers_split(s: &mut App) {
+    section(s, Section::Answers);
+    s.metric = crate::state::Metric::Answers;
+    s.split = true;
+}
+
+pub fn overview_answers_hover(s: &mut App) {
+    section(s, Section::Answers);
+    s.chart_hover = Some(("hero-trend".into(), 20));
+}
+
+pub fn overview_answers_share(s: &mut App) {
+    section(s, Section::Answers);
+    s.metric = crate::state::Metric::Wrong;
+    s.split = true;
+}
+
 pub fn overview_events(s: &mut App) {
     section(s, Section::Events);
 }
@@ -195,10 +212,20 @@ fn insights() -> Insights {
         prev_answers: 56,
         current,
         providers: vec![
-            insights::Provider { name: "gpt-5".into(), answers: 41, prev_answers: 30, v: Verdicts { supported: 28, wrong: 6, partial: 3, unknown: 4, unreviewed: 0 } },
-            insights::Provider { name: "claude-sonnet-5-5".into(), answers: 36, prev_answers: 26, v: Verdicts { supported: 29, wrong: 3, partial: 2, unknown: 1, unreviewed: 1 } },
-            insights::Provider { name: "gemini-3-pro".into(), answers: 22, prev_answers: 0, v: Verdicts { supported: 12, wrong: 6, partial: 2, unknown: 2, unreviewed: 0 } },
+            insights::Provider { name: "openai".into(), answers: 41, prev_answers: 30, v: Verdicts { supported: 28, wrong: 6, partial: 3, unknown: 4, unreviewed: 0 } },
+            insights::Provider { name: "claude".into(), answers: 36, prev_answers: 26, v: Verdicts { supported: 29, wrong: 3, partial: 2, unknown: 1, unreviewed: 1 } },
+            insights::Provider { name: "gemini".into(), answers: 22, prev_answers: 0, v: Verdicts { supported: 12, wrong: 6, partial: 2, unknown: 2, unreviewed: 0 } },
+            insights::Provider { name: "perplexity".into(), answers: 14, prev_answers: 12, v: Verdicts { supported: 9, wrong: 2, partial: 1, unknown: 1, unreviewed: 0 } },
+            insights::Provider { name: "deepseek".into(), answers: 6, prev_answers: 4, v: Verdicts { supported: 3, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
         ],
+        provider_daily: (0..31)
+            .flat_map(|i| {
+                [("openai", 1 + wave(i, 0) / 2), ("claude", 1 + wave(i, 1) / 3), ("gemini", wave(i, 2) / 2), ("perplexity", wave(i, 3) / 3), ("deepseek", wave(i, 4) / 4)]
+                    .into_iter()
+                    .filter(|(_, n)| *n > 0)
+                    .map(move |(p, n)| (day(i), p.to_string(), n))
+            })
+            .collect(),
         questions: vec![
             insights::Question { prompt: "How much does Northstar cost?".into(), checks: 12, last_checked: ago(60 * 3), v: Verdicts { supported: 5, wrong: 5, partial: 1, unknown: 1, unreviewed: 0 } },
             insights::Question { prompt: "Does Northstar integrate with Snowflake?".into(), checks: 10, last_checked: ago(60 * 26), v: Verdicts { supported: 7, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },

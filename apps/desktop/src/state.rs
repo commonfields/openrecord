@@ -88,6 +88,19 @@ pub enum Turn {
     Failed { message: String, error: String },
 }
 
+/// What the AI discovery chart plots (the web's `metric` URL parameter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Partial and needs-review are reachable by link on the web, not by tab.
+pub enum Metric {
+    Accuracy,
+    Wrong,
+    Partial,
+    Unreviewed,
+    Answers,
+    Checks,
+    Goal,
+}
+
 pub struct App {
     pub net: Net,
     pub screen: Screen,
@@ -115,6 +128,14 @@ pub struct App {
     /// The Overview section on screen and its period in days.
     pub section: Section,
     pub days: u32,
+    /// The AI discovery chart: which metric, trend or split, and which models.
+    pub metric: Metric,
+    pub split: bool,
+    pub hidden_models: std::collections::BTreeSet<String>,
+    pub model_focus: Option<String>,
+    pub all_models: bool,
+    /// The chart and day under the pointer.
+    pub chart_hover: Option<(String, usize)>,
     pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
@@ -179,6 +200,12 @@ impl App {
             campaigns: Load::Idle,
             section: Section::Summary,
             days: 30,
+            metric: Metric::Accuracy,
+            split: false,
+            hidden_models: Default::default(),
+            model_focus: None,
+            all_models: false,
+            chart_hover: None,
             insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
@@ -343,6 +370,33 @@ impl App {
         self.section = section;
         if self.page != Page::Overview || self.view != View::Workspace {
             self.show_page(Page::Overview);
+        }
+    }
+
+    pub fn set_metric(&mut self, m: Metric) {
+        self.metric = m;
+        // Checks have no split; the split of answers is per model.
+        if m == Metric::Checks || m == Metric::Goal {
+            self.split = false;
+        }
+        self.chart_hover = None;
+    }
+
+    pub fn set_split(&mut self, split: bool) {
+        self.split = split;
+        self.chart_hover = None;
+    }
+
+    /// Hides or shows one model; hiding the last one shows them all again.
+    pub fn toggle_model(&mut self, key: &str, total: usize) {
+        if !self.hidden_models.remove(key) {
+            self.hidden_models.insert(key.to_string());
+        }
+        if self.hidden_models.len() >= total {
+            self.hidden_models.clear();
+        }
+        if self.hidden_models.contains(key) && self.model_focus.as_deref() == Some(key) {
+            self.model_focus = None;
         }
     }
 

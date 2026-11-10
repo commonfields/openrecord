@@ -7,7 +7,7 @@ use crate::format;
 use crate::insights::{Analytics, Discovery, Goal, Insights, PERIODS, Report, Section, Source, Verdicts, int, pct};
 use crate::state::{App, Load, Page};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::charts;
+use crate::ui::{charts, discovery};
 use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleton};
 
 pub fn view(s: &App, t: &Theme) -> El {
@@ -30,9 +30,9 @@ pub fn view(s: &App, t: &Theme) -> El {
             Section::Performance => performance(t, i),
             Section::Revenue => revenue(t, i),
             Section::Funnel => funnel(t, i),
-            Section::Events => events(t, i),
+            Section::Events => events(s, t, i),
             Section::Realtime => realtime(t),
-            Section::Answers => answers(t, i),
+            Section::Answers => answers(s, t, i),
         },
         Load::Failed(e) => failure(t, "insights-failed", e, |s: &mut App| s.refresh()),
         _ => col().w_full().gap(16.0).child(skeleton(t, 1)).child(skeleton(t, 2)),
@@ -145,18 +145,19 @@ fn note(t: &Theme, text_: &str) -> El {
 
 fn summary(s: &App, t: &Theme, i: &Insights) -> El {
     let mut c = col().w_full().gap(16.0);
-    c = c.child(goal_card(t, i));
+    c = c.child(goal_card(s, t, i));
     c = c.child(health(s, t, i));
     if !i.initiatives.is_empty() {
         c = c.child(initiatives(t, i));
     }
     if let Ok(a) = &i.analytics {
-        c = c.child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(models(t, a)));
+        let st = discovery::stats(a);
+        c = c.child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(discovery::accuracy_by_model(t, a, &st)));
     }
     c
 }
 
-fn goal_card(t: &Theme, i: &Insights) -> El {
+fn goal_card(s: &App, t: &Theme, i: &Insights) -> El {
     match &i.goal {
         Ok(Some(g)) => {
             let mut p = panel(t, "goal", &g.label, (!g.statement.is_empty()).then(|| g.statement.clone()));
@@ -176,7 +177,7 @@ fn goal_card(t: &Theme, i: &Insights) -> El {
             if current.is_empty() {
                 p.child(note(t, "No daily values recorded for this period yet. Missing days are not zero."))
             } else {
-                p.child(charts::line(t, "goal-line", &current, t.primary_ink, 140.0)).child(label(
+                p.child(discovery::goal_trend(s, t, g, i.days, "goal-trend")).child(label(
                     format!(
                         "From {}. Missing days are not zero.",
                         match g.source.as_deref() {
@@ -316,85 +317,36 @@ fn questions(t: &Theme, a: &Analytics, days: u32) -> El {
     p.grow(1.0).min_w(360.0).child(list)
 }
 
-fn models(t: &Theme, a: &Analytics) -> El {
-    let mut p = panel(t, "models", "Accuracy by AI model", Some("Supported answers among those judged, for each model that answered.".into()));
-    if a.providers.is_empty() {
-        return p.grow(1.0).min_w(360.0).child(note(t, "No AI model answered in this period."));
-    }
-    let mut list = col().w_full().gap(12.0);
-    for (k, m) in a.providers.iter().enumerate() {
-        list = list.child(
-            row()
-                .key(format!("model-row-{k}"))
-                .w_full()
-                .gap(12.0)
-                .center_y()
-                .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(m.name.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(
-                    format!("{}{}", plural(m.answers, "answer", "answers"), if m.prev_answers > 0 { format!(", {} the period before", m.prev_answers) } else { String::new() }),
-                    type_::XS,
-                    t.muted_foreground,
-                )))
-                .child(charts::verdict_bar(t, &m.v, 140.0))
-                .child(label(m.v.accuracy().map(pct).unwrap_or_else(|| "—".into()), type_::SM_MEDIUM.features("'tnum' 1"), t.foreground).w(44.0)),
-        );
-    }
-    p = p.child(list).child(charts::legend(t, &charts::verdict_series(t)));
-    p.grow(1.0).min_w(360.0)
-}
-
 // ---- AI discovery -----------------------------------------------------------
 
-fn answers(t: &Theme, i: &Insights) -> El {
-    let mut c = col().w_full().gap(16.0);
-    c = c.child(discovery(t, &i.discovery));
+fn answers(s: &App, t: &Theme, i: &Insights) -> El {
+    let mut c = col().w_full().gap(24.0);
+    c = c.child(discovery_panel(t, &i.discovery));
     match &i.analytics {
         Ok(a) => {
-            let cit_delta = (a.prev_citations > 0).then(|| (a.citations - a.prev_citations) as f64 / a.prev_citations as f64);
-            let ans_delta = (a.prev_answers > 0).then(|| (a.answers - a.prev_answers) as f64 / a.prev_answers as f64);
+            let st = discovery::stats(a);
+            c = c.child(discovery::hero(s, t, i, a, &st));
             c = c.child(
-                row()
+                col()
                     .w_full()
                     .gap(12.0)
-                    .flex_wrap()
-                    .child(tile(t, "ans-checks", "Checks run", int(a.checks as f64), Some(if a.failed > 0 { format!("{} failed", a.failed) } else { "None failed".into() }), None, None, None))
-                    .child(tile(t, "ans-answers", "Answers collected", int(a.answers as f64), None, ans_delta.map(|d| delta(t, change_text(d), None)), None, None))
-                    .child(tile(
-                        t,
-                        "ans-accuracy",
-                        "Supported",
-                        a.current.accuracy().map(pct).unwrap_or_else(|| "—".into()),
-                        Some(verdict_hint(&a.current)),
-                        None,
-                        Some(t.supported),
-                        Some(Page::AiAnswers),
-                    ))
-                    .child(tile(
-                        t,
-                        "ans-citations",
-                        "Citations",
-                        int(a.citations as f64),
-                        Some(format!("{} attributed to your sites", a.attributed)),
-                        cit_delta.map(|d| delta(t, change_text(d), Some(d >= 0.0))),
-                        None,
-                        None,
-                    )),
+                    .child(
+                        col()
+                            .gap(2.0)
+                            .child(label("AI answer details", type_::SM_MEDIUM, t.foreground).role("heading"))
+                            .child(label(format!("Which providers answered, what buyers asked, and the sources they cited, last {} days", i.days), type_::XS, t.muted_foreground)),
+                    )
+                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(discovery::answer_collection(t, &st, i.days)).child(discovery::accuracy_by_model(t, a, &st)))
+                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(discovery::citations(s, t, a, i.days)))
+                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(facts(t, a))),
             );
-            let dates: Vec<String> = a.daily.iter().map(|d| d.date.clone()).collect();
-            let days: Vec<Verdicts> = a.daily.iter().map(|d| d.v.clone()).collect();
-            c = c.child(
-                panel(t, "answers-chart", "Answers by verdict", Some(format!("Each day's checked answers, by how they compared with your approved facts. Last {} days.", i.days)))
-                    .child(charts::verdict_bars(t, "verdict-chart", &dates, &days, 180.0))
-                    .child(charts::legend(t, &charts::verdict_series(t))),
-            );
-            c = c.child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(models(t, a)));
-            c = c.child(row().w_full().gap(16.0).items_start().flex_wrap().child(citations(t, a)).child(facts(t, a)));
         }
         Err(e) => c = c.child(panel(t, "answers-failed", "Answer analytics could not load", Some(e.clone()))),
     }
     c
 }
 
-fn discovery(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
+fn discovery_panel(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
     let p = panel(t, "discovery", "AI discovery and referrals", Some("What sampled AI answers say, and separately, visits attributed to AI assistants.".into()));
     match d {
         Err(_) => p.child(note(t, "AI discovery evidence is unavailable. This does not mean there are no results.")),
@@ -420,20 +372,6 @@ fn discovery(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
             p.child(c)
         }
     }
-}
-
-fn citations(t: &Theme, a: &Analytics) -> El {
-    let p = panel(t, "citations", "Citations", Some("Sources the AI answers cited, and how many were your own sites.".into()));
-    if a.citation_days.is_empty() || a.citations == 0 {
-        return p.grow(1.0).min_w(360.0).child(note(t, "No citations were recorded in this period."));
-    }
-    let dates: Vec<String> = a.citation_days.iter().map(|d| d.0.clone()).collect();
-    let values: Vec<Vec<f64>> = a.citation_days.iter().map(|d| vec![d.2 as f64, (d.1 - d.2).max(0) as f64]).collect();
-    let colors = [t.primary_ink, t.muted_foreground.alpha(0.45)];
-    p.grow(1.0)
-        .min_w(360.0)
-        .child(charts::stacked_bars(t, "citation-chart", &dates, &values, &colors, 120.0))
-        .child(charts::legend(t, &[("Your sites", colors[0]), ("Other sources", colors[1])]))
 }
 
 fn facts(t: &Theme, a: &Analytics) -> El {
@@ -591,7 +529,7 @@ fn funnel(t: &Theme, i: &Insights) -> El {
         .child(panel(t, "funnel-coverage", "Measurement coverage", Some("Where to find each part of the journey. These are separate reports, not a measured funnel.".into())).child(list))
 }
 
-fn events(t: &Theme, i: &Insights) -> El {
+fn events(s: &App, t: &Theme, i: &Insights) -> El {
     let goal: Option<&Goal> = i.goal.as_ref().ok().and_then(Option::as_ref);
     if let Err(e) = &i.goal {
         return panel(t, "events", "Your saved goal could not load", Some(e.clone()));
@@ -614,7 +552,7 @@ fn events(t: &Theme, i: &Insights) -> El {
         )
         .child(label("This is the daily history of the saved goal metric. A list of individual events, custom event exploration and live event delivery are not available. Missing days are not zero.", type_::XS, t.muted_foreground).wrap())
         .child(row().child(button(t, "events-accounts", "Manage measurement accounts", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
-    col().w_full().gap(16.0).child(p).children(goal.map(|_| goal_card(t, i)))
+    col().w_full().gap(16.0).child(p).children(goal.map(|_| goal_card(s, t, i)))
 }
 
 fn realtime(t: &Theme) -> El {

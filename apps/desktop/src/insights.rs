@@ -132,6 +132,8 @@ pub struct Analytics {
     pub prev_answers: i64,
     pub daily: Vec<Day>,
     pub providers: Vec<Provider>,
+    /// (date, provider, answers) for each provider that answered that day.
+    pub provider_daily: Vec<(String, String, i64)>,
     pub questions: Vec<Question>,
     pub facts: Vec<FactRow>,
     pub citations: i64,
@@ -159,6 +161,7 @@ impl Analytics {
                 .iter()
                 .map(|p| Provider { name: s(p, "provider"), answers: n(p, "answers"), prev_answers: n(p, "prev_answers"), v: Verdicts::read(p) })
                 .collect(),
+            provider_daily: arr("providerDaily").iter().map(|d| (s(d, "date"), s(d, "provider"), n(d, "answers"))).collect(),
             questions: arr("questions")
                 .iter()
                 .map(|q| Question {

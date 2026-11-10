@@ -7,6 +7,8 @@
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
 mod api;
+mod brand_marks;
+mod brands;
 mod decisions;
 mod fixtures;
 mod format;
@@ -68,6 +70,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("inbox-decline", fixtures::inbox_decline),
     ("overview", fixtures::overview),
     ("overview-answers", fixtures::overview_answers),
+    ("overview-answers-split", fixtures::overview_answers_split),
+    ("overview-answers-hover", fixtures::overview_answers_hover),
+    ("overview-answers-share", fixtures::overview_answers_share),
     ("overview-performance", fixtures::overview_performance),
     ("overview-revenue", fixtures::overview_revenue),
     ("overview-funnel", fixtures::overview_funnel),

@@ -2,6 +2,7 @@
 
 mod agent;
 mod charts;
+mod discovery;
 mod overview;
 mod pages;
 mod shell;

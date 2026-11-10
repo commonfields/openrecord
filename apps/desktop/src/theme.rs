@@ -22,6 +22,22 @@ const fn sh(x: f32, y: f32, blur: f32, spread: f32, color: Color, inset: bool) -
     Shadow { x, y, blur, spread, color, inset }
 }
 
+/// Chart colours (`--chart-*` and `--series-*`).
+#[derive(Clone, Debug)]
+pub struct Chart {
+    pub primary: Color,
+    pub compare: Color,
+    pub grid: Color,
+    pub axis: Color,
+    pub supported: Color,
+    pub wrong: Color,
+    pub partial: Color,
+    pub unknown: Color,
+    pub unreviewed: Color,
+    /// Categorical slots for AI models, in the web's fixed order.
+    pub series: [Color; 12],
+}
+
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub dark: bool,
@@ -52,6 +68,7 @@ pub struct Theme {
     pub supported_soft: Color,
     pub working: Color,
     pub hover_tint: Color,
+    pub chart: Chart,
     pub panel_shadow: Vec<Shadow>,
     pub card_shadow: Vec<Shadow>,
     pub control_shadow: Vec<Shadow>,
@@ -97,6 +114,18 @@ impl Theme {
             supported_soft: oklch(0.965, 0.025, 160.0),
             working: hex("#0284c7"),
             hover_tint: black(0.035),
+            chart: Chart {
+                primary: oklch(0.49, 0.091, 241.5),
+                compare: oklch(0.581, 0.106, 126.7),
+                grid: oklcha(0.912, 0.006, 84.6, 0.7),
+                axis: oklcha(0.556, 0.008, 84.6, 0.85),
+                supported: hex("#1f9d6a"),
+                wrong: hex("#d03b3b"),
+                partial: hex("#e09a12"),
+                unknown: hex("#8277c9"),
+                unreviewed: hex("#2a78d6"),
+                series: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948", "#0e7c86", "#64748b", "#65a30d", "#7c3aed"].map(hex),
+            },
             panel_shadow: vec![
                 sh(0.0, 0.0, 0.0, 1.0, white(0.95), true),
                 sh(0.0, 0.0, 0.0, 1.0, black(0.06), false),
@@ -167,6 +196,18 @@ impl Theme {
             supported_soft: oklch(0.3, 0.05, 160.0),
             working: hex("#7dd3fc").alpha(0.8),
             hover_tint: white(0.04),
+            chart: Chart {
+                primary: oklch(0.72, 0.1, 241.5),
+                compare: oklch(0.74, 0.1, 126.7),
+                grid: white(0.07),
+                axis: oklcha(0.7, 0.008, 84.6, 0.85),
+                supported: hex("#199e70"),
+                wrong: hex("#e05a5a"),
+                partial: hex("#c98500"),
+                unknown: hex("#8579d4"),
+                unreviewed: hex("#3d8ae6"),
+                series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767", "#2dd4bf", "#94a3b8", "#a3e635", "#a78bfa"].map(hex),
+            },
             panel_shadow: vec![
                 sh(0.0, 1.0, 0.0, 0.0, white(0.03), true),
                 sh(0.0, 0.0, 0.0, 1.0, border, false),
@@ -227,6 +268,10 @@ pub fn shadows(mut e: rune::El, list: &[Shadow]) -> rune::El {
 pub mod type_ {
     use super::TextStyle;
     pub const XS2: TextStyle = TextStyle::new(10.0, 400.0).lh(14.0);
+    /// Chart axis ticks (10.5 px).
+    pub const AXIS: TextStyle = TextStyle::new(10.5, 400.0).lh(14.0).features("'tnum' 1");
+    /// Chart legends and tooltip dates (0.6875 rem).
+    pub const XS11: TextStyle = TextStyle::new(11.0, 400.0).lh(16.0);
     pub const XS: TextStyle = TextStyle::new(12.0, 400.0).lh(16.0);
     pub const XS_MEDIUM: TextStyle = TextStyle::new(12.0, 500.0).lh(16.0);
     pub const SM_13: TextStyle = TextStyle::new(13.0, 400.0).lh(20.0);
