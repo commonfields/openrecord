@@ -425,6 +425,48 @@ pub fn agent_ui_invalid(s: &mut App) {
     }
 }
 
+/// A helper session open beside the conversation.
+pub fn agent_helper(s: &mut App) {
+    agent(s);
+    let helper = Conversation {
+        id: "s2".into(),
+        title: Some("How others explain onboarding".into()),
+        revision: 1,
+        messages: vec![
+            msg(json!({ "role": "user", "text": "Read how three similar products explain onboarding, and report what they promise about setup time.", "origin": { "kind": "task", "fromSessionId": "c1" } })),
+            msg(json!({ "role": "agent", "text": "Two of the three promise setup in a day; one says a week with a call. All three show the steps on a single page.", "activity": [{ "kind": "tool", "tool": "read_web_pages", "text": "Read 3 onboarding pages" }], "durationMs": 21000 })),
+        ],
+        session: Some(crate::chat::SessionInfo { parent_session_id: Some("c1".into()), title: Some("How others explain onboarding".into()), role: Some("researcher".into()) }),
+    };
+    s.helper = Some(("s2".into(), Load::Ready(helper)));
+}
+
+/// An accepted draft in the chat's work pane.
+pub fn agent_work(s: &mut App) {
+    agent(s);
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.push(msg(json!({ "role": "user", "text": "Propose buyer questions to check." })));
+        c.messages.push(msg(json!({ "role": "agent", "text": "I saved a set of buyer questions for you to review.", "decisions": [{ "type": "AGENT_PROPOSAL", "id": "p9" }] })));
+    }
+    s.proposals = Load::Ready(vec![serde_json::from_value(json!({
+        "id": "p9", "kind": "PROPOSE_QUESTION_SET", "status": "APPROVED",
+        "message": "Review buyer-question text. Acceptance does not freeze questions or assert authorization.",
+        "payload": { "generatedAt": "2026-11-03T10:14:00.870Z", "text": "1. Which analytics tools integrate with Salesforce?\n2. What does Northstar cost for a team of five?\n3. How long does Northstar take to set up?", "references": [{ "kind": "web", "id": "https://northstar.example/pricing", "text": "Northstar pricing" }] }
+    }))
+    .expect("fixture proposal")]);
+    s.drafts_open = true;
+}
+
+/// A reply with a diagram, drawn by Rune's Mermaid renderer.
+pub fn agent_diagram(s: &mut App) {
+    agent(s);
+    let text = "Here is how a visitor becomes a trial.\n\n```mermaid\nflowchart LR\n  A[AI answer] --> B[Pricing page]\n  S[Search result] --> B\n  B --> C{Clear setup steps?}\n  C -- yes --> D[Trial sign-up]\n  C -- no --> E[Leaves]\n```\n\nThe pricing page is where most visitors decide.";
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.push(msg(json!({ "role": "user", "text": "How do visitors become trials?" })));
+        c.messages.push(msg(json!({ "role": "agent", "text": text })));
+    }
+}
+
 pub fn agent_empty(s: &mut App) {
     workspace(s);
     s.view = View::Agent;

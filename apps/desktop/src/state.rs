@@ -319,6 +319,12 @@ pub struct App {
     pub row_hover: Option<String>,
     /// The next loaded conversation was opened, not answered: it lands as it is, without animation.
     pub settle_next: bool,
+    /// The business's agent proposals, for the chat's work pane.
+    pub proposals: Load<Vec<crate::api::Proposal>>,
+    /// Accepted drafts in the work pane, folded open.
+    pub drafts_open: bool,
+    /// A helper session opened beside the conversation, to review (`?helper=` on the web).
+    pub helper: Option<(String, Load<crate::api::Conversation>)>,
     /// The chat on screen has no business: a general chat (`/api/agent`).
     pub general: bool,
     /// "Start a new chat", while it is open.
@@ -435,6 +441,9 @@ impl App {
             reveal_next: false,
             reasoning: None,
             general: false,
+            proposals: Load::Idle,
+            drafts_open: false,
+            helper: None,
             settle_next: false,
             new_chat: None,
             row_hover: None,
@@ -619,6 +628,9 @@ impl App {
             self.page = Page::Overview;
         }
         self.net.playbooks(Some(id.to_string()));
+        self.proposals = Load::Loading;
+        self.helper = None;
+        self.net.proposals(id.to_string());
         self.followups = Load::Loading;
         self.net.followups(id.to_string());
         self.load_business();
@@ -844,6 +856,20 @@ impl App {
     /// Whose agent the chat on screen talks to: the business's, or `""` for a general chat.
     pub fn chat_scope(&self) -> Option<String> {
         if self.general { Some(String::new()) } else { self.active.clone() }
+    }
+
+    /// Opens a helper session beside the conversation, read-only.
+    pub fn open_helper(&mut self, id: &str) {
+        let Some(scope) = self.chat_scope() else { return };
+        self.helper = Some((id.to_string(), Load::Loading));
+        self.net.helper(scope, id.to_string());
+    }
+
+    /// Makes the helper the main chat, where replies can be written.
+    pub fn helper_as_main(&mut self) {
+        if let Some((id, _)) = self.helper.take() {
+            self.open_session(&id);
+        }
     }
 
     /// Opens "Start a new chat".
@@ -1080,6 +1106,13 @@ impl App {
         if text.is_empty() || self.model_unavailable() {
             return;
         }
+        // "What's next?" and the like run their command, as on the web.
+        if !self.general && self.attachments.is_empty() {
+            if let Some(c) = crate::chat::phrase_command(&text) {
+                self.run_command(c, tx);
+                return;
+            }
+        }
         self.composer.clear();
         self.command_index = 0;
         if matches!(self.turn, Turn::Working { .. }) {
@@ -1286,6 +1319,22 @@ impl App {
     }
 
     /// Picks a text file to send with the next message.
+    /// Attaches a file dropped on the composer, with the picker's limits.
+    pub fn attach_path(&mut self, path: &std::path::Path) {
+        if self.attachments.len() >= crate::chat::MAX_FILES {
+            self.attach_error = Some("You can attach up to three files.".into());
+            return;
+        }
+        let used = self.attachments.iter().map(|a| a.text.chars().count()).sum();
+        match crate::chat::read_attachment(path, used) {
+            Ok(a) => {
+                self.attachments.push(a);
+                self.attach_error = None;
+            }
+            Err(e) => self.attach_error = Some(e),
+        }
+    }
+
     pub fn attach(&mut self, tx: &mut Tx) {
         self.chat_actions = false;
         if self.attachments.len() >= crate::chat::MAX_FILES {
@@ -1524,6 +1573,9 @@ impl App {
                 match self.failed(result) {
                     Ok(()) => {
                         self.turn = Turn::Idle;
+                        if !business.is_empty() {
+                            self.net.proposals(business.clone());
+                        }
                         // The reply is revealed word by word once it loads.
                         self.reveal_next = rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
                         self.chat_id = Some(conversation.clone());
@@ -1563,6 +1615,9 @@ impl App {
                         self.decline_reason.clear();
                         self.notice = done.map(str::to_string);
                         self.net.decisions();
+                        if let Some(b) = self.active.clone() {
+                            self.net.proposals(b);
+                        }
                     }
                     Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),
                     Err(e) => {
@@ -1640,6 +1695,28 @@ impl App {
                         }
                         Err(e) if e.is_empty() => {}
                         Err(e) => a.action_error = Some(format!("Couldn't record the action. {e}")),
+                    }
+                }
+            }
+            Reply::Proposals(b, r) if here(self, &b) => {
+                let r = self.failed(r);
+                // A failed refresh keeps what is on screen.
+                match (r, &self.proposals) {
+                    (Ok(list), _) => self.proposals = Load::Ready(list),
+                    (Err(_), Load::Ready(_)) => {}
+                    (Err(e), _) => self.proposals = Load::Failed(e),
+                }
+            }
+            Reply::Proposals(..) => {}
+            Reply::Helper(id, r) => {
+                let r = self.failed(r);
+                if let Some((open, load)) = &mut self.helper {
+                    if *open == id {
+                        *load = match r {
+                            Ok(Some(c)) => Load::Ready(c),
+                            Ok(None) => Load::Failed("This helper session no longer exists.".into()),
+                            Err(e) => Load::Failed(e),
+                        };
                     }
                 }
             }

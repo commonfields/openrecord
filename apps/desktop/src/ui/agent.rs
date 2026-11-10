@@ -13,7 +13,7 @@ use crate::chat::{self, Activity, Progress};
 use crate::icons;
 use crate::state::{App, Load, Page, Turn, View};
 use crate::theme::{Theme, hex, shadows, type_};
-use crate::ui::widgets::{CONTROL, failure, ico, label};
+use crate::ui::widgets::{CONTROL, failure, ico, icon_button, label};
 
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
@@ -71,6 +71,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         }
         Turn::Idle => {}
     }
+    if let Some(w) = work_pane(s, t, &messages) {
+        list = list.child(w.pt(12.0));
+    }
 
     let transcript = col()
         .key("transcript")
@@ -81,7 +84,171 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(16.0);
 
-    col().key("agent").w_full().h_full().min_h(0.0).child(transcript).child(composer(s, t, &business))
+    let main = col().key("agent").w_full().h_full().min_h(0.0).child(transcript).child(composer(s, t, &business));
+    match &s.helper {
+        // A helper opened beside the conversation takes the right half.
+        Some((id, load)) => row().key("agent-split").w_full().h_full().child(main.w(0.0).grow(1.0)).child(helper_pane(s, t, k, id, load)),
+        None => main,
+    }
+}
+
+/// What the agent produced in this chat (`WorkPane`): the proposals its replies
+/// saved that still wait for a decision, and the drafts that were accepted.
+fn work_pane(s: &App, t: &Theme, messages: &[Message]) -> Option<El> {
+    let proposals = s.proposals.ready()?;
+    let ids: std::collections::HashSet<&str> =
+        messages.iter().filter(|m| m.role != "user").flat_map(|m| m.decisions.iter()).filter(|r| r.kind == "AGENT_PROPOSAL").map(|r| r.id.as_str()).collect();
+    let linked: Vec<&crate::api::Proposal> = proposals.iter().filter(|p| ids.contains(p.id.as_str())).collect();
+    let open: Vec<chat::DecisionRef> = linked.iter().filter(|p| p.status == "PROPOSED").map(|p| chat::DecisionRef { kind: "AGENT_PROPOSAL".into(), id: p.id.clone() }).collect();
+    let kept: Vec<&&crate::api::Proposal> = linked.iter().filter(|p| p.status == "APPROVED" && p.is_draft()).collect();
+    if open.is_empty() && kept.is_empty() {
+        return None;
+    }
+    let mut c = col().key("work-pane").w_full().gap(20.0);
+    let cards = decisions(s, t, usize::MAX - 1, &open);
+    if !cards.is_empty() {
+        c = c.child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .label("Waiting for your decision")
+                .child(row().gap(6.0).center_y().child(el().size(6.0, 6.0).radius(3.0).fill(t.review)).child(label(format!("Waiting for your decision ({})", cards.len()), type_::XS_MEDIUM, t.foreground)))
+                .children(cards),
+        );
+    }
+    if !kept.is_empty() {
+        let open_ = s.drafts_open;
+        let mut d = col().w_full().gap(8.0).child(
+            label(format!("Accepted drafts ({}), {}", kept.len(), if open_ { "hide" } else { "view" }), type_::XS_MEDIUM, t.muted_foreground)
+                .key("drafts-toggle")
+                .role("button")
+                .expanded(open_)
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover_group()
+                .group_color(t.foreground)
+                .on_press(|s: &mut App| s.drafts_open = !s.drafts_open),
+        );
+        if open_ {
+            for p in kept {
+                d = d.child(draft_card(s, t, p));
+            }
+        }
+        c = c.child(d);
+    }
+    Some(c)
+}
+
+/// An accepted draft (`SavedDraft`): what it is, its text to copy, and its evidence.
+fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
+    let mut c = col().key(format!("draft-{}", p.id)).w_full().gap(10.0).padding(16.0).radius(10.0).fill(t.card).hover_group().child(label(format!("{} (accepted)", p.draft_name()), type_::XS_MEDIUM, t.foreground)).child(label(p.message.clone(), type_::XS, t.foreground).wrap());
+    match &p.payload {
+        Some(pl) => {
+            let when = pl.generated_at.as_deref().map(crate::format::date_time).unwrap_or_default();
+            c = c.child(label(format!("Snapshot prepared {when}. Accepting this draft does not publish, deliver, execute or record completed work."), type_::XS, t.muted_foreground).wrap());
+            if let Some(text_) = pl.text.clone().filter(|x| !x.is_empty()) {
+                let copy = text_.clone();
+                let copied = s.copied == Some(usize::MAX - 2);
+                c = c
+                    .child(col().w_full().max_h(384.0).child(label(text_, type_::XS.lh(20.0), t.foreground).wrap().selectable(true)).scroll(ScrollSpec { stick_bottom: false }))
+                    .child(
+                        row()
+                            .key(format!("draft-copy-{}", p.id))
+                            .size(24.0, 24.0)
+                            .radius(6.0)
+                            .center()
+                            .role("button")
+                            .label(if copied { "Copied" } else { "Copy draft" })
+                            .help(if copied { "Copied" } else { "Copy" })
+                            .cursor(Cursor::Pointer)
+                            .hover(t.hover_tint)
+                            .on_press_tx(move |s: &mut App, tx| {
+                                tx.copy(copy.clone());
+                                s.copied = Some(usize::MAX - 2);
+                            })
+                            .child(ico(if copied { &icons::CHECK } else { &icons::COPY }, 14.0, t.muted_foreground)),
+                    );
+            }
+            if !pl.references.is_empty() {
+                let mut refs = row().w_full().gap(8.0).flex_wrap().label("Draft evidence");
+                for (j, r) in pl.references.iter().enumerate() {
+                    let mut l = label(if r.text.is_empty() { "Evidence".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
+                    if let Some(u) = r.url().map(str::to_string) {
+                        l = l.role("link").cursor(Cursor::Pointer).help(u.clone()).on_press_tx(move |_s: &mut App, tx| {
+                            let _ = tx.open_url(&u);
+                        });
+                    }
+                    refs = refs.child(l);
+                }
+                c = c.child(refs);
+            }
+        }
+        None => c = c.child(label("Draft evidence unavailable", type_::XS, t.muted_foreground)),
+    }
+    shadows(c, &t.card_shadow)
+}
+
+/// A helper session opened from the conversation, to review (`HelperPane`): its
+/// own card over the right half, sliding in from the right. Read-only; "Open as
+/// main chat" is where to reply. Escape or the close button slides it away.
+fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Conversation>) -> El {
+    let info = load.ready().and_then(|c| c.session.clone());
+    let role = chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
+    let title = info.as_ref().and_then(|i| i.title.clone());
+    let head = row()
+        .w_full()
+        .h(48.0)
+        .px(16.0)
+        .gap(8.0)
+        .center_y()
+        .child(row().size(24.0, 24.0).radius(6.0).center().fill(t.accent).child(ico(&icons::USERS, 14.0, t.muted_foreground)))
+        .child(
+            row()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(4.0)
+                .child(label(format!("{role} helper"), type_::XS_MEDIUM, t.foreground))
+                .children(title.map(|x| label(x, type_::XS, t.muted_foreground).truncate().min_w(0.0))),
+        )
+        .child(
+            label("Open as main chat", type_::XS_MEDIUM, t.muted_foreground)
+                .key("helper-main")
+                .role("button")
+                .px(8.0)
+                .py(4.0)
+                .radius(6.0)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(|s: &mut App| s.helper_as_main()),
+        )
+        .child(icon_button(t, "helper-close", &icons::X, "Close the helper (Esc)", false).on_press(|s: &mut App| s.helper = None));
+    let body = match load {
+        Load::Ready(c) => {
+            let statuses = task_statuses(&c.messages);
+            let mut list = col().w_full().gap(12.0).px(20.0).py(16.0);
+            for (i, m) in c.messages.iter().enumerate() {
+                // Keys and folds of their own, apart from the main conversation's.
+                list = list.child(message(s, t, k, 100_000 + i, m, &statuses));
+            }
+            list
+        }
+        Load::Failed(e) => col().w_full().padding(20.0).child(label(e.clone(), type_::SM_13, t.muted_foreground).wrap()),
+        _ => col().w_full().padding(20.0).child(label("Opening the helper…", type_::SM_13, t.muted_foreground)),
+    };
+    col()
+        .key(format!("helper-{id}"))
+        .w(0.0)
+        .grow(1.0)
+        .h_full()
+        .padding(6.0)
+        .transition(Transition::offset(64.0, 0.0).combined(Transition::opacity()))
+        .label("Helper session")
+        .child(
+            shadows(
+                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
+                &t.panel_shadow,
+            ),
+        )
 }
 
 // ---- Motion (the web's `step-in`, `bubble-in` and `chip-in`) ----------------
@@ -201,7 +368,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         body = body.child(tasks(t, i, m, statuses));
     }
     if !m.decisions.is_empty() {
-        body = body.children(decisions(s, t, i, m));
+        body = body.children(decisions(s, t, i, &m.decisions));
     }
     c.child(body).child(copy_button(s, t, i, &m.text))
 }
@@ -317,13 +484,14 @@ fn tools_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, l
         .child(rune_kit::RollingText::new(format!("{key}-count"), n.to_string()).value(n as f64).font(type_::SM_MEDIUM.features("'tnum' 1")).color(t.foreground).build(k))
         .child(label(if n == 1 { "tool" } else { "tools" }, type_::SM, t.muted_foreground).group_color(t.foreground))];
     let head = fold(t, k, key.clone(), open, at, parts, true).label(name);
-    let mut body = col().key(format!("{key}-steps")).w_full().pl(2.0).pb(6.0);
+    // Rune's fold, opening onto the web's rail: each tool in its round node on a
+    // thin line, as the web's work log draws it, ending on a soft rule.
+    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
+    let mut rail = col().key(format!("{key}-rail")).w_full().child(line);
     for (j, a) in list.iter().enumerate() {
-        if let Activity::Tool { tool, text: x, failed } = a {
-            let (icon, ink) = if *failed { (ico(&icons::X, 14.0, t.wrong), t.wrong.alpha(0.85)) } else { (ico(chat::tool_icon(tool), 14.0, t.muted_foreground), t.muted_foreground) };
-            body = body.child(row().key(format!("{key}-step-{j}")).w_full().h(28.0).gap(8.0).center_y().transition(step_in()).child(icon).child(label(x.clone(), type_::SM_13, ink).truncate().grow(1.0).min_w(0.0)));
-        }
+        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")).transition(step_in()));
     }
+    let body = col().key(format!("{key}-steps")).w_full().mt(2.0).pb(8.0).mb(4.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6)).child(rail);
     let mut c = col().key(format!("{key}-group")).w_full().clip_soft(0.0).child(head).child(folding(format!("{key}-box"), open, body));
     if let Some(l) = live {
         c = c.child(l);
@@ -573,7 +741,7 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
                 .focusable(true)
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
-                .on_press(move |s: &mut App| s.open_session(&id));
+                .on_press(move |s: &mut App| s.open_helper(&id));
         }
         let n = c_count(&m.tasks, &task.id);
         c = c.child(chip_in(shadows(chip, &t.card_shadow), n));
@@ -586,10 +754,10 @@ fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
 }
 
 /// The proposals a reply saved that still wait for a decision, each opening in the inbox.
-fn decisions(s: &App, t: &Theme, i: usize, m: &Message) -> Vec<El> {
+fn decisions(s: &App, t: &Theme, i: usize, refs: &[chat::DecisionRef]) -> Vec<El> {
     use crate::ui::widgets::{Variant, button};
     let mut out = Vec::new();
-    for r in &m.decisions {
+    for r in refs {
         let key = r.key();
         let Some(d) = s.decisions.iter().find(|d| d.key == key) else { continue };
         let busy = s.deciding.as_deref() == Some(key.as_str());
@@ -740,6 +908,28 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 .child(ico(&icons::ARROW_UP, 16.0, t.primary_foreground)),
         );
     }
+    // The microphone (when voice input is on): macOS dictation into the composer.
+    if s.prefs.voice_input && !working {
+        actions = row().gap(4.0).center_y().self_end().child(
+            row()
+                .key("mic")
+                .size(32.0, 32.0)
+                .radius(6.0)
+                .center()
+                .role("button")
+                .label("Start voice input")
+                .help("Voice input")
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .hover_group()
+                .on_press_tx(|_s: &mut App, tx| {
+                    tx.focus("composer-input", false);
+                    crate::dictation::start();
+                })
+                .child(ico(&icons::MIC, 20.0, t.muted_foreground).group_color(t.foreground)),
+        ).child(actions);
+    }
     // "Chat actions" on the left of the box: save as playbook, share, attach and providers.
     let plus = row()
         .key("chat-actions-trigger")
@@ -769,6 +959,12 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             .items_end()
             .radius(10.0)
             .fill(t.card)
+            // Files dropped on the box are attached, as on the web.
+            .on_drop_files(|s: &mut App, paths, _tx| {
+                for p in paths {
+                    s.attach_path(p);
+                }
+            })
             .child(plus)
             .child(col().grow(1.0).min_w(0.0).self_center().child(input))
             .child(actions),
@@ -786,6 +982,8 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .w_full()
         .min_h(24.0)
         .px(12.0)
+        .gap(16.0)
+        .flex_wrap()
         .center_y()
         .child({
             // "Change the business or client": opens "Start a new chat", as the web's chip does.

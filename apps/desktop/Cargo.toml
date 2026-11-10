@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 # Rune is pre-release; `dev` is never rewritten, so a pinned rev stays buildable.
 rune = { git = "https://github.com/anomalyco/rune", rev = "1ea05bc7aed6711212e838cbc63b6aca9d97f6c3" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "1ea05bc7aed6711212e838cbc63b6aca9d97f6c3", features = ["markdown"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "1ea05bc7aed6711212e838cbc63b6aca9d97f6c3", features = ["markdown", "mermaid"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["json"] }
@@ -28,3 +28,7 @@ opt-level = 2
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+# The composer's microphone asks AppKit to start dictation (already in the lockfile through Rune).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
