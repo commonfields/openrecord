@@ -9,6 +9,7 @@
 mod api;
 mod brand_marks;
 mod brands;
+mod chat;
 mod decisions;
 mod fixtures;
 mod format;
@@ -64,6 +65,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("signin", fixtures::signin),
     ("agent", fixtures::agent),
     ("agent-empty", fixtures::agent_empty),
+    ("agent-log", fixtures::agent_open_log),
+    ("agent-working", fixtures::agent_working),
+    ("agent-models", fixtures::agent_models),
     ("inbox", fixtures::inbox),
     ("inbox-wordpress", fixtures::inbox_wordpress),
     ("inbox-check", fixtures::inbox_check),

@@ -1,0 +1,455 @@
+//! The agent chat's data beyond plain text, as the web reads it
+//! (`AgentMessage`, `AgentRunProgress` and the harness catalog in
+//! `apps/web/app/lib/api.ts` and `lib/harness.ts`): what a run did, the
+//! sources it used, the decisions and helpers it started, which model
+//! answered, the live journal of a running turn, and the models to pick from.
+
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::api::{ApiResult, Client, enc};
+
+/// One step of a run: the model's reasoning, or a tool it ran.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Activity {
+    Thought {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        ms: i64,
+    },
+    Tool {
+        #[serde(default)]
+        tool: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        failed: bool,
+    },
+}
+
+/// A source the answer used: a web page or a record in the workspace.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Citation {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+impl Citation {
+    /// The page's address when the source is on the web.
+    pub fn url(&self) -> Option<&str> {
+        let s = if self.id.starts_with("http") { self.id.as_str() } else { self.text.as_str() };
+        (s.starts_with("https://") || s.starts_with("http://")).then_some(s)
+    }
+}
+
+/// A proposal a reply saved, shown as an approval card under it.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DecisionRef {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: String,
+}
+
+impl DecisionRef {
+    /// The inbox key of the same decision (`TYPE:id`).
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.kind, self.id)
+    }
+}
+
+/// A helper session a reply started or reports on.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TaskRef {
+    pub id: String,
+    #[serde(default, rename = "sessionId")]
+    pub session_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+pub fn role_label(role: &str) -> &'static str {
+    match role {
+        "researcher" => "Research",
+        "seo" => "Search",
+        "aeo" => "AI answers",
+        "content" => "Content",
+        "analyst" => "Measurement",
+        "reviewer" => "Review",
+        "verifier" => "Fact-check",
+        _ => "Helper",
+    }
+}
+
+pub fn task_status(status: &str) -> &'static str {
+    match status {
+        "RUNNING" => "Working",
+        "COMPLETED" => "Done",
+        "FAILED" => "Stopped",
+        "CANCELLED" => "Cancelled",
+        _ => "Interrupted",
+    }
+}
+
+/// How the run behind a reply ended, and the checks it could not make.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RunRef {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub gaps: Vec<String>,
+}
+
+/// Which provider and model answered.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Inference {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default, rename = "requestedModel")]
+    pub model: Option<String>,
+}
+
+/// Where a message came from when another session sent it.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Origin {
+    pub kind: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+impl Origin {
+    pub fn text(&self) -> String {
+        match self.kind.as_str() {
+            "result" => format!("Result from \u{201c}{}\u{201d}", self.title.as_deref().unwrap_or("a helper")),
+            "message" => "Follow-up from another session".into(),
+            _ => "Task from the session that started this one".into(),
+        }
+    }
+}
+
+/// A text file sent with a message.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Attachment {
+    #[serde(default)]
+    pub name: String,
+}
+
+/// The tool icon the web draws for a tool (`toolIcon` in `agent-trace.tsx`).
+pub fn tool_icon(tool: &str) -> &'static rune::Icon {
+    use crate::icons as i;
+    let has = |k: &str| tool.contains(k);
+    if tool == "search_web" {
+        &i::SEARCH
+    } else if tool == "audit_website" {
+        &i::GAUGE
+    } else if tool == "read_web_page" || tool == "read_web_pages" {
+        &i::GLOBE
+    } else if tool == "map_website" {
+        &i::NETWORK
+    } else if tool == "read_proposals" {
+        &i::FILE_TEXT
+    } else if ["session", "task", "delegate", "list_models"].iter().any(|k| has(k)) {
+        &i::USERS
+    } else if tool.starts_with("propose_") || tool.starts_with("draft_") || tool.starts_with("prepare_") {
+        &i::PEN_LINE
+    } else if has("question") {
+        &i::MESSAGE_CIRCLE_QUESTION
+    } else if ["acquisition", "referral", "search_performance", "competitor", "observation", "outcomes"].iter().any(|k| has(k)) {
+        &i::CHART_LINE
+    } else if ["goal", "opportunit", "diagnose"].iter().any(|k| has(k)) {
+        &i::TARGET
+    } else if has("issue") {
+        &i::LIST_CHECKS
+    } else if ["truth", "representation", "scope", "record"].iter().any(|k| has(k)) {
+        &i::FILE_TEXT
+    } else {
+        &i::WRENCH
+    }
+}
+
+/// "12s", "1m 05s".
+pub fn elapsed(ms: i64) -> String {
+    let s = (ms / 1000).max(0);
+    let m = s / 60;
+    if m == 0 { format!("{s}s") } else { format!("{m}m {:02}s", s % 60) }
+}
+
+// ---- A running turn ---------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Thinking,
+    Working,
+    Checking,
+}
+
+/// What a running turn is doing, folded from the run journal (`progressOf`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Progress {
+    pub phase: Phase,
+    /// The tool running now, as a present-tense label, and its name.
+    pub current: Option<String>,
+    pub current_tool: Option<String>,
+    /// The model's reasoning in the step under way.
+    pub thought: String,
+    /// Finished steps, oldest first.
+    pub trace: Vec<Activity>,
+    /// The last journal sequence read.
+    pub seq: i64,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), seq: 0 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RunEvent {
+    pub seq: i64,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
+impl Progress {
+    pub fn apply(&mut self, events: &[RunEvent]) {
+        let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        for e in events {
+            self.seq = self.seq.max(e.seq);
+            let p = &e.payload;
+            match e.kind.as_str() {
+                "MODEL_REQUESTED" => {
+                    self.phase = Phase::Thinking;
+                    self.current = None;
+                    self.current_tool = None;
+                    self.thought.clear();
+                }
+                "MODEL_THINKING" => self.thought = s(p, "text"),
+                "MODEL_STEP" => {
+                    let thought = Some(s(p, "thought")).filter(|t| !t.is_empty()).unwrap_or_else(|| std::mem::take(&mut self.thought));
+                    self.thought.clear();
+                    if p.get("toolCalls").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
+                        self.phase = Phase::Working;
+                    }
+                    if !thought.is_empty() {
+                        self.trace.push(Activity::Thought { text: thought, ms: p.get("elapsedMs").and_then(Value::as_i64).unwrap_or(0) });
+                    }
+                }
+                "TOOL_STARTED" => {
+                    self.phase = Phase::Working;
+                    self.current = Some(Some(s(p, "label")).filter(|l| !l.is_empty()).unwrap_or_else(|| "Working".into()));
+                    self.current_tool = Some(s(p, "tool")).filter(|t| !t.is_empty());
+                }
+                "TOOL_COMPLETED" | "TOOL_FAILED" => {
+                    self.current = None;
+                    self.current_tool = None;
+                    self.trace.push(Activity::Tool { tool: s(p, "tool"), text: s(p, "summary"), failed: e.kind == "TOOL_FAILED" });
+                }
+                "VERIFICATION" if p.get("action").and_then(Value::as_str) == Some("REMINDED") => {
+                    self.phase = Phase::Checking;
+                    self.current = None;
+                    self.current_tool = None;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The line under way: the tool running, the check, or the last line of reasoning.
+    pub fn live(&self) -> String {
+        match self.phase {
+            Phase::Working => self.current.clone().unwrap_or_else(|| "Working".into()),
+            Phase::Checking => "Checking the answer is complete".into(),
+            Phase::Thinking => self.thought.trim().lines().filter(|l| !l.trim().is_empty()).last().map(|l| l.trim().to_string()).unwrap_or_else(|| "Thinking".into()),
+        }
+    }
+
+    pub fn working(&self) -> bool {
+        self.phase != Phase::Thinking || self.trace.iter().any(|a| matches!(a, Activity::Tool { .. }))
+    }
+}
+
+// ---- Models -----------------------------------------------------------------
+
+/// A model the composer offers: the hosted default, or one on a connected provider.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelOption {
+    /// "hosted", or "instanceId:modelId".
+    pub value: String,
+    pub name: String,
+    /// The provider it runs on ("hosted" or the harness driver), for the filter.
+    pub provider: String,
+    /// The connection's name, under the model.
+    pub instance: Option<String>,
+    /// The brand whose logo it shows.
+    pub brand: String,
+}
+
+impl ModelOption {
+    /// The request's `selection`, or `None` for the hosted default.
+    pub fn selection(&self) -> Option<Value> {
+        let (instance, model) = self.value.split_once(':')?;
+        Some(json!({ "instanceId": instance, "model": model }))
+    }
+}
+
+pub const DRIVERS: [&str; 5] = ["codex", "claude", "opencode", "cursor", "cliproxy"];
+
+pub fn driver_name(d: &str) -> &'static str {
+    match d {
+        "codex" => "Codex",
+        "claude" => "Claude Code",
+        "opencode" => "OpenCode",
+        "cursor" => "Cursor",
+        "cliproxy" => "CLIProxyAPI",
+        _ => "OpenRecord hosted",
+    }
+}
+
+/// Hosted first, then each ready provider's enabled models in the fixed driver order (`modelOptions`).
+pub fn model_options(catalog: &Value) -> Vec<ModelOption> {
+    let mut out = Vec::new();
+    if let Some(h) = catalog.get("hosted").filter(|h| !h.is_null()) {
+        let (provider, model) = (h.get("provider").and_then(Value::as_str).unwrap_or(""), h.get("model").and_then(Value::as_str).unwrap_or(""));
+        out.push(ModelOption { value: "hosted".into(), name: model.into(), provider: "hosted".into(), instance: None, brand: crate::brands::model_brand(model, provider) });
+    }
+    let instances = catalog.get("instances").and_then(Value::as_array).cloned().unwrap_or_default();
+    for driver in DRIVERS {
+        for i in instances.iter().filter(|i| i.get("driver").and_then(Value::as_str) == Some(driver)) {
+            let b = |k: &str| i.get(k).and_then(Value::as_bool).unwrap_or(false);
+            let st = |k: &str| i.get(k).and_then(Value::as_str).unwrap_or("");
+            if !(b("enabled") && b("installed") && st("auth") != "unauthenticated" && st("state") == "ready") {
+                continue;
+            }
+            let off: Vec<&str> = i.get("disabledModels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            for m in i.get("models").and_then(Value::as_array).into_iter().flatten() {
+                let id = m.get("id").and_then(Value::as_str).unwrap_or("");
+                if id.is_empty() || off.contains(&id) {
+                    continue;
+                }
+                out.push(ModelOption {
+                    value: format!("{}:{id}", st("id")),
+                    name: m.get("name").and_then(Value::as_str).unwrap_or(id).into(),
+                    provider: driver.into(),
+                    instance: Some(st("name").into()),
+                    brand: crate::brands::model_brand(id, driver),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The model chosen last, kept between launches as the web keeps it in the browser.
+pub fn stored_model() -> Option<String> {
+    if rune::tooling::headless_run().is_some() {
+        return None;
+    }
+    std::fs::read_to_string(model_path()?).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+pub fn store_model(value: &str) {
+    if let Some(p) = model_path() {
+        let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
+        let _ = std::fs::write(p, value);
+    }
+}
+
+fn model_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(std::path::PathBuf::from(home).join("Library/Application Support/OpenRecord/agent-model"))
+}
+
+// ---- Calls ------------------------------------------------------------------
+
+impl Client {
+    /// The live journal of the run answering a request, after `after`.
+    pub fn progress(&self, request: &str, after: i64) -> ApiResult<Vec<RunEvent>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(default)]
+            events: Vec<RunEvent>,
+        }
+        Ok(self.get::<R>(&format!("/api/agent/runs/progress?requestId={}&after={after}", enc(request)))?.events)
+    }
+
+    /// Stops the turn in flight; the request settles on its own after this.
+    pub fn cancel(&self, business: &str, conversation: &str) -> ApiResult<()> {
+        self.post::<Value>(&format!("/api/businesses/{}/agent/cancel", enc(business)), json!({ "conversationId": conversation })).map(|_| ())
+    }
+
+    pub fn catalog(&self) -> ApiResult<Vec<ModelOption>> {
+        Ok(model_options(&self.get::<Value>("/api/agent/providers")?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_folds_the_journal() {
+        let ev = |seq, kind: &str, payload: Value| RunEvent { seq, kind: kind.into(), payload };
+        let mut p = Progress::default();
+        p.apply(&[
+            ev(1, "MODEL_REQUESTED", json!({})),
+            ev(2, "MODEL_THINKING", json!({ "text": "Look at the goal\nthen the answers" })),
+        ]);
+        assert_eq!(p.live(), "then the answers");
+        p.apply(&[ev(3, "MODEL_STEP", json!({ "toolCalls": [{}], "elapsedMs": 900 })), ev(4, "TOOL_STARTED", json!({ "tool": "search_web", "label": "Searching the web" }))]);
+        assert_eq!((p.phase, p.live(), p.trace.len()), (Phase::Working, "Searching the web".to_string(), 1));
+        p.apply(&[ev(5, "TOOL_FAILED", json!({ "tool": "search_web", "summary": "Search failed" }))]);
+        assert_eq!(p.trace[1], Activity::Tool { tool: "search_web".into(), text: "Search failed".into(), failed: true });
+        assert_eq!(p.seq, 5);
+    }
+
+    #[test]
+    fn options_list_ready_models() {
+        let catalog = json!({
+            "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+            "instances": [
+                { "id": "i1", "driver": "claude", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+                  "models": [{ "id": "claude-sonnet-5-5", "name": "Sonnet 5.5" }, { "id": "claude-haiku-5-5", "name": "Haiku 5.5" }], "disabledModels": ["claude-haiku-5-5"] },
+                { "id": "i2", "driver": "codex", "name": "Off", "enabled": false, "installed": true, "auth": "authenticated", "state": "ready", "models": [{ "id": "gpt-5", "name": "GPT-5" }] }
+            ]
+        });
+        let o = model_options(&catalog);
+        assert_eq!(o.iter().map(|x| x.value.as_str()).collect::<Vec<_>>(), ["hosted", "i1:claude-sonnet-5-5"]);
+        assert_eq!(o[1].brand, "claude");
+        assert_eq!(o[1].selection(), Some(json!({ "instanceId": "i1", "model": "claude-sonnet-5-5" })));
+        assert_eq!(o[0].selection(), None);
+    }
+
+    #[test]
+    fn reads_message_parts() {
+        let m: crate::api::Message = serde_json::from_value(json!({
+            "role": "agent", "text": "Done",
+            "activity": [{ "kind": "thought", "text": "hm", "ms": 3 }, { "kind": "tool", "tool": "search_web", "text": "Searched" }],
+            "citations": [{ "kind": "web", "id": "https://example.com/a", "text": "Example" }],
+            "decisions": [{ "type": "GROWTH_OPPORTUNITY", "id": "g1" }],
+            "run": { "id": "r", "status": "COMPLETED", "gaps": ["pricing"] },
+            "inference": { "provider": "claude", "requestedModel": "claude-sonnet-5-5" },
+            "durationMs": 12000
+        }))
+        .unwrap();
+        assert_eq!(m.activity.len(), 2);
+        assert_eq!(m.citations[0].url(), Some("https://example.com/a"));
+        assert_eq!(m.decisions[0].key(), "GROWTH_OPPORTUNITY:g1");
+        assert_eq!(m.run.as_ref().unwrap().gaps, ["pricing"]);
+        assert_eq!(elapsed(m.duration_ms.unwrap()), "12s");
+        assert_eq!(elapsed(65_000), "1m 05s");
+    }
+}

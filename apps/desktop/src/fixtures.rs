@@ -3,9 +3,9 @@
 
 use serde_json::json;
 
-use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview, ToolCall};
+use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview};
 use crate::insights::{self, Analytics, Insights, Report, Section, Source, Verdicts};
-use crate::state::{App, Load, Menu, Page, Screen, View};
+use crate::state::{App, Load, Menu, Page, Screen, Turn, View};
 
 fn business(id: &str, name: &str) -> Business {
     Business { id: id.into(), name: name.into() }
@@ -84,31 +84,91 @@ pub fn signin(s: &mut App) {
     s.screen = Screen::SignIn;
 }
 
+fn chat_messages() -> Vec<Message> {
+    let m = |v: serde_json::Value| serde_json::from_value::<Message>(v).expect("fixture message");
+    vec![
+        m(json!({ "role": "user", "text": "What should we work on next? Check our results and channels and propose the most useful next step for me to approve." })),
+        m(json!({
+            "role": "agent",
+            "text": "The most useful next step is **a public pricing and onboarding guide**, built only from your approved facts.\n\n- AI assistants guessed at pricing in 3 of the 5 answers checked this week.\n- Your website has no page that states plans or setup time.\n- Search Console is not connected, so I can't yet see which queries reach you.\n\nI saved it to your inbox as an idea to approve. Once you approve, I'll draft the page and set a baseline to measure against.",
+            "activity": [
+                { "kind": "thought", "text": "Start from what was approved and what the latest AI answers got wrong.", "ms": 2100 },
+                { "kind": "tool", "tool": "read_results", "text": "2 approved ideas, 2 not done yet" },
+                { "kind": "tool", "tool": "read_business_truth", "text": "8 approved facts read" },
+                { "kind": "tool", "tool": "read_search_performance", "text": "Search Console is not connected", "failed": true },
+                { "kind": "tool", "tool": "propose_growth_opportunity", "text": "Saved an idea to approve" }
+            ],
+            "durationMs": 23000,
+            "citations": [
+                { "kind": "web", "id": "https://northstar.example/pricing", "text": "Northstar pricing" },
+                { "kind": "truth", "id": "f1", "text": "Monthly price: from 49 USD" }
+            ],
+            "decisions": [{ "type": "GROWTH_OPPORTUNITY", "id": "o1" }],
+            "inference": { "provider": "hosted", "requestedModel": "gemini-3-flash" },
+            "run": { "id": "r1", "status": "COMPLETED", "gaps": ["Search Console data"] }
+        })),
+        m(json!({ "role": "user", "text": "Ask a helper to research how competitors explain their onboarding." })),
+        m(json!({
+            "role": "agent",
+            "text": "I started a research helper. It reads public onboarding pages and reports back here.",
+            "activity": [{ "kind": "tool", "tool": "start_session", "text": "Started a research helper" }],
+            "durationMs": 6000,
+            "tasks": [{ "id": "t1", "sessionId": "s2", "title": "How others explain onboarding", "role": "researcher", "status": "RUNNING", "model": "claude-sonnet-5-5" }],
+            "inference": { "provider": "claude", "requestedModel": "claude-sonnet-5-5" }
+        })),
+    ]
+}
+
 pub fn agent(s: &mut App) {
     workspace(s);
     s.view = View::Agent;
     s.chat_id = Some("c1".into());
-    s.conversation = Load::Ready(Conversation {
-        id: "c1".into(),
-        title: Some("Next step for the pricing page".into()),
-        revision: 2,
-        messages: vec![
-            Message {
-                role: "user".into(),
-                text: "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.".into(),
-                tool_calls: vec![],
-            },
-            Message {
-                role: "agent".into(),
-                text: "The most useful next step is **a public pricing and onboarding guide**, built only from your approved facts.\n\n- AI assistants guessed at pricing in 3 of the 5 answers checked this week.\n- Your website has no page that states plans or setup time.\n- Search Console is not connected, so I can't yet see which queries reach you.\n\nI saved it to your inbox as an idea to approve. Once you approve, I'll draft the page and set a baseline to measure against.".into(),
-                tool_calls: vec![
-                    ToolCall { tool: "read_results".into(), summary: "2 approved ideas, 2 not done yet".into() },
-                    ToolCall { tool: "read_business_truth".into(), summary: "8 approved facts read".into() },
-                    ToolCall { tool: "read_search_performance".into(), summary: "Search Console is not connected".into() },
-                ],
-            },
-        ],
-    });
+    s.catalog = Load::Ready(models());
+    s.agent_model = Some("i1:claude-sonnet-5-5".into());
+    s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages() });
+}
+
+/// The models the composer offers in scenes.
+fn models() -> Vec<crate::chat::ModelOption> {
+    crate::chat::model_options(&json!({
+        "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+        "instances": [
+            { "id": "i1", "driver": "claude", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }] },
+            { "id": "i2", "driver": "codex", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "gpt-5", "name": "GPT-5" }] }
+        ]
+    }))
+}
+
+pub fn agent_open_log(s: &mut App) {
+    agent(s);
+    s.open_logs.insert(1);
+    s.open_sources.insert(1);
+}
+
+pub fn agent_working(s: &mut App) {
+    agent(s);
+    let mut progress = crate::chat::Progress::default();
+    let ev = |seq, kind: &str, payload: serde_json::Value| crate::chat::RunEvent { seq, kind: kind.into(), payload };
+    progress.apply(&[
+        ev(1, "MODEL_STEP", json!({ "thought": "The helper should look at public pages only.", "toolCalls": [{}] })),
+        ev(2, "TOOL_STARTED", json!({ "tool": "read_web_pages", "label": "Reading 4 pages" })),
+        ev(3, "TOOL_COMPLETED", json!({ "tool": "read_web_pages", "summary": "Read 4 onboarding pages" })),
+        ev(4, "TOOL_STARTED", json!({ "tool": "search_web", "label": "Searching the web for setup guides" })),
+    ]);
+    s.turn = Turn::Working {
+        message: "And what does setup take for a team of five?".into(),
+        request: Some("q1".into()),
+        progress,
+        started: std::time::Instant::now() - std::time::Duration::from_secs(14),
+        stopping: false,
+    };
+}
+
+pub fn agent_models(s: &mut App) {
+    agent(s);
+    s.menu = Some(Menu::Model);
 }
 
 pub fn agent_empty(s: &mut App) {

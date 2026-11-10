@@ -73,6 +73,51 @@ pub struct Message {
     pub text: String,
     #[serde(default, rename = "toolCalls")]
     pub tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub activity: Vec<crate::chat::Activity>,
+    #[serde(default)]
+    pub citations: Vec<crate::chat::Citation>,
+    #[serde(default)]
+    pub decisions: Vec<crate::chat::DecisionRef>,
+    #[serde(default)]
+    pub tasks: Vec<crate::chat::TaskRef>,
+    #[serde(default)]
+    pub run: Option<crate::chat::RunRef>,
+    #[serde(default, rename = "durationMs")]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub inference: Option<crate::chat::Inference>,
+    #[serde(default)]
+    pub origin: Option<crate::chat::Origin>,
+    #[serde(default)]
+    pub attachments: Vec<crate::chat::Attachment>,
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Message {
+        Message {
+            role: "user".into(),
+            text: text.into(),
+            tool_calls: Vec::new(),
+            activity: Vec::new(),
+            citations: Vec::new(),
+            decisions: Vec::new(),
+            tasks: Vec::new(),
+            run: None,
+            duration_ms: None,
+            inference: None,
+            origin: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// The work log: the recorded steps, or for older replies the tools it ran.
+    pub fn work_log(&self) -> Vec<crate::chat::Activity> {
+        if !self.activity.is_empty() {
+            return self.activity.clone();
+        }
+        self.tool_calls.iter().map(|c| crate::chat::Activity::Tool { tool: c.tool.clone(), text: c.summary.clone(), failed: false }).collect()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -236,7 +281,7 @@ impl Client {
         self.call("GET", path, None)
     }
 
-    fn post<T: DeserializeOwned>(&self, path: &str, body: Value) -> ApiResult<T> {
+    pub(crate) fn post<T: DeserializeOwned>(&self, path: &str, body: Value) -> ApiResult<T> {
         self.call("POST", path, Some(body))
     }
 
@@ -304,9 +349,12 @@ impl Client {
     }
 
     /// Queues a turn and returns once the API has accepted it.
-    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, message: &str) -> ApiResult<()> {
+    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, message: &str, selection: Option<Value>) -> ApiResult<()> {
         let path = format!("/api/businesses/{}/agent/requests", enc(business));
-        let body = json!({ "message": message, "requestId": request_id, "revision": revision, "conversationId": conversation });
+        let mut body = json!({ "message": message, "requestId": request_id, "revision": revision, "conversationId": conversation });
+        if let Some(sel) = selection {
+            body["selection"] = sel;
+        }
         self.post::<Value>(&path, body).map(|_| ())
     }
 
@@ -532,6 +580,20 @@ mod live {
             let conv = c.conversation(chat.business_id.as_deref().unwrap(), Some(&chat.id)).expect("conversation").expect("exists");
             eprintln!("chat {:?}: {} messages, revision {}", conv.title, conv.messages.len(), conv.revision);
         }
+        // Every chat's messages decode with their steps, sources and decisions.
+        let mut parts = (0, 0, 0, 0);
+        for chat in chats.iter().filter(|ch| ch.business_id.is_some()).take(10) {
+            let conv = c.conversation(chat.business_id.as_deref().unwrap(), Some(&chat.id)).expect("conversation");
+            for m in conv.iter().flat_map(|cv| cv.messages.iter()) {
+                parts = (parts.0 + m.activity.len(), parts.1 + m.citations.len(), parts.2 + m.decisions.len(), parts.3 + usize::from(m.inference.is_some()));
+            }
+        }
+        eprintln!("messages: {} steps, {} sources, {} decisions, {} with a model", parts.0, parts.1, parts.2, parts.3);
+        let models = c.catalog().expect("catalog");
+        eprintln!("models: {:?}", models.iter().map(|m| (&m.value, &m.name, &m.brand)).collect::<Vec<_>>());
+        // An unknown request has an empty journal, not an error.
+        let events = c.progress(&uuid(), 0);
+        eprintln!("progress for an unknown request: {:?}", events.as_ref().map(Vec::len));
         c.signout().expect("signout");
         assert_eq!(c.me(), Err(ApiError::Unauthorized));
     }

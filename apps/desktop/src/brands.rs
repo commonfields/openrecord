@@ -82,7 +82,6 @@ pub fn brand(provider: &str) -> (String, Mark) {
 }
 
 /// The brand of the model itself, apart from the harness carrying it.
-#[allow(dead_code)] // The agent's model picker uses it next.
 pub fn model_brand(model: &str, fallback: &str) -> String {
     let name = model.to_lowercase();
     if name.starts_with("nvidia/") {
@@ -133,6 +132,20 @@ pub fn logo(t: &Theme, provider: &str, size: f32) -> El {
             tile(Color::WHITE, t.border).child(glyph(&first, near_black))
         }
     }
+}
+
+/// A provider's mark alone, with no tile (`ProviderLogo bare`): its own colour,
+/// or the text colour for a black or white mark.
+pub fn mark(t: &Theme, provider: &str, size: f32) -> El {
+    let (name, mark) = brand(provider);
+    let ink = t.foreground;
+    let letter = |g: &str| text(g.to_string()).font(TextStyle::new(size * if g.len() > 1 { 0.5 } else { 0.7 }, 700.0).lh(size)).color(ink);
+    let inner = match mark {
+        Mark::Icon(i) | Mark::Inverted(i) => icon(i, size).color(ink),
+        Mark::Glyph(g, _) => letter(g),
+        Mark::None => letter(&name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()),
+    };
+    row().size(size, size).center().help(name).child(inner)
 }
 
 // ---- Model series -----------------------------------------------------------

@@ -465,11 +465,12 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             let side = if s.sidebar_open { Side::Top } else { Side::Right };
             Some(m.role("menu").anchored("account-menu", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
         }
+        Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
     }
 }
 
 /// The web app for an API address: the dev server serves it on :3000 beside the API on :3001.
-fn web_url(api: &str) -> String {
+pub(crate) fn web_url(api: &str) -> String {
     if let Ok(web) = std::env::var("OPENRECORD_WEB_URL") {
         return web;
     }

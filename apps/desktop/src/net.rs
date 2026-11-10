@@ -23,7 +23,11 @@ pub enum Reply {
     Campaigns(String, ApiResult<Vec<Campaign>>),
     Conversation(String, ApiResult<Option<Conversation>>),
     /// A turn was accepted: the conversation it belongs to (new or existing).
-    TurnQueued { business: String, conversation: String },
+    TurnQueued { business: String, conversation: String, request: String },
+    /// New entries in the journal of the run answering a request (empty: still running).
+    Progress { request: String, events: Vec<crate::chat::RunEvent> },
+    /// The models the composer offers.
+    Catalog(ApiResult<Vec<crate::chat::ModelOption>>),
     /// A turn finished (or failed) in this conversation.
     TurnDone { business: String, conversation: String, result: ApiResult<()> },
     /// A decision was approved (`true`) or declined, or the call failed.
@@ -165,7 +169,18 @@ impl Net {
     /// Sends one message: makes the conversation first when there is none,
     /// queues the turn, then follows it until it settles, as the web
     /// client's `waitForAgentRequest` does.
-    pub fn send(&self, business: String, conversation: Option<(String, i64)>, message: String) {
+    /// Asks the API to stop the turn running in a conversation.
+    pub fn cancel(&self, business: String, conversation: String) {
+        self.spawn(move |c, _send| {
+            let _ = c.cancel(&business, &conversation);
+        });
+    }
+
+    pub fn catalog(&self) {
+        self.spawn(|c, send| send(Reply::Catalog(c.catalog())));
+    }
+
+    pub fn send(&self, business: String, conversation: Option<(String, i64)>, message: String, selection: Option<serde_json::Value>) {
         self.spawn(move |c, send| {
             let (conversation, revision) = match conversation {
                 Some(pair) => pair,
@@ -178,21 +193,28 @@ impl Net {
                 },
             };
             let request = crate::api::uuid();
-            if let Err(e) = c.send(&business, &conversation, revision, &request, &message) {
+            if let Err(e) = c.send(&business, &conversation, revision, &request, &message, selection) {
                 send(Reply::TurnDone { business, conversation, result: Err(e) });
                 return;
             }
-            send(Reply::TurnQueued { business: business.clone(), conversation: conversation.clone() });
-            let result = follow(c, &request);
+            send(Reply::TurnQueued { business: business.clone(), conversation: conversation.clone(), request: request.clone() });
+            let result = follow(c, &request, &send);
             send(Reply::TurnDone { business, conversation, result });
         });
     }
 }
 
-fn follow(c: &Client, request: &str) -> ApiResult<()> {
+fn follow(c: &Client, request: &str, send: &dyn Fn(Reply)) -> ApiResult<()> {
     let started = Instant::now();
     let mut offline_since: Option<Instant> = None;
+    let mut seq = 0;
     loop {
+        // The run's journal first, so the live trace moves while the turn runs;
+        // an empty batch still wakes the window for its clock.
+        if let Ok(events) = c.progress(request, seq) {
+            seq = events.iter().map(|e| e.seq).max().unwrap_or(seq);
+            send(Reply::Progress { request: request.to_string(), events });
+        }
         match c.job(request) {
             Ok(job) => {
                 offline_since = None;

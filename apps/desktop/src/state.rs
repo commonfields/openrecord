@@ -77,6 +77,7 @@ impl Page {
 pub enum Menu {
     Businesses,
     Account,
+    Model,
 }
 
 /// The turn the composer sent, while it runs.
@@ -84,7 +85,15 @@ pub enum Menu {
 pub enum Turn {
     Idle,
     /// Sent and not yet answered; the message shows at once.
-    Working { message: String },
+    Working {
+        message: String,
+        /// The request, once the API accepted it, and what its run is doing.
+        request: Option<String>,
+        progress: crate::chat::Progress,
+        started: std::time::Instant,
+        /// Stop was pressed; the turn settles on its own.
+        stopping: bool,
+    },
     Failed { message: String, error: String },
 }
 
@@ -136,6 +145,14 @@ pub struct App {
     pub all_models: bool,
     /// The chart and day under the pointer.
     pub chart_hover: Option<(String, usize)>,
+    /// The models the composer offers, the one picked, and the picker's filter.
+    pub catalog: Load<Vec<crate::chat::ModelOption>>,
+    pub agent_model: Option<String>,
+    pub model_filter: Option<String>,
+    /// Finished replies whose work log is open, and copied messages.
+    pub open_logs: std::collections::BTreeSet<usize>,
+    pub open_sources: std::collections::BTreeSet<usize>,
+    pub copied: Option<usize>,
     pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
@@ -206,6 +223,12 @@ impl App {
             model_focus: None,
             all_models: false,
             chart_hover: None,
+            catalog: Load::Idle,
+            agent_model: crate::chat::stored_model(),
+            model_filter: None,
+            open_logs: Default::default(),
+            open_sources: Default::default(),
+            copied: None,
             insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
@@ -485,6 +508,42 @@ impl App {
         }
     }
 
+    /// The model the next turn uses: the one picked if it's still offered,
+    /// otherwise the first offered (the hosted default when there is one).
+    pub fn chosen_model(&self) -> Option<&crate::chat::ModelOption> {
+        let list = self.catalog.ready()?;
+        self.agent_model.as_ref().and_then(|v| list.iter().find(|o| &o.value == v)).or_else(|| list.first())
+    }
+
+    /// The picked model is gone from the catalog: never re-routed silently.
+    pub fn model_unavailable(&self) -> bool {
+        match (self.catalog.ready(), &self.agent_model) {
+            (Some(list), Some(v)) if v != "hosted" => !list.iter().any(|o| &o.value == v),
+            _ => false,
+        }
+    }
+
+    pub fn choose_agent_model(&mut self, value: String) {
+        crate::chat::store_model(&value);
+        self.agent_model = Some(value);
+        self.menu = None;
+    }
+
+    pub fn open_model_menu(&mut self) {
+        self.menu = Some(Menu::Model);
+        self.model_filter = None;
+        self.net.catalog();
+    }
+
+    /// Stops the turn running in this chat.
+    pub fn stop_turn(&mut self) {
+        let (Some(b), Some(c)) = (self.active.clone(), self.chat_id.clone()) else { return };
+        if let Turn::Working { stopping, .. } = &mut self.turn {
+            *stopping = true;
+            self.net.cancel(b, c);
+        }
+    }
+
     pub fn send_message(&mut self, tx: &mut Tx) {
         let text = self.composer.text.trim().to_string();
         if text.is_empty() || matches!(self.turn, Turn::Working { .. }) {
@@ -496,8 +555,9 @@ impl App {
             _ => None,
         };
         self.composer.clear();
-        self.turn = Turn::Working { message: text.clone() };
-        self.net.send(business, conversation, text);
+        self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
+        let selection = self.chosen_model().and_then(|m| m.selection());
+        self.net.send(business, conversation, text, selection);
         tx.scroll_to_bottom("transcript");
     }
 
@@ -594,12 +654,23 @@ impl App {
                 Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
                 Err(e) => self.conversation = Load::Failed(e),
             },
-            Reply::TurnQueued { business, conversation } if here(self, &business) => {
+            Reply::TurnQueued { business, conversation, request: id } if here(self, &business) => {
                 if self.chat_id.is_none() {
                     self.chat_id = Some(conversation);
                 }
+                if let Turn::Working { request, .. } = &mut self.turn {
+                    *request = Some(id);
+                }
                 self.net.chats();
             }
+            Reply::Progress { request: id, events } => {
+                if let Turn::Working { request: Some(r), progress, .. } = &mut self.turn {
+                    if *r == id {
+                        progress.apply(&events);
+                    }
+                }
+            }
+            Reply::Catalog(r) => self.catalog = to_load(self.failed(r)),
             Reply::TurnDone { business, conversation, result } => {
                 self.net.chats();
                 if !here(self, &business) || self.chat_id.as_deref().is_some_and(|c| c != conversation) {
@@ -612,9 +683,14 @@ impl App {
                         self.net.conversation(business, conversation);
                     }
                     Err(e) if e.is_empty() => {}
+                    // Stopped on purpose: what the run said so far reloads with the chat.
+                    Err(_) if matches!(self.turn, Turn::Working { stopping: true, .. }) => {
+                        self.turn = Turn::Idle;
+                        self.net.conversation(business, conversation);
+                    }
                     Err(error) => {
                         let message = match &self.turn {
-                            Turn::Working { message } => message.clone(),
+                            Turn::Working { message, .. } => message.clone(),
                             _ => String::new(),
                         };
                         self.turn = Turn::Failed { message, error };
@@ -680,16 +756,17 @@ impl App {
         self.screen = Screen::Workspace;
         self.signin_error = None;
         self.net.workspace();
+        self.net.catalog();
     }
 
     /// The messages the transcript shows: the loaded conversation, plus the
     /// message a running or failed turn sent, until the reload carries it.
     pub fn transcript(&self) -> Vec<Message> {
         let mut list = self.conversation.ready().map(|c| c.messages.clone()).unwrap_or_default();
-        if let Turn::Working { message } | Turn::Failed { message, .. } = &self.turn {
+        if let Turn::Working { message, .. } | Turn::Failed { message, .. } = &self.turn {
             let already = list.iter().rev().find(|m| m.role == "user").is_some_and(|m| &m.text == message);
             if !already && !message.is_empty() {
-                list.push(Message { role: "user".into(), text: message.clone(), tool_calls: Vec::new() });
+                list.push(Message::user(message.clone()));
             }
         }
         list
