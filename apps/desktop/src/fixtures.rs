@@ -308,6 +308,8 @@ pub fn agent_models_many(s: &mut App) {
         ]
     })));
     s.menu = Some(Menu::Model);
+    // The pointer over GPT-5, Claude Sonnet chosen: hover and selection side by side.
+    s.row_hover = Some("model:i2:gpt-5".into());
 }
 
 fn playbooks() -> Vec<crate::chat::Playbook> {

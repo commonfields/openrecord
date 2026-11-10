@@ -1160,8 +1160,8 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         let mut r = row()
             .key(format!("model-{}", o.value))
             .w_full()
-            .h(32.0)
             .px(8.0)
+            .py(8.0)
             .gap(8.0)
             .center_y()
             .radius(6.0)
@@ -1173,18 +1173,22 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
             .on_hover_change(hover_key(format!("model:{}", o.value)))
             .on_press(move |s: &mut App| s.choose_agent_model(value.clone()))
             .child(brands::mark(t, &o.brand, 16.0))
-            .child(label(o.name.clone(), type_::SM, t.foreground).truncate().min_w(0.0))
-            .child(match &o.instance {
-                Some(i) => label(i.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0),
-                None => el().grow(1.0),
-            });
+            // The web's row: the model's name, and the computer it runs on under it.
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .child(label(o.name.clone(), type_::SM, t.foreground).truncate())
+                    .children(o.instance.clone().map(|i| label(i, type_::XS, t.muted_foreground).truncate())),
+            );
         if on {
-            r = r.child(ico(&icons::CHECK, 14.0, secondary(t)));
+            r = r.child(ico(&icons::CHECK, 16.0, secondary(t)));
         }
         let hovered = s.row_hover.as_deref() == Some(format!("model:{}", o.value).as_str());
         list = list.child(crate::ui::widgets::highlight(t, r, hovered, on));
     }
-    let list = col().key("model-list").w_full().max_h(256.0).mt(4.0).child(list).scroll(ScrollSpec { stick_bottom: false });
+    // The web's `max-h-64` list, inset 4 points, 6 above and below.
+    let list = col().key("model-list").w_full().max_h(256.0).mt(4.0).px(4.0).py(6.0).child(list).scroll(ScrollSpec { stick_bottom: false });
     let status = match &s.catalog {
         Load::Loading | Load::Idle if options.is_empty() => Some("Checking providers…".to_string()),
         Load::Failed(e) => Some(format!("Providers could not load. {e}")),
@@ -1203,7 +1207,10 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
         .on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::Agent));
-    let mut m = shadows(col().key("model-menu").w(300.0).padding(6.0).radius(12.0).fill(t.popover), &t.float_shadow).child(tabs).child(list);
+    // The web's picker: 21rem wide, 8 points in, a hairline border; in dark mode
+    // the lighter #303030 surface with a #414141 border, so rows hover darker.
+    let (surface, rim) = if t.dark { (crate::theme::hex("#303030"), crate::theme::hex("#414141")) } else { (t.popover, t.border) };
+    let mut m = shadows(col().key("model-menu").w(336.0).padding(8.0).radius(12.0).fill(surface).border(1.0, rim), &t.float_shadow).child(tabs).child(list);
     if let Some(st) = status {
         m = m.child(label(st, type_::XS, t.muted_foreground).px(8.0).py(12.0).wrap());
     }
