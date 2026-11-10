@@ -26,6 +26,10 @@ pub enum Reply {
     TurnQueued { business: String, conversation: String },
     /// A turn finished (or failed) in this conversation.
     TurnDone { business: String, conversation: String, result: ApiResult<()> },
+    /// A decision was approved (`true`) or declined, or the call failed.
+    Decided { key: String, approved: bool, result: ApiResult<()> },
+    /// The models a re-check can run on.
+    Models(ApiResult<Vec<String>>),
 }
 
 pub struct Net {
@@ -101,6 +105,17 @@ impl Net {
 
     pub fn decisions(&self) {
         self.spawn(|c, send| send(Reply::Decisions(c.decisions())));
+    }
+
+    pub fn decide(&self, d: Decision, approve: bool, model: Option<String>, reason: Option<String>) {
+        self.spawn(move |c, send| {
+            let result = c.decide(&d, approve, model.as_deref(), reason.as_deref());
+            send(Reply::Decided { key: d.key.clone(), approved: approve, result });
+        });
+    }
+
+    pub fn models(&self) {
+        self.spawn(|c, send| send(Reply::Models(c.models())));
     }
 
     pub fn overview(&self, business: String) {

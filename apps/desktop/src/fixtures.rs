@@ -1,6 +1,8 @@
 //! Made-up workspace data for headless scenes (`--scene NAME`), so every
 //! screen can be rendered and checked without a server.
 
+use serde_json::json;
+
 use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview, ToolCall};
 use crate::state::{App, Load, Menu, Page, Screen, View};
 
@@ -53,14 +55,28 @@ fn workspace(s: &mut App) {
     s.businesses = vec![a, b, c];
     s.active = Some("b-northstar".into());
     s.overview = Load::Ready(Overview { completed: 6, last_checked: ago(60 * 3), unreviewed: 1, needs_attention: 4 });
-    s.decisions = vec![Decision {
-        kind: "GROWTH_OPPORTUNITY".into(),
-        business_id: "b-northstar".into(),
-        business_name: "Northstar Analytics".into(),
-        title: "Publish a transparent pricing and onboarding guide".into(),
-        detail: "Three of five checked answers guess at pricing. One page with verified prices and setup steps gives assistants something true to quote.".into(),
-        created_at: ago(90),
-    }];
+    s.decisions = decisions();
+}
+
+fn decisions() -> Vec<Decision> {
+    let northstar = json!({ "id": "b-northstar", "name": "Northstar Analytics" });
+    let items = [
+        json!({ "type": "GROWTH_OPPORTUNITY", "business": northstar, "createdAt": ago(90), "conversationId": "c1", "opportunity": {
+            "id": "o1", "title": "Publish a transparent pricing and onboarding guide", "status": "PROPOSED", "revision": 2,
+            "problemStatement": "Three of five checked answers guess at pricing. One page with verified prices and setup steps gives assistants something true to quote.",
+            "proposedChange": "One public page with each plan's price, what it includes, and the setup steps, built only from approved facts.",
+            "expectedMechanism": "Assistants quote pages that state prices plainly, so answers stop guessing and buyers arrive with the right expectations.",
+            "uncertainty": "How quickly assistants pick up a new page varies from days to weeks.",
+            "source": "Brief", "evidence": [{ "type": "MODEL_SUGGESTION" }] } }),
+        json!({ "type": "WORDPRESS_CHANGE", "business": northstar, "createdAt": ago(60 * 5), "change": {
+            "id": "w1", "kind": "SET_SEO", "postType": "pages", "targetTitle": "Pricing", "targetLink": "https://northstar.test/pricing", "status": "PROPOSED",
+            "rationale": "The search title doesn't say what Northstar does, so the pricing page rarely shows for plan questions.",
+            "before": { "meta": { "_yoast_wpseo_title": "Pricing - Northstar", "_yoast_wpseo_metadesc": "" } },
+            "after": { "meta": { "_yoast_wpseo_title": "Northstar Analytics pricing: plans from $49 a month", "_yoast_wpseo_metadesc": "Compare Northstar's three plans, what each includes, and how setup works." } } } }),
+        json!({ "type": "AGENT_PROPOSAL", "business": northstar, "createdAt": ago(60 * 26), "proposal": {
+            "id": "p1", "kind": "REQUEST_CHECK", "status": "PROPOSED", "questionId": "q1", "message": "Re-check \"Does Northstar integrate with Snowflake?\" now that the integrations page lists it." } }),
+    ];
+    items.iter().filter_map(crate::decisions::parse).collect()
 }
 
 pub fn signin(s: &mut App) {
@@ -107,6 +123,24 @@ fn page(s: &mut App, page: Page) {
 
 pub fn inbox(s: &mut App) {
     page(s, Page::Inbox);
+}
+
+pub fn inbox_wordpress(s: &mut App) {
+    page(s, Page::Inbox);
+    s.decision = Some("WORDPRESS_CHANGE:w1".into());
+}
+
+pub fn inbox_check(s: &mut App) {
+    page(s, Page::Inbox);
+    s.decision = Some("AGENT_PROPOSAL:p1".into());
+    s.models = Load::Ready(vec!["openai/gpt-5".into(), "anthropic/claude-sonnet-5-5".into(), "google/gemini-3-pro".into()]);
+    s.model = Some("openai/gpt-5".into());
+}
+
+pub fn inbox_decline(s: &mut App) {
+    page(s, Page::Inbox);
+    s.declining = true;
+    s.decline_reason.replace_text("We're changing prices next month");
 }
 
 pub fn overview(s: &mut App) {

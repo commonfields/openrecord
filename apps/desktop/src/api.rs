@@ -157,16 +157,7 @@ pub struct Campaign {
     pub updated_at: Option<String>,
 }
 
-/// One decision waiting on the signed-in person.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Decision {
-    pub kind: String,
-    pub business_id: String,
-    pub business_name: String,
-    pub title: String,
-    pub detail: String,
-    pub created_at: Option<String>,
-}
+pub use crate::decisions::Decision;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AgentJob {
@@ -360,7 +351,30 @@ impl Client {
     pub fn decisions(&self) -> ApiResult<Vec<Decision>> {
         let v: Value = self.get("/api/decisions")?;
         let list = v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
-        Ok(list.iter().map(decision).collect())
+        Ok(list.iter().filter_map(crate::decisions::parse).collect())
+    }
+
+    /// Approves or declines one decision, then records the verdict for the
+    /// agent, as the web cards do. The record is best effort.
+    pub fn decide(&self, d: &Decision, approve: bool, model: Option<&str>, reason: Option<&str>) -> ApiResult<()> {
+        let (path, body) = if approve { d.approve_call(model) } else { d.decline_call(reason) };
+        self.post::<Value>(&path, body)?;
+        let (path, body) = d.feedback(approve, reason);
+        let _ = self.post::<Value>(&path, body);
+        Ok(())
+    }
+
+    /// The measurement models a re-check can run on: 9Router's, when it is enabled.
+    pub fn models(&self) -> ApiResult<Vec<String>> {
+        let v: Value = self.get("/api/providers")?;
+        let list = v.get("providers").and_then(Value::as_array).cloned().unwrap_or_default();
+        Ok(list
+            .iter()
+            .find(|p| p.get("id").and_then(Value::as_str) == Some("9router") && p.get("enabled").and_then(Value::as_bool) == Some(true))
+            .and_then(|p| p.get("models"))
+            .and_then(Value::as_array)
+            .map(|m| m.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default())
     }
 }
 
@@ -383,34 +397,6 @@ fn campaign(v: &Value) -> Campaign {
         stage: first(v, &[&["stage"], &["status"]]),
         goal: first(v, &[&["goal"], &["objective"], &["plan", "goal"]]),
         updated_at: s(v, &["updatedAt"]).or_else(|| s(v, &["createdAt"])),
-    }
-}
-
-fn decision(v: &Value) -> Decision {
-    let kind = first(v, &[&["type"]]);
-    let (title, detail) = match kind.as_str() {
-        "AGENT_PROPOSAL" => (
-            first(v, &[&["proposal", "title"], &["proposal", "summary"]]),
-            first(v, &[&["proposal", "rationale"], &["proposal", "summary"]]),
-        ),
-        "GROWTH_OPPORTUNITY" => (
-            first(v, &[&["opportunity", "title"]]),
-            first(v, &[&["opportunity", "hypothesis"], &["opportunity", "summary"]]),
-        ),
-        "WORDPRESS_CHANGE" => (
-            first(v, &[&["change", "title"], &["change", "summary"]]),
-            first(v, &[&["change", "rationale"]]),
-        ),
-        "ACCOUNT_ACTION" => (first(v, &[&["action", "kind"]]).replace('_', " ").to_lowercase(), first(v, &[&["action", "rationale"]])),
-        _ => (String::new(), String::new()),
-    };
-    Decision {
-        kind,
-        business_id: first(v, &[&["business", "id"]]),
-        business_name: first(v, &[&["business", "name"]]),
-        title: if title.is_empty() { "A decision is waiting".into() } else { title },
-        detail,
-        created_at: s(v, &["createdAt"]),
     }
 }
 
@@ -507,11 +493,6 @@ mod tests {
         assert_eq!(&id[14..15], "4");
     }
 
-    #[test]
-    fn decisions_read_each_kind() {
-        let d = decision(&json!({ "type": "GROWTH_OPPORTUNITY", "business": { "id": "b", "name": "Cueup" }, "opportunity": { "title": "Pricing guide" } }));
-        assert_eq!((d.title.as_str(), d.business_name.as_str()), ("Pricing guide", "Cueup"));
-    }
 }
 
 /// Against a running dev API with the demo seed:

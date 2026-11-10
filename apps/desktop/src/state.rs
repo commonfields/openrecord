@@ -117,6 +117,19 @@ pub struct App {
     pub composer: TextEdit,
     pub turn: Turn,
 
+    /// The decision open in the inbox (its `key`); the first one when unset.
+    pub decision: Option<String>,
+    /// The decline reason field is open for the open decision.
+    pub declining: bool,
+    pub decline_reason: TextEdit,
+    /// A decision whose approve or decline call is in flight.
+    pub deciding: Option<String>,
+    /// Why the last decision call failed, for the decision it was about.
+    pub decision_error: Option<(String, String)>,
+    /// Re-check measurement models, loaded when a re-check is opened.
+    pub models: Load<Vec<String>>,
+    pub model: Option<String>,
+
     /// The last failure the shell itself hit, shown in a toast.
     pub notice: Option<String>,
 }
@@ -163,6 +176,13 @@ impl App {
             conversation: Load::Idle,
             composer: TextEdit::new(""),
             turn: Turn::Idle,
+            decision: None,
+            declining: false,
+            decline_reason: TextEdit::new(""),
+            deciding: None,
+            decision_error: None,
+            models: Load::Idle,
+            model: None,
             notice: None,
         }
     }
@@ -185,7 +205,72 @@ impl App {
         }
     }
 
+    /// The inbox's decisions: the business on screen's, or every business's.
+    pub fn inbox(&self) -> Vec<&Decision> {
+        self.decisions.iter().filter(|d| self.active.as_ref().is_none_or(|b| &d.business_id == b)).collect()
+    }
+
+    /// The decision open in the inbox.
+    pub fn open_decision(&self) -> Option<&Decision> {
+        let list = self.inbox();
+        self.decision.as_ref().and_then(|k| list.iter().find(|d| &d.key == k).copied()).or_else(|| list.first().copied())
+    }
+
     // ---- Actions --------------------------------------------------------
+
+    pub fn select_decision(&mut self, key: &str) {
+        if self.decision.as_deref() != Some(key) {
+            self.decision = Some(key.to_string());
+            self.declining = false;
+            self.decline_reason.clear();
+        }
+        self.load_models();
+    }
+
+    /// Fetches the re-check models the first time a re-check is open.
+    fn load_models(&mut self) {
+        let is_check = self.open_decision().is_some_and(|d| d.act == crate::decisions::Act::Check);
+        if is_check && matches!(self.models, Load::Idle | Load::Failed(_)) {
+            self.models = Load::Loading;
+            self.net.models();
+        }
+    }
+
+    pub fn choose_model(&mut self, model: &str) {
+        self.model = Some(model.to_string());
+    }
+
+    pub fn approve_decision(&mut self) {
+        let Some(d) = self.open_decision().cloned() else { return };
+        if self.deciding.is_some() || d.blocked(self.model.as_deref()).is_some() {
+            return;
+        }
+        self.decision_error = None;
+        self.deciding = Some(d.key.clone());
+        let model = (d.act == crate::decisions::Act::Check).then(|| self.model.clone()).flatten();
+        self.net.decide(d, true, model, None);
+    }
+
+    pub fn start_decline(&mut self, tx: &mut Tx) {
+        self.declining = true;
+        tx.focus("decline-reason", false);
+    }
+
+    pub fn cancel_decline(&mut self) {
+        self.declining = false;
+        self.decline_reason.clear();
+    }
+
+    pub fn confirm_decline(&mut self) {
+        let Some(d) = self.open_decision().cloned() else { return };
+        if self.deciding.is_some() {
+            return;
+        }
+        let reason = self.decline_reason.text.trim().to_string();
+        self.decision_error = None;
+        self.deciding = Some(d.key.clone());
+        self.net.decide(d, false, None, (!reason.is_empty()).then_some(reason));
+    }
 
     pub fn start(&mut self) {
         if self.screen == Screen::Restoring {
@@ -259,7 +344,10 @@ impl App {
             return;
         }
         match self.page {
-            Page::Inbox => self.net.decisions(),
+            Page::Inbox => {
+                self.net.decisions();
+                self.load_models();
+            }
             Page::Overview => {
                 self.overview = keep_or_load(&self.overview);
                 self.net.overview(id);
@@ -450,6 +538,46 @@ impl App {
                         if !conversation.is_empty() {
                             self.net.conversation(business, conversation);
                         }
+                    }
+                }
+            }
+            Reply::Decided { key, approved, result } => {
+                self.deciding = None;
+                let done = self.decisions.iter().find(|d| d.key == key).map(|d| d.done(approved));
+                match result {
+                    Ok(()) => {
+                        let list = self.inbox();
+                        let at = list.iter().position(|d| d.key == key);
+                        let next = at.and_then(|i| list.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| list.get(j)))).map(|d| d.key.clone());
+                        self.decisions.retain(|d| d.key != key);
+                        if self.decision.as_deref() == Some(key.as_str()) || self.decision.is_none() {
+                            self.decision = next;
+                        }
+                        self.declining = false;
+                        self.decline_reason.clear();
+                        self.notice = done.map(str::to_string);
+                        self.net.decisions();
+                    }
+                    Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),
+                    Err(e) => {
+                        let message = match &e {
+                            ApiError::Status(_, body) => crate::decisions::refusal(body).map(str::to_string),
+                            _ => None,
+                        }
+                        .unwrap_or_else(|| match e {
+                            ApiError::Status(409, _) => "This changed since it was prepared. It was reloaded; check it before deciding again.".into(),
+                            other => other.message(),
+                        });
+                        self.decision_error = Some((key, message));
+                        self.net.decisions();
+                    }
+                }
+            }
+            Reply::Models(r) => {
+                self.models = to_load(self.failed(r));
+                if let (Load::Ready(list), None) = (&self.models, &self.model) {
+                    if list.len() == 1 {
+                        self.model = list.first().cloned();
                     }
                 }
             }

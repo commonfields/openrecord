@@ -7,6 +7,7 @@
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
 mod api;
+mod decisions;
 mod fixtures;
 mod format;
 mod icons;
@@ -61,6 +62,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent", fixtures::agent),
     ("agent-empty", fixtures::agent_empty),
     ("inbox", fixtures::inbox),
+    ("inbox-wordpress", fixtures::inbox_wordpress),
+    ("inbox-check", fixtures::inbox_check),
+    ("inbox-decline", fixtures::inbox_decline),
     ("overview", fixtures::overview),
     ("campaigns", fixtures::campaigns),
     ("ai-answers", fixtures::ai_answers),
