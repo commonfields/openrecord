@@ -466,7 +466,11 @@ fn channel_row(t: &Theme, ch: &Channel, rule: bool) -> El {
         "PERMISSION_REQUIRED" | "RECONNECT" => (t.partial, t.partial_soft, "Needs access"),
         _ => (t.muted_foreground, t.accent, "Not connected"),
     };
-    let i: &'static rune::Icon = if ch.key == "website" { &icons::GLOBE } else { &icons::PLUG };
+    // The service's own mark, as the web's `ChannelMark` draws it; the globe for the website.
+    let mark = match crate::channel_marks::for_channel(&ch.key) {
+        Some(i) => rune::icon(i, 16.0).color(t.foreground),
+        None => ico(&icons::GLOBE, 16.0, t.muted_foreground),
+    };
     let mut r = row()
         .key(format!("channel-{}", ch.key))
         .w_full()
@@ -474,7 +478,7 @@ fn channel_row(t: &Theme, ch: &Channel, rule: bool) -> El {
         .py(14.0)
         .gap(14.0)
         .items_start()
-        .child(shadows(row().size(32.0, 32.0).radius(8.0).center().fill(t.control).child(ico(i, 16.0, t.foreground)), &t.control_shadow))
+        .child(shadows(row().size(32.0, 32.0).radius(8.0).center().fill(t.accent.alpha(0.7)).child(mark), &t.control_shadow))
         .child(
             col()
                 .grow(1.0)
@@ -487,7 +491,7 @@ fn channel_row(t: &Theme, ch: &Channel, rule: bool) -> El {
                         .child(label(ch.label.clone(), type_::SM_MEDIUM, t.foreground).truncate().min_w(0.0))
                         .child(status_chip(state, ink, soft)),
                 )
-                .child(label(ch.identity.clone().unwrap_or_default(), type_::XS, t.muted_foreground).truncate())
+                .children(ch.identity.clone().filter(|x| !x.is_empty()).map(|x| label(x, type_::XS, t.muted_foreground).truncate()))
                 .child(label(ch.note.clone(), type_::SM_13, t.muted_foreground).wrap()),
         );
     if rule {

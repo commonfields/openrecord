@@ -9,6 +9,7 @@
 mod api;
 mod brand_marks;
 mod brands;
+mod channel_marks;
 mod chat;
 mod decisions;
 mod fixtures;

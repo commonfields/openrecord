@@ -74,7 +74,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .child(col().w_full().items_center().child(col().w_full().max_w(1400.0).px(40.0).pt(32.0).pb(40.0).child(pages::view(s, t))))
+                // Full width inside the content inset, as the web's workspace pages are.
+                .child(col().w_full().px(40.0).pt(32.0).pb(40.0).child(pages::view(s, t)))
                 .scroll(ScrollSpec { stick_bottom: false });
             (page, Some(pages::ask_agent(t)))
         }

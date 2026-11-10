@@ -699,6 +699,9 @@ pub fn channels(s: &mut App) {
         ch("website", "Website", Some("northstar.test"), "DISCOVERED", "Read from the public web. Inspections find indexing problems, propose fixes and re-check the live page."),
         ch("ga4", "Google Analytics 4", None, "UNSUPPORTED", "Not configured on this server. Import daily numbers by hand instead."),
         ch("search-console", "Google Search Console", None, "UNSUPPORTED", "Google sign-in is not configured on this server, so search clicks and queries cannot be read."),
+        ch("stripe", "Stripe", Some("Northstar Inc."), "CONNECTED", "Revenue and new customers, so results are counted in money."),
+        ch("wordpress", "WordPress", None, "DISCOVERED", "Improve pages and publish posts, with your approval for each change."),
+        ch("google_ads", "Google Ads", None, "PERMISSION_REQUIRED", "Spend and conversions from your campaigns."),
     ]);
 }
 
