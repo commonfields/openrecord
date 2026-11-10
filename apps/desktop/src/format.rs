@@ -58,6 +58,14 @@ pub fn date(iso: &str) -> String {
     format!("{} {d}, {y}", MONTHS.get(m.wrapping_sub(1)).copied().unwrap_or("?"))
 }
 
+/// "Nov 6, 2026 at 14:05 UTC".
+pub fn date_time(iso: &str) -> String {
+    match iso.get(11..16) {
+        Some(hm) => format!("{} at {hm} UTC", date(iso)),
+        None => date(iso),
+    }
+}
+
 /// "5 minutes ago", "yesterday", "in 2 hours", then a date past 30 days.
 pub fn relative(iso: Option<&str>, now: i64) -> String {
     let Some(iso) = iso else { return "Never".into() };

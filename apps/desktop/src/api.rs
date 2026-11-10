@@ -250,7 +250,7 @@ impl Client {
         }
     }
 
-    fn call<T: DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> ApiResult<T> {
+    pub(crate) fn call<T: DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> ApiResult<T> {
         let mut req = self.agent.request(method, &format!("{}{}", self.base, path)).set("Accept", "application/json");
         if let Some(s) = self.session() {
             req = req.set("Cookie", &format!("{SESSION_COOKIE}={s}"));
@@ -360,6 +360,9 @@ impl Client {
         let mut body = json!({ "message": out.message, "requestId": request_id, "revision": revision, "conversationId": conversation });
         if let Some(sel) = &out.selection {
             body["selection"] = sel.clone();
+        }
+        if let Some(style) = &out.style {
+            body["style"] = json!(style);
         }
         if !out.attachments.is_empty() {
             body["attachments"] = json!(out.attachments.iter().map(|a| json!({ "name": a.name, "type": a.kind, "text": a.text })).collect::<Vec<_>>());
@@ -599,6 +602,16 @@ mod live {
         }
         eprintln!("messages: {} steps, {} sources, {} decisions, {} with a model", parts.0, parts.1, parts.2, parts.3);
         eprintln!("archived chats: {}", c.archived_chats().expect("archived chats").len());
+        let me = c.identity().expect("identity");
+        assert!(!me.account_id.is_empty());
+        let notes = c.memory(b).expect("memory");
+        let cat = c.providers().expect("providers");
+        eprintln!(
+            "settings: {} memory notes, {} computers, providers {:?}",
+            notes.len(),
+            cat.bridges.len(),
+            cat.instances.iter().map(|i| (i.name.as_str(), i.status(), i.model_count())).collect::<Vec<_>>()
+        );
         let models = c.catalog().expect("catalog");
         eprintln!("models: {:?}", models.iter().map(|m| (&m.value, &m.name, &m.brand)).collect::<Vec<_>>());
         // An unknown request has an empty journal, not an error.

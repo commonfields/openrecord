@@ -15,13 +15,13 @@ use crate::state::{App, Load, Page, Turn, View};
 use crate::theme::{Theme, hex, shadows, type_};
 use crate::ui::widgets::{CONTROL, failure, ico, label};
 
-const COLUMN: f32 = 720.0;
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
+    let column = s.prefs.chat_width.max();
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
     let messages = s.transcript();
 
-    let mut list = col().key("messages").w_full().max_w(COLUMN).gap(12.0).px(24.0).pt(24.0).pb(16.0);
+    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0);
     match &s.conversation {
         Load::Loading if messages.is_empty() => {
             list = list.child(label("Opening the chat…", type_::SM_13, t.muted_foreground).key("chat-loading"));
@@ -136,7 +136,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         if !m.text.is_empty() {
             c = c.child(
                 col()
-                    .max_w(COLUMN * 0.85)
+                    .max_w(s.prefs.chat_width.max().min(900.0) * 0.85)
                     .px(16.0)
                     .py(10.0)
                     .radius(16.0)
@@ -458,7 +458,14 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .max_h(200.0)
         .color(t.foreground)
         .on_edit(|s: &mut App| &mut s.composer)
-        .on_submit(|s: &mut App, tx| s.send_message(tx))
+        // Return sends, or with "Send with Enter" off adds a line (⌘Return sends then).
+        .on_submit(|s: &mut App, tx| {
+            if s.prefs.enter_to_send {
+                s.send_message(tx);
+            } else {
+                s.composer.insert("\n");
+            }
+        })
         .autofocus();
     // While a turn runs an empty box offers Stop; anything typed queues behind it.
     let action = if working && !has_text {
@@ -547,7 +554,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     }
     options = options.child(model_trigger(s, t, working));
 
-    let mut stack = col().w_full().max_w(COLUMN).gap(6.0);
+    let mut stack = col().w_full().max_w(s.prefs.chat_width.max()).gap(6.0);
     let matches = chat::command_matches(&s.composer.text);
     if !matches.is_empty() {
         stack = stack.child(command_menu(t, &matches));
@@ -814,7 +821,6 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         _ if options.is_empty() => Some("No agent model is ready. Connect a provider in Settings.".into()),
         _ => None,
     };
-    let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
     let manage = label("Manage providers…", type_::SM, t.foreground)
         .key("manage-providers")
         .w_full()
@@ -823,10 +829,7 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         .pb(4.0)
         .role("button")
         .cursor(Cursor::Pointer)
-        .on_press_tx(move |s: &mut App, tx| {
-            s.menu = None;
-            let _ = tx.open_url(&crate::ui::shell::web_url(&api));
-        });
+        .on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::Agent));
     let mut m = shadows(col().key("model-menu").w(336.0).padding(8.0).radius(12.0).fill(t.popover), &t.float_shadow).child(tabs).child(list);
     if let Some(st) = status {
         m = m.child(label(st, type_::XS, t.muted_foreground).px(8.0).py(12.0).wrap());

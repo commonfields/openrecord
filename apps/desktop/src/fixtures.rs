@@ -185,6 +185,47 @@ pub fn agent_archived(s: &mut App) {
     s.archived = Load::Ready(vec![chat("c9", &business("b-acme", "Acme Outdoors"), "Old launch checklist", 60 * 24 * 12, false)]);
 }
 
+fn settings(s: &mut App, page: crate::state::SettingsPage) {
+    agent(s);
+    s.settings = Some(page);
+}
+
+pub fn settings_general(s: &mut App) {
+    settings(s, crate::state::SettingsPage::General);
+}
+
+pub fn settings_agent(s: &mut App) {
+    settings(s, crate::state::SettingsPage::Agent);
+    s.memory = Load::Ready(
+        serde_json::from_value(json!([
+            { "id": "n1", "kind": "PREFERENCE", "text": "Write in plain English, no jargon.", "source": "OPERATOR", "createdAt": "2026-11-02T10:00:00Z" },
+            { "id": "n2", "kind": "DECISION", "text": "Pricing page comes before the comparison pages.", "source": "ASSISTANT", "createdAt": "2026-11-08T15:30:00Z" }
+        ]))
+        .unwrap(),
+    );
+    s.providers = Load::Ready(
+        serde_json::from_value(json!({
+            "bridges": [{ "id": "b1", "name": "This Mac", "online": true, "managed": true }, { "id": "b2", "name": "Studio iMac", "online": false }],
+            "instances": [
+                { "id": "i1", "bridgeId": "b1", "localId": "l1", "driver": "claude", "name": "Claude Code", "enabled": true, "installed": true, "version": "2.4.1", "auth": "authenticated", "state": "ready",
+                  "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }, { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5" }], "disabledModels": ["claude-haiku-5-5"] },
+                { "id": "i2", "bridgeId": "b1", "localId": "l2", "driver": "codex", "name": "Codex", "enabled": true, "installed": true, "version": "1.9.0", "auth": "unauthenticated", "state": "ready", "models": [{ "id": "gpt-5", "name": "GPT-5" }] },
+                { "id": "i3", "bridgeId": "b1", "driver": "opencode", "name": "OpenCode", "enabled": false, "installed": true, "auth": "authenticated", "state": "ready", "models": [{ "id": "a", "name": "A" }, { "id": "b", "name": "B" }] },
+                { "id": "i4", "bridgeId": "b1", "driver": "cursor", "name": "Cursor", "installed": false, "models": [] }
+            ],
+            "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+            "local": true
+        }))
+        .unwrap(),
+    );
+    s.open_models.insert("i1".into());
+}
+
+pub fn settings_account(s: &mut App) {
+    settings(s, crate::state::SettingsPage::Account);
+    s.identity = Load::Ready(crate::settings::Identity { user_id: "8f1c2d0e-user".into(), account_id: "41a7b9c3-account".into() });
+}
+
 pub fn agent_models(s: &mut App) {
     agent(s);
     s.menu = Some(Menu::Model);

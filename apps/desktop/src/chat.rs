@@ -184,6 +184,8 @@ pub struct Outgoing {
     pub message: String,
     pub selection: Option<Value>,
     pub attachments: Vec<Attachment>,
+    /// How the person wants answers written (friendly when absent).
+    pub style: Option<String>,
 }
 
 /// How much of the chat's memory the model was sent on a turn.

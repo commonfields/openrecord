@@ -29,6 +29,12 @@ pub enum Reply {
     /// The models the composer offers.
     Catalog(ApiResult<Vec<crate::chat::ModelOption>>),
     ArchivedChats(ApiResult<Vec<ChatSummary>>),
+    Identity(ApiResult<crate::settings::Identity>),
+    Memory(String, ApiResult<Vec<crate::settings::Note>>),
+    Providers(ApiResult<crate::settings::Catalog>),
+    Pairing(ApiResult<crate::settings::Pairing>),
+    /// A settings change failed; what to tell the person.
+    SettingFailed(String),
     /// A chat was archived (`true`) or restored.
     Archived { archived: bool, result: ApiResult<()> },
     /// A turn finished (or failed) in this conversation.
@@ -39,6 +45,15 @@ pub enum Reply {
     Models(ApiResult<Vec<String>>),
     /// The Overview's data for a business over a number of days.
     Insights(String, u32, ApiResult<crate::insights::Insights>),
+}
+
+/// A change to the agent's provider connections.
+pub enum ProviderChange {
+    Enable(String, bool),
+    Refresh(String),
+    Model(String, String, bool),
+    Revoke(String),
+    StartLocal,
 }
 
 pub struct Net {
@@ -177,6 +192,64 @@ impl Net {
         self.spawn(move |c, _send| {
             let _ = c.cancel(&business, &conversation);
         });
+    }
+
+    pub fn identity(&self) {
+        self.spawn(|c, send| send(Reply::Identity(c.identity())));
+    }
+
+    pub fn memory(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.memory(&business);
+            send(Reply::Memory(business, r));
+        });
+    }
+
+    /// Adds (`Some(kind, text)`) or forgets (`None`, by id) a memory note, then reloads the notes.
+    pub fn change_memory(&self, business: String, add: Option<(String, String)>, forget: Option<String>) {
+        self.spawn(move |c, send| {
+            let r = match (&add, &forget) {
+                (Some((kind, text)), _) => c.remember(&business, kind, text),
+                (_, Some(id)) => c.forget(&business, id),
+                _ => Ok(()),
+            };
+            if r.is_err() {
+                send(Reply::SettingFailed(if add.is_some() { "Couldn't save the note. Forget an old one if the memory is full." } else { "Couldn't forget the note. Try again." }.into()));
+            }
+            let list = c.memory(&business);
+            send(Reply::Memory(business, list));
+        });
+    }
+
+    pub fn providers(&self) {
+        self.spawn(|c, send| send(Reply::Providers(c.providers())));
+    }
+
+    /// Changes a provider connection, then reloads the providers and the composer's models.
+    pub fn change_provider(&self, change: ProviderChange) {
+        self.spawn(move |c, send| {
+            let (r, failed) = match &change {
+                ProviderChange::Enable(i, on) => (c.set_provider_enabled(i, *on), "Couldn't save that. The provider state may have changed. Try again."),
+                ProviderChange::Refresh(i) => (c.refresh_provider(i), "Couldn't request a refresh. Try again in a moment."),
+                ProviderChange::Model(i, m, on) => (c.choose_provider_model(i, m, *on), "Couldn't change that model. Try again."),
+                ProviderChange::Revoke(b) => (c.revoke_bridge(b), "Couldn't disconnect it. It may already be gone. Try again."),
+                ProviderChange::StartLocal => match c.start_local_bridge() {
+                    Ok(s) if s == "UNAVAILABLE" => (Ok(()), "The bridge program isn't available on this computer."),
+                    Ok(s) if s == "DISABLED" => (Ok(()), "This server isn't running in local mode (OPENRECORD_LOCAL_BRIDGE)."),
+                    Ok(_) => (Ok(()), ""),
+                    Err(e) => (Err(e), "The bridge didn't start. Try again."),
+                },
+            };
+            if r.is_err() || (matches!(change, ProviderChange::StartLocal) && !failed.is_empty()) {
+                send(Reply::SettingFailed(failed.into()));
+            }
+            send(Reply::Providers(c.providers()));
+            send(Reply::Catalog(c.catalog()));
+        });
+    }
+
+    pub fn pair(&self, name: String) {
+        self.spawn(move |c, send| send(Reply::Pairing(c.pair(&name))));
     }
 
     pub fn archived_chats(&self) {

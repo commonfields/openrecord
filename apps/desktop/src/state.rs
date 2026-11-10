@@ -98,6 +98,54 @@ pub enum Turn {
     Failed { message: String, error: String },
 }
 
+/// A section of Settings (`SettingsSection`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    General,
+    Agent,
+    Checks,
+    Shortcuts,
+    Account,
+    Privacy,
+    About,
+}
+
+impl SettingsPage {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Agent => "Agent",
+            Self::Checks => "Checks",
+            Self::Shortcuts => "Keyboard shortcuts",
+            Self::Account => "Account",
+            Self::Privacy => "Privacy and data",
+            Self::About => "About",
+        }
+    }
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::General => "Appearance, language and how the app opens.",
+            Self::Agent => "How the chat box behaves, and which agent it talks to.",
+            Self::Checks => "Defaults for running buyer questions against AI providers.",
+            Self::Shortcuts => "Move around OpenRecord without the mouse.",
+            Self::Account => "Your sign-in details and current session.",
+            Self::Privacy => "What leaves this app, and what is kept.",
+            Self::About => "Version and build information.",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Agent => "agent",
+            Self::Checks => "checks",
+            Self::Shortcuts => "shortcuts",
+            Self::Account => "account",
+            Self::Privacy => "privacy",
+            Self::About => "about",
+        }
+    }
+}
+
 /// What the AI discovery chart plots (the web's `metric` URL parameter).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)] // Partial and needs-review are reachable by link on the web, not by tab.
@@ -162,6 +210,17 @@ pub struct App {
     pub show_archived: bool,
     pub archived: Load<Vec<ChatSummary>>,
     pub chat_filter: Option<String>,
+    /// Settings, when open, and what it shows.
+    pub settings: Option<SettingsPage>,
+    pub prefs: crate::prefs::Prefs,
+    pub identity: Load<crate::settings::Identity>,
+    pub memory: Load<Vec<crate::settings::Note>>,
+    pub memory_kind: usize,
+    pub memory_text: TextEdit,
+    pub providers: Load<crate::settings::Catalog>,
+    pub open_models: std::collections::BTreeSet<String>,
+    pub pairing: Load<crate::settings::Pairing>,
+    pub settings_error: Option<String>,
     pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
@@ -244,6 +303,16 @@ impl App {
             show_archived: false,
             archived: Load::Idle,
             chat_filter: None,
+            settings: None,
+            prefs: crate::prefs::Prefs::load(),
+            identity: Load::Idle,
+            memory: Load::Idle,
+            memory_kind: 0,
+            memory_text: TextEdit::new(""),
+            providers: Load::Idle,
+            open_models: Default::default(),
+            pairing: Load::Idle,
+            settings_error: None,
             insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
@@ -386,7 +455,13 @@ impl App {
         self.channels = Load::Idle;
         self.campaigns = Load::Idle;
         self.insights = Load::Idle;
+        self.memory = Load::Idle;
         self.new_chat();
+        // A business opens on the agent or its Overview, as the person chose.
+        if self.prefs.landing == crate::prefs::Landing::Today {
+            self.view = View::Workspace;
+            self.page = Page::Overview;
+        }
         self.load_business();
     }
 
@@ -551,6 +626,88 @@ impl App {
     }
 
     /// Stops the turn running in this chat.
+    // ---- Settings ---------------------------------------------------------
+
+    pub fn open_settings(&mut self, page: SettingsPage) {
+        self.menu = None;
+        self.settings = Some(page);
+        self.settings_error = None;
+        self.load_settings(page);
+    }
+
+    pub fn show_settings(&mut self, page: SettingsPage) {
+        self.settings = Some(page);
+        self.settings_error = None;
+        self.load_settings(page);
+    }
+
+    fn load_settings(&mut self, page: SettingsPage) {
+        match page {
+            SettingsPage::Account => {
+                self.identity = keep_or_load(&self.identity);
+                self.net.identity();
+            }
+            SettingsPage::Agent => {
+                self.providers = keep_or_load(&self.providers);
+                self.net.providers();
+                if let Some(b) = self.active.clone() {
+                    self.memory = keep_or_load(&self.memory);
+                    self.net.memory(b);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Changes a preference and saves it.
+    pub fn set_pref(&mut self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
+        f(&mut self.prefs);
+        self.prefs.save();
+    }
+
+    pub fn add_memory(&mut self) {
+        let text = self.memory_text.text.trim().to_string();
+        let Some(b) = self.active.clone() else { return };
+        if text.is_empty() {
+            return;
+        }
+        let kind = crate::settings::NOTE_KINDS[self.memory_kind % crate::settings::NOTE_KINDS.len()].0.to_string();
+        self.memory_text.clear();
+        self.net.change_memory(b, Some((kind, text)), None);
+    }
+
+    pub fn forget_memory(&mut self, id: &str) {
+        if let Some(b) = self.active.clone() {
+            if let Load::Ready(list) = &mut self.memory {
+                list.retain(|n| n.id != id);
+            }
+            self.net.change_memory(b, None, Some(id.to_string()));
+        }
+    }
+
+    pub fn change_provider(&mut self, change: crate::net::ProviderChange) {
+        self.settings_error = None;
+        // Switches answer at once; the reload confirms them.
+        if let Load::Ready(cat) = &mut self.providers {
+            match &change {
+                crate::net::ProviderChange::Enable(id, on) => cat.instances.iter_mut().filter(|i| &i.id == id).for_each(|i| i.enabled = *on),
+                crate::net::ProviderChange::Model(id, m, on) => cat.instances.iter_mut().filter(|i| &i.id == id).for_each(|i| {
+                    i.disabled_models.retain(|x| x != m);
+                    if !on {
+                        i.disabled_models.push(m.clone());
+                    }
+                }),
+                _ => {}
+            }
+        }
+        self.net.change_provider(change);
+    }
+
+    pub fn new_pairing(&mut self) {
+        self.pairing = Load::Loading;
+        self.net.pair("Another computer".into());
+    }
+
     pub fn toggle_archived(&mut self) {
         self.show_archived = !self.show_archived;
         if self.show_archived {
@@ -661,7 +818,7 @@ impl App {
             _ => None,
         };
         self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
-        let out = crate::chat::Outgoing { message: text, selection: self.chosen_model().and_then(|m| m.selection()), attachments: std::mem::take(&mut self.attachments) };
+        let out = crate::chat::Outgoing { message: text, selection: self.chosen_model().and_then(|m| m.selection()), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
         self.attach_error = None;
         self.net.send(business, conversation, out);
         tx.scroll_to_bottom("transcript");
@@ -783,6 +940,19 @@ impl App {
             }
             Reply::Catalog(r) => self.catalog = to_load(self.failed(r)),
             Reply::ArchivedChats(r) => self.archived = to_load(self.failed(r)),
+            Reply::Identity(r) => self.identity = to_load(self.failed(r)),
+            Reply::Memory(b, r) if here(self, &b) => self.memory = to_load(self.failed(r)),
+            Reply::Memory(..) => {}
+            Reply::Providers(r) => {
+                let r = self.failed(r);
+                // A failed refresh keeps the list it had and says it may be stale.
+                match (&self.providers, r) {
+                    (Load::Ready(_), Err(e)) => self.settings_error = Some(format!("The list may be stale ({e}).")),
+                    (_, r) => self.providers = to_load(r),
+                }
+            }
+            Reply::Pairing(r) => self.pairing = to_load(self.failed(r)),
+            Reply::SettingFailed(e) => self.settings_error = Some(e),
             Reply::Archived { archived, result, .. } => {
                 if let Err(e) = self.failed(result) {
                     if !e.is_empty() {

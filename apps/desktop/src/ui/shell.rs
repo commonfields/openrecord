@@ -148,7 +148,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             Page::Inbox => (&icons::INBOX, s.waiting() as i64),
             Page::Overview => (&icons::CHART_COLUMN, 0),
             Page::Campaigns => (&icons::BRIEFCASE, 0),
-            Page::AiAnswers => (&icons::CIRCLE_ALERT, s.attention()),
+            Page::AiAnswers => (&icons::CIRCLE_ALERT, if s.prefs.show_issue_count { s.attention() } else { 0 }),
             Page::Channels => (&icons::PLUG, 0),
         };
         let mut link = row()
@@ -533,6 +533,7 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             let m = menu(t, "account-menu-list", width)
                 .child(head)
                 .child(separator(t))
+                .child(menu_row(t, "open-settings".into(), ico(&icons::SETTINGS, 16.0, t.muted_foreground), "Settings", false).help_keys(["⌘", ","]).on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::General)))
                 .child(menu_row(t, "open-web".into(), ico(&icons::EXTERNAL_LINK, 16.0, t.muted_foreground), "Open in the browser", false).on_press_tx(move |s: &mut App, tx| {
                     s.menu = None;
                     let _ = tx.open_url(&web_url(&api));
