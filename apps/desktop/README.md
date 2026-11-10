@@ -40,13 +40,26 @@ to a release. The app opened from Finder talks to `http://localhost:3001`.
 - Sign in, with the demo-account shortcut.
 - The shell: business switcher, the Agent and Workspace tabs, breadcrumbs, a
   sidebar that collapses to a rail (⌘B), and the account menu.
-- Agent: chat history across businesses, transcripts with Markdown replies,
-  and sending a message, which follows the run until it settles.
-- Workspace: Inbox (approve or decline every kind of decision), the Overview with all seven sections (Summary, Performance, Revenue, Funnel, Events, Realtime, AI discovery) and their charts, Campaigns, AI answers
-  and Channels.
+- Agent: chat history across businesses, transcripts with Markdown replies in
+  Rune's agent timeline ("Thought for 4s", "Used 3 tools", each folding open,
+  a "Working" line while a turn runs, helper tasks as chips), charts the agent
+  writes in ```chart blocks (bar, line, donut and stat tiles, each plot with a
+  table view), and a compact model picker with search.
+- The composer: a "/" menu built on Rune's `PopupList` with OpenRecord's
+  commands and the playbooks (built-in SEO, AEO and GEO ones and the account's
+  own), driven by the arrows, Tab, Return and Escape; a "+" menu to save the
+  draft as a playbook, share the chat by read-only link, attach files and
+  manage providers; and automatic follow-ups by the model picker. The agent's
+  skills are chosen by the server for each turn, so the desktop gets them as
+  the web does.
+- Workspace: Inbox (approve or decline every kind of decision), the Overview
+  with all seven sections and their charts, Campaigns, AI answers (open a claim
+  to see the answer, its sources and linked facts, record a verdict, and log
+  actions) and Channels.
+- Settings, with all seven sections.
 
-Settings, connecting accounts and business setup stay on
-the web for now. "Open in the browser" in the account menu goes there.
+Connecting accounts, business setup and the evidence pages stay on the web for
+now. "Open in the browser" in the account menu goes there.
 
 Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 Agent, ⌘2 Workspace, ⌘B sidebar.
 
@@ -57,7 +70,7 @@ Every screen has a scene built from fixture data, with no network:
 ```sh
 cargo build
 ./target/debug/openrecord-desktop --snap agent.png --scene agent [--theme dark] [--chrome]
-# scenes: signin agent agent-empty inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers channels collapsed business-menu
+# scenes: signin agent agent-empty agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
 ```
 
 `--chrome` draws the traffic lights and reports any element under them.

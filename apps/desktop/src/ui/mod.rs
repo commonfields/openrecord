@@ -1,6 +1,7 @@
 //! The window's view: sign in, or the workspace shell around the page on screen.
 
 mod agent;
+mod answer;
 mod charts;
 mod discovery;
 mod overview;
@@ -8,7 +9,10 @@ mod pages;
 mod shell;
 mod settings;
 mod signin;
+mod visual;
 pub mod widgets;
+
+pub(crate) use shell::web_url;
 
 use rune::{Cursor, Cx, El, ScrollSpec, col, row};
 use rune_kit::{Kit, PaletteSeed};
@@ -39,6 +43,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if s.screen == Screen::Workspace {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
+        }
+        if s.view == View::Agent && s.active.is_some() && s.settings.is_none() {
+            agent::layers(s, &t, &k, &mut layers);
         }
         if let Some(page) = s.settings {
             layers.extend(settings::view(s, &t, &k, page));

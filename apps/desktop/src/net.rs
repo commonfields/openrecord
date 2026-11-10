@@ -43,6 +43,20 @@ pub enum Reply {
     Decided { key: String, approved: bool, result: ApiResult<()> },
     /// The models a re-check can run on.
     Models(ApiResult<Vec<String>>),
+    /// One AI answer's claim opened for review (`true`: facts and actions loaded too).
+    Answer(String, String, ApiResult<(crate::api::AnswerDetail, bool)>),
+    /// A verdict was recorded on a claim (or the call failed).
+    Judged { claim: String, verdict: String, result: ApiResult<()> },
+    /// An action was recorded for a claim (or the call failed).
+    ActionRecorded { claim: String, result: ApiResult<()> },
+    /// The "/" menu's playbooks for a business.
+    Playbooks(Option<String>, ApiResult<Vec<crate::chat::Playbook>>),
+    /// A playbook was saved (`Some(name)`) or deleted, or the call failed.
+    PlaybookChanged { saved: Option<String>, result: ApiResult<()> },
+    /// A chat's read-only links, and a link just made (shown once).
+    Shares { conversation: String, created: Option<ApiResult<String>>, list: ApiResult<Vec<crate::api::Share>> },
+    /// A business's follow-up policy (read, or as a change left it).
+    Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
     Insights(String, u32, ApiResult<crate::insights::Insights>),
 }
@@ -160,6 +174,79 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.issues(&business);
             send(Reply::Issues(business, r));
+        });
+    }
+
+    pub fn answer(&self, business: String, claim: String) {
+        self.spawn(move |c, send| {
+            let r = c.answer(&business, &claim);
+            send(Reply::Answer(business, claim, r));
+        });
+    }
+
+    /// Records a verdict, then reloads the claim list and the counts.
+    pub fn judge(&self, business: String, claim: String, verdict: String, facts: Vec<String>, notes: Option<String>) {
+        self.spawn(move |c, send| {
+            let result = c.judge(&claim, &verdict, &facts, notes.as_deref());
+            let ok = result.is_ok();
+            send(Reply::Judged { claim: claim.clone(), verdict, result });
+            if ok {
+                send(Reply::Issues(business.clone(), c.issues(&business)));
+                send(Reply::Overview(business.clone(), c.overview(&business)));
+            }
+        });
+    }
+
+    pub fn record_action(&self, business: String, claim: String, kind: String, target: String, notes: Option<String>) {
+        self.spawn(move |c, send| {
+            let result = c.record_action(&business, &claim, &kind, &target, notes.as_deref());
+            send(Reply::ActionRecorded { claim, result });
+        });
+    }
+
+    pub fn playbooks(&self, business: Option<String>) {
+        self.spawn(move |c, send| {
+            let r = c.playbooks(business.as_deref());
+            send(Reply::Playbooks(business, r));
+        });
+    }
+
+    /// Saves (`Some(title, prompt)`) or deletes a playbook, then reloads the list.
+    pub fn change_playbook(&self, business: Option<String>, name: String, save: Option<(String, String)>) {
+        self.spawn(move |c, send| {
+            let result = c.change_playbook(&name, save.as_ref().map(|(t, p)| (t.as_str(), p.as_str())));
+            send(Reply::PlaybookChanged { saved: save.is_some().then(|| name.clone()), result });
+            send(Reply::Playbooks(business.clone(), c.playbooks(business.as_deref())));
+        });
+    }
+
+    /// Reads a chat's links; `create` makes one first, `revoke` ends one first.
+    pub fn shares(&self, business: String, conversation: String, create: bool, revoke: Option<String>) {
+        self.spawn(move |c, send| {
+            let created = create.then(|| c.create_share(&business, &conversation));
+            if let Some(id) = &revoke {
+                if let Err(e) = c.revoke_share(&business, &conversation, id) {
+                    send(Reply::Shares { conversation: conversation.clone(), created: Some(Err(e)), list: c.shares(&business, &conversation) });
+                    return;
+                }
+            }
+            let list = c.shares(&business, &conversation);
+            send(Reply::Shares { conversation, created, list });
+        });
+    }
+
+    pub fn followups(&self, business: String) {
+        self.spawn(move |c, send| {
+            let result = c.followups(&business);
+            send(Reply::Followups { business, changed: false, result });
+        });
+    }
+
+    /// Turns follow-ups on in a chat (`Some(conversation, grant, model)`) or pauses them.
+    pub fn configure_followups(&self, business: String, enable: Option<(String, Option<String>, crate::followups::Model)>) {
+        self.spawn(move |c, send| {
+            let result = c.configure_followups(&business, enable.as_ref().map(|(conv, grant, m)| (conv.as_str(), grant.as_deref(), m)));
+            send(Reply::Followups { business, changed: true, result });
         });
     }
 

@@ -134,16 +134,78 @@ fn models() -> Vec<crate::chat::ModelOption> {
         "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
         "instances": [
             { "id": "i1", "driver": "claude", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
-              "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }] },
+              "models": [{ "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "reasoningEfforts": ["low", "medium", "high", "xhigh"] }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "reasoningEfforts": ["low", "medium", "high", "xhigh"] }] },
             { "id": "i2", "driver": "codex", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
               "models": [{ "id": "gpt-5", "name": "GPT-5" }] }
         ]
     }))
 }
 
+/// The reasoning effort picker open, "High" picked.
+pub fn agent_reasoning(s: &mut App) {
+    agent(s);
+    s.reasoning = Some(("i1:claude-sonnet-5-5".into(), "high".into()));
+    s.menu = Some(Menu::Reasoning);
+}
+
+fn msg(v: serde_json::Value) -> Message {
+    serde_json::from_value(v).expect("fixture message")
+}
+
+/// A reply that answers with charts: bars, a line, a donut and stat tiles.
+pub fn agent_chart(s: &mut App) {
+    agent(s);
+    let text = [
+        "Trial sign-ups rose after the pricing page changed.",
+        "```chart",
+        r#"{"type":"stats","title":"Last 30 days","stats":[{"label":"Trial sign-ups","value":184,"hint":"Up 22% on the month before"},{"label":"Conversion","value":"3.1%"},{"label":"From AI answers","value":"41","hint":"Visits that named an assistant"}]}"#,
+        "```",
+        "```chart",
+        r#"{"type":"bar","title":"Sign-ups by week","labels":["W1","W2","W3","W4","W5","W6"],"series":[{"name":"Sign-ups","values":[28,31,26,39,44,47]}]}"#,
+        "```",
+        "```chart",
+        r#"{"type":"line","title":"Visits from search and AI answers","labels":["Oct 6","Oct 13","Oct 20","Oct 27","Nov 3","Nov 10"],"series":[{"name":"Search","values":[410,436,402,470,512,540]},{"name":"AI answers","values":[22,25,null,38,52,61]}],"note":"No AI answer data for Oct 20."}"#,
+        "```",
+        "```chart",
+        r#"{"type":"donut","title":"Where trials came from","unit":"%","labels":["Search","AI answers","Direct","Referral","Ads"],"series":[{"name":"Share","values":[46,22,17,9,6]}]}"#,
+        "```",
+        "The largest gain came from people who asked an assistant about pricing.",
+    ]
+    .join("\n");
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.push(msg(json!({ "role": "user", "text": "How did trials change after the pricing update? Show me." })));
+        c.messages.push(msg(json!({ "role": "agent", "text": text, "durationMs": 9000 })));
+    }
+}
+
+/// Only the charts reply, so a snapshot shows its top.
+pub fn agent_chart_top(s: &mut App) {
+    agent_chart(s);
+    if let Load::Ready(c) = &mut s.conversation {
+        let n = c.messages.len();
+        c.messages.drain(..n - 1);
+        // Stop after the bar chart (the fourth fence), so the stats and bars show.
+        let text = &c.messages[0].text;
+        let cut = text.match_indices("```").nth(3).map_or(text.len(), |(i, _)| i + 3);
+        c.messages[0].text = text[..cut].to_string();
+    }
+}
+
+/// The same reply with the line chart shown as a table.
+pub fn agent_chart_table(s: &mut App) {
+    agent_chart(s);
+    let n = match &s.conversation {
+        Load::Ready(c) => c.messages.len() - 1,
+        _ => 0,
+    };
+    s.visual_tables.insert(format!("visual-{n}-3"));
+}
+
 pub fn agent_open_log(s: &mut App) {
     agent(s);
-    s.open_logs.insert(1);
+    s.open_logs.insert((1, 0));
+    s.open_logs.insert((1, 1));
+    s.open_logs.insert((3, 0));
     s.open_sources.insert(1);
 }
 
@@ -229,6 +291,96 @@ pub fn settings_account(s: &mut App) {
 pub fn agent_models(s: &mut App) {
     agent(s);
     s.menu = Some(Menu::Model);
+}
+
+/// A catalog as long as a real one: the list scrolls past eight models.
+pub fn agent_models_many(s: &mut App) {
+    agent(s);
+    s.catalog = Load::Ready(crate::chat::model_options(&json!({
+        "hosted": { "provider": "gemini", "model": "gemini-3-flash" },
+        "instances": [
+            { "id": "i1", "driver": "claude", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "claude-fable-5-1", "name": "Claude Fable 5.1" }, { "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }, { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }, { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5" }] },
+            { "id": "i2", "driver": "codex", "name": "This Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "gpt-5", "name": "GPT-5" }, { "id": "gpt-5-mini", "name": "GPT-5 mini" }, { "id": "gpt-5-codex", "name": "GPT-5 Codex" }] },
+            { "id": "i3", "driver": "claude", "name": "Studio Mac", "enabled": true, "installed": true, "auth": "authenticated", "state": "ready",
+              "models": [{ "id": "claude-opus-5-5", "name": "Claude Opus 5.5" }, { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5" }] }
+        ]
+    })));
+    s.menu = Some(Menu::Model);
+}
+
+fn playbooks() -> Vec<crate::chat::Playbook> {
+    let p = |n: &str, t: &str, area: &str, built_in: bool| crate::chat::Playbook { name: n.into(), title: t.into(), prompt: format!("{t} for {{business}}."), area: area.into(), built_in };
+    // The built-in playbooks the API serves, in its order, and one of the account's own.
+    let mut list: Vec<_> = [
+        "seo-audit", "keyword-gaps", "aeo-check", "ai-crawlers", "geo-citations", "schema-kit", "rank-watch",
+        "entity-consistency", "competitor-scan", "daily-loop", "paying-users", "outcome-review", "portfolio-digest", "weekly-review",
+    ]
+    .iter()
+    .map(|n| p(n, n, "SEO", true))
+    .collect();
+    list.push(p("sales-recap", "Monday sales recap", "", false));
+    list
+}
+
+/// The "/" menu after typing "/s": commands first, then playbooks.
+pub fn agent_commands(s: &mut App) {
+    agent(s);
+    s.playbooks = playbooks();
+    s.composer.replace_text("/");
+    s.command_index = 5;
+}
+
+/// The "+" menu open over the composer.
+pub fn agent_actions(s: &mut App) {
+    agent(s);
+    s.composer.replace_text("Write a weekly summary of Northstar Analytics's sign-ups.");
+    s.chat_actions = true;
+}
+
+pub fn agent_save_playbook(s: &mut App) {
+    agent(s);
+    s.playbooks = playbooks();
+    s.save_playbook = Some(crate::state::SavePlaybook {
+        title: rune::TextEdit::new("Weekly sign-ups summary"),
+        name: rune::TextEdit::new(""),
+        prompt: rune::TextEdit::new("Write a weekly summary of {business}'s sign-ups."),
+        busy: false,
+        error: None,
+    });
+}
+
+pub fn agent_share(s: &mut App) {
+    agent(s);
+    let share = |id: &str, hint: &str, viewed: Option<String>| crate::api::Share { id: id.into(), hint: hint.into(), expires_at: Some("2026-11-24T10:00:00Z".into()), last_viewed_at: viewed, active: true };
+    s.share = Some(crate::state::ShareChat {
+        conversation: "c1".into(),
+        shares: Load::Ready(vec![share("s1", "x7Qa", Some("2026-11-09T15:20:00Z".into())), share("s2", "Lm2c", None)]),
+        link: Some("http://localhost:3000/shared/6f1c0b8e7a2d4c35Lm2c".into()),
+        busy: false,
+        error: None,
+    });
+}
+
+/// The follow-ups dialog, enabled in this chat, with a recent review.
+pub fn agent_followups(s: &mut App) {
+    agent(s);
+    s.followups = Load::Ready(
+        serde_json::from_value(json!({
+            "policy": { "kind": "configured", "enabled": true, "grantId": "g1", "conversationId": "c1", "selection": { "instanceId": "i1", "model": "claude-opus-5-5" }, "provider": "claude", "model": "claude-opus-5-5", "updatedAt": "2026-11-09T10:00:00Z" },
+            "limits": { "wakeUpsPer24Hours": 1, "modelSteps": 3, "toolCalls": 4, "timeoutSeconds": 120, "readOnly": true },
+            "wakes": [{ "id": "w1", "noteId": "n1", "conversationId": "c1", "status": "COMPLETED", "startedAt": "2026-11-10T07:00:00Z", "finishedAt": "2026-11-10T07:01:10Z" }]
+        }))
+        .expect("fixture follow-ups"),
+    );
+    s.followups_open = true;
+}
+
+/// A turn that failed: its note and Retry.
+pub fn agent_failed(s: &mut App) {
+    agent(s);
+    s.turn = Turn::Failed { message: "And what does setup take for a team of five?".into(), error: "The provider didn't answer. Your message was kept.".into() };
 }
 
 pub fn agent_empty(s: &mut App) {
@@ -433,6 +585,16 @@ pub fn ai_answers(s: &mut App) {
         question_prompt: Some(q.into()),
         collected_at: ago(60 * 4),
         state: state.into(),
+        observation_id: format!("o-{id}"),
+        verdict: match state {
+            "WRONG" => Some("CONTRADICTED".into()),
+            "PARTIAL" => Some("PARTIAL".into()),
+            "UNKNOWN" => Some("INSUFFICIENT_EVIDENCE".into()),
+            _ => None,
+        },
+        notes: None,
+        facts: vec![],
+        citation_evidence: vec![],
     };
     s.issues = Load::Ready(vec![
         issue("i1", "WRONG", "Northstar does not integrate with Salesforce.", "Does Northstar integrate with Salesforce?", "Northstar does not integrate with Salesforce. Teams usually export CSV files instead."),
@@ -440,6 +602,47 @@ pub fn ai_answers(s: &mut App) {
         issue("i3", "UNKNOWN", "Setup takes about two weeks.", "How long does Northstar take to set up?", "Most teams report that setup takes about two weeks."),
         issue("i4", "NEEDS_REVIEW", "Northstar is SOC 2 certified.", "Is Northstar secure?", "Yes. Northstar is SOC 2 certified and encrypts data at rest."),
     ]);
+}
+
+fn answer_facts() -> Vec<crate::api::Fact> {
+    let f = |id: &str, p: &str, v: &str| crate::api::Fact { id: id.into(), subject: "Northstar".into(), predicate: p.into(), value_text: v.into(), status: "ACTIVE".into(), version: 1 };
+    vec![f("f1", "monthly_price", "39 USD"), f("f2", "integrations", "Salesforce, HubSpot, Slack"), f("f3", "setup_time", "One day")]
+}
+
+/// A wrong claim open, with its verdict, linked fact, sources and an action.
+pub fn ai_answer(s: &mut App) {
+    ai_answers(s);
+    let mut issue = s.issues.ready().unwrap()[0].clone();
+    issue.facts = vec![crate::api::IssueFact { id: "f2".into(), predicate: "integrations".into(), value_text: "Salesforce, HubSpot, Slack".into(), version: 1 }];
+    issue.notes = Some("The integrations page was updated in March; the assistant is reading an old review.".into());
+    issue.citation_evidence = vec![
+        crate::api::CitationEvidence { uri: "https://www.example-reviews.test/northstar-2024".into(), title: Some("Northstar review (2024)".into()), attributed: true },
+        crate::api::CitationEvidence { uri: "https://northstar.test/integrations".into(), title: None, attributed: false },
+    ];
+    let actions = vec![crate::api::Intervention {
+        id: "a1".into(),
+        kind: "THIRD_PARTY_CORRECTION_REQUESTED".into(),
+        target: "https://www.example-reviews.test/northstar-2024".into(),
+        performed_at: ago(60 * 2),
+        notes: Some("Asked the editor to update the integrations section.".into()),
+        supersedes_id: None,
+    }];
+    let mut a = crate::state::AnswerView::fixture(issue.claim_id.clone());
+    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions });
+    s.answer = Some(a);
+}
+
+/// An unreviewed claim open on the verdict form, one fact ticked.
+pub fn ai_answer_review(s: &mut App) {
+    ai_answers(s);
+    let issue = s.issues.ready().unwrap()[3].clone();
+    let mut a = crate::state::AnswerView::fixture(issue.claim_id.clone());
+    a.reviewing = true;
+    a.verdict = Some("INSUFFICIENT_EVIDENCE");
+    a.facts.insert("f1".into());
+    a.recording = true;
+    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions: vec![] });
+    s.answer = Some(a);
 }
 
 pub fn channels(s: &mut App) {
