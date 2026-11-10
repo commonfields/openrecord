@@ -20,6 +20,21 @@ The session cookie is kept in `~/Library/Application Support/OpenRecord/session`
 (mode 600), so a relaunch stays signed in. Sign out from the account menu to
 remove it.
 
+## Install as an app
+
+```sh
+scripts/bundle.sh            # dist/OpenRecord.app and dist/OpenRecord-<version>.dmg
+scripts/bundle.sh --debug    # same, from the dev build (much faster to compile)
+cp -R dist/OpenRecord.app /Applications/
+```
+
+A bundle built on this Mac is ad-hoc signed and opens normally here. A copy
+downloaded onto another Mac needs a Developer ID signature and notarization to
+open without a warning: set `MACOS_SIGN_IDENTITY` (and `APPLE_ID`,
+`APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` to notarize). The `Desktop` workflow
+builds an Intel + Apple Silicon `.dmg` on GitHub; a `desktop-v*` tag attaches it
+to a release. The app opened from Finder talks to `http://localhost:3001`.
+
 ## What it covers
 
 - Sign in, with the demo-account shortcut.
