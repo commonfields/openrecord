@@ -7,8 +7,9 @@ Practical notes for running this checkout locally. Architecture lives in
 
 - Web first: complete and validate the current web product before starting the
   native desktop client. The legacy `tauri-app` was removed on 2026-11-06.
-  Future desktop work starts fresh with Rust + Rune (not GPUI or Tauri); do not
-  scaffold it until requested. The separate legacy Rust CLI remains untouched.
+  The macOS client is `apps/desktop`: Rust + Rune (not GPUI or Tauri), a
+  standalone Cargo package that reads the same API as the web app; see its
+  README. The separate legacy Rust CLI remains untouched.
 - Canonical local checkout: `/Users/wira/openrecord`, normally on merged `main`.
   Keep development in this directory; use temporary branches here for PRs,
   then return to `main`. Do not create more worktrees unless explicitly asked.
