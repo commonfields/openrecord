@@ -232,7 +232,7 @@ impl Client {
         res.into_json::<T>().map_err(|e| ApiError::Decode(e.to_string()))
     }
 
-    fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
+    pub(crate) fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
         self.call("GET", path, None)
     }
 
@@ -517,6 +517,13 @@ mod live {
         let campaigns = c.campaigns(b).expect("campaigns");
         let decisions = c.decisions().expect("decisions");
         let chats = c.chats().expect("chats");
+        for days in crate::insights::PERIODS {
+            let i = c.insights(b, days).expect("insights");
+            assert!(i.analytics.is_ok(), "analytics for {days} days: {:?}", i.analytics);
+            if days == 30 {
+                eprintln!("insights: analytics {:?}, goal {:?}, {} initiatives, health {:?}, search {:?}", i.analytics.as_ref().map(|a| (a.checks, a.daily.len())), i.goal.as_ref().map(Option::is_some), i.initiatives.len(), i.health, i.search);
+            }
+        }
         eprintln!(
             "{} businesses, overview {overview:?}, {} issues, {} channels, {} campaigns, {} decisions, {} chats",
             businesses.len(), issues.len(), channels.len(), campaigns.len(), decisions.len(), chats.len()

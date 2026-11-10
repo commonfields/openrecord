@@ -3,6 +3,7 @@
 use rune::{TextEdit, Tx};
 
 use crate::api::{ApiError, ApiResult, Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview};
+use crate::insights::{Insights, Section};
 use crate::net::{Net, Reply};
 
 /// Something loaded from the API for the business on screen.
@@ -111,6 +112,10 @@ pub struct App {
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
+    /// The Overview section on screen and its period in days.
+    pub section: Section,
+    pub days: u32,
+    pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
     pub conversation: Load<Conversation>,
@@ -172,6 +177,9 @@ impl App {
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
+            section: Section::Summary,
+            days: 30,
+            insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
             composer: TextEdit::new(""),
@@ -312,6 +320,7 @@ impl App {
         self.issues = Load::Idle;
         self.channels = Load::Idle;
         self.campaigns = Load::Idle;
+        self.insights = Load::Idle;
         self.new_chat();
         self.load_business();
     }
@@ -327,6 +336,24 @@ impl App {
         self.view = view;
         if view == View::Workspace {
             self.load_page();
+        }
+    }
+
+    pub fn show_section(&mut self, section: Section) {
+        self.section = section;
+        if self.page != Page::Overview || self.view != View::Workspace {
+            self.show_page(Page::Overview);
+        }
+    }
+
+    pub fn set_days(&mut self, days: u32) {
+        if self.days == days {
+            return;
+        }
+        self.days = days;
+        if let Some(id) = self.active.clone() {
+            self.insights = Load::Loading;
+            self.net.insights(id, days);
         }
     }
 
@@ -350,7 +377,9 @@ impl App {
             }
             Page::Overview => {
                 self.overview = keep_or_load(&self.overview);
-                self.net.overview(id);
+                self.net.overview(id.clone());
+                self.insights = keep_or_load(&self.insights);
+                self.net.insights(id, self.days);
             }
             Page::Campaigns => {
                 self.campaigns = keep_or_load(&self.campaigns);
@@ -573,6 +602,8 @@ impl App {
                     }
                 }
             }
+            Reply::Insights(b, days, r) if here(self, &b) && days == self.days => self.insights = to_load(self.failed(r)),
+            Reply::Insights(..) => {}
             Reply::Models(r) => {
                 self.models = to_load(self.failed(r));
                 if let (Load::Ready(list), None) = (&self.models, &self.model) {

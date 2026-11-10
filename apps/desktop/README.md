@@ -42,10 +42,10 @@ to a release. The app opened from Finder talks to `http://localhost:3001`.
   sidebar that collapses to a rail (⌘B), and the account menu.
 - Agent: chat history across businesses, transcripts with Markdown replies,
   and sending a message, which follows the run until it settles.
-- Workspace: Inbox (approve or decline every kind of decision), Overview counts, Campaigns, AI answers
+- Workspace: Inbox (approve or decline every kind of decision), the Overview with all seven sections (Summary, Performance, Revenue, Funnel, Events, Realtime, AI discovery) and their charts, Campaigns, AI answers
   and Channels.
 
-The results charts, settings and business setup stay on
+Settings, connecting accounts and business setup stay on
 the web for now. "Open in the browser" in the account menu goes there.
 
 Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 Agent, ⌘2 Workspace, ⌘B sidebar.
@@ -57,7 +57,7 @@ Every screen has a scene built from fixture data, with no network:
 ```sh
 cargo build
 ./target/debug/openrecord-desktop --snap agent.png --scene agent [--theme dark] [--chrome]
-# scenes: signin agent agent-empty inbox overview campaigns ai-answers channels collapsed business-menu
+# scenes: signin agent agent-empty inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers channels collapsed business-menu
 ```
 
 `--chrome` draws the traffic lights and reports any element under them.

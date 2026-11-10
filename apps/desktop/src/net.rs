@@ -30,6 +30,8 @@ pub enum Reply {
     Decided { key: String, approved: bool, result: ApiResult<()> },
     /// The models a re-check can run on.
     Models(ApiResult<Vec<String>>),
+    /// The Overview's data for a business over a number of days.
+    Insights(String, u32, ApiResult<crate::insights::Insights>),
 }
 
 pub struct Net {
@@ -111,6 +113,13 @@ impl Net {
         self.spawn(move |c, send| {
             let result = c.decide(&d, approve, model.as_deref(), reason.as_deref());
             send(Reply::Decided { key: d.key.clone(), approved: approve, result });
+        });
+    }
+
+    pub fn insights(&self, business: String, days: u32) {
+        self.spawn(move |c, send| {
+            let r = c.insights(&business, days);
+            send(Reply::Insights(business, days, r));
         });
     }
 

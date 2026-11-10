@@ -14,7 +14,7 @@ use crate::ui::widgets::{CONTROL, Variant, button, card, empty_state, failure, i
 pub fn view(s: &App, t: &Theme) -> El {
     let body = match s.page {
         Page::Inbox => inbox(s, t),
-        Page::Overview => overview(s, t),
+        Page::Overview => crate::ui::overview::view(s, t),
         Page::Campaigns => campaigns(s, t),
         Page::AiAnswers => ai_answers(s, t),
         Page::Channels => channels(s, t),
@@ -301,38 +301,6 @@ fn stat(t: &Theme, key: &str, name: &str, value: String, dot: Option<Color>) -> 
             .child(label(value, type_::TITLE.features("'tnum' 1"), t.foreground)),
         &t.card_shadow,
     )
-}
-
-fn overview(s: &App, t: &Theme) -> El {
-    let header = page_header(t, "Overview", "How AI assistants answer about this business, from the checks run so far.");
-    let body = match &s.overview {
-        Load::Ready(o) => {
-            let now = format::now();
-            row()
-                .w_full()
-                .gap(12.0)
-                .flex_wrap()
-                .child(stat(t, "stat-attention", "Needs attention", o.needs_attention.to_string(), Some(t.wrong)))
-                .child(stat(t, "stat-unreviewed", "Not reviewed yet", o.unreviewed.to_string(), Some(t.review)))
-                .child(stat(t, "stat-completed", "Checks completed", o.completed.to_string(), Some(t.supported)))
-                .child(stat(t, "stat-last", "Last checked", format::relative(o.last_checked.as_deref(), now), None))
-        }
-        Load::Failed(e) => failure(t, "overview-failed", e, |s: &mut App| s.refresh()),
-        _ => skeleton(t, 1),
-    };
-    let next = card(t)
-        .px(20.0)
-        .py(18.0)
-        .gap(10.0)
-        .child(label("Results, revenue and AI discovery", type_::SM_MEDIUM, t.foreground))
-        .child(label("The full charts and the funnel are on the web for now. Ask the agent for a summary of what changed.", type_::SM_13, t.muted_foreground).wrap())
-        .child(
-            row().pt(4.0).child(
-                button(t, "ask-summary", "Summarize this week", Variant::Outline)
-                    .on_press(ask("Summarize what changed this week for this business: results, AI answers and channels.")),
-            ),
-        );
-    col().w_full().gap(24.0).child(header).child(body).child(next)
 }
 
 fn campaigns(s: &App, t: &Theme) -> El {

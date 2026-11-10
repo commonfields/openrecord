@@ -4,6 +4,7 @@
 use serde_json::json;
 
 use crate::api::{Business, Campaign, Channel, ChatSummary, Conversation, Decision, Issue, Message, Overview, ToolCall};
+use crate::insights::{self, Analytics, Insights, Report, Section, Source, Verdicts};
 use crate::state::{App, Load, Menu, Page, Screen, View};
 
 fn business(id: &str, name: &str) -> Business {
@@ -145,6 +146,122 @@ pub fn inbox_decline(s: &mut App) {
 
 pub fn overview(s: &mut App) {
     page(s, Page::Overview);
+    s.insights = Load::Ready(insights());
+}
+
+fn section(s: &mut App, sec: Section) {
+    overview(s);
+    s.section = sec;
+}
+
+pub fn overview_answers(s: &mut App) {
+    section(s, Section::Answers);
+}
+
+pub fn overview_performance(s: &mut App) {
+    section(s, Section::Performance);
+}
+
+pub fn overview_revenue(s: &mut App) {
+    section(s, Section::Revenue);
+}
+
+pub fn overview_funnel(s: &mut App) {
+    section(s, Section::Funnel);
+}
+
+pub fn overview_events(s: &mut App) {
+    section(s, Section::Events);
+}
+
+fn insights() -> Insights {
+    let day = |i: i64| crate::format::iso_date(crate::format::now() - (30 - i) * 86_400);
+    // A deterministic, gently rising month of checks.
+    let wave = |i: i64, k: i64| ((i * 7 + k * 3) % 5) as i64;
+    let daily: Vec<insights::Day> = (0..31)
+        .map(|i| insights::Day {
+            date: day(i),
+            checks: 2,
+            v: Verdicts { supported: 1 + wave(i, 0) / 2 + i / 10, wrong: wave(i, 1) / 3, partial: wave(i, 2) / 4, unknown: wave(i, 3) / 4, unreviewed: if i > 27 { 1 } else { 0 } },
+        })
+        .collect();
+    let total = |f: fn(&Verdicts) -> i64| daily.iter().map(|d| f(&d.v)).sum::<i64>();
+    let current = Verdicts { supported: total(|v| v.supported), wrong: total(|v| v.wrong), partial: total(|v| v.partial), unknown: total(|v| v.unknown), unreviewed: total(|v| v.unreviewed) };
+    let analytics = Analytics {
+        checks: 62,
+        answers: current.total(),
+        failed: 1,
+        previous: Verdicts { supported: 31, wrong: 14, partial: 5, unknown: 6, unreviewed: 0 },
+        prev_answers: 56,
+        current,
+        providers: vec![
+            insights::Provider { name: "gpt-5".into(), answers: 41, prev_answers: 30, v: Verdicts { supported: 28, wrong: 6, partial: 3, unknown: 4, unreviewed: 0 } },
+            insights::Provider { name: "claude-sonnet-5-5".into(), answers: 36, prev_answers: 26, v: Verdicts { supported: 29, wrong: 3, partial: 2, unknown: 1, unreviewed: 1 } },
+            insights::Provider { name: "gemini-3-pro".into(), answers: 22, prev_answers: 0, v: Verdicts { supported: 12, wrong: 6, partial: 2, unknown: 2, unreviewed: 0 } },
+        ],
+        questions: vec![
+            insights::Question { prompt: "How much does Northstar cost?".into(), checks: 12, last_checked: ago(60 * 3), v: Verdicts { supported: 5, wrong: 5, partial: 1, unknown: 1, unreviewed: 0 } },
+            insights::Question { prompt: "Does Northstar integrate with Snowflake?".into(), checks: 10, last_checked: ago(60 * 26), v: Verdicts { supported: 7, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
+            insights::Question { prompt: "Is Northstar SOC 2 compliant?".into(), checks: 8, last_checked: ago(60 * 50), v: Verdicts { supported: 8, wrong: 0, partial: 0, unknown: 0, unreviewed: 0 } },
+        ],
+        facts: vec![
+            insights::FactRow { predicate: "monthly_price".into(), value: "From 49 USD a month".into(), v: Verdicts { supported: 6, wrong: 5, partial: 1, unknown: 0, unreviewed: 0 } },
+            insights::FactRow { predicate: "integration".into(), value: "Snowflake, BigQuery and Postgres".into(), v: Verdicts { supported: 9, wrong: 2, partial: 0, unknown: 1, unreviewed: 0 } },
+        ],
+        citations: 48,
+        attributed: 17,
+        prev_citations: 35,
+        citation_days: (0..31).map(|i| (day(i), 1 + wave(i, 2) / 2, wave(i, 4) / 3)).collect(),
+        daily,
+    };
+    let reports = |r: Report| Source::Reports(vec![r]);
+    let m = |l: &str, v: &str, d: Option<f64>| insights::Metric { label: l.into(), value: v.into(), delta: d };
+    Insights {
+        days: 30,
+        analytics: Ok(analytics),
+        goal: Ok(Some(insights::Goal {
+            statement: "More trial sign-ups from people who asked an assistant about pricing.".into(),
+            label: "Trial sign-ups".into(),
+            event_name: Some("sign_up".into()),
+            counting: "EVENT_COUNT".into(),
+            time_zone: Some("America/New_York".into()),
+            points: (0..61).map(|i| (crate::format::iso_date(crate::format::now() - (61 - i) * 86_400), (8 + (i * 5) % 7 + i / 6) as f64)).collect(),
+            source: Some("GA4_AGGREGATE_EXPORT".into()),
+        })),
+        initiatives: vec![
+            insights::Initiative { title: "Publish a transparent pricing and onboarding guide".into(), status: "APPROVED".into(), progress: "NOT_STARTED".into() },
+            insights::Initiative { title: "Answer the questions buyers ask AI assistants".into(), status: "APPROVED".into(), progress: "EXECUTED".into() },
+        ],
+        health: insights::Health { sources: 5, in_sync: 4, drift: 1, inspected: true, open_findings: 3, urls_inspected: 12, verified_fixes: 1 },
+        discovery: Ok(Some(insights::Discovery {
+            period: Some(("ChatGPT search".into(), "38 of 40".into(), "21 of 38".into(), "9 of 38".into(), "2026-10-27 to 2026-11-09".into())),
+            referral: Some("412 of 9,830 sessions, 2026-10-01 to 2026-10-31. 23 signups reported.".into()),
+            limitations: vec![],
+        })),
+        search: reports(Report {
+            title: "Google Search".into(),
+            subtitle: "sc-domain:northstar.test, 2026-10-12 to 2026-11-08".into(),
+            metrics: vec![m("Clicks", "1,284", Some(0.18)), m("Impressions", "48,210", Some(0.09)), m("Click-through rate", "3%", Some(0.08)), m("Average position", "11.4", None)],
+            table: Some((
+                vec!["Top queries".into(), "Clicks".into(), "Impressions".into(), "CTR".into()],
+                vec![
+                    vec!["northstar analytics".into(), "402".into(), "1,980".into(), "20%".into()],
+                    vec!["northstar pricing".into(), "131".into(), "860".into(), "15%".into()],
+                    vec!["snowflake dashboard tool".into(), "44".into(), "5,120".into(), "1%".into()],
+                ],
+            )),
+            note: None,
+        }),
+        ads: Source::NotConnected("Connect Google Ads or Meta on the web to see spend, clicks and conversions.".into()),
+        local: Source::NotConnected("Connect a Google Business Profile on the web to see calls, direction requests and reviews.".into()),
+        revenue: reports(Report {
+            title: "Stripe: Northstar Analytics".into(),
+            subtitle: "2026-10-12 to 2026-11-08".into(),
+            metrics: vec![m("Revenue (USD)", "$18,420.00", Some(0.12)), m("Paying customers", "214", Some(0.05)), m("New customers", "19", Some(-0.1))],
+            table: None,
+            note: None,
+        }),
+    }
 }
 
 pub fn campaigns(s: &mut App) {

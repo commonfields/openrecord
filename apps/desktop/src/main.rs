@@ -11,6 +11,7 @@ mod decisions;
 mod fixtures;
 mod format;
 mod icons;
+mod insights;
 mod net;
 mod state;
 mod theme;
@@ -66,6 +67,11 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("inbox-check", fixtures::inbox_check),
     ("inbox-decline", fixtures::inbox_decline),
     ("overview", fixtures::overview),
+    ("overview-answers", fixtures::overview_answers),
+    ("overview-performance", fixtures::overview_performance),
+    ("overview-revenue", fixtures::overview_revenue),
+    ("overview-funnel", fixtures::overview_funnel),
+    ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
     ("ai-answers", fixtures::ai_answers),
     ("channels", fixtures::channels),

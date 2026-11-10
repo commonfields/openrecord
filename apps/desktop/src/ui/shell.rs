@@ -7,6 +7,7 @@ use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, col, el, row};
 use crate::api::ChatSummary;
 use crate::format;
 use crate::icons;
+use crate::insights::Section;
 use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico, icon_button, label};
@@ -163,7 +164,12 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(move |s: &mut App| s.show_page(page))
+            .on_press(move |s: &mut App| {
+                if page == Page::Overview {
+                    s.section = Section::Summary;
+                }
+                s.show_page(page)
+            })
             .child(ico(i, 14.0, if active { t.primary_ink } else { t.muted_foreground }));
         if open {
             link = link.w_full().px(8.0).child(
@@ -185,6 +191,33 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
         }
         links = links.child(link);
+        // The Overview's sections, under it while it is open, as on the web.
+        if open && active && page == Page::Overview {
+            let mut sub = col().grow(1.0).min_w(0.0).pl(10.0).gap(1.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border);
+            for sec in Section::ALL.into_iter().filter(|x| *x != Section::Summary) {
+                let on = s.section == sec;
+                sub = sub.child(
+                    row()
+                        .key(format!("nav-section-{}", sec.key()))
+                        .w_full()
+                        .h(30.0)
+                        .px(8.0)
+                        .radius(6.0)
+                        .center_y()
+                        .role("link")
+                        .label(sec.label())
+                        .checked(on)
+                        .focusable(true)
+                        .cursor(Cursor::Pointer)
+                        .hover(t.hover_tint)
+                        .motion(CONTROL)
+                        .fill(if on { t.sidebar_accent } else { rune::Color::TRANSPARENT })
+                        .on_press(move |s: &mut App| s.show_section(sec))
+                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.sidebar_foreground })),
+                );
+            }
+            links = links.child(row().w_full().pl(22.0).child(sub));
+        }
     }
     let mut c = col().w_full();
     if open {
@@ -283,6 +316,7 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
             View::Agent => "Agent",
             View::Workspace => s.page.label(),
         };
+        let sub = (s.view == View::Workspace && s.page == Page::Overview && s.section != Section::Summary).then(|| s.section.label());
         h = h.child(
             row()
                 .key("breadcrumbs")
@@ -299,7 +333,11 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
                         .truncate(),
                 )
                 .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7)))
-                .child(label(here, type_::XS_MEDIUM, t.foreground).truncate()),
+                .children(sub.is_some().then(|| {
+                    label(here, type_::XS, t.muted_foreground).key("crumb-page").cursor(Cursor::Pointer).on_press(|s: &mut App| s.show_section(Section::Summary))
+                }))
+                .children(sub.is_some().then(|| ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7))))
+                .child(label(sub.unwrap_or(here), type_::XS_MEDIUM, t.foreground).truncate()),
         );
     }
     h = h.child(el().grow(1.0));

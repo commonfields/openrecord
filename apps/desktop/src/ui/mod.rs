@@ -1,6 +1,8 @@
 //! The window's view: sign in, or the workspace shell around the page on screen.
 
 mod agent;
+mod charts;
+mod overview;
 mod pages;
 mod shell;
 mod signin;
