@@ -143,6 +143,120 @@ impl Origin {
 pub struct Attachment {
     #[serde(default)]
     pub name: String,
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+impl Attachment {
+    pub fn lines(&self) -> usize {
+        self.text.split('\n').count()
+    }
+}
+
+/// At most three files, 80,000 characters together (`AgentMessageRequest`).
+pub const MAX_FILES: usize = 3;
+pub const MAX_ATTACHMENT_CHARS: usize = 80_000;
+
+/// Reads a file to attach: text only, within what is left of the limit.
+pub fn read_attachment(path: &std::path::Path, used: usize) -> Result<Attachment, String> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+    let bytes = std::fs::read(path).map_err(|e| format!("{name} could not be read: {e}"))?;
+    let text = String::from_utf8(bytes).map_err(|_| format!("{name} isn't a text file. Attach text, Markdown, CSV or JSON."))?;
+    if used + text.chars().count() > MAX_ATTACHMENT_CHARS {
+        return Err(format!("{name} is too long. Files can be 80,000 characters together."));
+    }
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let kind = match ext.as_str() {
+        "md" | "markdown" => "text/markdown",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "html" | "htm" => "text/html",
+        _ => "text/plain",
+    };
+    Ok(Attachment { name, kind: kind.into(), text })
+}
+
+/// What one turn sends: the message, the model and any files.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Outgoing {
+    pub message: String,
+    pub selection: Option<Value>,
+    pub attachments: Vec<Attachment>,
+}
+
+/// How much of the chat's memory the model was sent on a turn.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextUse {
+    #[serde(default)]
+    pub history_chars: i64,
+    #[serde(default)]
+    pub budget_chars: i64,
+    #[serde(default)]
+    pub verbatim: i64,
+    #[serde(default)]
+    pub compacted: i64,
+    #[serde(default)]
+    pub omitted: i64,
+}
+
+impl ContextUse {
+    pub fn percent(&self) -> i64 {
+        if self.budget_chars <= 0 { 0 } else { (self.history_chars * 100 / self.budget_chars).min(100) }
+    }
+    pub fn note(&self) -> String {
+        let p = self.percent();
+        let older = self.compacted + self.omitted;
+        let mut s = format!("Chat memory {p}% full. {} recent message{} go to the model in full", self.verbatim, if self.verbatim == 1 { "" } else { "s" });
+        if older > 0 {
+            s.push_str(&format!("; {older} older {} summarized to make room", if older == 1 { "one is" } else { "ones are" }));
+        }
+        s.push('.');
+        if p >= 90 {
+            s.push_str(" Start a new chat for a fresh topic.");
+        }
+        s
+    }
+}
+
+/// A helper session's link to the session that started it.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+// ---- Commands ---------------------------------------------------------------
+
+/// The slash commands the composer offers (`COMMANDS` in `agent-commands.tsx`); each sends `/name`.
+pub const COMMANDS: [(&str, &str); 9] = [
+    ("marketing", "Find the marketing blocker and work on the next step"),
+    ("setup", "Understand and configure this business"),
+    ("status", "Current work, channels and blockers"),
+    ("plan", "What to do next, most important first"),
+    ("report", "What was done, verified and measured"),
+    ("campaign", "Prepare and save a campaign from your goal"),
+    ("campaign-status", "Campaign priorities, blockers and reviews due"),
+    ("campaign-run", "Prepare campaign work; external actions need approval"),
+    ("campaign-review", "Review available results and the next experiment"),
+];
+
+/// Commands matching what has been typed after "/".
+pub fn command_matches(text: &str) -> Vec<(&'static str, &'static str)> {
+    let t = text.trim();
+    let Some(rest) = t.strip_prefix('/') else { return Vec::new() };
+    if !rest.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Vec::new();
+    }
+    let rest = rest.to_lowercase();
+    COMMANDS.iter().filter(|(k, _)| k.starts_with(&rest)).copied().collect()
 }
 
 /// The tool icon the web draws for a tool (`toolIcon` in `agent-trace.tsx`).
@@ -391,6 +505,19 @@ impl Client {
         self.post::<Value>(&format!("/api/businesses/{}/agent/cancel", enc(business)), json!({ "conversationId": conversation })).map(|_| ())
     }
 
+    /// Archives a chat the person is done with, or brings it back.
+    pub fn archive(&self, conversation: &str, archived: bool) -> ApiResult<()> {
+        self.post::<Value>(&format!("/api/agent/conversations/{}/archive", enc(conversation)), json!({ "archived": archived })).map(|_| ())
+    }
+
+    pub fn archived_chats(&self) -> ApiResult<Vec<crate::api::ChatSummary>> {
+        #[derive(Deserialize)]
+        struct R {
+            conversations: Vec<crate::api::ChatSummary>,
+        }
+        Ok(self.get::<R>("/api/agent/conversations?archived=1")?.conversations.into_iter().filter(|c| c.parent_session_id.is_none()).collect())
+    }
+
     pub fn catalog(&self) -> ApiResult<Vec<ModelOption>> {
         Ok(model_options(&self.get::<Value>("/api/agent/providers")?))
     }
@@ -399,6 +526,20 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commands_match_what_is_typed() {
+        assert_eq!(command_matches("/camp").len(), 4);
+        assert_eq!(command_matches("/").len(), 9);
+        assert!(command_matches("/plan this").is_empty());
+        assert!(command_matches("plan").is_empty());
+    }
+
+    #[test]
+    fn memory_note() {
+        let c = ContextUse { history_chars: 95, budget_chars: 100, verbatim: 1, compacted: 3, omitted: 0 };
+        assert_eq!(c.note(), "Chat memory 95% full. 1 recent message go to the model in full; 3 older ones are summarized to make room. Start a new chat for a fresh topic.");
+    }
 
     #[test]
     fn progress_folds_the_journal() {

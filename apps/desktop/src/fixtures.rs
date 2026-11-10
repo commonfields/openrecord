@@ -48,7 +48,7 @@ fn workspace(s: &mut App) {
     s.screen = Screen::Workspace;
     s.account_email = Some("demo@northstar.test".into());
     s.chats = vec![
-        chat("c1", &a, "Next step for the pricing page", 12, false),
+        ChatSummary { providers: vec!["gemini".into(), "claude".into()], ..chat("c1", &a, "Next step for the pricing page", 12, false) },
         chat("c2", &b, "Weekly brief", 60 * 26, false),
         chat("c3", &a, "Why ChatGPT gets our integrations wrong", 60 * 50, false),
         chat("c4", &c, "Draft the FAQ for new clients", 60 * 24 * 4, false),
@@ -125,7 +125,7 @@ pub fn agent(s: &mut App) {
     s.chat_id = Some("c1".into());
     s.catalog = Load::Ready(models());
     s.agent_model = Some("i1:claude-sonnet-5-5".into());
-    s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages() });
+    s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages(), session: None });
 }
 
 /// The models the composer offers in scenes.
@@ -164,6 +164,25 @@ pub fn agent_working(s: &mut App) {
         started: std::time::Instant::now() - std::time::Duration::from_secs(14),
         stopping: false,
     };
+}
+
+/// Typing a command while a turn runs, with two messages queued, a file attached and memory nearly full.
+pub fn agent_compose(s: &mut App) {
+    agent_working(s);
+    if let Load::Ready(c) = &mut s.conversation {
+        if let Some(m) = c.messages.last_mut() {
+            m.context = Some(crate::chat::ContextUse { history_chars: 92_000, budget_chars: 100_000, verbatim: 6, compacted: 4, omitted: 0 });
+        }
+    }
+    s.queued = vec!["Then draft the FAQ from the approved facts.".into(), "And send me the weekly brief.".into()];
+    s.attachments = vec![crate::chat::Attachment { name: "pricing-notes.md".into(), kind: "text/markdown".into(), text: "# Pricing\n\nStarter 49\nTeam 149\n".into() }];
+    s.composer = rune::TextEdit::new("/camp");
+}
+
+pub fn agent_archived(s: &mut App) {
+    agent(s);
+    s.show_archived = true;
+    s.archived = Load::Ready(vec![chat("c9", &business("b-acme", "Acme Outdoors"), "Old launch checklist", 60 * 24 * 12, false)]);
 }
 
 pub fn agent_models(s: &mut App) {

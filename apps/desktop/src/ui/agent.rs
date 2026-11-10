@@ -44,6 +44,11 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
                 .child(label("It reads your results and channels, proposes the next step, and asks before it publishes, sends or spends.", type_::SM_13, t.muted_foreground).wrap().max_w(420.0)),
         );
     }
+    if let Some(info) = s.conversation.ready().and_then(|c| c.session.clone()) {
+        if let Some(parent) = info.parent_session_id.clone() {
+            list = list.child(helper_banner(t, &info, parent));
+        }
+    }
     let statuses = task_statuses(&messages);
     for (i, m) in messages.iter().enumerate() {
         if let Some(name) = handover(&messages, i) {
@@ -124,18 +129,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         if !m.attachments.is_empty() {
             let mut files = row().gap(6.0).flex_wrap();
             for (j, a) in m.attachments.iter().enumerate() {
-                files = files.child(
-                    row()
-                        .key(format!("attachment-{i}-{j}"))
-                        .gap(6.0)
-                        .center_y()
-                        .px(8.0)
-                        .py(4.0)
-                        .radius(8.0)
-                        .fill(t.accent)
-                        .child(ico(&icons::FILE_TEXT, 13.0, t.muted_foreground))
-                        .child(label(a.name.clone(), type_::XS, t.foreground).truncate().max_w(200.0)),
-                );
+                files = files.child(attachment_chip(t, &format!("attachment-{i}-{j}"), &a.name, a.lines(), None));
             }
             c = c.child(files);
         }
@@ -301,6 +295,32 @@ fn live_trace(t: &Theme, p: &Progress, ms: i64, stopping: bool) -> El {
         .child(rail(t, "live-steps", rows))
 }
 
+/// At the top of a helper session: what it is for and where it came from.
+fn helper_banner(t: &Theme, info: &chat::SessionInfo, parent: String) -> El {
+    let name = format!("{} helper{}", chat::role_label(info.role.as_deref().unwrap_or("general")), info.title.as_ref().map(|x| format!(", {x}")).unwrap_or_default());
+    shadows(
+        row()
+            .key("helper-banner")
+            .w_full()
+            .px(14.0)
+            .py(10.0)
+            .gap(8.0)
+            .center_y()
+            .radius(10.0)
+            .fill(t.card)
+            .child(ico(&icons::USERS, 14.0, t.muted_foreground))
+            .child(label(name, type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+            .child(
+                label("Open the session that started it", type_::XS_MEDIUM, t.foreground)
+                    .key("open-parent")
+                    .role("link")
+                    .cursor(Cursor::Pointer)
+                    .on_press(move |s: &mut App| s.open_session(&parent)),
+            ),
+        &t.card_shadow,
+    )
+}
+
 // ---- What a reply points to -------------------------------------------------
 
 fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
@@ -367,7 +387,11 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
                 .radius(10.0)
                 .fill(t.card)
                 .child(row().size(24.0, 24.0).radius(6.0).center().fill(t.accent).child(ico(icon, 14.0, t.muted_foreground)))
-                .child(col().grow(1.0).min_w(0.0).child(label(task.title.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(meta, type_::XS11, t.muted_foreground))),
+                .child(col().grow(1.0).min_w(0.0).child(label(task.title.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(meta, type_::XS11, t.muted_foreground)))
+                .children((!task.session_id.is_empty()).then(|| {
+                    let id = task.session_id.clone();
+                    label("Open", type_::XS_MEDIUM, t.foreground).key(format!("task-open-{}", task.id)).role("link").cursor(Cursor::Pointer).on_press(move |s: &mut App| s.open_session(&id))
+                })),
             &t.card_shadow,
         ));
     }
@@ -416,9 +440,19 @@ fn decisions(s: &App, t: &Theme, i: usize, m: &Message) -> Vec<El> {
 fn composer(s: &App, t: &Theme, business: &str) -> El {
     let working = matches!(s.turn, Turn::Working { .. });
     let blocked = s.model_unavailable();
+    let has_text = !s.composer.text.trim().is_empty();
+    let placeholder = if blocked {
+        "The model you used is unavailable now. Pick another model below"
+    } else if working {
+        "Write a follow-up. It sends when the agent finishes"
+    } else if !s.transcript().is_empty() {
+        "Reply to the agent, or type / for commands"
+    } else {
+        "Describe a task or ask a question"
+    };
     let input = text_input(&s.composer, type_::LG)
         .key("composer-input")
-        .placeholder(if blocked { "Pick another model to continue" } else { "Describe a task or ask a question" }, t.muted_foreground)
+        .placeholder(placeholder, t.muted_foreground)
         .label("Message the agent")
         .w_full()
         .max_h(200.0)
@@ -426,7 +460,8 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .on_edit(|s: &mut App| &mut s.composer)
         .on_submit(|s: &mut App, tx| s.send_message(tx))
         .autofocus();
-    let action = if working {
+    // While a turn runs an empty box offers Stop; anything typed queues behind it.
+    let action = if working && !has_text {
         let stopping = matches!(s.turn, Turn::Working { stopping: true, .. });
         row()
             .key("stop")
@@ -442,20 +477,44 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             .on_press(|s: &mut App| s.stop_turn())
             .child(el().size(10.0, 10.0).radius(2.0).fill(t.primary_foreground))
     } else {
-        let can_send = !blocked && !s.composer.text.trim().is_empty();
+        let can_send = !blocked && has_text;
         row()
             .key("send")
             .size(32.0, 32.0)
             .radius(16.0)
             .center()
             .role("button")
-            .label("Send")
+            .label(if working { "Queue message" } else { "Send" })
+            .help(if working { "Sends when the agent finishes" } else { "Send" })
             .disabled(!can_send)
             .cursor(if can_send { Cursor::Pointer } else { Cursor::Default })
             .fill(if can_send { t.primary } else { t.accent })
             .on_press_tx(|s: &mut App, tx| s.send_message(tx))
             .child(ico(&icons::ARROW_UP, 18.0, if can_send { t.primary_foreground } else { t.muted_foreground }))
     };
+    let attach = row()
+        .key("attach")
+        .size(32.0, 32.0)
+        .radius(8.0)
+        .center()
+        .role("button")
+        .label("Attach a file")
+        .help("Attach a text file")
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .hover(t.hover_tint)
+        .on_press_tx(|s: &mut App, tx| s.attach(tx))
+        .child(ico(&icons::PAPERCLIP, 16.0, t.muted_foreground));
+
+    let mut inner = col().grow(1.0).min_w(0.0).py(3.0).gap(8.0).self_center();
+    if !s.attachments.is_empty() {
+        let mut files = row().gap(6.0).flex_wrap();
+        for (j, a) in s.attachments.iter().enumerate() {
+            files = files.child(attachment_chip(t, &format!("pending-{j}"), &a.name, a.lines(), Some(j)));
+        }
+        inner = inner.child(files);
+    }
+    inner = inner.child(input);
     let field = shadows(
         row()
             .key("composer")
@@ -464,15 +523,17 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             .pl(16.0)
             .pr(8.0)
             .py(8.0)
-            .gap(12.0)
-            .items_center()
+            .gap(8.0)
+            .items_end()
             .radius(12.0)
             .fill(t.control)
-            .child(col().grow(1.0).min_w(0.0).py(3.0).self_center().child(input))
+            .child(inner)
+            .child(attach)
             .child(action),
         &t.control_shadow,
     );
-    let options = row()
+
+    let mut options = row()
         .w_full()
         .px(12.0)
         .pt(4.0)
@@ -480,9 +541,174 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .center_y()
         .child(ico(&icons::FOLDER, 14.0, t.muted_foreground))
         .child(label(business.to_string(), type_::XS, t.muted_foreground))
-        .child(el().grow(1.0))
-        .child(model_trigger(s, t, working));
-    col().w_full().items_center().px(24.0).pb(8.0).child(col().w_full().max_w(COLUMN).child(field).child(options))
+        .child(el().grow(1.0));
+    if let Some(m) = context_meter(s, t) {
+        options = options.child(m).child(el().w(8.0));
+    }
+    options = options.child(model_trigger(s, t, working));
+
+    let mut stack = col().w_full().max_w(COLUMN).gap(6.0);
+    let matches = chat::command_matches(&s.composer.text);
+    if !matches.is_empty() {
+        stack = stack.child(command_menu(t, &matches));
+    }
+    if !s.queued.is_empty() {
+        stack = stack.child(queued(t, &s.queued));
+    }
+    if let Some(e) = &s.attach_error {
+        stack = stack.child(label(e.clone(), type_::XS, t.wrong).px(12.0).wrap().live_region(LiveRegion::Polite));
+    }
+    col().w_full().items_center().px(24.0).pb(8.0).child(stack.child(field).child(options))
+}
+
+/// A file attached to a message: its name and length, removable before sending.
+fn attachment_chip(t: &Theme, key: &str, name: &str, lines: usize, remove: Option<usize>) -> El {
+    let mut c = row()
+        .key(key.to_string())
+        .h(32.0)
+        .max_w(256.0)
+        .pl(10.0)
+        .pr(if remove.is_some() { 4.0 } else { 10.0 })
+        .gap(8.0)
+        .center_y()
+        .radius(8.0)
+        .fill(t.card)
+        .help(name.to_string())
+        .child(ico(&icons::FILE_TEXT, 14.0, t.muted_foreground))
+        .child(label(name.to_string(), type_::XS_MEDIUM.lh(16.0), t.foreground).truncate().min_w(0.0))
+        .child(label(format!("{} line{}", crate::insights::int(lines as f64), if lines == 1 { "" } else { "s" }), type_::XS, t.muted_foreground));
+    if let Some(j) = remove {
+        c = c.child(
+            row()
+                .key(format!("{key}-remove"))
+                .size(24.0, 24.0)
+                .radius(5.0)
+                .center()
+                .role("button")
+                .label(format!("Remove {name}"))
+                .cursor(Cursor::Pointer)
+                .hover(t.accent)
+                .on_press(move |s: &mut App| {
+                    if j < s.attachments.len() {
+                        s.attachments.remove(j);
+                    }
+                })
+                .child(ico(&icons::X, 14.0, t.muted_foreground)),
+        );
+    }
+    shadows(c, &t.card_shadow)
+}
+
+/// The slash commands matching what's typed; pressing one sends it.
+fn command_menu(t: &Theme, matches: &[(&'static str, &'static str)]) -> El {
+    let mut m = col().key("commands").w_full().padding(6.0).gap(1.0).radius(12.0).fill(t.popover).role("listbox").label("Commands");
+    for (name, description) in matches {
+        let n = *name;
+        m = m.child(
+            row()
+                .key(format!("command-{name}"))
+                .w_full()
+                .px(10.0)
+                .py(8.0)
+                .gap(12.0)
+                .center_y()
+                .radius(8.0)
+                .role("option")
+                .label(format!("/{name}"))
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press_tx(move |s: &mut App, tx| s.run_command(n, tx))
+                .child(label(format!("/{name}"), type_::SM_MEDIUM, t.foreground).w(150.0))
+                .child(label(description.to_string(), type_::SM_13, t.muted_foreground).truncate().grow(1.0).min_w(0.0)),
+        );
+    }
+    shadows(m, &t.float_shadow)
+}
+
+/// Messages waiting for the turn under way: each can go now (stopping the agent) or be removed.
+fn queued(t: &Theme, list: &[String]) -> El {
+    let mut c = col().key("queued").w_full().gap(4.0).role("list").label("Queued messages");
+    for (i, m) in list.iter().enumerate() {
+        c = c.child(shadows(
+            row()
+                .key(format!("queued-{i}"))
+                .w_full()
+                .min_h(36.0)
+                .pl(12.0)
+                .pr(4.0)
+                .py(4.0)
+                .gap(8.0)
+                .center_y()
+                .radius(10.0)
+                .fill(t.card)
+                .child(ico(&icons::CORNER_DOWN_RIGHT, 14.0, t.muted_foreground))
+                .child(label(m.clone(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+                .child(label(if i == 0 { "Next".to_string() } else { format!("Queued {}", i + 1) }, type_::XS, t.muted_foreground))
+                .child(
+                    row()
+                        .key(format!("queued-now-{i}"))
+                        .h(28.0)
+                        .px(10.0)
+                        .radius(6.0)
+                        .center()
+                        .role("button")
+                        .label("Send now")
+                        .cursor(Cursor::Pointer)
+                        .fill(t.accent)
+                        .hover(t.hover_tint)
+                        .on_press(move |s: &mut App| s.send_queued_now(i))
+                        .child(label("Send now", type_::XS_MEDIUM, t.foreground)),
+                )
+                .child(
+                    row()
+                        .key(format!("queued-remove-{i}"))
+                        .size(28.0, 28.0)
+                        .radius(6.0)
+                        .center()
+                        .role("button")
+                        .label("Remove queued message")
+                        .cursor(Cursor::Pointer)
+                        .hover(t.hover_tint)
+                        .on_press(move |s: &mut App| s.unqueue(i))
+                        .child(ico(&icons::X, 14.0, t.muted_foreground)),
+                ),
+            &t.card_shadow,
+        ));
+    }
+    c
+}
+
+/// How full the chat's memory was on the last turn, as a small ring and percent.
+fn context_meter(s: &App, t: &Theme) -> Option<El> {
+    let messages = s.conversation.ready()?.messages.as_slice();
+    let use_ = messages.iter().rev().find_map(|m| m.context.as_ref()).filter(|c| c.budget_chars > 0)?;
+    let pct = use_.percent();
+    let tone = if pct >= 90 { t.partial } else { t.muted_foreground };
+    let r = 6.0f32;
+    let ring = |from: f32, to: f32| -> Vec<[f32; 2]> {
+        let n = 48;
+        (0..=n).map(|k| {
+            let a = (from + (to - from) * k as f32 / n as f32) * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            [8.0 + r * a.cos(), 8.0 + r * a.sin()]
+        }).collect()
+    };
+    let mut shape = rune::Shape::new().stroke(ring(0.0, 1.0), 2.0, t.muted_foreground.alpha(0.25));
+    if pct > 0 {
+        shape = shape.stroke(ring(0.0, pct as f32 / 100.0), 2.0, tone);
+    }
+    Some(
+        row()
+            .key("context-meter")
+            .gap(4.0)
+            .center_y()
+            .role("img")
+            .label(format!("Chat memory {pct}% full"))
+            .help(use_.note())
+            .focusable(true)
+            .child(rune::canvas(shape).size(16.0, 16.0))
+            .child(label(format!("{pct}%"), type_::XS.features("'tnum' 1"), tone)),
+    )
 }
 
 /// The composer's model button: the chosen model's logo and name.

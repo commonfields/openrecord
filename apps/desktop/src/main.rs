@@ -68,6 +68,8 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-log", fixtures::agent_open_log),
     ("agent-working", fixtures::agent_working),
     ("agent-models", fixtures::agent_models),
+    ("agent-compose", fixtures::agent_compose),
+    ("agent-archived", fixtures::agent_archived),
     ("inbox", fixtures::inbox),
     ("inbox-wordpress", fixtures::inbox_wordpress),
     ("inbox-check", fixtures::inbox_check),

@@ -78,6 +78,7 @@ pub enum Menu {
     Businesses,
     Account,
     Model,
+    ChatFilter,
 }
 
 /// The turn the composer sent, while it runs.
@@ -153,6 +154,14 @@ pub struct App {
     pub open_logs: std::collections::BTreeSet<usize>,
     pub open_sources: std::collections::BTreeSet<usize>,
     pub copied: Option<usize>,
+    /// Messages waiting for the turn under way, and files for the next message.
+    pub queued: Vec<String>,
+    pub attachments: Vec<crate::chat::Attachment>,
+    pub attach_error: Option<String>,
+    /// The chat history: archived chats instead of live ones, and one business only.
+    pub show_archived: bool,
+    pub archived: Load<Vec<ChatSummary>>,
+    pub chat_filter: Option<String>,
     pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
@@ -229,6 +238,12 @@ impl App {
             open_logs: Default::default(),
             open_sources: Default::default(),
             copied: None,
+            queued: Vec::new(),
+            attachments: Vec::new(),
+            attach_error: None,
+            show_archived: false,
+            archived: Load::Idle,
+            chat_filter: None,
             insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
@@ -536,6 +551,37 @@ impl App {
     }
 
     /// Stops the turn running in this chat.
+    pub fn toggle_archived(&mut self) {
+        self.show_archived = !self.show_archived;
+        if self.show_archived {
+            self.archived = keep_or_load(&self.archived);
+            self.net.archived_chats();
+        }
+    }
+
+    /// Archives a chat, or restores an archived one.
+    pub fn archive_chat(&mut self, id: &str, archived: bool) {
+        if archived {
+            self.chats.retain(|c| c.id != id);
+        } else if let Load::Ready(list) = &mut self.archived {
+            list.retain(|c| c.id != id);
+        }
+        self.net.archive(id.to_string(), archived);
+    }
+
+    /// Opens another session of this business, such as a helper, in the chat.
+    pub fn open_session(&mut self, id: &str) {
+        self.view = View::Agent;
+        self.chat_id = Some(id.to_string());
+        self.turn = Turn::Idle;
+        self.conversation = Load::Loading;
+        self.open_logs.clear();
+        self.open_sources.clear();
+        if let Some(b) = self.active.clone() {
+            self.net.conversation(b, id.to_string());
+        }
+    }
+
     pub fn stop_turn(&mut self) {
         let (Some(b), Some(c)) = (self.active.clone(), self.chat_id.clone()) else { return };
         if let Turn::Working { stopping, .. } = &mut self.turn {
@@ -544,20 +590,80 @@ impl App {
         }
     }
 
+    /// Sends what the composer holds, or queues it while a turn runs: it
+    /// goes out when the agent finishes, as the web composer queues follow-ups.
     pub fn send_message(&mut self, tx: &mut Tx) {
         let text = self.composer.text.trim().to_string();
-        if text.is_empty() || matches!(self.turn, Turn::Working { .. }) {
+        if text.is_empty() || self.model_unavailable() {
             return;
         }
+        self.composer.clear();
+        if matches!(self.turn, Turn::Working { .. }) {
+            self.queued.push(text);
+            return;
+        }
+        self.dispatch(text, tx);
+    }
+
+    /// Sends a slash command at once (or queues it behind the turn under way).
+    pub fn run_command(&mut self, name: &str, tx: &mut Tx) {
+        self.composer.clear();
+        let text = format!("/{name}");
+        if matches!(self.turn, Turn::Working { .. }) {
+            self.queued.push(text);
+        } else {
+            self.dispatch(text, tx);
+        }
+    }
+
+    /// Sends a queued message now: the turn under way stops, and this one goes next.
+    pub fn send_queued_now(&mut self, i: usize) {
+        if i < self.queued.len() {
+            let m = self.queued.remove(i);
+            self.queued.insert(0, m);
+            self.stop_turn();
+        }
+    }
+
+    pub fn unqueue(&mut self, i: usize) {
+        if i < self.queued.len() {
+            self.queued.remove(i);
+        }
+    }
+
+    /// Picks a text file to send with the next message.
+    pub fn attach(&mut self, tx: &mut Tx) {
+        if self.attachments.len() >= crate::chat::MAX_FILES {
+            self.attach_error = Some("You can attach up to three files.".into());
+            return;
+        }
+        let options = rune::FileDialogOptions { title: "Attach a file".into(), ..Default::default() }.filter("Text", &["txt", "md", "markdown", "csv", "json", "html", "htm", "xml", "yaml", "yml", "log", "tsv"]);
+        tx.open_file(options, |s: &mut App, answer, _tx| match answer {
+            Ok(Some(path)) => {
+                let used = s.attachments.iter().map(|a| a.text.chars().count()).sum();
+                match crate::chat::read_attachment(&path, used) {
+                    Ok(a) => {
+                        s.attachments.push(a);
+                        s.attach_error = None;
+                    }
+                    Err(e) => s.attach_error = Some(e),
+                }
+            }
+            Ok(None) => {}
+            Err(e) => s.attach_error = Some(e.0),
+        });
+    }
+
+    fn dispatch(&mut self, text: String, tx: &mut Tx) {
         let Some(business) = self.active.clone() else { return };
         let conversation = match (&self.chat_id, self.conversation.ready()) {
             (Some(id), Some(c)) if &c.id == id => Some((id.clone(), c.revision)),
             _ => None,
         };
-        self.composer.clear();
         self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
-        let selection = self.chosen_model().and_then(|m| m.selection());
-        self.net.send(business, conversation, text, selection);
+        let out = crate::chat::Outgoing { message: text, selection: self.chosen_model().and_then(|m| m.selection()), attachments: std::mem::take(&mut self.attachments) };
+        self.attach_error = None;
+        self.net.send(business, conversation, out);
         tx.scroll_to_bottom("transcript");
     }
 
@@ -649,6 +755,11 @@ impl App {
                 Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
                     self.conversation = Load::Ready(c);
                     tx.scroll_to_bottom("transcript");
+                    // The reply is in and the revision current: the next queued message goes.
+                    if matches!(self.turn, Turn::Idle) && !self.queued.is_empty() {
+                        let next = self.queued.remove(0);
+                        self.dispatch(next, tx);
+                    }
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
@@ -671,6 +782,14 @@ impl App {
                 }
             }
             Reply::Catalog(r) => self.catalog = to_load(self.failed(r)),
+            Reply::ArchivedChats(r) => self.archived = to_load(self.failed(r)),
+            Reply::Archived { archived, result, .. } => {
+                if let Err(e) = self.failed(result) {
+                    if !e.is_empty() {
+                        self.notice = Some(if archived { "Couldn't archive the chat. Try again." } else { "Couldn't restore the chat. Try again." }.into());
+                    }
+                }
+            }
             Reply::TurnDone { business, conversation, result } => {
                 self.net.chats();
                 if !here(self, &business) || self.chat_id.as_deref().is_some_and(|c| c != conversation) {

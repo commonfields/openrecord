@@ -91,6 +91,8 @@ pub struct Message {
     pub origin: Option<crate::chat::Origin>,
     #[serde(default)]
     pub attachments: Vec<crate::chat::Attachment>,
+    #[serde(default)]
+    pub context: Option<crate::chat::ContextUse>,
 }
 
 impl Message {
@@ -108,6 +110,7 @@ impl Message {
             inference: None,
             origin: None,
             attachments: Vec::new(),
+            context: None,
         }
     }
 
@@ -137,6 +140,9 @@ pub struct Conversation {
     pub revision: i64,
     #[serde(default)]
     pub messages: Vec<Message>,
+    /// Set on a helper session: the session that started it.
+    #[serde(default)]
+    pub session: Option<crate::chat::SessionInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
@@ -349,11 +355,14 @@ impl Client {
     }
 
     /// Queues a turn and returns once the API has accepted it.
-    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, message: &str, selection: Option<Value>) -> ApiResult<()> {
+    pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, out: &crate::chat::Outgoing) -> ApiResult<()> {
         let path = format!("/api/businesses/{}/agent/requests", enc(business));
-        let mut body = json!({ "message": message, "requestId": request_id, "revision": revision, "conversationId": conversation });
-        if let Some(sel) = selection {
-            body["selection"] = sel;
+        let mut body = json!({ "message": out.message, "requestId": request_id, "revision": revision, "conversationId": conversation });
+        if let Some(sel) = &out.selection {
+            body["selection"] = sel.clone();
+        }
+        if !out.attachments.is_empty() {
+            body["attachments"] = json!(out.attachments.iter().map(|a| json!({ "name": a.name, "type": a.kind, "text": a.text })).collect::<Vec<_>>());
         }
         self.post::<Value>(&path, body).map(|_| ())
     }
@@ -589,6 +598,7 @@ mod live {
             }
         }
         eprintln!("messages: {} steps, {} sources, {} decisions, {} with a model", parts.0, parts.1, parts.2, parts.3);
+        eprintln!("archived chats: {}", c.archived_chats().expect("archived chats").len());
         let models = c.catalog().expect("catalog");
         eprintln!("models: {:?}", models.iter().map(|m| (&m.value, &m.name, &m.brand)).collect::<Vec<_>>());
         // An unknown request has an empty journal, not an error.

@@ -28,6 +28,9 @@ pub enum Reply {
     Progress { request: String, events: Vec<crate::chat::RunEvent> },
     /// The models the composer offers.
     Catalog(ApiResult<Vec<crate::chat::ModelOption>>),
+    ArchivedChats(ApiResult<Vec<ChatSummary>>),
+    /// A chat was archived (`true`) or restored.
+    Archived { archived: bool, result: ApiResult<()> },
     /// A turn finished (or failed) in this conversation.
     TurnDone { business: String, conversation: String, result: ApiResult<()> },
     /// A decision was approved (`true`) or declined, or the call failed.
@@ -176,11 +179,24 @@ impl Net {
         });
     }
 
+    pub fn archived_chats(&self) {
+        self.spawn(|c, send| send(Reply::ArchivedChats(c.archived_chats())));
+    }
+
+    pub fn archive(&self, conversation: String, archived: bool) {
+        self.spawn(move |c, send| {
+            let result = c.archive(&conversation, archived);
+            send(Reply::Archived { archived, result });
+            send(Reply::Chats(c.chats()));
+            send(Reply::ArchivedChats(c.archived_chats()));
+        });
+    }
+
     pub fn catalog(&self) {
         self.spawn(|c, send| send(Reply::Catalog(c.catalog())));
     }
 
-    pub fn send(&self, business: String, conversation: Option<(String, i64)>, message: String, selection: Option<serde_json::Value>) {
+    pub fn send(&self, business: String, conversation: Option<(String, i64)>, out: crate::chat::Outgoing) {
         self.spawn(move |c, send| {
             let (conversation, revision) = match conversation {
                 Some(pair) => pair,
@@ -193,7 +209,7 @@ impl Net {
                 },
             };
             let request = crate::api::uuid();
-            if let Err(e) = c.send(&business, &conversation, revision, &request, &message, selection) {
+            if let Err(e) = c.send(&business, &conversation, revision, &request, &out) {
                 send(Reply::TurnDone { business, conversation, result: Err(e) });
                 return;
             }
