@@ -35,7 +35,7 @@ export const reconcileRequestJobs = Effect.gen(function*() {
 export const enqueueAgentRequest = (scope: ConversationScope, raw: unknown) => Effect.gen(function*() {
   const body = yield* Schema.decodeUnknown(AgentMessageRequest, { onExcessProperty: "error" })(raw)
   if (!body.conversationId) return yield* refuse("CONVERSATION_REQUIRED")
-  const digest = createHash("sha256").update(JSON.stringify([body.message,body.conversationId,body.revision,body.selection ?? null,body.style ?? null,body.attachments ?? []])).digest("hex")
+  const digest = createHash("sha256").update(JSON.stringify([body.message,body.conversationId,body.revision,body.selection ?? null,body.style ?? null,body.attachments ?? [],...(body.surfaces ? [body.surfaces] : [])])).digest("hex")
   const sql = yield* SqlClient.SqlClient
   return yield* sql.withTransaction(Effect.gen(function*() {
     // Serialize account caps and enqueue-versus-cancel ordering across API replicas.

@@ -9,6 +9,7 @@ mod pages;
 mod shell;
 mod settings;
 mod signin;
+mod surface;
 mod visual;
 pub mod widgets;
 
@@ -44,14 +45,20 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
         }
-        if s.view == View::Agent && s.active.is_some() && s.settings.is_none() {
+        if s.view == View::Agent && (s.active.is_some() || s.general) && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
+        }
+        if let Some(n) = &s.new_chat {
+            agent::new_chat_dialog(s, &t, &k, n, &mut layers);
         }
         if let Some(page) = s.settings {
             layers.extend(settings::view(s, &t, &k, page));
         }
     }
-    rune_kit::root(screen.fill(t.sidebar), layers)
+    // Every hover eases in and out over 150 milliseconds on the web's curve
+    // (Tailwind's default `transition`), instead of landing at once.
+    let ease = rune::Curve::Tween { duration: 0.15, easing: rune::Easing::cubic(0.4, 0.0, 0.2, 1.0) };
+    rune_kit::root(screen.fill(t.sidebar).hover_motion_within(ease, ease), layers)
 }
 
 fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
@@ -59,7 +66,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // so it starts past them.
     let leading = if s.sidebar_open { 0.0 } else { (titlebar_inset - shell::RAIL_WIDTH).max(0.0) };
     let (content, trailing) = match s.view {
-        View::Agent if s.active.is_some() => (agent::view(s, t, k), None),
+        View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
         View::Agent => (choose_business(t), None),
         View::Workspace => {
             let page = col()
@@ -67,7 +74,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .child(col().w_full().items_center().child(col().w_full().max_w(1400.0).px(40.0).pt(32.0).pb(40.0).child(pages::view(s, t))))
+                // Full width inside the content inset, as the web's workspace pages are.
+                .child(col().w_full().px(40.0).pt(32.0).pb(40.0).child(pages::view(s, t)))
                 .scroll(ScrollSpec { stick_bottom: false });
             (page, Some(pages::ask_agent(t)))
         }

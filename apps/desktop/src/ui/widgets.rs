@@ -7,6 +7,25 @@ use crate::theme::{Theme, shadows, type_};
 
 pub const CONTROL: Spring = Spring::new(0.18, 0.0);
 
+/// The web's `transition-[background-color,box-shadow]`: 150 milliseconds.
+pub const HOVER: Spring = Spring::new(0.15, 0.0);
+
+/// A menu row's highlight as the web draws it: hovered or picked by the arrows,
+/// the accent fill with the control shadow; the chosen one, half the accent.
+/// The fill and shadow are always there, transparent at rest, so Rune eases
+/// them in and out instead of swapping them.
+pub fn highlight(t: &crate::theme::Theme, r: El, hovered: bool, chosen: bool) -> El {
+    let fill = if hovered {
+        t.accent
+    } else if chosen {
+        t.accent.alpha(0.5)
+    } else {
+        t.accent.alpha(0.0)
+    };
+    let list: Vec<rune::Shadow> = t.control_shadow.iter().map(|s| rune::Shadow { color: if hovered { s.color } else { s.color.alpha(0.0) }, ..*s }).collect();
+    shadows(r.fill(fill).motion(HOVER), &list)
+}
+
 pub fn ico(i: &'static Icon, size: f32, color: Color) -> El {
     icon(i, size).color(color)
 }

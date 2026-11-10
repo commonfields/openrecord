@@ -180,8 +180,9 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     let mut reply = col().key(format!("reply-{i}")).w_full().gap(6.0);
     for (j, part) in crate::visual::split(&shown).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md).selectable(revealing.is_none()).streaming(revealing.is_some()).reveal(if revealing.is_some() { 0.18 } else { 0.0 }).build(k).w_full().opacity(if muted { 0.7 } else { 1.0 }),
+            crate::visual::Part::Text(md) => Markdown::new(md).selectable(revealing.is_none()).streaming(revealing.is_some()).reveal(if revealing.is_some() { 0.18 } else { 0.0 }).build(k).w_full().opacity(if muted { 0.7 } else { 0.9 }),
             crate::visual::Part::Chart(raw) => crate::ui::visual::view(s, t, format!("visual-{i}-{j}"), &raw).my(4.0),
+            crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("surface-{i}-{j}"), &raw).my(4.0),
         });
     }
     if revealing.is_some() {
@@ -297,7 +298,7 @@ fn fold(t: &Theme, k: &Kit, key: String, open: bool, at: (usize, usize), parts: 
 
 fn thought_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, texts: &[&str], ms: i64) -> El {
     let name = if ms > 0 { format!("Thought for {}", chat::elapsed(ms)) } else { "Thought".to_string() };
-    let head = fold(t, k, key.clone(), open, at, vec![ico(&icons::BRAIN, 15.0, t.muted_foreground).group_color(t.foreground), label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
+    let head = fold(t, k, key.clone(), open, at, vec![label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
     let mut body = col().w_full().pl(22.0).pb(6.0).gap(6.0);
     for x in texts.iter().filter(|x| !x.trim().is_empty()) {
         body = body.child(label(x.to_string(), type_::SM_13.italic(), t.muted_foreground.alpha(0.85)).wrap().selectable(open));
@@ -316,7 +317,7 @@ fn tools_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, l
         .child(rune_kit::RollingText::new(format!("{key}-count"), n.to_string()).value(n as f64).font(type_::SM_MEDIUM.features("'tnum' 1")).color(t.foreground).build(k))
         .child(label(if n == 1 { "tool" } else { "tools" }, type_::SM, t.muted_foreground).group_color(t.foreground))];
     let head = fold(t, k, key.clone(), open, at, parts, true).label(name);
-    let mut body = col().key(format!("{key}-steps")).w_full().pl(2.0).pb(6.0).growth(GrowthSpec::default());
+    let mut body = col().key(format!("{key}-steps")).w_full().pl(2.0).pb(6.0);
     for (j, a) in list.iter().enumerate() {
         if let Activity::Tool { tool, text: x, failed } = a {
             let (icon, ink) = if *failed { (ico(&icons::X, 14.0, t.wrong), t.wrong.alpha(0.85)) } else { (ico(chat::tool_icon(tool), 14.0, t.muted_foreground), t.muted_foreground) };
@@ -353,51 +354,114 @@ fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity]) -> El
     c
 }
 
-/// The turn still running: its folded steps so far, what it is doing now,
-/// and the "Working" line under them.
-fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
-    let live = usize::MAX;
-    let all = groups(&p.trace);
-    let n = all.len();
-    let mut c = col().key("working").w_full().role("status").live_region(LiveRegion::Polite).growth(GrowthSpec::default());
-    let now = label(p.live(), type_::SM_13, t.muted_foreground).truncate();
-    let thinking_now = !matches!((p.phase, &p.current_tool), (chat::Phase::Working, Some(_)));
-    for (g, group) in all.iter().enumerate() {
-        let at = (live, g);
-        let open = s.open_logs.contains(&at);
-        let key = format!("live-{g}");
-        c = c.child(match group {
-            Group::Thought { texts, ms } => thought_line(t, k, key, at, open, texts, *ms),
-            // The step under way shows under the tool group it belongs to.
-            Group::Tools(list) if g + 1 == n && !thinking_now => {
-                let tool = p.current_tool.clone().unwrap_or_default();
-                let step = row().key("live-now").w_full().h(28.0).pl(2.0).gap(8.0).center_y().transition(step_in()).child(ico(chat::tool_icon(&tool), 14.0, secondary(t)).looping(LoopSpec::opacity(1.2, 0.0, 0.45, 1.0))).child(now.clone());
-                tools_line(t, k, key, at, open, list, Some(step))
-            }
-            Group::Tools(list) => tools_line(t, k, key, at, open, list, None),
-        });
+// ---- The turn still running (the web's `LiveTrace`) -----------------------------
+
+/// Thinking, as the web draws it: one glyph that grows and settles in the
+/// brand's periwinkle, a step every 220 milliseconds (`ThinkingGlyph`).
+const GLYPHS: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+
+fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
+    let g = match ms {
+        Some(ms) if !reduce => GLYPHS[((ms / 220) as usize) % GLYPHS.len()],
+        _ => "✻",
+    };
+    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(secondary(t)))
+}
+
+/// The web's `.thinking` text: muted, with a soft band of foreground light that
+/// crosses it left to right on a 4.5-second loop. Built as Rune's shimmer: a
+/// feathered window slides across the label carrying a bright copy that slides
+/// back by the same amount, so the copy stays on the words.
+fn shimmer(t: &Theme, key: &str, text_: &str, style: TextStyle, reduce: bool) -> El {
+    let dim = label(text_.to_string(), style, t.muted_foreground);
+    if reduce {
+        return dim;
     }
-    if thinking_now || !matches!(all.last(), Some(Group::Tools(_))) {
-        if !thinking_now {
-            let tool = p.current_tool.clone().unwrap_or_default();
-            c = c.child(row().key("live-now").w_full().h(28.0).pl(2.0).gap(8.0).center_y().transition(step_in()).child(ico(chat::tool_icon(&tool), 14.0, secondary(t)).looping(LoopSpec::opacity(1.2, 0.0, 0.45, 1.0))).child(now));
-        } else {
-            // Thinking: the glyph breathes while the text sweeps, as the web's `.thinking` does.
-            c = c.child(row().key("live-thinking").w_full().h(28.0).gap(6.0).center_y().transition(step_in()).child(ico(&icons::BRAIN, 15.0, secondary(t)).looping(LoopSpec::opacity(1.6, 0.0, 0.4, 1.0))).child(now.looping(LoopSpec::opacity(2.25, 0.0, 0.6, 1.0))));
+    // The label's width, near enough: the band starts one label left of it and
+    // ends three to the right, as the web's 200% background travels 400%.
+    let w = (text_.chars().count() as f32 * style.size * 0.53).max(24.0);
+    let band = (w * 0.32).max(18.0);
+    let (x0, x1) = (-band, 3.0 * w);
+    let spec = |a: f32, b: f32| LoopSpec::slide(4.5, [a, 0.0], [b, 0.0]).easing(rune::Easing::LINEAR);
+    let lit = el().key(format!("{key}-lit")).absolute(0.0, 0.0).w(band).h_full().looping(spec(-x0 / band, -x1 / band)).child(label(text_.to_string(), style, t.foreground).absolute(0.0, 0.0));
+    let sheen = el().key(format!("{key}-sheen")).absolute(0.0, 0.0).w(band).h_full().clip_fade(band / 2.0, 0.0, band / 2.0, 0.0).looping(spec(x0 / band, x1 / band)).child(lit);
+    row().key(key.to_string()).child(dim).child(sheen)
+}
+
+/// The arc that turns around the tool under way (`.live-ring`): a thin brand
+/// arc fading in from nothing, 1.5 points wide, one turn every 1.1 seconds.
+fn live_ring(t: &Theme) -> El {
+    let c = secondary(t);
+    let (cx, r) = (15.0f32, 14.25f32);
+    let mut shape = rune::Shape::new();
+    let seg = 40;
+    for k in 0..seg {
+        let f0 = 0.55 + 0.45 * k as f32 / seg as f32;
+        let f1 = 0.55 + 0.45 * (k + 1) as f32 / seg as f32;
+        let mid = (f0 + f1) / 2.0;
+        // conic-gradient(transparent 0 55%, secondary 85%, transparent 100%)
+        let a = if mid < 0.85 { (mid - 0.55) / 0.30 } else { (1.0 - mid) / 0.15 };
+        let pt = |f: f32| {
+            let ang = f * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            [cx + r * ang.cos(), cx + r * ang.sin()]
+        };
+        shape = shape.stroke_with(vec![pt(f0), pt(f1)], false, 1.5, rune::LineCap::Butt, c.alpha(a.clamp(0.0, 1.0)));
+    }
+    rune::canvas(shape.view_box(30.0, 30.0)).size(30.0, 30.0).absolute(-3.0, -3.0).looping(LoopSpec::rotation(1.1)).a11y_hidden()
+}
+
+/// One line on the rail: a node and its text. Tool steps sit in a small round
+/// node; reasoning is a lighter aside with its glyph.
+fn log_row(t: &Theme, node: El, body: El, boxed: bool, wrap: bool) -> El {
+    let mut n = row().size(24.0, 24.0).center().child(node);
+    if boxed {
+        n = shadows(n.radius(12.0).fill(t.background), &t.control_shadow);
+    }
+    let r = row().w_full().min_h(28.0).py(2.0).gap(8.0).child(n).child(col().grow(1.0).min_w(0.0).child(body));
+    if wrap { r.items_start() } else { r.center_y() }
+}
+
+fn step(t: &Theme, a: &Activity) -> El {
+    match a {
+        Activity::Thought { text: x, .. } => log_row(t, thinking_glyph(t, None, true), label(x.clone(), type_::SM.italic(), t.muted_foreground.alpha(0.8)).wrap().max_lines(4).pt(2.0), false, true),
+        Activity::Tool { tool, text: x, failed } => {
+            let icon = if *failed { ico(&icons::X, 14.0, t.wrong) } else { ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7)) };
+            log_row(t, icon, label(x.clone(), type_::SM, if *failed { t.wrong.alpha(0.8) } else { t.foreground.alpha(0.8) }).truncate(), true, false)
         }
     }
-    let status = if stopping { "Stopping".to_string() } else { format!("Working for {}", chat::elapsed(ms)) };
-    c.child(
-        row()
-            .key("working-line")
-            .h(28.0)
-            .mt(4.0)
-            .gap(8.0)
-            .center_y()
-            // Two steady beats a second (`status-pulse`).
-            .child(el().size(6.0, 6.0).radius(3.0).fill(t.working).looping(LoopSpec::opacity(0.5, 0.0, 0.4, 1.0)))
-            .child(label(status, type_::SM.features("'tnum' 1"), t.muted_foreground)),
-    )
+}
+
+/// The work log of a turn still running: "Thinking for 4s" (or "Working for"
+/// once a tool runs) with a live clock, the finished steps on the rail, and the
+/// step under way at the bottom.
+fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
+    let reduce = s.prefs.reduce_motion;
+    let working = p.phase != chat::Phase::Thinking || p.trace.iter().any(|a| matches!(a, Activity::Tool { .. }));
+    let head = if stopping { "Stopping".to_string() } else { format!("{} for {}", if working { "Working" } else { "Thinking" }, chat::elapsed(ms)) };
+    let tool = match (p.phase, &p.current_tool) {
+        (chat::Phase::Working, Some(tool)) => Some(tool.clone()),
+        _ => None,
+    };
+    // Finished steps stay mounted, so only the newest slides in.
+    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
+    let mut rail = col().key("live-steps").w_full().mt(4.0).label("Steps so far").child(line);
+    for (i, a) in p.trace.iter().enumerate() {
+        rail = rail.child(step(t, a).key(format!("live-step-{i}")).transition(step_in()));
+    }
+    // The step under way re-enters whenever the agent moves to another tool.
+    let now = shimmer(t, "live-now-text", &p.live(), type_::SM, reduce);
+    let live = match &tool {
+        Some(tool) => log_row(t, row().size(24.0, 24.0).center().child(live_ring(t)).child(ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7))), now, true, false),
+        None => log_row(t, thinking_glyph(t, Some(ms), reduce), now, false, false),
+    };
+    rail = rail.child(live.key(format!("live:{}:{}", p.trace.len(), tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).transition(step_in()));
+    col()
+        .key("working")
+        .w_full()
+        .role("status")
+        .live_region(LiveRegion::Polite)
+        .child(row().h(24.0).px(2.0).center_y().child(shimmer(t, "live-head", &head, type_::SM.features("'tnum' 1"), reduce)))
+        .child(rail)
 }
 
 /// At the top of a helper session: what it is for and where it came from.
@@ -723,7 +787,30 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .min_h(24.0)
         .px(12.0)
         .center_y()
-        .child(row().gap(4.0).center_y().max_w(224.0).min_w(0.0).label(format!("Chatting about {business}")).child(ico(&icons::FOLDER, 14.0, t.muted_foreground)).child(label(business.to_string(), type_::XS, t.muted_foreground).truncate()))
+        .child({
+            // "Change the business or client": opens "Start a new chat", as the web's chip does.
+            let name = if s.general { "General chat".to_string() } else { business.to_string() };
+            row()
+                .key("chat-context")
+                .gap(4.0)
+                .center_y()
+                .max_w(224.0)
+                .min_w(0.0)
+                .role("button")
+                .label(format!("Change the business or client, now chatting about {name}"))
+                .help(format!("Chatting about {name}"))
+                .disabled(working)
+                .focusable(!working)
+                .cursor(if working { Cursor::Default } else { Cursor::Pointer })
+                .hover_group()
+                .on_press_tx(move |s: &mut App, tx| {
+                    if !matches!(s.turn, Turn::Working { .. }) {
+                        s.open_new_chat(tx);
+                    }
+                })
+                .child(ico(&icons::FOLDER, 14.0, t.muted_foreground).group_color(t.foreground))
+                .child(label(name, type_::XS, t.muted_foreground).group_color(t.foreground).truncate())
+        })
         .child(el().grow(1.0));
     let mut right = row().gap(12.0).center_y();
     if let Some(f) = followups_trigger(s, t) {
@@ -945,7 +1032,8 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     let current = s.reasoning_effort().map(str::to_string);
     let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
     let row_ = |key: String, name: String, on: bool, effort: Option<String>| {
-        row()
+        let hk = format!("effort:{key}");
+        let r = row()
             .key(key)
             .w_full()
             .h(40.0)
@@ -957,17 +1045,29 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(t.accent)
-            .motion(CONTROL)
+            .on_hover_change(hover_key(hk.clone()))
             .on_press(move |s: &mut App| s.choose_reasoning(effort.clone()))
             .child(label(name, type_::SM, t.foreground).grow(1.0))
-            .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))))
+            .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))));
+        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+        crate::ui::widgets::highlight(t, r, hovered, false)
     };
     m = m.child(row_("effort-default".into(), "Default".into(), current.is_none(), None));
     for e in efforts {
         m = m.child(row_(format!("effort-{e}"), chat::effort_label(&e), current.as_deref() == Some(e.as_str()), Some(e.clone())));
     }
     m.anchored("reasoning-picker", Side::Top, Align::End, 8.0).modal(true, |s: &mut App| s.menu = None)
+}
+
+/// Remembers which menu row the pointer is over, so its highlight eases in and out.
+fn hover_key(key: String) -> impl Fn(&mut App, bool, &mut rune::Tx) + 'static {
+    move |s: &mut App, inside, _tx| {
+        if inside {
+            s.row_hover = Some(key.clone());
+        } else if s.row_hover.as_deref() == Some(key.as_str()) {
+            s.row_hover = None;
+        }
+    }
 }
 
 /// The model picker, opened over the composer: provider logos to filter by,
@@ -1060,8 +1160,8 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         let mut r = row()
             .key(format!("model-{}", o.value))
             .w_full()
-            .h(32.0)
             .px(8.0)
+            .py(8.0)
             .gap(8.0)
             .center_y()
             .radius(6.0)
@@ -1070,21 +1170,25 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(t.accent)
-            .motion(CONTROL)
+            .on_hover_change(hover_key(format!("model:{}", o.value)))
             .on_press(move |s: &mut App| s.choose_agent_model(value.clone()))
             .child(brands::mark(t, &o.brand, 16.0))
-            .child(label(o.name.clone(), type_::SM, t.foreground).truncate().min_w(0.0))
-            .child(match &o.instance {
-                Some(i) => label(i.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0),
-                None => el().grow(1.0),
-            });
+            // The web's row: the model's name, and the computer it runs on under it.
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .child(label(o.name.clone(), type_::SM, t.foreground).truncate())
+                    .children(o.instance.clone().map(|i| label(i, type_::XS, t.muted_foreground).truncate())),
+            );
         if on {
-            r = r.fill(t.accent.alpha(0.5)).child(ico(&icons::CHECK, 14.0, secondary(t)));
+            r = r.child(ico(&icons::CHECK, 16.0, secondary(t)));
         }
-        list = list.child(r);
+        let hovered = s.row_hover.as_deref() == Some(format!("model:{}", o.value).as_str());
+        list = list.child(crate::ui::widgets::highlight(t, r, hovered, on));
     }
-    let list = col().key("model-list").w_full().max_h(256.0).mt(4.0).child(list).scroll(ScrollSpec { stick_bottom: false });
+    // The web's `max-h-64` list, inset 4 points, 6 above and below.
+    let list = col().key("model-list").w_full().max_h(256.0).mt(4.0).px(4.0).py(6.0).child(list).scroll(ScrollSpec { stick_bottom: false });
     let status = match &s.catalog {
         Load::Loading | Load::Idle if options.is_empty() => Some("Checking providers…".to_string()),
         Load::Failed(e) => Some(format!("Providers could not load. {e}")),
@@ -1103,7 +1207,10 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
         .on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::Agent));
-    let mut m = shadows(col().key("model-menu").w(300.0).padding(6.0).radius(12.0).fill(t.popover), &t.float_shadow).child(tabs).child(list);
+    // The web's picker: 21rem wide, 8 points in, a hairline border; in dark mode
+    // the lighter #303030 surface with a #414141 border, so rows hover darker.
+    let (surface, rim) = if t.dark { (crate::theme::hex("#303030"), crate::theme::hex("#414141")) } else { (t.popover, t.border) };
+    let mut m = shadows(col().key("model-menu").w(336.0).padding(8.0).radius(12.0).fill(surface).border(1.0, rim), &t.float_shadow).child(tabs).child(list);
     if let Some(st) = status {
         m = m.child(label(st, type_::XS, t.muted_foreground).px(8.0).py(12.0).wrap());
     }
@@ -1152,12 +1259,129 @@ fn command_menu(s: &App, t: &Theme) -> Option<El> {
             })
             .on_press_tx(move |s: &mut App, tx| s.choose_entry(&id, tx))
             .child(label(e.name().to_string(), type_::XS_MEDIUM, t.foreground).truncate());
-        if on {
-            r = shadows(r.fill(t.accent), &t.control_shadow);
-        }
+        r = crate::ui::widgets::highlight(t, r, on, false);
         list = list.child(r);
     }
     Some(shadows(list, &t.float_shadow))
+}
+
+/// "Start a new chat" (`new-chat-dialog.tsx`): a search, "Start without a
+/// business", then the businesses and client records, each listed once.
+pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, layer: &mut Vec<El>) {
+    let search = text_input(&n.query, type_::SM)
+        .key("new-chat-search")
+        .placeholder("Search businesses", t.muted_foreground)
+        .label("Search businesses")
+        .w_full()
+        .color(t.foreground)
+        .on_edit(|s: &mut App| &mut s.new_chat.as_mut().expect("dialog open").query);
+    let field = shadows(
+        row().w_full().h(32.0).px(10.0).gap(8.0).radius(8.0).center_y().fill(t.control).child(ico(&icons::SEARCH, 16.0, t.muted_foreground)).child(search),
+        &t.control_shadow,
+    );
+    let hover = |key: String, r: El| {
+        let hovered = s.row_hover.as_deref() == Some(key.as_str());
+        crate::ui::widgets::highlight(t, r.on_hover_change(hover_key(key)), hovered, false)
+    };
+    let general = hover(
+        "new:general".into(),
+        row()
+            .key("new-chat-general")
+            .w_full()
+            .px(12.0)
+            .py(12.0)
+            .gap(12.0)
+            .radius(8.0)
+            .center_y()
+            .role("button")
+            .label("Start without a business")
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .on_press(|s: &mut App| s.start_chat(None))
+            .child(ico(&icons::MESSAGES_SQUARE, 20.0, t.muted_foreground))
+            .child(col().child(label("Start without a business", type_::SM_MEDIUM, t.foreground)).child(label("A general chat, without business context", type_::SM_13, t.muted_foreground))),
+    );
+    // A client record is the same business seen from the agency side: listed once, by its own name.
+    let q = n.query.text.trim().to_lowercase();
+    let body = match &n.clients {
+        Load::Ready(clients) => {
+            let ids: std::collections::HashSet<&str> = clients.iter().map(|c| c.0.as_str()).collect();
+            let targets: Vec<(String, String)> = s
+                .businesses
+                .iter()
+                .filter(|b| !ids.contains(b.id.as_str()))
+                .map(|b| (b.id.clone(), b.name.clone()))
+                .chain(clients.iter().cloned())
+                .filter(|(_, name)| name.to_lowercase().contains(&q))
+                .collect();
+            if targets.is_empty() {
+                label(if q.is_empty() { "No businesses yet. You can start a general chat." } else { "No matching businesses." }, type_::SM, t.muted_foreground).px(8.0).py(16.0)
+            } else {
+                let mut list = col().w_full().py(4.0).label("Businesses").child(label("Businesses", type_::SM_13, t.muted_foreground).px(12.0).py(6.0));
+                for (id, name) in targets {
+                    let pick = id.clone();
+                    list = list.child(hover(
+                        format!("new:{id}"),
+                        row()
+                            .key(format!("new-chat-{id}"))
+                            .w_full()
+                            .px(12.0)
+                            .py(10.0)
+                            .gap(12.0)
+                            .radius(8.0)
+                            .center_y()
+                            .role("button")
+                            .label(name.clone())
+                            .focusable(true)
+                            .cursor(Cursor::Pointer)
+                            .on_press(move |s: &mut App| s.start_chat(Some(pick.clone())))
+                            .child(ico(&icons::BUILDING, 16.0, t.muted_foreground))
+                            .child(label(name, type_::SM, t.foreground).truncate()),
+                    ));
+                }
+                list
+            }
+        }
+        Load::Failed(_) => row()
+            .px(8.0)
+            .py(16.0)
+            .gap(4.0)
+            .child(label("Couldn't load your businesses.", type_::SM, t.foreground))
+            .child(label("Try again", type_::SM, t.foreground).role("button").cursor(Cursor::Pointer).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx))),
+        _ => label("Loading workspaces…", type_::SM, t.muted_foreground).px(8.0).py(16.0),
+    };
+    let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+    let web = crate::ui::web_url(&api);
+    let (w1, w2) = (web.clone(), web);
+    let link = |key: &str, name: &str| label(name, type_::XS, t.muted_foreground).key(key).role("link").cursor(Cursor::Pointer).hover_group().group_color(t.foreground);
+    let footer = row()
+        .w_full()
+        .px(24.0)
+        .py(12.0)
+        .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
+        .child(link("manage-businesses", "Manage businesses").on_press_tx(move |s: &mut App, tx| {
+            s.new_chat = None;
+            let _ = tx.open_url(&format!("{w1}/businesses"));
+        }))
+        .child(el().grow(1.0))
+        .child(link("add-business", "Add a business").on_press_tx(move |s: &mut App, tx| {
+            s.new_chat = None;
+            let _ = tx.open_url(&format!("{w2}/start"));
+        }));
+    let content = col()
+        .w_full()
+        .child(col().w_full().px(24.0).pb(12.0).child(field))
+        .child(col().w_full().px(16.0).pb(8.0).child(general))
+        .child(col().key("new-chat-list").w_full().max_h(360.0).px(16.0).py(8.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border).child(body).scroll(ScrollSpec { stick_bottom: false }))
+        .child(footer);
+    Dialog::new("new-chat", "Start a new chat")
+        .description("Choose the business to talk about, or start without one.")
+        .width(672.0)
+        .fit()
+        .open(true)
+        .child(content)
+        .on_close(|s: &mut App| s.new_chat = None)
+        .build(k, layer);
 }
 
 // ---- Overlays: the "/" menu, the "+" menu and their dialogs ---------------------
@@ -1199,6 +1423,9 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
 /// "Follow-ups", "Follow-ups on" or "Follow-ups elsewhere", by the model picker.
 /// Only on a person's own chat, not a helper session.
 fn followups_trigger(s: &App, t: &Theme) -> Option<El> {
+    if s.general {
+        return None;
+    }
     let chat = s.chat_id.as_deref()?;
     let conv = s.conversation.ready().filter(|c| c.id == chat)?;
     if conv.session.as_ref().is_some_and(|i| i.parent_session_id.is_some()) {

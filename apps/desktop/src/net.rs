@@ -49,6 +49,8 @@ pub enum Reply {
     Judged { claim: String, verdict: String, result: ApiResult<()> },
     /// An action was recorded for a claim (or the call failed).
     ActionRecorded { claim: String, result: ApiResult<()> },
+    /// The account's client records, for "Start a new chat".
+    Clients(ApiResult<Vec<(String, String)>>),
     /// The "/" menu's playbooks for a business.
     Playbooks(Option<String>, ApiResult<Vec<crate::chat::Playbook>>),
     /// A playbook was saved (`Some(name)`) or deleted, or the call failed.
@@ -202,6 +204,10 @@ impl Net {
             let result = c.record_action(&business, &claim, &kind, &target, notes.as_deref());
             send(Reply::ActionRecorded { claim, result });
         });
+    }
+
+    pub fn clients(&self) {
+        self.spawn(|c, send| send(Reply::Clients(c.clients())));
     }
 
     pub fn playbooks(&self, business: Option<String>) {

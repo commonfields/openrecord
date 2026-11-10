@@ -9,6 +9,7 @@
 mod api;
 mod brand_marks;
 mod brands;
+mod channel_marks;
 mod chat;
 mod decisions;
 mod fixtures;
@@ -20,6 +21,7 @@ mod net;
 mod prefs;
 mod settings;
 mod state;
+mod surface;
 mod theme;
 mod ui;
 mod visual;
@@ -62,8 +64,7 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if ev.is_command('n') {
-        s.new_chat();
-        tx.focus("composer-input", false);
+        s.open_new_chat(tx);
         return true;
     }
     if ev.is_command('r') {
@@ -99,6 +100,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-followups", fixtures::agent_followups),
     ("agent-reasoning", fixtures::agent_reasoning),
     ("agent-failed", fixtures::agent_failed),
+    ("new-chat", fixtures::new_chat),
+    ("agent-ui", fixtures::agent_ui),
+    ("agent-ui-invalid", fixtures::agent_ui_invalid),
     ("agent-compose", fixtures::agent_compose),
     ("agent-archived", fixtures::agent_archived),
     ("settings-general", fixtures::settings_general),

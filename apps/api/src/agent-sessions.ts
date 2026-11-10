@@ -190,7 +190,7 @@ const SYSTEM_WAKE = "This turn started because helper results arrived. Combine t
 /** What runs a turn's model loop: handleAgentMessage in production, a fixture in tests. */
 export type BaseResponder = (accountId: string, userId: string, businessId: string | null, message: string, history: import("./agent.js").AgentHistory,
   selection: HarnessSelection | undefined, assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: import("./agent-run.js").RunJournal,
-  extension?: TurnExtension, generateTitle?: boolean, style?: import("@openrecord/contracts").AgentResponseStyle) => ReturnType<Responder<Ctx>>
+  extension?: TurnExtension, generateTitle?: boolean, style?: import("@openrecord/contracts").AgentResponseStyle, surfaces?: ReadonlyArray<"ui">) => ReturnType<Responder<Ctx>>
 
 /** The session runtime bound to one model loop. Helpers, follow-ups and the
  * turn that continues after results all run through the same loop. */
@@ -342,7 +342,7 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
   const sessionResponder: Responder<Ctx> = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) => Effect.gen(function*() {
     const context = yield* Effect.context<Ctx>()
     const extension = businessId === null ? undefined : sessionExtension({ accountId, userId, businessId }, turn, assertActive, context)
-    return yield* base(accountId, userId, businessId, message, history, selection, assertActive, journal, extension, turn.generateTitle === true, turn.style)
+    return yield* base(accountId, userId, businessId, message, history, selection, assertActive, journal, extension, turn.generateTitle === true, turn.style, turn.surfaces)
   })
 
   /** One operator turn with session tools. Afterwards, results that arrived

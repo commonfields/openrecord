@@ -351,6 +351,10 @@ export const AgentMessageRequest = Schema.Struct({
   /** At most three files, 80,000 characters together. */
   attachments: Schema.optional(Schema.Array(AgentAttachment).pipe(Schema.maxItems(3),
     Schema.filter(files => files.reduce((n, f) => n + f.text.length, 0) <= MAX_ATTACHMENT_CHARS))),
+  /** What the client can draw beyond Markdown and charts: "ui" renders ```ui
+   * blocks (generated views from the app's component catalog). The agent is told about
+   * them only when the client says it draws them. */
+  surfaces: Schema.optional(Schema.Array(Schema.Literal("ui")).pipe(Schema.maxItems(4))),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
 export type AgentResponseStyle = NonNullable<AgentMessageRequest["style"]>

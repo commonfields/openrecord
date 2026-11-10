@@ -49,7 +49,14 @@ to a release. The app opened from Finder talks to `http://localhost:3001`.
   commands and the playbooks (built-in SEO, AEO and GEO ones and the account's
   own), driven by the arrows, Tab, Return and Escape; a "+" menu to save the
   draft as a playbook, share the chat by read-only link, attach files and
-  manage providers; and automatic follow-ups by the model picker. The agent's
+  manage providers; automatic follow-ups by the model picker; and "Start a new
+  chat" (⌘N) for a business, a client or a general chat.
+- Generated views: the app sends `surfaces: ["ui"]`, so the agent may answer
+  with a ```ui block, a flat list of components from a fixed catalog (cards,
+  metrics, lists, tables, progress, badges, charts, and "ask" or "open"
+  buttons). `src/surface.rs` validates the whole block (budgets, depth, ids,
+  reachability, https-only links) before it is drawn inside a "Generated view"
+  frame; a refused block shows as code. Needs an API with the `surfaces` field. The agent's
   skills are chosen by the server for each turn, so the desktop gets them as
   the web does.
 - Workspace: Inbox (approve or decline every kind of decision), the Overview
@@ -70,7 +77,7 @@ Every screen has a scene built from fixture data, with no network:
 ```sh
 cargo build
 ./target/debug/openrecord-desktop --snap agent.png --scene agent [--theme dark] [--chrome]
-# scenes: signin agent agent-empty agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
+# scenes: signin agent agent-empty agent-ui agent-ui-invalid new-chat agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
 ```
 
 `--chrome` draws the traffic lights and reports any element under them.

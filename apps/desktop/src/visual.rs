@@ -42,6 +42,8 @@ pub enum Part {
     Text(String),
     /// The raw JSON of a ```chart block.
     Chart(String),
+    /// The raw JSON of a ```ui block: a generated view (`crate::surface`).
+    Ui(String),
 }
 
 fn text(v: Option<&Value>, max: usize) -> Option<String> {
@@ -118,7 +120,9 @@ pub fn split(md: &str) -> Vec<Part> {
     let mut buf = String::new();
     let mut lines = md.split_inclusive('\n').peekable();
     while let Some(line) = lines.next() {
-        if line.trim_end() == "```chart" {
+        let fence = line.trim_end();
+        if fence == "```chart" || fence == "```ui" {
+            let ui = fence == "```ui";
             let mut body = String::new();
             let mut closed = false;
             let mut taken = Vec::new();
@@ -137,7 +141,8 @@ pub fn split(md: &str) -> Vec<Part> {
                     parts.push(Part::Text(std::mem::take(&mut buf)));
                 }
                 buf.clear();
-                parts.push(Part::Chart(body.trim().to_string()));
+                let raw = body.trim().to_string();
+                parts.push(if ui { Part::Ui(raw) } else { Part::Chart(raw) });
             } else {
                 buf.push_str(line);
                 taken.iter().for_each(|l| buf.push_str(l));
@@ -199,6 +204,12 @@ mod tests {
     fn splits_reply_at_chart_fences() {
         let md = "Here is the trend.\n\n```chart\n{\"type\":\"bar\"}\n```\nAnd more.\n";
         assert_eq!(split(md), vec![Part::Text("Here is the trend.\n\n".into()), Part::Chart("{\"type\":\"bar\"}".into()), Part::Text("And more.\n".into())]);
+    }
+
+    #[test]
+    fn splits_ui_fences() {
+        let md = "Plan:\n```ui\n{\"root\":\"r\"}\n```\n";
+        assert_eq!(split(md), vec![Part::Text("Plan:\n".into()), Part::Ui("{\"root\":\"r\"}".into())]);
     }
 
     #[test]

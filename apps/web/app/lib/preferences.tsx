@@ -15,7 +15,7 @@ export type Preferences = {
   showIssueCount: boolean
   reduceMotion: boolean
   /** How wide the chat's messages and composer can grow on large screens. */
-  chatWidth: "comfortable" | "wide" | "full"
+  chatWidth: "comfortable" | "wide"
   /** How the agent writes its answers: friendly by default, or shorter or deeper. */
   responseStyle: "friendly" | "concise" | "detailed"
 }
@@ -41,8 +41,11 @@ function load(): Preferences {
     if (!raw) return defaultPreferences
     const saved = JSON.parse(raw) as Partial<Preferences> | null
     const theme = saved?.theme
+    // "Full" was retired: a saved full width becomes Wide, the widest left.
+    const chatWidth = saved?.chatWidth === "comfortable" || saved?.chatWidth === "wide" ? saved.chatWidth : (saved?.chatWidth as string | undefined) === "full" ? "wide" : defaultPreferences.chatWidth
     return { ...defaultPreferences, ...saved,
-      theme: theme === "light" || theme === "dark" || theme === "system" ? theme : defaultPreferences.theme }
+      theme: theme === "light" || theme === "dark" || theme === "system" ? theme : defaultPreferences.theme,
+      chatWidth }
   } catch {
     return defaultPreferences
   }
