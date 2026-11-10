@@ -42,10 +42,10 @@ to a release. The app opened from Finder talks to `http://localhost:3001`.
   sidebar that collapses to a rail (⌘B), and the account menu.
 - Agent: chat history across businesses, transcripts with Markdown replies,
   and sending a message, which follows the run until it settles.
-- Workspace: Inbox (decisions waiting), Overview counts, Campaigns, AI answers
+- Workspace: Inbox (approve or decline every kind of decision), Overview counts, Campaigns, AI answers
   and Channels.
 
-Approving decisions, the results charts, settings and business setup stay on
+The results charts, settings and business setup stay on
 the web for now. "Open in the browser" in the account menu goes there.
 
 Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 Agent, ⌘2 Workspace, ⌘B sidebar.
