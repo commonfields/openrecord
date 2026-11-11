@@ -12,7 +12,6 @@ use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico, icon_button, label};
 
-pub const SIDEBAR_WIDTH: f32 = 256.0;
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights.
 pub const TITLEBAR: f32 = 36.0;
@@ -61,13 +60,24 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
     };
 
     let agent = s.view == View::Agent;
+    // The web's row: the Find icon on the left; the chat filter and archive (while
+    // the agent is open) and New chat on the right.
     let tools = {
+        let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
         let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat", false).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx));
-        let refresh = icon_button(t, "refresh", &icons::REFRESH_CW, "Refresh", false).on_press(|s: &mut App| s.refresh());
+        let mut right = if open { row().gap(2.0).center_y() } else { col().gap(4.0).items_center() };
+        if agent {
+            let archived = s.show_archived;
+            let filtered = s.chat_filter.as_ref().and_then(|f| s.businesses.iter().find(|b| &b.id == f)).map(|b| b.name.clone());
+            right = right
+                .child(icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some()).on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)))
+                .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).on_press(|s: &mut App| s.toggle_archived()));
+        }
+        right = right.child(new_chat);
         if open {
-            row().w_full().center_y().justify_between().child(refresh).child(new_chat)
+            row().w_full().center_y().justify_between().child(find).child(right)
         } else {
-            col().gap(4.0).items_center().child(refresh).child(new_chat)
+            col().gap(4.0).items_center().child(find).child(right)
         }
     };
 
@@ -85,7 +95,7 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
     let account = {
         let name = s.account_email.as_deref().map(|e| e.split('@').next().unwrap_or(e).to_string()).unwrap_or_else(|| "Your account".into());
         let mut b = row()
-            .key("account-menu")
+            .key("account-trigger")
             .gap(8.0)
             .radius(6.0)
             .center_y()
@@ -97,7 +107,13 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .hover(t.hover_tint)
             .motion(CONTROL)
             .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Account) { None } else { Some(Menu::Account) })
-            .child(avatar_sphere(t, 24.0));
+            .child({
+                // A dot on the avatar while a newer version waits in the account menu.
+                let ready = matches!(s.update, crate::update::Update::Available(_));
+                row().size(24.0, 24.0).child(avatar_sphere(t, 24.0)).children(ready.then(|| {
+                    el().absolute(17.0, -1.0).size(9.0, 9.0).radius(4.5).fill(t.primary_ink).border(1.5, t.sidebar).help("A new version is ready")
+                }))
+            });
         if open {
             b = b
                 .w_full()
@@ -114,13 +130,17 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         b
     };
 
-    col()
+    let mut side = col()
         .key("sidebar")
-        .w(if open { SIDEBAR_WIDTH } else { RAIL_WIDTH })
+        .w(if open { s.prefs.sidebar() } else { RAIL_WIDTH })
         .h_full()
         .fill(t.sidebar)
         .motion(PANE)
-        .clip_rounded(0.0)
+        .clip_rounded(0.0);
+    if open {
+        side = side.child(resize_edge(t, s.resizing == Some(Resize::Sidebar)));
+    }
+    side
         .child(el().key("titlebar-band").w_full().h(TITLEBAR).window_drag())
         .child(
             col()
@@ -133,6 +153,63 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         )
         .child(nav)
         .child(col().w_full().py(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(account))
+}
+
+/// What a drag edge is resizing, while one is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resize {
+    Sidebar,
+    Helper,
+    AgentPane,
+}
+
+/// The sidebar's right edge: drag to resize between the web's 224 and 448
+/// points, double-click for the default, arrow keys to nudge. The width is
+/// kept between launches.
+fn resize_edge(t: &Theme, held: bool) -> El {
+    use crate::prefs::{SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN};
+    el().key("sidebar-edge")
+        .pin(None, Some(0.0), Some(0.0), Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize sidebar")
+        .help("Drag to resize; double-click for the default width")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        // A hairline that shows while the edge is held or hovered.
+        .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(2.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.prefs.sidebar();
+                    s.resizing = Some(Resize::Sidebar);
+                }
+                rune::Phase::Move => s.prefs.sidebar_width = (d.data + d.dx).clamp(SIDEBAR_MIN, SIDEBAR_MAX).round(),
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.prefs.sidebar_width = d.data;
+                    }
+                    s.resizing = None;
+                    s.prefs.save();
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| {
+            s.prefs.sidebar_width = SIDEBAR_DEFAULT;
+            s.prefs.save();
+        })
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => -16.0,
+                rune::Key::Right => 16.0,
+                _ => return false,
+            };
+            s.prefs.sidebar_width = (s.prefs.sidebar() + step).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+            s.prefs.save();
+            true
+        })
 }
 
 fn group_label(t: &Theme, text_: &str) -> El {
@@ -150,6 +227,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             Page::Campaigns => (&icons::BRIEFCASE, 0),
             Page::AiAnswers => (&icons::CIRCLE_ALERT, if s.prefs.show_issue_count { s.attention() } else { 0 }),
             Page::Channels => (&icons::PLUG, 0),
+            Page::Usage | Page::Businesses | Page::Clients => continue,
         };
         let mut link = row()
             .key(format!("nav-{}", page.key()))
@@ -187,6 +265,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                 link = link.child(el().absolute(26.0, 6.0).size(6.0, 6.0).radius(3.0).fill(t.wrong));
             }
         }
+        // The web's active row: the accent fill with the control shadow.
         if active {
             link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
         }
@@ -213,7 +292,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                         .motion(CONTROL)
                         .fill(if on { t.sidebar_accent } else { rune::Color::TRANSPARENT })
                         .on_press(move |s: &mut App| s.show_section(sec))
-                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.sidebar_foreground })),
+                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.muted_foreground })),
                 );
             }
             links = links.child(row().w_full().pl(22.0).child(sub));
@@ -256,19 +335,11 @@ fn chat_history(s: &App, t: &Theme) -> El {
                 .child(ico(&icons::ARROW_LEFT, 14.0, t.muted_foreground)),
         );
     }
-    header = header.child(label(if archived { "Archived" } else { "Chats" }, type_::SM_MEDIUM, t.muted_foreground));
+    // As the web draws it: "Chats" on the left, the count on the right.
+    header = header.child(label(if archived { "Archived" } else { "Chats" }, type_::SM_MEDIUM, t.muted_foreground)).child(el().grow(1.0));
     if !all.is_empty() {
-        header = header.child(label(all.len().to_string(), type_::XS2.features("'tnum' 1"), t.muted_foreground).pl(4.0));
+        header = header.child(label(all.len().to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground));
     }
-    let filtered = s.chat_filter.as_ref().and_then(|f| s.businesses.iter().find(|b| &b.id == f)).map(|b| b.name.clone());
-    header = header
-        .child(el().grow(1.0))
-        .child(
-            icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some())
-                .size(24.0, 24.0)
-                .on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)),
-        )
-        .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).size(24.0, 24.0).on_press(|s: &mut App| s.toggle_archived()));
 
     let mut list = col().w_full().gap(2.0);
     if archived && matches!(s.archived, crate::state::Load::Loading) && shown.is_empty() {
@@ -291,7 +362,11 @@ fn chat_history(s: &App, t: &Theme) -> El {
                 .role("button")
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
-                .on_press(|s: &mut App| s.show_all_chats = !s.show_all_chats)
+                // Showing more or fewer chats lands at once; the rows' hover keeps its easing.
+                .on_press_tx(|s: &mut App, tx| {
+                    tx.instant();
+                    s.show_all_chats = !s.show_all_chats;
+                })
                 .child(label(text_, type_::SM_13, t.muted_foreground)),
         );
     }
@@ -338,9 +413,10 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         .help(if archived { "Restore chat" } else { "Archive chat" })
         .cursor(Cursor::Pointer)
         .group_opacity(0.0, 1.0)
-        .hover(t.sidebar.alpha(0.8))
+        .hover_group()
         .on_press(move |s: &mut App| s.archive_chat(&id, !archived))
-        .child(ico(if archived { &icons::ARCHIVE_RESTORE } else { &icons::ARCHIVE }, 14.0, t.muted_foreground));
+        // No frame of its own on hover: the icon brightens instead.
+        .child(ico(if archived { &icons::ARCHIVE_RESTORE } else { &icons::ARCHIVE }, 14.0, t.muted_foreground).group_color(t.foreground));
     // The web's row: on hover its background eases to the sidebar accent at 70% over
     // 200 milliseconds and its right padding opens for the archive button, so the
     // title stops short of it; the open chat keeps the accent with the control shadow.
@@ -410,7 +486,20 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
         .on_press(|s: &mut App| s.sidebar_open = !s.sidebar_open);
     let mut h = row().key("header").w_full().h(48.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag().child(toggle);
 
-    if let Some(b) = s.active_business() {
+    if s.view == View::Workspace && s.page.account() {
+        // An account page belongs to no business.
+        h = h.child(
+            row()
+                .key("breadcrumbs")
+                .gap(6.0)
+                .center_y()
+                .role("navigation")
+                .label("Breadcrumb")
+                .child(label("Account", type_::XS, t.muted_foreground))
+                .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7)))
+                .child(label(s.page.label(), type_::XS_MEDIUM, t.foreground)),
+        );
+    } else if let Some(b) = s.active_business() {
         h = h.child(tabs(s, t)).child(el().w(1.0).h(16.0).mx(4.0).fill(t.border));
         let here = match s.view {
             View::Agent if s.general => "General chat",
@@ -520,13 +609,109 @@ fn menu_row(t: &Theme, key: String, lead: El, text_: &str, checked: bool) -> El 
     r
 }
 
-fn separator(t: &Theme) -> El {
-    el().w_full().h(1.0).my(6.0).fill(t.border)
+/// The account menu, as the web draws it: who is signed in, then Settings,
+/// Account, Keyboard shortcuts and Usage; Businesses and Clients and products;
+/// and Sign out. A waiting update shows above Sign out.
+pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>) {
+    if s.menu != Some(Menu::Account) {
+        return;
+    }
+    let email = s.account_email.clone().unwrap_or_else(|| "Signed in".into());
+    let name = email.split('@').next().unwrap_or(&email).to_string();
+    let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+    let web = web_url(&api);
+    let item = |key: &str, icon: &'static rune::Icon, text_: &str| {
+        row().key(key.to_string()).w_full().h(34.0).px(10.0).gap(10.0).radius(6.0).center_y()
+            .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer)
+            .hover(t.hover_tint).hover_group().motion(CONTROL)
+            .child(ico(icon, 16.0, t.muted_foreground).group_color(t.foreground))
+            .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+    };
+    let rule = || el().w_full().h(1.0).my(6.0).fill(t.border);
+    let settings = |page: crate::state::SettingsPage| move |s: &mut App| {
+        s.menu = None;
+        s.open_settings(page);
+    };
+    let _ = web;
+    // Opens in the app, as the web opens them in its own shell.
+    let page = |p: Page| {
+        move |s: &mut App| {
+            s.menu = None;
+            s.show_page(p);
+        }
+    };
+    let width = if s.sidebar_open { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
+    let mut m = menu(t, "account-menu-list", width)
+        .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
+            .child(avatar_sphere(t, 36.0))
+            .child(col().min_w(0.0).gap(1.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate())))
+        .child(rule())
+        .child(item("acct-settings", &icons::SETTINGS, "Settings").on_press(settings(crate::state::SettingsPage::General)))
+        .child(item("acct-account", &icons::USER_ROUND, "Account").on_press(settings(crate::state::SettingsPage::Account)))
+        .child(item("acct-shortcuts", &icons::KEYBOARD, "Keyboard shortcuts").on_press(settings(crate::state::SettingsPage::Shortcuts)))
+        .child(item("acct-usage", &icons::GAUGE, "Usage").on_press(page(Page::Usage)))
+        .child(rule())
+        .child(item("acct-businesses", &icons::BUILDING, "Businesses").on_press(page(Page::Businesses)))
+        .child(item("acct-clients", &icons::BRIEFCASE, "Clients and products").on_press(page(Page::Clients)))
+        .child(rule())
+        .child(update_row(s, t))
+        .child(rule());
+    m = m.child(item("sign-out", &icons::LOG_OUT, "Sign out").on_press(|s: &mut App| s.sign_out()));
+    let side = if s.sidebar_open { Side::Top } else { Side::Right };
+    layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
+}
+
+/// The update row, always there: check for a newer version, install one that
+/// is waiting, or show how the last attempt went, with this build's version.
+fn update_row(s: &App, t: &Theme) -> El {
+    use crate::update::{Update, current};
+    let spin = || ico(&icons::LOADER, 16.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
+    let (lead, text_, note, busy) = match &s.update {
+        Update::Available(r) => (ico(&icons::DOWNLOAD, 16.0, t.primary_ink), format!("Update to {}", r.version), Some("Restarts the app".to_string()), false),
+        Update::Installing(v) => (spin(), format!("Installing {v}…"), None, true),
+        Update::Checking => (spin(), "Checking for updates…".to_string(), None, true),
+        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 16.0, t.wrong), "Update failed, try again".to_string(), None, false),
+        Update::UpToDate => (ico(&icons::CHECK, 16.0, t.muted_foreground), "Up to date".to_string(), Some("Check again".to_string()), false),
+        Update::Unknown => (ico(&icons::DOWNLOAD, 16.0, t.muted_foreground), "Check for updates".to_string(), None, false),
+    };
+    let available = matches!(s.update, Update::Available(_));
+    let mut r = row()
+        .key("app-update")
+        .w_full()
+        .h(44.0)
+        .px(10.0)
+        .gap(10.0)
+        .radius(6.0)
+        .center_y()
+        .role("menuitem")
+        .label(text_.clone())
+        .disabled(busy)
+        .focusable(!busy)
+        .cursor(if busy { Cursor::Default } else { Cursor::Pointer })
+        .hover(t.hover_tint)
+        .child(lead)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .child(label(text_, type_::SM, t.foreground).truncate())
+                .child(label(format!("OpenRecord {}{}", current(), note.map(|n| format!(", {}", n.to_lowercase())).unwrap_or_default()), type_::XS11, t.muted_foreground).truncate()),
+        );
+    if available {
+        r = r.fill(t.primary_ink.alpha(0.08));
+    }
+    if busy {
+        return r;
+    }
+    r.on_press(|s: &mut App| match s.update {
+        crate::update::Update::Available(_) => s.install_update(),
+        _ => s.check_update(),
+    })
 }
 
 /// The menu open over the sidebar, if any, anchored to its trigger.
 pub fn menus(s: &App, t: &Theme) -> Option<El> {
-    let width = if s.sidebar_open { SIDEBAR_WIDTH - 16.0 } else { 256.0 };
+    let width = if s.sidebar_open { s.prefs.sidebar() - 16.0 } else { 256.0 };
     let side = if s.sidebar_open { Side::Bottom } else { Side::Right };
     match s.menu? {
         Menu::Businesses => {
@@ -546,34 +731,8 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             }
             Some(m.role("menu").anchored("business-switcher", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
         }
-        Menu::Account => {
-            let email = s.account_email.clone().unwrap_or_else(|| "Signed in".into());
-            let name = email.split('@').next().unwrap_or(&email).to_string();
-            let head = row()
-                .px(10.0)
-                .py(10.0)
-                .gap(12.0)
-                .center_y()
-                .child(avatar_sphere(t, 36.0))
-                .child(col().min_w(0.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate()));
-            let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
-            let m = menu(t, "account-menu-list", width)
-                .child(head)
-                .child(separator(t))
-                .child(menu_row(t, "open-settings".into(), ico(&icons::SETTINGS, 16.0, t.muted_foreground), "Settings", false).help_keys(["⌘", ","]).on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::General)))
-                .child(menu_row(t, "open-web".into(), ico(&icons::EXTERNAL_LINK, 16.0, t.muted_foreground), "Open in the browser", false).on_press_tx(move |s: &mut App, tx| {
-                    s.menu = None;
-                    let _ = tx.open_url(&web_url(&api));
-                }))
-                .child(menu_row(t, "refresh-all".into(), ico(&icons::REFRESH_CW, 16.0, t.muted_foreground), "Refresh", false).on_press(|s: &mut App| {
-                    s.menu = None;
-                    s.refresh();
-                }))
-                .child(separator(t))
-                .child(menu_row(t, "sign-out".into(), ico(&icons::LOG_OUT, 16.0, t.muted_foreground), "Sign out", false).on_press(|s: &mut App| s.sign_out()));
-            let side = if s.sidebar_open { Side::Top } else { Side::Right };
-            Some(m.role("menu").anchored("account-menu", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
-        }
+        // Built with the kit beside the other layers (`account_menu`).
+        Menu::Account => None,
         Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
         Menu::Reasoning => Some(crate::ui::agent::reasoning_menu(s, t)),
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),

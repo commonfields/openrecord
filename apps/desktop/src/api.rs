@@ -330,15 +330,93 @@ pub struct Channel {
     pub active: Vec<String>,
 }
 
-/// A campaign as the list returns it. Kept loose: the desktop list shows its
-/// name, stage and goal and leaves the rest to the web view.
-#[derive(Debug, Clone, PartialEq)]
+/// A campaign as the list returns it: its saved brief (`CampaignBrief` in
+/// `packages/contracts/src/campaigns.ts`), read field by field so a missing
+/// one is empty rather than a failed list.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Campaign {
     pub id: String,
+    pub revision: i64,
     pub title: String,
-    pub stage: String,
+    /// DRAFT, ACTIVE, REVIEW or CLOSED.
+    pub status: String,
     pub goal: String,
+    pub audience: String,
+    pub offer: String,
+    pub message: String,
+    pub hypothesis: String,
+    pub metric: String,
+    pub baseline: String,
+    pub target: String,
+    pub owner: String,
+    pub launch_date: String,
+    pub review_date: String,
+    pub tasks: Vec<CampaignTask>,
+    pub result: String,
+    /// UNDECIDED, KEEP, CHANGE, STOP or INCONCLUSIVE.
+    pub decision: String,
+    pub learning: String,
+    pub next_move: String,
+    pub channel: String,
+    /// OWNED, EARNED, PAID, PRODUCT_LED, HYBRID or UNSPECIFIED.
+    pub motion: String,
+    /// AWARENESS through REFERRAL, or UNSPECIFIED.
+    pub funnel_stage: String,
+    pub budget: String,
+    pub cadence: String,
+    pub conversion_event: String,
+    pub tracking_plan: String,
     pub updated_at: Option<String>,
+    /// Who drafted it: OPERATOR or ASSISTANT.
+    pub created_by: String,
+}
+
+/// One deliverable of a campaign.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CampaignTask {
+    pub title: String,
+    pub owner: String,
+    pub due: String,
+    /// WEBSITE, EMAIL, PAID, SOCIAL or OTHER.
+    pub channel: String,
+    /// TODO, IN_PROGRESS, BLOCKED or DONE.
+    pub status: String,
+}
+
+impl Campaign {
+    /// What still stands between the brief and a launch (`campaignBlockers`).
+    pub fn blockers(&self) -> Vec<String> {
+        let fields = [
+            (&self.goal, "Define a goal"),
+            (&self.audience, "Choose an audience"),
+            (&self.offer, "Define the offer"),
+            (&self.message, "Agree the message"),
+            (&self.hypothesis, "Write a hypothesis"),
+            (&self.metric, "Define the success metric and data source"),
+            (&self.baseline, "Record a baseline or explain why unavailable"),
+            (&self.target, "Set a target"),
+            (&self.owner, "Assign a campaign owner"),
+            (&self.launch_date, "Set a launch date"),
+            (&self.review_date, "Schedule a review"),
+        ];
+        let mut out: Vec<String> = fields.iter().filter(|(v, _)| v.trim().is_empty()).map(|(_, l)| l.to_string()).collect();
+        if self.tasks.is_empty() {
+            out.push("Add launch deliverables".into());
+        }
+        out.extend(self.tasks.iter().filter(|t| t.owner.trim().is_empty() || t.due.is_empty()).map(|t| format!("{}: assign an owner and due date", t.title)));
+        out.extend(self.tasks.iter().filter(|t| t.status != "DONE").map(|t| format!("{}: {}", t.title, if t.status == "BLOCKED" { "blocked" } else { "not complete" })));
+        out
+    }
+
+    /// Deliverables done, of all of them.
+    pub fn done(&self) -> (usize, usize) {
+        (self.tasks.iter().filter(|t| t.status == "DONE").count(), self.tasks.len())
+    }
+
+    /// A live campaign whose review date has come.
+    pub fn review_due(&self, today: &str) -> bool {
+        matches!(self.status.as_str(), "ACTIVE" | "REVIEW") && (self.review_date.is_empty() || self.review_date.as_str() <= today)
+    }
 }
 
 pub use crate::decisions::Decision;
@@ -517,6 +595,15 @@ impl Client {
         Ok(self.get::<R>(&format!("/api/businesses/{}/overview", enc(business)))?.overview)
     }
 
+    /// A business's approved facts (the active versions).
+    pub fn facts(&self, business: &str) -> ApiResult<Vec<Fact>> {
+        #[derive(Deserialize)]
+        struct F {
+            facts: Vec<Fact>,
+        }
+        Ok(self.get::<F>(&format!("/api/businesses/{}/facts", enc(business)))?.facts.into_iter().filter(|f| f.status == "ACTIVE").collect())
+    }
+
     pub fn issues(&self, business: &str) -> ApiResult<Vec<Issue>> {
         #[derive(Deserialize)]
         struct R {
@@ -688,12 +775,55 @@ fn first(v: &Value, paths: &[&[&str]]) -> String {
 }
 
 fn campaign(v: &Value) -> Campaign {
+    // The list nests the brief; older payloads kept its fields at the top.
+    let b = v.get("brief").filter(|b| b.is_object()).unwrap_or(v);
+    let t = |k: &str| s(b, &[k]).unwrap_or_default();
+    let d = |k: &str| s(b, &["distribution", k]).unwrap_or_default();
+    let tasks = b
+        .get("tasks")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|x| CampaignTask {
+                    title: first(x, &[&["title"]]),
+                    owner: first(x, &[&["owner"]]),
+                    due: first(x, &[&["due"]]),
+                    channel: first(x, &[&["channel"]]),
+                    status: first(x, &[&["status"]]),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Campaign {
         id: first(v, &[&["id"]]),
-        title: first(v, &[&["title"], &["name"], &["plan", "title"]]),
-        stage: first(v, &[&["stage"], &["status"]]),
-        goal: first(v, &[&["goal"], &["objective"], &["plan", "goal"]]),
-        updated_at: s(v, &["updatedAt"]).or_else(|| s(v, &["createdAt"])),
+        revision: v.get("revision").and_then(Value::as_i64).unwrap_or(0),
+        title: first(b, &[&["title"], &["name"], &["plan", "title"]]),
+        status: first(b, &[&["status"], &["stage"]]),
+        goal: first(b, &[&["goal"], &["objective"], &["plan", "goal"]]),
+        audience: t("audience"),
+        offer: t("offer"),
+        message: t("message"),
+        hypothesis: t("hypothesis"),
+        metric: t("metric"),
+        baseline: t("baseline"),
+        target: t("target"),
+        owner: t("owner"),
+        launch_date: t("launchDate"),
+        review_date: t("reviewDate"),
+        tasks,
+        result: t("result"),
+        decision: t("decision"),
+        learning: t("learning"),
+        next_move: t("nextMove"),
+        channel: d("primaryChannel"),
+        motion: d("motion"),
+        funnel_stage: d("funnelStage"),
+        budget: d("budget"),
+        cadence: d("cadence"),
+        conversion_event: d("conversionEvent"),
+        tracking_plan: d("trackingPlan"),
+        updated_at: s(v, &["updated_at"]).or_else(|| s(v, &["updatedAt"])).or_else(|| s(v, &["createdAt"])),
+        created_by: first(v, &[&["created_by_actor"]]),
     }
 }
 
@@ -776,6 +906,25 @@ pub fn uuid() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_campaign_brief_as_the_list_nests_it() {
+        let c = campaign(&serde_json::json!({
+            "id": "c1", "revision": 3, "updated_at": "2026-11-10T08:00:00Z", "created_by_actor": "ASSISTANT",
+            "brief": { "title": "Pricing guide", "status": "ACTIVE", "goal": "More trials", "audience": "", "owner": "Maya",
+                "launchDate": "2026-11-01", "reviewDate": "2026-11-20", "decision": "UNDECIDED",
+                "tasks": [{ "id": "t1", "title": "Publish", "owner": "Maya", "due": "2026-11-02", "channel": "WEBSITE", "status": "DONE" },
+                          { "id": "t2", "title": "Email", "owner": "", "due": "", "channel": "EMAIL", "status": "BLOCKED" }],
+                "distribution": { "primaryChannel": "Website", "funnelStage": "CONVERSION", "motion": "OWNED", "budget": "$500" } }
+        }));
+        assert_eq!((c.title.as_str(), c.status.as_str(), c.revision, c.updated_at.as_deref()), ("Pricing guide", "ACTIVE", 3, Some("2026-11-10T08:00:00Z")));
+        assert_eq!((c.funnel_stage.as_str(), c.budget.as_str(), c.done()), ("CONVERSION", "$500", (1, 2)));
+        let b = c.blockers();
+        assert!(b.contains(&"Choose an audience".to_string()));
+        assert!(b.contains(&"Email: assign an owner and due date".to_string()));
+        assert!(b.contains(&"Email: blocked".to_string()));
+        assert!(c.review_due("2026-11-20") && !c.review_due("2026-11-19"));
+    }
 
     #[test]
     fn reads_the_session_cookie() {
@@ -876,5 +1025,23 @@ mod live {
         eprintln!("progress for an unknown request: {:?}", events.as_ref().map(Vec::len));
         c.signout().expect("signout");
         assert_eq!(c.me(), Err(ApiError::Unauthorized));
+    }
+
+    #[test]
+    #[ignore]
+    fn live_api_reattaches_and_stops_requests() {
+        let base = std::env::var("OPENRECORD_API_URL").unwrap_or_else(|_| "http://localhost:3001".into());
+        let c = Client::new(base);
+        c.signin("demo@northstar.test", "password123").expect("signin");
+        // A reopened chat asks for a turn still in flight; most have none.
+        for chat in c.chats().expect("chats").iter().take(20) {
+            if let Some(p) = c.pending_request(&chat.id).expect("pending request") {
+                eprintln!("chat {} has request {} in flight or failed", chat.id, p.request_id);
+            }
+        }
+        // Stopping a request that is not this person's is refused, never applied elsewhere.
+        let r = c.cancel_request(&uuid());
+        assert!(matches!(r, Err(ApiError::Status(404, _))), "cancel of an unknown request: {r:?}");
+        c.signout().expect("signout");
     }
 }

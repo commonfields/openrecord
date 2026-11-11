@@ -254,7 +254,7 @@ pub fn parse(v: &Value) -> Option<Decision> {
                 sec("What we don't know", s(o, "uncertainty")),
                 sec(
                     "Where this came from",
-                    if suggested { "Suggested by OpenRecord from your brief and homepage. A hypothesis, not a measured result.".into() } else { s(o, "source") },
+                    if suggested { "Suggested by OpenRecord from your brief and homepage. An idea to try, not a measured result.".into() } else { s(o, "source") },
                 ),
             ];
             d.note = Some("Approving records your decision. Nothing is published or changed on your site.".into());
@@ -422,11 +422,11 @@ pub fn parse(v: &Value) -> Option<Decision> {
                     d.summary = match k {
                         "PREPARE_CLIENT_REPORT" => "Private client report, awaiting review",
                         "PROPOSE_QUESTION_SET" => "Buyer-question proposal, awaiting review",
-                        _ => "Source action hypothesis, awaiting review",
+                        _ => "Suggested fix, waiting for you",
                     }
                     .into();
-                    d.body = Some(text.clone().unwrap_or_else(|| "Draft evidence unavailable".into()));
-                    d.note = Some("Accepting this draft does not publish, deliver, execute or record completed work.".into());
+                    d.body = Some(text.clone().unwrap_or_else(|| "Sources not available".into()));
+                    d.note = Some("Accepting saves the draft. Nothing is published or sent.".into());
                     d.approve = "Accept draft".into();
                     d.act = Act::Draft;
                     d.feedback_title = d.title.clone();

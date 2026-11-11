@@ -79,7 +79,16 @@ pub struct Prefs {
     /// The composer's microphone, for macOS dictation.
     pub voice_input: bool,
     pub default_provider: String,
+    /// The sidebar's width when open, dragged from its edge (the web's 224 to 448).
+    pub sidebar_width: f32,
+    /// A helper session's share of the conversation split, in percent (30 to 70).
+    pub helper_width: f32,
 }
+
+pub const SIDEBAR_DEFAULT: f32 = 256.0;
+pub const SIDEBAR_MIN: f32 = 224.0;
+pub const SIDEBAR_MAX: f32 = 448.0;
+pub const HELPER_DEFAULT: f32 = 50.0;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -93,6 +102,8 @@ impl Default for Prefs {
             enter_to_send: true,
             voice_input: true,
             default_provider: "mock".into(),
+            sidebar_width: SIDEBAR_DEFAULT,
+            helper_width: HELPER_DEFAULT,
         }
     }
 }
@@ -113,6 +124,16 @@ impl Prefs {
             let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
             let _ = std::fs::write(p, json);
         }
+    }
+
+    /// The sidebar's width, kept within the web's bounds.
+    pub fn sidebar(&self) -> f32 {
+        self.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
+    }
+
+    /// The helper's share of the split, kept within 30 to 70 percent.
+    pub fn helper(&self) -> f32 {
+        self.helper_width.clamp(30.0, 70.0)
     }
 
     /// Whether to draw dark, given what the system asks for.
@@ -143,5 +164,8 @@ mod tests {
         assert_eq!(full.chat_width, ChatWidth::Wide);
         assert!(p.dark(false));
         assert!(!Prefs::default().dark(false));
+        assert_eq!((p.sidebar(), p.helper()), (SIDEBAR_DEFAULT, HELPER_DEFAULT));
+        let wide: Prefs = serde_json::from_str(r#"{ "sidebar_width": 900, "helper_width": 10 }"#).unwrap();
+        assert_eq!((wide.sidebar(), wide.helper()), (SIDEBAR_MAX, 30.0));
     }
 }

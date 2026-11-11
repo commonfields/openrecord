@@ -1,7 +1,8 @@
 //! Charts in the web Overview's language (`components/charts.tsx`).
 //!
-//! [`area_trend`] is the web's `AreaTrendChart`: one metric as a smoothed
-//! 2-point line over a soft area, an optional dotted comparison line (the
+//! [`area_trend`] draws one metric over days as a line over a soft area (a
+//! rate as its trailing average, each day a faint dot), the comparison as a
+//! dashed grey line, an optional dotted comparison line (the
 //! trailing average), three faint gridlines, the value axis on the right and
 //! a tooltip for the day under the pointer. [`verdict_bar`] is `VerdictBar`.
 
@@ -16,7 +17,7 @@ use crate::ui::widgets::label;
 /// The verdict colours in the web's order (`verdictSeries`), with their names.
 pub fn verdict_series(t: &Theme) -> [(&'static str, Color); 5] {
     let c = &t.chart;
-    [("Wrong", c.wrong), ("Not enough information", c.unknown), ("Partially correct", c.partial), ("Waiting for review", c.unreviewed), ("Supported", c.supported)]
+    [("Wrong", c.wrong), ("Can't tell", c.unknown), ("Partly right", c.partial), ("Not checked yet", c.unreviewed), ("Correct", c.supported)]
 }
 
 fn verdict_values(v: &Verdicts) -> [f64; 5] {
@@ -199,21 +200,38 @@ pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
     if let Some(i) = hover {
         shape = shape.line([x(i), TOP], [x(i), VIEW_H], 1.0, LineCap::Butt, t.border);
     }
-    let main = monotone(&line_of(tr.values));
+    // A rate, or a count only taken every few days (mostly zero days), reads as
+    // its trailing average, the solid line; each day that has a value is a
+    // faint dot behind it. Otherwise the line runs through every day.
+    let zeros = tr.values.iter().filter(|v| matches!(v, Some(x) if *x == 0.0)).count();
+    let sparse = !tr.percent && zeros * 3 >= n.max(1);
+    // A chart compared with its own trailing average is read as that average.
+    let averaged = tr.compare.as_ref().is_some_and(|c| c.1.to_lowercase().contains("average"));
+    let smooth = (tr.percent || sparse || averaged) && tr.compare.is_some();
+    if smooth {
+        for p in tr.values.iter().enumerate().filter_map(|(i, v)| v.filter(|v| *v > 0.0 || tr.percent).map(|v| [x(i), y(v)])) {
+            shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 3.5, LineCap::Round, tr.color.alpha(0.28));
+        }
+    }
+    let main = if smooth { monotone(&line_of(tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]))) } else { line_of(tr.values) };
+    let points = if smooth { tr.compare.as_ref().map(|c| c.0.iter().flatten().count()).unwrap_or(0) } else { tr.values.iter().flatten().count() };
     if main.len() >= 2 {
-        let mut area = vec![[main[0][0], VIEW_H]];
-        area.extend(main.iter().copied());
-        area.push([main[main.len() - 1][0], VIEW_H]);
-        // A soft wash, strongest along the line, standing in for the web's gradient.
-        shape = shape.fill(area, tr.color.alpha(0.09));
-        shape = shape.stroke(main.clone(), 2.0, tr.color);
+        // A soft wash under the line only when there is enough of it to read as a trend.
+        if points >= 5 {
+            let mut area = vec![[main[0][0], VIEW_H]];
+            area.extend(main.iter().copied());
+            area.push([main[main.len() - 1][0], VIEW_H]);
+            shape = shape.fill(area, tr.color.alpha(0.045));
+        }
+        shape = shape.stroke(main.clone(), 1.6, tr.color);
     } else if let Some(p) = main.first() {
         shape = shape.stroke_with(vec![*p, [p[0] + 0.0001, p[1]]], false, 5.0, LineCap::Round, tr.color);
     }
-    if let Some((vals, _)) = &tr.compare {
-        let avg = monotone(&line_of(vals));
-        for p in dots(&avg, tr.width_hint, tr.height, 6.0) {
-            shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 1.5, LineCap::Round, t.chart.compare.alpha(0.8));
+    // The comparison (the period before, or an average) as a dashed grey line.
+    if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !smooth) {
+        let pts = dots(&line_of(vals), tr.width_hint, tr.height, 3.0);
+        for pair in pts.chunks(2).filter(|c| c.len() == 2) {
+            shape = shape.stroke_with(vec![pair[0], pair[1]], false, 1.5, LineCap::Butt, t.chart.compare);
         }
     }
     if let Some(v) = hover.and_then(|i| tr.values.get(i).copied().flatten().map(|v| (i, v))) {

@@ -6,6 +6,7 @@
 //! `cargo run` opens the window. Headless, with fixture data and no network:
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
+mod account;
 mod api;
 mod brand_marks;
 mod brands;
@@ -25,6 +26,7 @@ mod state;
 mod surface;
 mod theme;
 mod ui;
+mod update;
 mod visual;
 
 use rune::{AppSpec, Chrome, KeyEvent, Tx, Waker};
@@ -48,9 +50,35 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.open_settings(state::SettingsPage::General);
         return true;
     }
+    // "Find…": Escape closes it, the arrows move through its results.
+    if s.find.is_some() {
+        match ev.key {
+            rune::Key::Escape => s.find = None,
+            rune::Key::Up => ui::find::step(s, -1),
+            rune::Key::Down => ui::find::step(s, 1),
+            _ if ev.is_command('k') => s.find = None,
+            _ => return false,
+        }
+        return true;
+    }
+    // ↑ and ↓ move through the inbox.
+    if s.settings.is_none() && s.view == state::View::Workspace && s.page == state::Page::Inbox && matches!(ev.key, rune::Key::Up | rune::Key::Down) && !ev.mods.cmd {
+        s.step_decision(if ev.key == rune::Key::Up { -1 } else { 1 });
+        return true;
+    }
+    // F (when no text field has the key) or ⌘K opens it, as on the web.
+    if s.settings.is_none() && (ev.is_command('k') || (matches!(&ev.key, rune::Key::Text(c) if c == "f" || c == "F") && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt)) {
+        s.toggle_find(tx);
+        return true;
+    }
     // Escape closes a helper opened beside the conversation, as on the web.
     if s.settings.is_none() && s.helper.is_some() && ev.key == rune::Key::Escape {
         s.helper = None;
+        return true;
+    }
+    // Then the agent pane beside a page, unless the composer's "/" menu takes the key.
+    if s.settings.is_none() && s.pane_shown() && ev.key == rune::Key::Escape && s.menu.is_none() && s.menu_entries().is_empty() {
+        s.close_pane();
         return true;
     }
     if s.settings.is_some() {
@@ -61,7 +89,7 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     // With "Send with Enter" off, ⌘Return sends.
-    if ev.key == rune::Key::Enter && ev.mods.cmd && !s.prefs.enter_to_send && s.view == state::View::Agent {
+    if ev.key == rune::Key::Enter && ev.mods.cmd && !s.prefs.enter_to_send && s.chat_shown() {
         s.send_message(tx);
         return true;
     }
@@ -114,6 +142,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-ui-invalid", fixtures::agent_ui_invalid),
     ("agent-compose", fixtures::agent_compose),
     ("agent-archived", fixtures::agent_archived),
+    ("overview-agent", fixtures::overview_agent),
     ("settings-general", fixtures::settings_general),
     ("settings-agent", fixtures::settings_agent),
     ("settings-account", fixtures::settings_account),
@@ -129,14 +158,22 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("overview-performance", fixtures::overview_performance),
     ("overview-revenue", fixtures::overview_revenue),
     ("overview-funnel", fixtures::overview_funnel),
+    ("overview-realtime", fixtures::overview_realtime),
     ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
+    ("campaign", fixtures::campaign_open),
     ("ai-answers", fixtures::ai_answers),
     ("ai-answer", fixtures::ai_answer),
     ("ai-answer-review", fixtures::ai_answer_review),
     ("channels", fixtures::channels),
     ("collapsed", fixtures::collapsed),
     ("business-menu", fixtures::business_menu),
+    ("agent-find", fixtures::agent_find),
+    ("account-update", fixtures::account_update),
+    ("account-menu", fixtures::account_menu),
+    ("usage", fixtures::usage),
+    ("businesses", fixtures::businesses),
+    ("clients", fixtures::clients),
 ];
 
 fn main() {

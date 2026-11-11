@@ -1,14 +1,23 @@
 //! The window's view: sign in, or the workspace shell around the page on screen.
 
+mod account_pages;
 mod agent;
 mod answer;
+mod campaigns;
 mod charts;
 mod discovery;
+pub mod find;
+pub mod world;
+mod world_land;
+mod kit;
 mod overview;
+pub use overview::number as overview_number;
 mod pages;
 mod shell;
+pub use shell::Resize;
 mod settings;
 mod signin;
+mod sources;
 mod surface;
 mod visual;
 pub mod widgets;
@@ -45,9 +54,11 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
         }
-        if s.view == View::Agent && (s.active.is_some() || s.general) && s.settings.is_none() {
+        shell::account_menu(s, &t, &k, &mut layers);
+        if s.chat_shown() && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }
+        find::layers(s, &t, &mut layers);
         if let Some(n) = &s.new_chat {
             agent::new_chat_dialog(s, &t, &k, n, &mut layers);
         }
@@ -68,6 +79,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     let (content, trailing) = match s.view {
         View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
         View::Agent => (choose_business(t), None),
+        // The inbox fills the panel; its list and reading pane scroll on their own.
+        View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), Some(pages::ask_agent(s, t))),
         View::Workspace => {
             let page = col()
                 .key("page-scroll")
@@ -77,7 +90,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 // Full width inside the content inset, as the web's workspace pages are.
                 .child(col().w_full().px(40.0).pt(32.0).pb(40.0).child(pages::view(s, t)))
                 .scroll(ScrollSpec { stick_bottom: false });
-            (page, Some(pages::ask_agent(t)))
+            (page, Some(pages::ask_agent(s, t)))
         }
     };
     let panel = shadows(
@@ -94,12 +107,27 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             .child(col().w_full().grow(1.0).min_h(0.0).child(content)),
         &t.panel_shadow,
     );
+    let panel = col().key("panel-column").grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0).child(panel);
+    // The agent beside a workspace page: its own card left of the page, where
+    // the sidebar was, as the web's `AgentPane` sits.
+    let main = if s.pane_shown() {
+        row()
+            .key("pane-split")
+            .grow(1.0)
+            .min_w(0.0)
+            .h_full()
+            .on_layout(|s: &mut App, r: [f32; 4]| s.pane_row_w = r[2])
+            .child(agent::pane(s, t, k))
+            .child(panel)
+    } else {
+        panel
+    };
     row()
         .key("workspace")
         .w_full()
         .h_full()
         .child(shell::sidebar(s, t))
-        .child(col().grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0).child(panel))
+        .child(main)
 }
 
 fn choose_business(t: &Theme) -> El {

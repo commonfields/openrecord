@@ -39,10 +39,10 @@ impl Section {
             Section::Summary => "Your goal, work in progress, and decisions that need you.",
             Section::Performance => "Search, advertising and local listing results from connected accounts.",
             Section::Revenue => "Revenue and paying customers reported by Stripe.",
-            Section::Funnel => "What you can measure across the customer journey, and what is still missing.",
+            Section::Funnel => "From being seen to paying, step by step.",
             Section::Events => "Your saved goal event and its daily measurement history.",
-            Section::Realtime => "Live measurement availability for this business.",
-            Section::Answers => "What AI answers say about you, buyer questions and referral evidence.",
+            Section::Realtime => "Who is on your site right now, and where they are.",
+            Section::Answers => "What AI assistants say about you, and the visits they send.",
         }
     }
 
@@ -219,20 +219,45 @@ pub struct Health {
 pub struct Discovery {
     /// The latest measured period: surface, reviewed, mention and owned-citation rates as "n of d".
     pub period: Option<(String, String, String, String, String)>,
-    /// The latest GA4 import: AI sessions, total sessions, dates, signups.
-    pub referral: Option<String>,
+    /// The latest GA4 import: AI sessions, total sessions, its dates, and signups when measured.
+    pub referral: Option<(f64, f64, String, Option<f64>)>,
     pub limitations: Vec<String>,
 }
 
 /// One connected account's numbers for the period, as label/value pairs, with what changed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Metric {
     pub label: String,
     pub value: String,
     pub delta: Option<f64>,
+    /// Each day of the period, and the same day of the period before, when the source gave them.
+    pub days: Option<Days>,
+    /// Lower is better (average position, cost per conversion).
+    pub lower_better: bool,
+    /// A rate, shown as a percent.
+    pub percent: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// A metric day by day: the dates, this period's values and the period before's, by position.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Days {
+    pub dates: Vec<String>,
+    pub now: Vec<Option<f64>>,
+    pub before: Vec<Option<f64>>,
+}
+
+/// Picks one field from two lists of daily rows (this period, the one before).
+fn days_of(v: &Value, date: &str, pick: impl Fn(&Value) -> Option<f64>) -> Option<Days> {
+    let d = v.get("daily")?;
+    let rows = |side: &str| d.get(side).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (now, before) = (rows("current"), rows("previous"));
+    if now.is_empty() {
+        return None;
+    }
+    Some(Days { dates: now.iter().map(|r| s(r, date)).collect(), now: now.iter().map(&pick).collect(), before: before.iter().map(&pick).collect() })
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Report {
     pub title: String,
     pub subtitle: String,
@@ -240,6 +265,84 @@ pub struct Report {
     /// A ranked table: header, then rows of (name, value columns).
     pub table: Option<(Vec<String>, Vec<Vec<String>>)>,
     pub note: Option<String>,
+    /// The source's own rows, for the Performance section's tables.
+    pub detail: Detail,
+}
+
+/// What one source sends beyond its headline numbers.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum Detail {
+    #[default]
+    None,
+    Search { queries: Vec<SearchRow>, pages: Vec<SearchRow> },
+    Ads(AdDetail),
+    Local(LocalDetail),
+}
+
+/// A query or a page in Search Console.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SearchRow {
+    pub key: String,
+    pub clicks: f64,
+    pub impressions: f64,
+    pub ctr: f64,
+    pub position: Option<f64>,
+}
+
+/// An ad account's or campaign's totals (`AdTotals`); ratios are None when their divisor is zero.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AdTotals {
+    pub spend: f64,
+    pub impressions: f64,
+    pub clicks: f64,
+    pub conversions: f64,
+    pub value: f64,
+    pub ctr: Option<f64>,
+    pub cpc: Option<f64>,
+    pub cpa: Option<f64>,
+    pub roas: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AdDetail {
+    pub provider: String,
+    pub currency: String,
+    pub now: AdTotals,
+    pub before: AdTotals,
+    /// (name, status, totals)
+    pub campaigns: Vec<(String, Option<String>, AdTotals)>,
+}
+
+/// A Business Profile's actions and views (`LocalTotals`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LocalTotals {
+    pub calls: f64,
+    pub website: f64,
+    pub directions: f64,
+    pub bookings: f64,
+    pub conversations: f64,
+    pub views: f64,
+    pub search: f64,
+    pub maps: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LocalDetail {
+    pub now: LocalTotals,
+    pub before: LocalTotals,
+    /// The month the search terms cover, and each term with its views ("at least" when Google rounds down).
+    pub terms: Option<(String, Vec<(String, f64, bool)>)>,
+    pub reviews: Option<Reviews>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Reviews {
+    pub average: Option<f64>,
+    pub total: f64,
+    pub unanswered: f64,
+    pub in_window: f64,
+    /// (rating, text, created at, replied)
+    pub recent: Vec<(Option<f64>, String, String, bool)>,
 }
 
 /// A source the Performance or Revenue section reads: connected with numbers, or why not.
@@ -262,6 +365,155 @@ pub struct Insights {
     pub ads: Source,
     pub local: Source,
     pub revenue: Source,
+    /// Stripe's numbers, read for the Revenue section's own charts.
+    pub revenue_data: Option<RevenueData>,
+    /// Who is on the site now, from the business's Google Analytics.
+    pub realtime: Option<Realtime>,
+}
+
+/// GA4's last 30 minutes: active users, by country and page, and per minute (oldest first).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Realtime {
+    pub active: f64,
+    /// People, page views and events over the last 30 minutes, when the source reports them.
+    pub visitors: Option<f64>,
+    pub views: Option<f64>,
+    pub events: Option<f64>,
+    /// The latest events: (name, page, minutes ago).
+    pub activity: Vec<(String, String, f64)>,
+    pub countries: Vec<(String, String, f64)>,
+    pub pages: Vec<(String, f64)>,
+    pub per_minute: Vec<f64>,
+}
+
+fn realtime_of(v: &Value) -> Option<Realtime> {
+    let r = v.get("realtime").filter(|x| !x.is_null())?;
+    let list = |k: &str| r.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    Some(Realtime {
+        active: f(r, "activeUsers").unwrap_or(0.0),
+        visitors: f(r, "users30"),
+        views: f(r, "views30"),
+        events: f(r, "events30"),
+        activity: list("activity").iter().map(|a| (s(a, "event"), s(a, "page"), f(a, "minutesAgo").unwrap_or(0.0))).collect(),
+        countries: list("countries").iter().map(|c| (s(c, "code"), s(c, "name"), f(c, "users").unwrap_or(0.0))).collect(),
+        pages: list("pages").iter().map(|p| (s(p, "title"), f(p, "users").unwrap_or(0.0))).collect(),
+        per_minute: list("perMinute").iter().map(|x| x.as_f64().unwrap_or(0.0)).collect(),
+    })
+}
+
+/// One period of revenue in the main currency, and the period before.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RevenueData {
+    pub account: String,
+    pub subtitle: String,
+    pub currency: String,
+    /// (this period, the period before)
+    pub net: (f64, f64),
+    pub gross: (f64, f64),
+    pub refunded: (f64, f64),
+    pub orders: (f64, f64),
+    pub average: (Option<f64>, Option<f64>),
+    pub paying: (f64, f64),
+    pub new_customers: (Option<f64>, Option<f64>),
+    /// Each day: its date and net revenue; and the period before, day by day.
+    pub daily: Vec<(String, f64)>,
+    pub before: Vec<f64>,
+    pub note: Option<String>,
+    /// Every currency: (code, net, gross, refunded, orders, net the period before).
+    pub currencies: Vec<(String, f64, f64, f64, f64, Option<f64>)>,
+}
+
+fn revenue_data_of(v: &Value) -> Option<RevenueData> {
+    let (c, p) = (totals(v, "current"), totals(v, "previous"));
+    let first = |t: &Value| t.get("byCurrency").and_then(Value::as_array).and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let (cc, pc) = (first(&c), first(&p));
+    let currency = s(&cc, "currency");
+    let pc = if s(&pc, "currency") == currency { pc } else { Value::Null };
+    let pair = |a: &Value, b: &Value, k: &str| (f(a, k).unwrap_or(0.0), f(b, k).unwrap_or(0.0));
+    let days = |t: &Value| t.get("daily").and_then(Value::as_array).cloned().unwrap_or_default();
+    let daily: Vec<(String, f64)> = days(&c).iter().map(|d| (s(d, "day"), f(d, "net").unwrap_or(0.0))).collect();
+    if daily.is_empty() && currency.is_empty() {
+        return None;
+    }
+    Some(RevenueData {
+        account: s(v, "accountName"),
+        subtitle: format!("{}{}", window(v), if v.get("livemode").and_then(Value::as_bool) == Some(false) { ", test mode" } else { "" }),
+        currency: currency.to_uppercase(),
+        net: pair(&cc, &pc, "net"),
+        gross: pair(&cc, &pc, "gross"),
+        refunded: pair(&cc, &pc, "refunded"),
+        orders: pair(&cc, &pc, "orders"),
+        average: (f(&cc, "averageOrder"), f(&pc, "averageOrder")),
+        paying: pair(&c, &p, "payingCustomers"),
+        new_customers: (f(&c, "newCustomers"), f(&p, "newCustomers")),
+        daily,
+        before: days(&p).iter().map(|d| f(d, "net").unwrap_or(0.0)).collect(),
+        note: c.get("truncated").and_then(Value::as_bool).filter(|t| *t).map(|_| "More charges than OpenRecord reads at once; totals cover the first 3,000.".to_string()),
+        currencies: {
+            let prev = p.get("byCurrency").and_then(Value::as_array).cloned().unwrap_or_default();
+            c.get("byCurrency")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|x| {
+                            let code = s(x, "currency").to_uppercase();
+                            let before = prev.iter().find(|y| s(y, "currency").to_uppercase() == code).and_then(|y| f(y, "net"));
+                            (code, f(x, "net").unwrap_or(0.0), f(x, "gross").unwrap_or(0.0), f(x, "refunded").unwrap_or(0.0), f(x, "orders").unwrap_or(0.0), before)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        },
+    })
+}
+
+fn search_rows(v: &Value, k: &str) -> Vec<SearchRow> {
+    v.get(k)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|r| SearchRow {
+                    key: s(r, "key"),
+                    clicks: f(r, "clicks").unwrap_or(0.0),
+                    impressions: f(r, "impressions").unwrap_or(0.0),
+                    ctr: f(r, "ctr").unwrap_or(0.0),
+                    position: f(r, "position"),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn ad_totals(v: &Value) -> AdTotals {
+    let x = |k: &str| f(v, k).unwrap_or(0.0);
+    let ratio = |a: f64, b: f64| (b > 0.0).then(|| a / b);
+    let (spend, impressions, clicks, conversions, value) = (x("spend"), x("impressions"), x("clicks"), x("conversions"), x("conversionValue"));
+    // The API derives these; derive them here too when an older payload leaves them out.
+    AdTotals {
+        spend,
+        impressions,
+        clicks,
+        conversions,
+        value,
+        ctr: f(v, "ctr").or_else(|| ratio(clicks, impressions)),
+        cpc: f(v, "cpc").or_else(|| ratio(spend, clicks)),
+        cpa: f(v, "costPerConversion").or_else(|| ratio(spend, conversions)),
+        roas: f(v, "roas").or_else(|| ratio(value, spend)),
+    }
+}
+
+fn local_totals(v: &Value) -> LocalTotals {
+    let x = |k: &str| f(v, k).unwrap_or(0.0);
+    LocalTotals {
+        calls: x("calls"),
+        website: x("websiteClicks"),
+        directions: x("directionRequests"),
+        bookings: x("bookings"),
+        conversations: x("conversations"),
+        views: x("impressions"),
+        search: x("searchImpressions"),
+        maps: x("mapsImpressions"),
+    }
 }
 
 fn n(v: &Value, k: &str) -> i64 {
@@ -348,7 +600,7 @@ impl Client {
         let analytics = quiet(self.get::<Value>(&format!("/api/businesses/{b}/analytics?days={days}")))?
             .map(|v| Analytics::read(v.get("analytics").unwrap_or(&Value::Null)))
             .map_err(|e| e.message());
-        let goal = match quiet(self.get::<Value>(&format!("/api/growth/clients/{b}/profile")))? {
+        let goal = match quiet(self.get::<Value>(&format!("/api/growth/clients/{b}")))? {
             Ok(v) => Ok(self.goal(&b, &v, days)),
             Err(ApiError::Status(404, _)) => Ok(None),
             Err(e) => Err(e.message()),
@@ -402,14 +654,19 @@ impl Client {
             }
             Err(e) => Source::Failed(e.message()),
         };
+        let mut revenue_data = None;
         let revenue = match quiet(self.get::<Value>(&format!("/api/revenue/clients/{b}/performance?days={ad}")))? {
             Ok(v) => match v.get("revenue").filter(|x| !x.is_null()) {
-                Some(r) => Source::Reports(vec![revenue_report(r)]),
+                Some(r) => {
+                    revenue_data = revenue_data_of(r);
+                    Source::Reports(vec![revenue_report(r)])
+                }
                 None => Source::NotConnected("Connect Stripe on the web to see paid orders, refunds and paying customers.".into()),
             },
             Err(e) => Source::Failed(e.message()),
         };
-        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue })
+        let realtime = quiet(self.get::<Value>(&format!("/api/growth/clients/{b}/realtime")))?.ok().and_then(|v| realtime_of(&v));
+        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data, realtime })
     }
 
     fn goal(&self, b: &str, profile: &Value, days: u32) -> Option<Goal> {
@@ -468,19 +725,7 @@ fn discovery(r: &Value) -> Discovery {
         .and_then(|x| x.get("imports"))
         .and_then(Value::as_array)
         .and_then(|imports| imports.iter().max_by_key(|i| s(i, "importedAt")))
-        .map(|i| {
-            let signups = match i.get("signups") {
-                Some(Value::Number(x)) => format!("{} signups reported.", int(x.as_f64().unwrap_or(0.0))),
-                _ => "Signups not measured.".into(),
-            };
-            format!(
-                "{} of {} sessions, {} to {}. {signups}",
-                int(f(i, "aiSessions").unwrap_or(0.0)),
-                int(f(i, "totalSessions").unwrap_or(0.0)),
-                s(i, "dateStart"),
-                s(i, "dateEnd")
-            )
-        });
+        .map(|i| (f(i, "aiSessions").unwrap_or(0.0), f(i, "totalSessions").unwrap_or(0.0), format!("{} to {}", s(i, "dateStart"), s(i, "dateEnd")), f(i, "signups")));
     let limitations = r.get("limitations").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
     Discovery { period, referral, limitations }
 }
@@ -496,7 +741,7 @@ fn window(v: &Value) -> String {
 
 fn metric(label: &str, cur: &Value, prev: &Value, k: &str, fmt: impl Fn(f64) -> String) -> Metric {
     let a = f(cur, k).unwrap_or(0.0);
-    Metric { label: label.into(), value: fmt(a), delta: f(prev, k).and_then(|b| change(a, b)) }
+    Metric { label: label.into(), value: fmt(a), delta: f(prev, k).and_then(|b| change(a, b)), ..Default::default() }
 }
 
 fn search_report(v: &Value) -> Report {
@@ -515,13 +760,21 @@ fn search_report(v: &Value) -> Report {
         title: "Google Search".into(),
         subtitle: format!("{}, {}", s(v, "siteUrl"), window(v)),
         metrics: vec![
-            metric("Clicks", &c, &p, "clicks", int),
-            metric("Impressions", &c, &p, "impressions", int),
-            metric("Click-through rate", &c, &p, "ctr", pct),
-            Metric { label: "Average position".into(), value: f(&c, "position").map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into()), delta: None },
+            Metric { days: days_of(v, "key", |r| f(r, "clicks")), ..metric("Clicks", &c, &p, "clicks", int) },
+            Metric { days: days_of(v, "key", |r| f(r, "impressions")), ..metric("Impressions", &c, &p, "impressions", int) },
+            Metric { days: days_of(v, "key", |r| f(r, "ctr").map(|x| x * 100.0)), percent: true, ..metric("Click-through rate", &c, &p, "ctr", pct) },
+            Metric {
+                label: "Average position".into(),
+                value: f(&c, "position").map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into()),
+                delta: f(&c, "position").zip(f(&p, "position")).and_then(|(a, b)| change(a, b)),
+                days: days_of(v, "key", |r| f(r, "position")),
+                lower_better: true,
+                ..Default::default()
+            },
         ],
         table: (!rows.is_empty()).then(|| (vec!["Top queries".into(), "Clicks".into(), "Impressions".into(), "CTR".into()], rows)),
         note: None,
+        detail: Detail::Search { queries: search_rows(v, "topQueries"), pages: search_rows(v, "topPages") },
     }
 }
 
@@ -549,13 +802,28 @@ fn ad_report(v: &Value) -> Report {
         title: format!("{provider}: {}", s(v, "accountName")),
         subtitle: window(v),
         metrics: vec![
-            metric("Spend", &c, &p, "spend", m),
-            metric("Clicks", &c, &p, "clicks", int),
-            metric("Conversions", &c, &p, "conversions", |x| format!("{x:.1}")),
-            metric("Cost per conversion", &c, &p, "costPerConversion", m),
+            Metric { days: days_of(v, "day", |r| f(r, "spend")), ..metric("Spend", &c, &p, "spend", m) },
+            Metric { days: days_of(v, "day", |r| f(r, "clicks")), ..metric("Clicks", &c, &p, "clicks", int) },
+            Metric { days: days_of(v, "day", |r| f(r, "conversions")), ..metric("Conversions", &c, &p, "conversions", |x| format!("{x:.1}")) },
+            Metric {
+                days: days_of(v, "day", |r| f(r, "spend").zip(f(r, "conversions")).and_then(|(s, c)| (c > 0.0).then(|| s / c))),
+                lower_better: true,
+                ..metric("Cost per conversion", &c, &p, "costPerConversion", m)
+            },
         ],
         table: (!rows.is_empty()).then(|| (vec!["Campaigns".into(), "Spend".into(), "Clicks".into(), "Conversions".into()], rows)),
         note: o(v, "conversionDefinition").map(|d| format!("Conversions as this platform counts them: {d}")),
+        detail: Detail::Ads(AdDetail {
+            provider: provider.clone(),
+            currency: cur.clone(),
+            now: ad_totals(&c),
+            before: ad_totals(&p),
+            campaigns: v
+                .get("topCampaigns")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(|r| (s(r, "name"), o(r, "status"), ad_totals(r))).collect())
+                .unwrap_or_default(),
+        }),
     }
 }
 
@@ -581,6 +849,25 @@ fn local_report(v: &Value) -> Report {
         ],
         table: None,
         note,
+        detail: Detail::Local(LocalDetail {
+            now: local_totals(&c),
+            before: local_totals(&p),
+            terms: v.get("searchTerms").filter(|x| !x.is_null()).map(|t| {
+                let list = t.get("terms").and_then(Value::as_array).cloned().unwrap_or_default();
+                (s(t, "month"), list.iter().map(|x| (s(x, "term"), f(x, "impressions").unwrap_or(0.0), x.get("atLeast").and_then(Value::as_bool).unwrap_or(false))).collect())
+            }),
+            reviews: reviews.map(|r| Reviews {
+                average: f(r, "averageRating"),
+                total: f(r, "total").unwrap_or(0.0),
+                unanswered: f(r, "unanswered").unwrap_or(0.0),
+                in_window: f(r, "inWindow").unwrap_or(0.0),
+                recent: r
+                    .get("recent")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().map(|x| (f(x, "rating"), s(x, "text"), s(x, "createdAt"), x.get("replied").and_then(Value::as_bool).unwrap_or(false))).collect())
+                    .unwrap_or_default(),
+            }),
+        }),
     }
 }
 
@@ -604,6 +891,7 @@ fn revenue_report(v: &Value) -> Report {
         metrics,
         table: None,
         note: c.get("truncated").and_then(Value::as_bool).filter(|t| *t).map(|_| "More charges than OpenRecord reads at once; totals cover the first 3,000.".to_string()),
+        detail: Detail::None,
     }
 }
 

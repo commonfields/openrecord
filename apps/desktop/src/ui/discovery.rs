@@ -73,7 +73,7 @@ impl Metric {
             Metric::Wrong => "Wrong answers",
             Metric::Answers => "Answers collected",
             Metric::Checks => "Checks run",
-            Metric::Partial => "Partial",
+            Metric::Partial => "Partly right",
             Metric::Unreviewed => "Needs review",
             Metric::Goal => "Goal",
         }
@@ -82,9 +82,9 @@ impl Metric {
     fn name(self) -> &'static str {
         match self {
             Metric::Answers => "Answers collected",
-            Metric::Accuracy => "Supported share",
+            Metric::Accuracy => "Correct share",
             Metric::Wrong => "Wrong",
-            Metric::Partial => "Partial",
+            Metric::Partial => "Partly right",
             Metric::Unreviewed => "Needs review",
             Metric::Checks => "Checks run",
             Metric::Goal => "Goal",
@@ -93,11 +93,11 @@ impl Metric {
     fn subtitle(self) -> &'static str {
         match self {
             Metric::Answers => "Answers collected per provider, per day",
-            Metric::Accuracy => "Supported ÷ judged claims (unknown left out), per day",
+            Metric::Accuracy => "Share of rated answers that were correct, per day",
             Metric::Checks => "Checks queued for configured providers, per day",
-            Metric::Unreviewed => "Claims needing a reviewer's verdict, per day",
-            Metric::Wrong => "Wrong claims found in AI answers, per day",
-            Metric::Partial => "Partially correct claims found in AI answers, per day",
+            Metric::Unreviewed => "Answers waiting for your rating, per day",
+            Metric::Wrong => "Wrong answers, per day",
+            Metric::Partial => "Partly right answers, per day",
             Metric::Goal => "",
         }
     }
@@ -106,13 +106,13 @@ impl Metric {
         match self {
             Metric::Answers => Some("By provider"),
             Metric::Checks | Metric::Goal => None,
-            _ => Some("Verdict share"),
+            _ => Some("By rating"),
         }
     }
     /// The split view's share line: its name and the verdict it counts.
     fn share(self, v: &Verdicts) -> Option<(&'static str, i64)> {
         Some(match self {
-            Metric::Accuracy => ("Supported share", v.supported),
+            Metric::Accuracy => ("Correct share", v.supported),
             Metric::Wrong => ("Wrong share", v.wrong),
             Metric::Partial => ("Partially correct share", v.partial),
             Metric::Unreviewed => ("Share needing review", v.unreviewed),
@@ -222,7 +222,7 @@ pub fn hero(s: &App, t: &Theme, i: &Insights, a: &Analytics, st: &Stats) -> El {
     };
     let nothing = values.iter().all(|v| v.unwrap_or(0.0) == 0.0) && a.current.total() == 0 && st.total == 0;
     if nothing {
-        return c.child(empty(t, i.days, if metric == Metric::Answers { "answers" } else { "claims" }));
+        return c.child(empty(t, i.days, "answers"));
     }
 
     if s.split && metric == Metric::Answers {
@@ -394,15 +394,17 @@ fn model_chips(s: &App, t: &Theme, st: &Stats) -> El {
     r
 }
 
+/// A card in the details grid. The rows inside keep 8 points of their own
+/// padding for their hover tint, so the card's edge is 12 and text lines up
+/// at 20, as on the other cards.
 fn panel(t: &Theme, key: &str, title: &str, description: String) -> El {
     card(t)
         .key(key)
-        .grow(1.0)
-        .min_w(360.0)
-        .px(8.0)
-        .pt(16.0)
-        .pb(8.0)
-        .gap(8.0)
+        .w_full()
+        .px(12.0)
+        .pt(18.0)
+        .pb(12.0)
+        .gap(10.0)
         .child(col().w_full().px(8.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(label(description, type_::XS, t.muted_foreground).wrap()))
 }
 
@@ -442,7 +444,7 @@ pub fn answer_collection(t: &Theme, st: &Stats, days: u32) -> El {
             Some(p) => format!("{}{p:.1}", if p > 0.0 { "+" } else { "" }),
         };
         // A bar behind the row, as long as the provider's share of the leader's.
-        let bar = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac((sh / max) as f32).radius(6.0).fill(m.series.color(t).alpha(0.12));
+        let bar = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac((sh / max) as f32).radius(6.0).fill(t.foreground.alpha(0.06));
         list = list.child(
             row()
                 .key(format!("share-{}", m.series.key))
@@ -462,7 +464,7 @@ pub fn answer_collection(t: &Theme, st: &Stats, days: u32) -> El {
     }
     p.child(header(t, &[("Provider", None), ("Share, change", Some(120.0))]))
         .child(list)
-        .child(row().w_full().px(8.0).pt(4.0).child(label(format!("Share of collected answers, not visibility. Change in share points vs the previous {days} days."), type_::XS11, t.muted_foreground).wrap()))
+        .child(col().w_full().px(8.0).pt(4.0).child(label(format!("Share of collected answers, not visibility. Change in share points against the previous {days} days."), type_::XS11, t.muted_foreground).wrap()))
 }
 
 fn pct_1(x: f64) -> String {
@@ -473,15 +475,15 @@ fn pct_1(x: f64) -> String {
 pub fn accuracy_by_model(t: &Theme, a: &Analytics, st: &Stats) -> El {
     let judged = a.current.supported + a.current.wrong + a.current.partial;
     let desc = format!(
-        "{} of {} judged claims are supported{}",
+        "{} of {} rated answers were correct{}",
         a.current.accuracy().map(pct).unwrap_or_else(|| "—".into()),
         crate::insights::int(judged as f64),
-        if a.current.unknown > 0 { format!(" ({} could not be judged)", crate::insights::int(a.current.unknown as f64)) } else { String::new() }
+        if a.current.unknown > 0 { format!(" ({} could not be rated)", crate::insights::int(a.current.unknown as f64)) } else { String::new() }
     );
-    let p = panel(t, "accuracy-by-model", "Supported claims by provider", desc);
+    let p = panel(t, "accuracy-by-model", "Correct answers by assistant", desc);
     let mut by: Vec<&ModelStat> = st.models.iter().filter(|m| m.v.total() > 0).collect();
     if by.is_empty() {
-        return p.child(faint(t, "No reviewed claims yet.".into()));
+        return p.child(faint(t, "Nothing rated yet.".into()));
     }
     by.sort_by(|x, y| y.v.accuracy().unwrap_or(-1.0).total_cmp(&x.v.accuracy().unwrap_or(-1.0)).then(y.v.total().cmp(&x.v.total())));
     let mut list = col().w_full();
@@ -509,7 +511,7 @@ pub fn accuracy_by_model(t: &Theme, a: &Analytics, st: &Stats) -> El {
                 .child(row().w(56.0).child(el().grow(1.0)).child(label(m.v.wrong.to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground))),
         );
     }
-    p.child(header(t, &[("Provider", Some(128.0)), ("Verdicts", None), ("Supported", Some(48.0)), ("Wrong", Some(56.0))])).child(list)
+    p.child(header(t, &[("Assistant", Some(128.0)), ("Ratings", None), ("Correct", Some(48.0)), ("Wrong", Some(56.0))])).child(list)
 }
 
 /// Citations returned with answers per day, against their trailing average.

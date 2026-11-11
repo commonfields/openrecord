@@ -4,8 +4,8 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Cursor, El, GrowthSpec, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
-use rune_kit::{Dialog, Kit, Markdown, Menu, MenuItem, Placement};
+use rune::{Align, Cursor, El, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement};
 
 use crate::api::Message;
 use crate::brands;
@@ -21,8 +21,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
     let messages = s.transcript();
 
-    // A growth stack: a message added to it eases in instead of jumping in.
-    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0).growth(GrowthSpec::default());
+    // Messages land where they belong: no rise and no glide, so opening a chat
+    // or starting a turn never slides the column up the window.
+    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0);
     match &s.conversation {
         Load::Loading if messages.is_empty() => {
             list = list.child(label("Opening the chat…", type_::SM_13, t.muted_foreground).key("chat-loading"));
@@ -87,7 +88,14 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let main = col().key("agent").w_full().h_full().min_h(0.0).child(transcript).child(composer(s, t, &business));
     match &s.helper {
         // A helper opened beside the conversation takes the right half.
-        Some((id, load)) => row().key("agent-split").w_full().h_full().child(main.w(0.0).grow(1.0)).child(helper_pane(s, t, k, id, load)),
+        // Its share is the web's 30 to 70 percent, dragged from its left edge.
+        Some((id, load)) => row()
+            .key("agent-split")
+            .w_full()
+            .h_full()
+            .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
+            .child(main.w(0.0).grow(1.0).min_w(0.0))
+            .child(helper_pane(s, t, k, id, load)),
         None => main,
     }
 }
@@ -145,7 +153,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
     match &p.payload {
         Some(pl) => {
             let when = pl.generated_at.as_deref().map(crate::format::date_time).unwrap_or_default();
-            c = c.child(label(format!("Snapshot prepared {when}. Accepting this draft does not publish, deliver, execute or record completed work."), type_::XS, t.muted_foreground).wrap());
+            c = c.child(label(format!("Prepared {when}. Accepting it saves the draft. Nothing is published or sent."), type_::XS, t.muted_foreground).wrap());
             if let Some(text_) = pl.text.clone().filter(|x| !x.is_empty()) {
                 let copy = text_.clone();
                 let copied = s.copied == Some(usize::MAX - 2);
@@ -170,7 +178,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
                     );
             }
             if !pl.references.is_empty() {
-                let mut refs = row().w_full().gap(8.0).flex_wrap().label("Draft evidence");
+                let mut refs = row().w_full().gap(8.0).flex_wrap().label("Where this came from");
                 for (j, r) in pl.references.iter().enumerate() {
                     let mut l = label(if r.text.is_empty() { "Evidence".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
                     if let Some(u) = r.url().map(str::to_string) {
@@ -183,9 +191,103 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
                 c = c.child(refs);
             }
         }
-        None => c = c.child(label("Draft evidence unavailable", type_::XS, t.muted_foreground)),
+        None => c = c.child(label("Sources not available", type_::XS, t.muted_foreground)),
     }
     shadows(c, &t.card_shadow)
+}
+
+/// The agent beside a workspace page (`AgentPane` in `workspace-agent.tsx`):
+/// the business's conversation on its own card left of the page, sliding in
+/// from the left at half the space by default, its right edge dragged within
+/// 30 to 70 percent. "Open full chat" moves it to the Agent view; the close
+/// button, Escape or "Hide the agent" slides it away.
+pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
+    let title = s.conversation.ready().and_then(|c| c.title.clone()).filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "New chat".into());
+    let head = row()
+        .w_full()
+        .h(44.0)
+        .pl(16.0)
+        .pr(8.0)
+        .gap(8.0)
+        .center_y()
+        .child(label(title, type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0))
+        .child(
+            label("Open full chat", type_::XS_MEDIUM, t.muted_foreground)
+                .key("pane-full")
+                .role("button")
+                .focusable(true)
+                .px(8.0)
+                .py(4.0)
+                .radius(6.0)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(|s: &mut App| s.show_view(View::Agent)),
+        )
+        .child(icon_button(t, "pane-close", &icons::X, "Close the agent (Esc)", false).on_press(|s: &mut App| s.close_pane()));
+    let w = if s.pane_row_w > 0.0 { (s.pane_row_w * s.pane_split.clamp(30.0, 70.0) / 100.0).round() } else { 0.0 };
+    col()
+        .key("agent-pane")
+        .w(w)
+        .grow(if w > 0.0 { 0.0 } else { 1.0 })
+        .min_w(0.0)
+        .h_full()
+        .pt(8.0)
+        .pb(8.0)
+        .pr(8.0)
+        .role("complementary")
+        .label("Agent")
+        .transition(Transition::offset(-64.0, 0.0).combined(Transition::opacity()))
+        .child(
+            shadows(
+                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(el().w_full().h(1.0).fill(t.border)).child(col().w_full().grow(1.0).min_h(0.0).child(view(s, t, k))),
+                &t.panel_shadow,
+            ),
+        )
+        .child(pane_edge(t, s.resizing == Some(crate::ui::Resize::AgentPane)))
+}
+
+/// The pane's right edge: drag to resize within 30 to 70 percent of the space
+/// beside the sidebar, double-click for half, arrow keys to nudge.
+fn pane_edge(t: &Theme, held: bool) -> El {
+    use crate::state::PANE_DEFAULT;
+    el().key("pane-edge")
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize agent panel")
+        .help("Drag to resize; double-click for half and half")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.pane_split;
+                    s.resizing = Some(crate::ui::Resize::AgentPane);
+                }
+                // Dragging right widens the pane.
+                rune::Phase::Move if s.pane_row_w > 0.0 => s.pane_split = (d.data + d.dx / s.pane_row_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move => {}
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.pane_split = d.data;
+                    }
+                    s.resizing = None;
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| s.pane_split = PANE_DEFAULT)
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => -2.0,
+                rune::Key::Right => 2.0,
+                _ => return false,
+            };
+            s.pane_split = (s.pane_split + step).clamp(30.0, 70.0);
+            true
+        })
 }
 
 /// A helper session opened from the conversation, to review (`HelperPane`): its
@@ -237,12 +339,13 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
     };
     col()
         .key(format!("helper-{id}"))
-        .w(0.0)
-        .grow(1.0)
+        .w(if s.split_w > 0.0 { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 })
+        .grow(if s.split_w > 0.0 { 0.0 } else { 1.0 })
         .h_full()
         .padding(6.0)
         .transition(Transition::offset(64.0, 0.0).combined(Transition::opacity()))
         .label("Helper session")
+        .child(helper_edge(t, s.resizing == Some(crate::ui::Resize::Helper)))
         .child(
             shadows(
                 col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
@@ -251,17 +354,56 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
         )
 }
 
-// ---- Motion (the web's `step-in`, `bubble-in` and `chip-in`) ----------------
-
-/// A finished step slides up 4 points out of a blur as it lands.
-fn step_in() -> Transition {
-    Transition::offset(0.0, 4.0).combined(Transition::opacity()).combined(Transition::blur(2.0))
+/// The helper's left edge: drag to resize within 30 to 70 percent of the
+/// split, double-click for half, arrow keys to nudge, as the web's pane does.
+fn helper_edge(t: &Theme, held: bool) -> El {
+    use crate::prefs::HELPER_DEFAULT;
+    el().key("helper-edge")
+        .pin(Some(0.0), Some(0.0), None, Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize helper panel")
+        .help("Drag to resize; double-click for half and half")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.prefs.helper();
+                    s.resizing = Some(crate::ui::Resize::Helper);
+                }
+                // Dragging left widens the helper.
+                rune::Phase::Move if s.split_w > 0.0 => s.prefs.helper_width = (d.data - d.dx / s.split_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move => {}
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.prefs.helper_width = d.data;
+                    }
+                    s.resizing = None;
+                    s.prefs.save();
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| {
+            s.prefs.helper_width = HELPER_DEFAULT;
+            s.prefs.save();
+        })
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => 2.0,
+                rune::Key::Right => -2.0,
+                _ => return false,
+            };
+            s.prefs.helper_width = (s.prefs.helper() + step).clamp(30.0, 70.0);
+            s.prefs.save();
+            true
+        })
 }
 
-/// A new message rises 6 points and fades in.
-fn bubble_in() -> Transition {
-    Transition::offset(0.0, 6.0).combined(Transition::opacity()).combined(Transition::scale(0.985))
-}
+// ---- Motion (the web's `chip-in`) -------------------------------------------
 
 /// Chips follow one another in, 50 milliseconds apart.
 fn chip_in(el_: El, n: usize) -> El {
@@ -308,9 +450,23 @@ fn task_statuses(messages: &[Message]) -> std::collections::HashMap<String, Stri
     messages.iter().flat_map(|m| m.tasks.iter()).map(|t| (t.id.clone(), t.status.clone())).collect()
 }
 
+/// A reply's prose, as Rune's chat sets it: 14 point Inter on a 22.4 line,
+/// bold at 600 rather than 670, and headings only a step above the body.
+fn prose(t: &Theme, k: &Kit) -> MarkdownStyle {
+    let body = TextStyle::new(14.0, 400.0).lh(22.4);
+    MarkdownStyle::from_kit(k)
+        .text(t.foreground)
+        .body_font(body)
+        .strong_weight(600.0)
+        .heading_font(1, TextStyle::new(16.0, 600.0).lh(24.0))
+        .heading_font(2, TextStyle::new(15.0, 600.0).lh(24.0))
+        .heading_font(3, TextStyle::new(14.0, 600.0).lh(22.4))
+        .heading_font(4, TextStyle::new(14.0, 600.0).lh(22.4))
+}
+
 fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
     let user = m.role == "user";
-    let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group().transition(bubble_in());
+    let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group();
     c = if user { c.items_end() } else { c.items_start() };
     if let Some(o) = &m.origin {
         c = c.child(row().gap(4.0).center_y().child(ico(&icons::CORNER_DOWN_RIGHT, 12.0, t.muted_foreground)).child(label(o.text(), type_::XS11, t.muted_foreground)));
@@ -331,7 +487,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
                     .py(10.0)
                     .radius(16.0)
                     .fill(t.accent)
-                    .child(label(m.text.clone(), type_::BASE.lh(26.0), t.foreground).wrap().selectable(true)),
+                    .child(label(m.text.clone(), type_::SM.lh(22.0), t.foreground).wrap().selectable(true)),
             );
         }
         return c.child(copy_button(s, t, i, &m.text));
@@ -347,7 +503,14 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     let mut reply = col().key(format!("reply-{i}")).w_full().gap(6.0);
     for (j, part) in crate::visual::split(&shown).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md).selectable(revealing.is_none()).streaming(revealing.is_some()).reveal(if revealing.is_some() { 0.18 } else { 0.0 }).build(k).w_full().opacity(if muted { 0.7 } else { 0.9 }),
+            crate::visual::Part::Text(md) => Markdown::new(md)
+                .style(prose(t, k))
+                .selectable(revealing.is_none())
+                .streaming(revealing.is_some())
+                .reveal(if revealing.is_some() { 0.18 } else { 0.0 })
+                .build(k)
+                .w_full()
+                .opacity(if muted { 0.7 } else { 1.0 }),
             crate::visual::Part::Chart(raw) => crate::ui::visual::view(s, t, format!("visual-{i}-{j}"), &raw).my(4.0),
             crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("surface-{i}-{j}"), &raw).my(4.0),
         });
@@ -465,7 +628,7 @@ fn fold(t: &Theme, k: &Kit, key: String, open: bool, at: (usize, usize), parts: 
 
 fn thought_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, texts: &[&str], ms: i64) -> El {
     let name = if ms > 0 { format!("Thought for {}", chat::elapsed(ms)) } else { "Thought".to_string() };
-    let head = fold(t, k, key.clone(), open, at, vec![label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
+    let head = fold(t, k, key.clone(), open, at, vec![thought_mark(t), label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
     let mut body = col().w_full().pl(22.0).pb(6.0).gap(6.0);
     for x in texts.iter().filter(|x| !x.trim().is_empty()) {
         body = body.child(label(x.to_string(), type_::SM_13.italic(), t.muted_foreground.alpha(0.85)).wrap().selectable(open));
@@ -489,7 +652,7 @@ fn tools_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, l
     let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
     let mut rail = col().key(format!("{key}-rail")).w_full().child(line);
     for (j, a) in list.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")).transition(step_in()));
+        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")));
     }
     let body = col().key(format!("{key}-steps")).w_full().mt(2.0).pb(8.0).mb(4.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6)).child(rail);
     let mut c = col().key(format!("{key}-group")).w_full().clip_soft(0.0).child(head).child(folding(format!("{key}-box"), open, body));
@@ -524,8 +687,8 @@ fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity]) -> El
 
 // ---- The turn still running (the web's `LiveTrace`) -----------------------------
 
-/// Thinking, as the web draws it: one glyph that grows and settles in the
-/// brand's periwinkle, a step every 220 milliseconds (`ThinkingGlyph`).
+/// Thinking, as Claude Code draws it: one glyph that grows and settles, a step
+/// every 220 milliseconds, in the text's own ink.
 const GLYPHS: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
 
 fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
@@ -533,7 +696,12 @@ fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
         Some(ms) if !reduce => GLYPHS[((ms / 220) as usize) % GLYPHS.len()],
         _ => "✻",
     };
-    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(secondary(t)))
+    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(t.foreground.alpha(0.85)))
+}
+
+/// A finished thought's mark, as Claude Code sets one: a quiet "∴".
+fn thought_mark(t: &Theme) -> El {
+    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text("∴").font(type_::SM).color(t.muted_foreground))
 }
 
 /// The web's `.thinking` text: muted, with a soft band of foreground light that
@@ -556,28 +724,6 @@ fn shimmer(t: &Theme, key: &str, text_: &str, style: TextStyle, reduce: bool) ->
     row().key(key.to_string()).child(dim).child(sheen)
 }
 
-/// The arc that turns around the tool under way (`.live-ring`): a thin brand
-/// arc fading in from nothing, 1.5 points wide, one turn every 1.1 seconds.
-fn live_ring(t: &Theme) -> El {
-    let c = secondary(t);
-    let (cx, r) = (15.0f32, 14.25f32);
-    let mut shape = rune::Shape::new();
-    let seg = 40;
-    for k in 0..seg {
-        let f0 = 0.55 + 0.45 * k as f32 / seg as f32;
-        let f1 = 0.55 + 0.45 * (k + 1) as f32 / seg as f32;
-        let mid = (f0 + f1) / 2.0;
-        // conic-gradient(transparent 0 55%, secondary 85%, transparent 100%)
-        let a = if mid < 0.85 { (mid - 0.55) / 0.30 } else { (1.0 - mid) / 0.15 };
-        let pt = |f: f32| {
-            let ang = f * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
-            [cx + r * ang.cos(), cx + r * ang.sin()]
-        };
-        shape = shape.stroke_with(vec![pt(f0), pt(f1)], false, 1.5, rune::LineCap::Butt, c.alpha(a.clamp(0.0, 1.0)));
-    }
-    rune::canvas(shape.view_box(30.0, 30.0)).size(30.0, 30.0).absolute(-3.0, -3.0).looping(LoopSpec::rotation(1.1)).a11y_hidden()
-}
-
 /// One line on the rail: a node and its text. Tool steps sit in a small round
 /// node; reasoning is a lighter aside with its glyph.
 fn log_row(t: &Theme, node: El, body: El, boxed: bool, wrap: bool) -> El {
@@ -591,7 +737,7 @@ fn log_row(t: &Theme, node: El, body: El, boxed: bool, wrap: bool) -> El {
 
 fn step(t: &Theme, a: &Activity) -> El {
     match a {
-        Activity::Thought { text: x, .. } => log_row(t, thinking_glyph(t, None, true), label(x.clone(), type_::SM.italic(), t.muted_foreground.alpha(0.8)).wrap().max_lines(4).pt(2.0), false, true),
+        Activity::Thought { text: x, .. } => log_row(t, thought_mark(t), label(x.clone(), type_::SM.italic(), t.muted_foreground.alpha(0.8)).wrap().max_lines(4).pt(2.0), false, true),
         Activity::Tool { tool, text: x, failed } => {
             let icon = if *failed { ico(&icons::X, 14.0, t.wrong) } else { ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7)) };
             log_row(t, icon, label(x.clone(), type_::SM, if *failed { t.wrong.alpha(0.8) } else { t.foreground.alpha(0.8) }).truncate(), true, false)
@@ -599,37 +745,45 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
-/// The work log of a turn still running: "Thinking for 4s" (or "Working for"
-/// once a tool runs) with a live clock, the finished steps on the rail, and the
-/// step under way at the bottom.
+/// The work log of a turn still running, as Claude Code shows one: the finished
+/// steps on the rail, then one turning glyph with "Thinking…" (or "Working…"
+/// once a tool runs) and the time so far, and under it, after a "⎿", the step
+/// under way.
 fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
     let reduce = s.prefs.reduce_motion;
     let working = p.phase != chat::Phase::Thinking || p.trace.iter().any(|a| matches!(a, Activity::Tool { .. }));
-    let head = if stopping { "Stopping".to_string() } else { format!("{} for {}", if working { "Working" } else { "Thinking" }, chat::elapsed(ms)) };
+    let head = if stopping { "Stopping…" } else if working { "Working…" } else { "Thinking…" };
     let tool = match (p.phase, &p.current_tool) {
         (chat::Phase::Working, Some(tool)) => Some(tool.clone()),
         _ => None,
     };
-    // Finished steps stay mounted, so only the newest slides in.
-    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
-    let mut rail = col().key("live-steps").w_full().mt(4.0).label("Steps so far").child(line);
-    for (i, a) in p.trace.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("live-step-{i}")).transition(step_in()));
+    let mut c = col().key("working").w_full().role("status").live_region(LiveRegion::Polite).label(format!("{head} {}. {}", chat::elapsed(ms), p.live()));
+    if !p.trace.is_empty() {
+        let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
+        let mut rail = col().key("live-steps").w_full().mb(4.0).label("Steps so far").child(line);
+        for (i, a) in p.trace.iter().enumerate() {
+            rail = rail.child(step(t, a).key(format!("live-step-{i}")));
+        }
+        c = c.child(rail);
     }
-    // The step under way re-enters whenever the agent moves to another tool.
-    let now = shimmer(t, "live-now-text", &p.live(), type_::SM, reduce);
-    let live = match &tool {
-        Some(tool) => log_row(t, row().size(24.0, 24.0).center().child(live_ring(t)).child(ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7))), now, true, false),
-        None => log_row(t, thinking_glyph(t, Some(ms), reduce), now, false, false),
-    };
-    rail = rail.child(live.key(format!("live:{}:{}", p.trace.len(), tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).transition(step_in()));
-    col()
-        .key("working")
-        .w_full()
-        .role("status")
-        .live_region(LiveRegion::Polite)
-        .child(row().h(24.0).px(2.0).center_y().child(shimmer(t, "live-head", &head, type_::SM.features("'tnum' 1"), reduce)))
-        .child(rail)
+    let headline = row()
+        .key("live-head")
+        .h(24.0)
+        .gap(8.0)
+        .center_y()
+        .child(row().size(24.0, 24.0).center().child(thinking_glyph(t, Some(ms), reduce)))
+        .child(shimmer(t, "live-head-text", head, type_::SM, reduce))
+        .child(label(chat::elapsed(ms), type_::SM.features("'tnum' 1"), t.muted_foreground.alpha(0.7)));
+    // What it is doing now, hung under the headline.
+    let now_text = p.live();
+    let mut now = row().key(format!("live-now:{}", tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).w_full().min_h(22.0).pl(12.0).gap(8.0).center_y()
+        .child(label("⎿", type_::SM, t.muted_foreground.alpha(0.6)));
+    if let Some(tool) = &tool {
+        now = now.child(ico(chat::tool_icon(tool), 13.0, t.muted_foreground));
+    }
+    let now_label = if tool.is_some() { label(now_text, type_::SM_13, t.muted_foreground) } else { label(now_text, type_::SM_13.italic(), t.muted_foreground.alpha(0.85)) };
+    now = now.child(now_label.truncate().grow(1.0).min_w(0.0));
+    c.child(headline).child(now)
 }
 
 /// At the top of a helper session: what it is for and where it came from.
@@ -680,7 +834,7 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
         let mut chips = row().gap(6.0).flex_wrap();
         for (j, cit) in m.citations.iter().enumerate() {
             let url = cit.url().map(str::to_string);
-            let name = if cit.text.is_empty() { url.clone().unwrap_or_else(|| "Open evidence".into()) } else { cit.text.clone() };
+            let name = if cit.text.is_empty() { url.clone().unwrap_or_else(|| "Open source".into()) } else { cit.text.clone() };
             let mut chip = row()
                 .key(format!("source-{i}-{j}"))
                 .gap(4.0)
@@ -713,7 +867,7 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
     for task in &m.tasks {
         let status = statuses.get(&task.id).unwrap_or(&task.status).as_str();
         let (icon, ink) = match status {
-            "RUNNING" => (&icons::LOADER, secondary(t)),
+            "RUNNING" => (&icons::LOADER, t.foreground.alpha(0.7)),
             "COMPLETED" => (&icons::CHECK, t.muted_foreground),
             _ => (&icons::X, t.wrong),
         };
@@ -1196,39 +1350,94 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
     r.child(label(name, type_::XS, ink).group_color(if s.model_unavailable() { t.wrong } else { t.foreground }).truncate()).child(ico(&icons::CHEVRON_DOWN, 14.0, t.muted_foreground).group_color(t.foreground))
 }
 
+/// How much thinking an effort asks for, as cube rows lit: none for off, all
+/// three for high, and the whole face bright past that. None is the model's default.
+fn effort_level(effort: Option<&str>) -> Option<usize> {
+    Some(match effort? {
+        "none" => 0,
+        "minimal" | "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        _ => 4,
+    })
+}
+
+/// One twist every third of the cycle: hold, turn a cell, hold, as a hand
+/// turns a cube's row.
+const TWIST: [[f32; 2]; 8] = [[0.0, 0.0], [0.18, 0.0], [0.3, 1.0 / 3.0], [0.51, 1.0 / 3.0], [0.63, 2.0 / 3.0], [0.84, 2.0 / 3.0], [0.96, 1.0], [1.0, 1.0]];
+
+/// The thinking knob: a 3 by 3 cube face. Its lit rows say how hard the model
+/// thinks; while it thinks, the rows turn one cell at a time like a Rubik's
+/// cube, the middle row against the others, each a beat apart.
+pub fn cube(t: &Theme, key: &str, level: Option<usize>, turning: bool, cell: f32) -> El {
+    let gap = (cell / 4.0).max(1.0);
+    let step = cell + gap;
+    let palette = [t.chart.tone(0), t.chart.tone(1), t.chart.tone(2), t.chart.tone(3)];
+    let mut face = col().key(key.to_string()).size(step * 3.0, step * 3.0).a11y_hidden();
+    for r in 0..3 {
+        // Rows light from the bottom up.
+        let lit = level.is_some_and(|l| l >= 3 - r || l >= 4);
+        let bright = level == Some(4);
+        let color = |k: usize| {
+            if lit {
+                palette[(r + k) % palette.len()].alpha(if bright { 1.0 } else { 0.85 })
+            } else if level.is_none() {
+                t.muted_foreground.alpha(0.45)
+            } else {
+                t.muted_foreground.alpha(0.2)
+            }
+        };
+        // Six cells, the face twice, so a full turn of three lands where it began.
+        let mut strip = row().w(step * 6.0).h(step);
+        for k in 0..6 {
+            strip = strip.child(row().size(step, step).padding(gap / 2.0).child(el().size(cell, cell).radius(cell * 0.28).fill(color(k % 3))));
+        }
+        if turning {
+            let (from, to) = if r == 1 { ([-0.5, 0.0], [0.0, 0.0]) } else { ([0.0, 0.0], [-0.5, 0.0]) };
+            let mut spec = rune::LoopSpec::slide(3.6, from, to).easing(rune::Easing::Piecewise(&TWIST));
+            spec.delay = r as f64 * 0.4;
+            strip = strip.looping(spec);
+        }
+        face = face.child(row().w(step * 3.0).h(step).clip_rounded(cell * 0.3).child(strip));
+    }
+    face
+}
+
 /// The reasoning effort for the next reply, beside the model, when the model reports any.
 fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
     // Always shown, as on the web; disabled while the model reports no reasoning controls.
     let none = s.chosen_model().filter(|_| !s.model_unavailable()).is_none_or(|m| m.efforts.is_empty());
+    let working = matches!(s.turn, Turn::Working { .. });
     let locked = locked || none;
     let name = s.reasoning_effort().map(chat::effort_label).unwrap_or_else(|| "Reasoning".into());
-    {
-        row()
-            .key("reasoning-picker")
-            .gap(4.0)
-            .center_y()
-            .role("button")
-            .label("Reasoning effort")
-            .help(if none { "This provider hasn't reported reasoning controls for this model." } else { "Reasoning effort for the next reply" })
-            .disabled(locked)
-            .focusable(!locked)
-            .cursor(if locked { Cursor::Default } else { Cursor::Pointer })
-            .hover_group()
-            .on_press(move |s: &mut App| {
-                if !locked && !matches!(s.turn, Turn::Working { .. }) {
-                    s.menu = Some(crate::state::Menu::Reasoning);
-                }
-            })
-            .child(label(name, type_::XS, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
-            .child(ico(&icons::CHEVRON_DOWN, 16.0, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
-    }
+    let level = if none { Some(0) } else { effort_level(s.reasoning_effort()) };
+    row()
+        .key("reasoning-picker")
+        .gap(6.0)
+        .center_y()
+        .role("button")
+        .label("Reasoning effort")
+        .help(if none { "This provider hasn't reported reasoning controls for this model." } else { "Reasoning effort for the next reply" })
+        .disabled(locked)
+        .focusable(!locked)
+        .cursor(if locked { Cursor::Default } else { Cursor::Pointer })
+        .hover_group()
+        .on_press(move |s: &mut App| {
+            if !locked && !matches!(s.turn, Turn::Working { .. }) {
+                s.menu = Some(crate::state::Menu::Reasoning);
+            }
+        })
+        // Turns while the agent thinks, unless motion is reduced.
+        .child(cube(t, "reasoning-cube", level, working && !none && !s.prefs.reduce_motion, 4.0))
+        .child(label(name, type_::XS, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
+        .child(ico(&icons::CHEVRON_DOWN, 16.0, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
 }
 
 /// Default and the efforts the model offers, each a 40-point row as the web's select draws them.
 pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     let efforts = s.chosen_model().map(|m| m.efforts.clone()).unwrap_or_default();
     let current = s.reasoning_effort().map(str::to_string);
-    let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
+    let mut m = shadows(col().key("reasoning-menu").w(196.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
     let row_ = |key: String, name: String, on: bool, effort: Option<String>| {
         let hk = format!("effort:{key}");
         let r = row()
@@ -1244,6 +1453,8 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
             .focusable(true)
             .cursor(Cursor::Pointer)
             .on_hover_change(hover_key(hk.clone()))
+            .gap(10.0)
+            .child(cube(t, &format!("{hk}-cube"), effort_level(effort.as_deref()), false, 3.5))
             .on_press(move |s: &mut App| s.choose_reasoning(effort.clone()))
             .child(label(name, type_::SM, t.foreground).grow(1.0))
             .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))));

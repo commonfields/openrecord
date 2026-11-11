@@ -36,6 +36,16 @@ pub struct Chart {
     pub unreviewed: Color,
     /// Categorical slots for AI models, in the web's fixed order.
     pub series: [Color; 12],
+    /// A calm palette for analytics, one colour per metric or row: blue, teal,
+    /// amber, violet, rose, sage. Muted, so no chart shouts.
+    pub palette: [Color; 6],
+}
+
+impl Chart {
+    /// The analytics colour for the `i`th metric or row.
+    pub fn tone(&self, i: usize) -> Color {
+        self.palette[i % self.palette.len()]
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -110,21 +120,24 @@ impl Theme {
             unknown_soft: oklch(0.965, 0.02, 285.0),
             review: oklch(0.5, 0.14, 255.0),
             review_soft: oklch(0.965, 0.02, 255.0),
-            supported: oklch(0.47, 0.09, 160.0),
-            supported_soft: oklch(0.965, 0.025, 160.0),
+            supported: oklch(0.47, 0.1, 266.0),
+            supported_soft: oklch(0.965, 0.025, 266.0),
             working: hex("#0284c7"),
             hover_tint: black(0.035),
             chart: Chart {
-                primary: oklch(0.49, 0.091, 241.5),
-                compare: oklch(0.581, 0.106, 126.7),
+                primary: hex("#4f6fe0"),
+                compare: black(0.3),
                 grid: oklcha(0.912, 0.006, 84.6, 0.7),
                 axis: oklcha(0.556, 0.008, 84.6, 0.85),
-                supported: hex("#1f9d6a"),
-                wrong: hex("#d03b3b"),
-                partial: hex("#e09a12"),
-                unknown: hex("#8277c9"),
-                unreviewed: hex("#2a78d6"),
+                // Two hues: green for right (full, then half for partly right),
+                // coral for wrong, and greys for what nobody could rate yet.
+                supported: hex("#4f6fe0"),
+                wrong: hex("#d9725f"),
+                partial: hex("#b5c3f3"),
+                unknown: black(0.16),
+                unreviewed: black(0.07),
                 series: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948", "#0e7c86", "#64748b", "#65a30d", "#7c3aed"].map(hex),
+                palette: ["#4f6fe0", "#2b8a8f", "#b7832f", "#7d5bbf", "#b85b72", "#5d8a4a"].map(hex),
             },
             panel_shadow: vec![
                 sh(0.0, 0.0, 0.0, 1.0, white(0.95), true),
@@ -172,18 +185,18 @@ impl Theme {
             background: hex("#1a1a1a"),
             // Softer than the web's #eeeeee and #b5b5b5: text drawn natively reads brighter
             // than the browser's at the same value, so dark mode steps both down.
-            foreground: hex("#e3e3e3"),
+            foreground: hex("#d4d4d4"),
             card: hex("#212121"),
             popover: hex("#212121"),
             primary: hex("#ffffff"),
             primary_foreground: hex("#202020"),
             primary_ink: oklch(0.8, 0.09, 266.0),
-            muted_foreground: hex("#a6a6a6"),
+            muted_foreground: hex("#8c8c8c"),
             accent: hex("#292929"),
             border,
             ring: oklcha(0.8, 0.09, 266.0, 0.45),
             sidebar: hex("#141414"),
-            sidebar_foreground: hex("#a6a6a6"),
+            sidebar_foreground: hex("#9a9a9a"),
             sidebar_accent: hex("#292929"),
             control: hex("#2a2a2a"),
             wrong: oklch(0.74, 0.15, 25.0),
@@ -194,21 +207,24 @@ impl Theme {
             unknown_soft: oklch(0.3, 0.05, 285.0),
             review: oklch(0.76, 0.11, 255.0),
             review_soft: oklch(0.3, 0.06, 255.0),
-            supported: oklch(0.78, 0.12, 160.0),
-            supported_soft: oklch(0.3, 0.05, 160.0),
+            supported: oklch(0.78, 0.1, 266.0),
+            supported_soft: oklch(0.3, 0.05, 266.0),
             working: hex("#7dd3fc").alpha(0.8),
             hover_tint: white(0.04),
             chart: Chart {
-                primary: oklch(0.72, 0.1, 241.5),
-                compare: oklch(0.74, 0.1, 126.7),
-                grid: white(0.07),
-                axis: oklcha(0.7, 0.008, 84.6, 0.85),
-                supported: hex("#199e70"),
-                wrong: hex("#e05a5a"),
-                partial: hex("#c98500"),
-                unknown: hex("#8579d4"),
-                unreviewed: hex("#3d8ae6"),
+                // Brand periwinkle for this period, quiet grey for the one
+                // before; ratings in one blue family with coral only for wrong.
+                primary: hex("#6c84c4"),
+                compare: white(0.22),
+                grid: white(0.04),
+                axis: white(0.3),
+                supported: hex("#6c84c4"),
+                wrong: hex("#b97a6e"),
+                partial: hex("#36456b"),
+                unknown: white(0.16),
+                unreviewed: white(0.07),
                 series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767", "#2dd4bf", "#94a3b8", "#a3e635", "#a78bfa"].map(hex),
+                palette: ["#6c84c4", "#4f9ea0", "#c09358", "#9a7fc0", "#bd7d8c", "#7fa36c"].map(hex),
             },
             panel_shadow: vec![
                 sh(0.0, 1.0, 0.0, 0.0, white(0.03), true),
