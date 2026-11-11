@@ -25,8 +25,8 @@ const row = (raw: Record<string, unknown>, key: string): SearchPerformanceRow =>
   const impressions = num(raw["impressions"])
   return { key, clicks: num(raw["clicks"]), impressions, ctr: num(raw["ctr"]), position: impressions > 0 ? num(raw["position"]) : null }
 }
-const query = async (config: Ga4ApiConfig, accessToken: string, siteUrl: string, window: SearchWindow, dimension: "query" | "page" | null) => {
-  const body = { startDate: window.start, endDate: window.end, type: "web", ...(dimension ? { dimensions: [dimension], rowLimit: SEARCH_PERFORMANCE_ROWS } : {}) }
+const query = async (config: Ga4ApiConfig, accessToken: string, siteUrl: string, window: SearchWindow, dimension: "query" | "page" | "date" | null) => {
+  const body = { startDate: window.start, endDate: window.end, type: "web", ...(dimension ? { dimensions: [dimension], rowLimit: dimension === "date" ? 500 : SEARCH_PERFORMANCE_ROWS } : {}) }
   const result = await send(config.fetch, `${config.endpoints.searchConsole}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, {
     method: "POST", headers: { ...auth(accessToken), "content-type": "application/json" }, body: JSON.stringify(body),
   })
@@ -50,4 +50,14 @@ export const searchTopRows = async (config: Ga4ApiConfig, accessToken: string, s
     if (!Array.isArray(keys) || typeof keys[0] !== "string") throw unexpected()
     return row(r, keys[0].slice(0, 500))
   })
+}
+
+/** Every day of a window that Google has data for, oldest first (key is the date). */
+export const searchDaily = async (config: Ga4ApiConfig, accessToken: string, siteUrl: string, window: SearchWindow): Promise<ReadonlyArray<SearchPerformanceRow>> => {
+  const rows = await query(config, accessToken, siteUrl, window, "date")
+  return rows.map(r => {
+    const keys = r["keys"]
+    if (!Array.isArray(keys) || typeof keys[0] !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(keys[0])) throw unexpected()
+    return row(r, keys[0])
+  }).sort((a, b) => a.key.localeCompare(b.key))
 }

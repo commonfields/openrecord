@@ -11,10 +11,10 @@ import {
   BindSearchConsoleSite, SEARCH_PERFORMANCE_DAYS, decodeRouteId, hasSearchConsoleScope, searchConsoleSiteMatchesHost, searchConsoleWindows,
   type SearchPerformance, type SearchPerformanceDays,
 } from "@openrecord/contracts"
-import { listSearchConsoleSites, searchTopRows, searchTotals } from "@openrecord/ga4"
+import { listSearchConsoleSites, realtimeSnapshot, searchDaily, searchTopRows, searchTotals } from "@openrecord/ga4"
 import { configured, ga4Failure, providerConfig, read } from "./growth-ga4-routes.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
-import { demoSearch, isDemoBusiness } from "./demo-data.js"
+import { demoRealtime, demoSearch, isDemoBusiness } from "./demo-data.js"
 
 const PRIVATE_HEADERS = { "cache-control": "no-store" }
 const refuse = (reason: string) => Effect.fail(new GrowthGa4Refused({ reason }))
@@ -31,12 +31,15 @@ export const searchPerformance = (accountId: string, businessId: string, days: S
     searchTotals(config.api, token, binding.siteUrl, windows.previous),
     searchTopRows(config.api, token, binding.siteUrl, windows.current, "query"),
     searchTopRows(config.api, token, binding.siteUrl, windows.current, "page"),
+    // Daily rows are a nicety for the charts: a failure here never hides the totals.
+    searchDaily(config.api, token, binding.siteUrl, windows.current).catch(() => null),
+    searchDaily(config.api, token, binding.siteUrl, windows.previous).catch(() => null),
   ]))
-  const [current, previous, topQueries, topPages] = result
+  const [current, previous, topQueries, topPages, dailyNow, dailyBefore] = result
   return {
     siteUrl: binding.siteUrl, days,
     current: { ...windows.current, totals: current }, previous: { ...windows.previous, totals: previous },
-    topQueries, topPages, collectedAt: new Date().toISOString(),
+    topQueries, topPages, ...(dailyNow && dailyBefore ? { daily: { current: dailyNow, previous: dailyBefore } } : {}), collectedAt: new Date().toISOString(),
   } satisfies SearchPerformance
 })
 
@@ -59,6 +62,17 @@ export const searchConsoleApi = (withSession: WithSession) => {
   const base = "/api/growth/clients/:id/search-console"
 
   return HttpRouter.empty.pipe(
+    // Who is on the site now, from the GA4 property bound to the business (or null when none is).
+    HttpRouter.get("/api/growth/clients/:id/realtime", business((session, businessId) => Effect.gen(function*() {
+      if (isDemoBusiness(businessId)) return yield* json(200, { realtime: demoRealtime() }, PRIVATE_HEADERS)
+      const config = yield* providerConfig
+      if (!config.configured) return yield* json(200, { realtime: null }, PRIVATE_HEADERS)
+      const bound = (yield* (yield* GrowthGa4Repository).bindings(session.accountId, businessId)).find(b => b.active)
+      if (!bound) return yield* json(200, { realtime: null }, PRIVATE_HEADERS)
+      const ready = yield* configured
+      const realtime = yield* read(ready, session.accountId, bound.connectionId, token => realtimeSnapshot(ready.api, token, bound.property))
+      return yield* json(200, { realtime }, PRIVATE_HEADERS)
+    }))),
     // Status: whether Google is configured, which connections can read Search Console, and the bound site.
     HttpRouter.get(base, business((session, businessId) => Effect.gen(function*() {
       const config = yield* providerConfig

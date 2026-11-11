@@ -5,6 +5,7 @@
 // the same on every reload, and the windows match the real readers'.
 import { adTotals, adWindows, searchConsoleWindows, type AdAccountPerformance, type AdPerformanceDays, type LocalProfilePerformance, type LocalTotals, type RevenuePerformance, type RevenueTotals, type SearchPerformance, type SearchPerformanceDays, type SearchTotals } from "@openrecord/contracts"
 import type { ChannelFacts } from "./channels.js"
+import type { RealtimeSnapshot } from "@openrecord/contracts"
 
 /** Whether `businessId` is a demo business on this dev server. */
 export const isDemoBusiness = (businessId: string): boolean =>
@@ -15,6 +16,17 @@ const DOMAIN = "openrecord.example"
 /** A steady rise with a weekly rhythm: `days` worth of a daily base, scaled. */
 const volume = (days: number, perDay: number, growth: number) => Math.round(days * perDay * growth)
 const round = (n: number, places = 2) => Math.round(n * 10 ** places) / 10 ** places
+const DAY_MS = 86_400_000
+/** Each day of a window with a value: a weekly rhythm, a gentle climb, and a little noise. */
+const series = (start: string, end: string, perDay: number, k: number, seed: number) => {
+  const out: Array<{ day: string; v: number }> = []
+  for (let ms = Date.parse(`${start}T00:00:00Z`), i = 0; ms <= Date.parse(`${end}T00:00:00Z`); ms += DAY_MS, i++) {
+    const weekday = new Date(ms).getUTCDay(), weekend = weekday === 0 || weekday === 6
+    const v = perDay * k * (1 + 0.18 * Math.sin((i + seed) / 3.1) + 0.07 * Math.sin((i * 7 + seed) / 1.7) + (weekend ? -0.32 : 0.06) + i * 0.004)
+    out.push({ day: new Date(ms).toISOString().slice(0, 10), v: Math.max(0, v) })
+  }
+  return out
+}
 
 export const demoSearch = (days: SearchPerformanceDays): SearchPerformance => {
   const w = searchConsoleWindows(Date.now(), days)
@@ -25,7 +37,13 @@ export const demoSearch = (days: SearchPerformanceDays): SearchPerformance => {
     const impressions = Math.round(current.impressions * share), clicks = Math.round(impressions * ctr)
     return { key, ...totals(impressions, clicks, position) }
   }
+  const daily = (wnd: { start: string; end: string }, k: number) => {
+    const imp = series(wnd.start, wnd.end, 1840, k * 1.0, 2), clk = series(wnd.start, wnd.end, 74, k * 1.05, 5)
+    return imp.map((d, i) => { const impressions = Math.round(d.v), clicks = Math.round(clk[i]!.v); return { key: d.day, clicks, impressions, ctr: impressions ? round(clicks / impressions, 4) : 0, position: round(15.6 - (k - 1) * 8 + Math.sin(i / 4) * 0.8, 1) } })
+  }
+  const dailyNow = daily(w.current, 1.18), dailyBefore = daily(w.previous, 1)
   return {
+    daily: { current: dailyNow, previous: dailyBefore },
     siteUrl: `sc-domain:${DOMAIN}`, days,
     current: { ...w.current, totals: current }, previous: { ...w.previous, totals: previous },
     topQueries: [
@@ -50,15 +68,21 @@ export const demoAds = (days: AdPerformanceDays): { accounts: AdAccountPerforman
   const campaign = (id: string, name: string, share: number, t: ReturnType<typeof adTotals>, status = "ENABLED") =>
     ({ id, name, status, ...adTotals({ spend: round(t.spend * share), impressions: Math.round(t.impressions * share), clicks: Math.round(t.clicks * share), conversions: round(t.conversions * share, 1), conversionValue: round(t.conversionValue * share) }) })
   const g = google(1.12), m = meta(0.94)
+  const adDays = (wnd: { start: string; end: string }, k: number, spend: number, clicks: number, impressions: number, conv: number, seed: number) => {
+    const base = series(wnd.start, wnd.end, 1, k, seed)
+    return base.map(d => ({ day: d.day, spend: round(spend * d.v), clicks: Math.round(clicks * d.v), impressions: Math.round(impressions * d.v), conversions: round(conv * d.v, 1) }))
+  }
   return {
     accounts: [
       { provider: "google_ads", accountName: "OpenRecord Search", externalId: "4815162342", currency: "USD", days,
         current: { ...w.current, totals: g }, previous: { ...w.previous, totals: google(1) },
         topCampaigns: [campaign("1001", "AI visibility, exact", 0.46, g), campaign("1002", "Competitor comparisons", 0.31, g), campaign("1003", "Brand", 0.23, g)],
+        daily: { current: adDays(w.current, 1.12, 42, 96, 2600, 3.1, 1), previous: adDays(w.previous, 1, 42, 96, 2600, 3.1, 1) },
         conversionDefinition: "Google Ads conversions (trial signups)", collectedAt: new Date().toISOString() },
       { provider: "meta", accountName: "OpenRecord Social", externalId: "907112233", currency: "USD", days,
         current: { ...w.current, totals: m }, previous: { ...w.previous, totals: meta(1) },
         topCampaigns: [campaign("2001", "Founder story, retargeting", 0.58, m), campaign("2002", "Guide download", 0.42, m, "PAUSED")],
+        daily: { current: adDays(w.current, 0.94, 18, 61, 5200, 1.2, 4), previous: adDays(w.previous, 1, 18, 61, 5200, 1.2, 4) },
         conversionDefinition: "Meta results (lead forms)", collectedAt: new Date().toISOString() },
     ],
     failures: [],
@@ -122,3 +146,21 @@ export const demoChannelFacts = (f: ChannelFacts): ChannelFacts => ({
     ],
   } as unknown as ChannelFacts["discovery"],
 })
+
+/** Who is on the demo site now: a few dozen people across the usual countries, drifting minute to minute. */
+export const demoRealtime = (): RealtimeSnapshot => {
+  const minute = Math.floor(Date.now() / 60_000)
+  const wobble = (seed: number) => 0.8 + 0.4 * Math.abs(Math.sin(minute / 7 + seed))
+  const base: Array<[string, string, number]> = [["US", "United States", 14], ["GB", "United Kingdom", 6], ["DE", "Germany", 4], ["IN", "India", 4], ["CA", "Canada", 3],
+    ["ID", "Indonesia", 3], ["FR", "France", 2], ["NL", "Netherlands", 2], ["AU", "Australia", 2], ["BR", "Brazil", 2], ["SG", "Singapore", 1], ["JP", "Japan", 1], ["ES", "Spain", 1], ["SE", "Sweden", 1]]
+  const countries = base.map(([code, name, n], i) => ({ code, name, users: Math.max(1, Math.round(n * wobble(i))) })).sort((a, b) => b.users - a.users)
+  const activeUsers = countries.reduce((t, c) => t + c.users, 0)
+  const pages = [["OpenRecord, see what AI says about you", 0.34], ["Pricing", 0.21], ["How assistants pick sources", 0.14], ["Quickstart", 0.11], ["AI answer accuracy guide", 0.09], ["Integrations", 0.06]] as const
+  return {
+    activeUsers,
+    countries,
+    pages: pages.map(([title, share]) => ({ title, users: Math.max(1, Math.round(activeUsers * share)) })),
+    perMinute: Array.from({ length: 30 }, (_, i) => Math.max(0, Math.round(activeUsers / 9 * (0.75 + 0.5 * Math.abs(Math.sin((minute - 29 + i) / 3.3)))))),
+    collectedAt: new Date().toISOString(),
+  }
+}

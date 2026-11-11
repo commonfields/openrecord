@@ -215,3 +215,12 @@ export const ga4PropertyMatchesRef = (property: string, propertyRef: string | nu
 export const ga4ScopesAcceptable = (granted: ReadonlyArray<string>): boolean =>
   (granted.includes(GA4_READONLY_SCOPE) || granted.includes(SEARCH_CONSOLE_READONLY_SCOPE)) && granted.every(s => GA4_ACCEPTED_SCOPES.includes(s))
 export const hasSearchConsoleScope = (granted: ReadonlyArray<string>): boolean => granted.includes(SEARCH_CONSOLE_READONLY_SCOPE)
+
+/** Who is on the site now (GA4's last 30 minutes): by country, by page, and per minute (oldest first). */
+export interface RealtimeSnapshot {
+  readonly activeUsers: number
+  readonly countries: ReadonlyArray<{ readonly code: string; readonly name: string; readonly users: number }>
+  readonly pages: ReadonlyArray<{ readonly title: string; readonly users: number }>
+  readonly perMinute: ReadonlyArray<number>
+  readonly collectedAt: string
+}
