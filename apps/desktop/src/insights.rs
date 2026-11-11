@@ -39,7 +39,7 @@ impl Section {
             Section::Summary => "Your goal, work in progress, and decisions that need you.",
             Section::Performance => "Search, advertising and local listing results from connected accounts.",
             Section::Revenue => "Revenue and paying customers reported by Stripe.",
-            Section::Funnel => "What you can measure across the customer journey, and what is still missing.",
+            Section::Funnel => "From being seen to paying, step by step.",
             Section::Events => "Your saved goal event and its daily measurement history.",
             Section::Realtime => "Who is on your site right now, and where they are.",
             Section::Answers => "What AI assistants say about you, and the visits they send.",

@@ -729,45 +729,79 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
 
 // ---- Funnel, events, realtime -----------------------------------------------
 
+/// The journey as a funnel: seen in search, clicked, the goal, paid. Each
+/// step is a band narrowing to the next, with its count, its change and the
+/// share that reached the next step.
 fn funnel(t: &Theme, i: &Insights) -> El {
+    let metric = |src: &Source, name: &str| match src {
+        Source::Reports(list) => list.first().and_then(|r| r.metrics.iter().find(|m| m.label == name)).and_then(|m| number(&m.value).map(|v| (v, m.delta))),
+        _ => None,
+    };
     let goal = i.goal.as_ref().ok().and_then(Option::as_ref);
-    let rows: [(&str, String, Section, &str); 3] = [
-        ("Discovery", "Search, ads and what AI assistants say.".into(), Section::Performance, "View performance"),
-        (
-            "Goal action",
-            match goal {
-                Some(g) => format!("{}. {}", g.label, g.event_name.as_ref().map(|e| format!("Configured event: {e}.")).unwrap_or_else(|| "No event name saved.".into())),
-                None => "No goal event has been defined yet.".into(),
-            },
-            Section::Events,
-            "View events",
-        ),
-        ("Revenue", "Paid orders, refunds and customers from Stripe, kept separate by currency.".into(), Section::Revenue, "View revenue"),
-    ];
-    let mut list = col().w_full();
-    for (k, (title, detail, sec, link)) in rows.into_iter().enumerate() {
-        let mut r = row()
-            .key(format!("funnel-{k}"))
-            .w_full()
-            .py(14.0)
-            .gap(12.0)
-            .center_y()
-            .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground)).child(label(detail, type_::XS, t.muted_foreground).wrap()))
-            .child(button(t, &format!("funnel-open-{k}"), link, Variant::Outline).on_press(move |s: &mut App| s.show_section(sec)));
-        if k < 2 {
-            r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
-        }
-        list = list.child(r);
+    let goal_step = goal.map(|g| {
+        let cut = format::iso_date(format::now() - i.days as i64 * 86_400);
+        let start = format::iso_date(format::now() - 2 * i.days as i64 * 86_400);
+        let now: f64 = g.points.iter().filter(|(d, _)| d.as_str() > cut.as_str()).map(|p| p.1).sum();
+        let before: f64 = g.points.iter().filter(|(d, _)| d.as_str() <= cut.as_str() && d.as_str() > start.as_str()).map(|p| p.1).sum();
+        (g.label.clone(), now, (before > 0.0).then(|| (now - before) / before))
+    });
+    let mut steps: Vec<(String, f64, Option<f64>, &str)> = Vec::new();
+    if let Some((v, d)) = metric(&i.search, "Impressions") {
+        steps.push(("Saw you in Google".into(), v, d, "Search Console"));
     }
-    col()
-        .w_full()
-        .gap(16.0)
-        .child(
-            panel(t, "funnel-intro", "Build a funnel you can trust", None)
-                .child(note(t, "A funnel follows the same people through defined steps. OpenRecord currently reads separate source totals, so a connected conversion funnel and drop-off rates are not available yet."))
-                .child(note(t, "Search clicks, ad conversions and paying customers can overlap or cover different dates. They are not added together or treated as consecutive funnel steps.")),
-        )
-        .child(panel(t, "funnel-coverage", "Measurement coverage", Some("Where to find each part of the journey. These are separate reports, not a measured funnel.".into())).child(list))
+    if let Some((v, d)) = metric(&i.search, "Clicks") {
+        steps.push(("Clicked through".into(), v, d, "Search Console"));
+    }
+    if let Some((label, v, d)) = goal_step {
+        steps.push((label, v, d, "Your goal"));
+    }
+    if let Some(r) = &i.revenue_data {
+        steps.push(("Paid".into(), r.paying.0, (r.paying.1 > 0.0).then(|| (r.paying.0 - r.paying.1) / r.paying.1), "Stripe"));
+    }
+    if steps.len() < 2 {
+        return panel(t, "funnel", "Not enough connected yet to draw the journey", None)
+            .child(note(t, "The funnel needs at least two steps: Search Console for how people find you, a goal for what they do, and Stripe for who pays."))
+            .child(row().child(button(t, "funnel-connect", "Connect on the Channels page", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
+    }
+    // Widths on a log scale so a step a hundred times smaller still shows.
+    let top = steps[0].1.max(1.0).ln();
+    let width = |v: f64| (0.22 + 0.78 * (v.max(1.0).ln() / top.max(0.001))).clamp(0.22, 1.0) as f32;
+    let (w_px, band, gap) = (420.0f32, 70.0f32, 24.0f32);
+    let n = steps.len();
+    let h = n as f32 * band + (n - 1) as f32 * gap;
+    let mut sh = rune::Shape::new();
+    for (k, st) in steps.iter().enumerate() {
+        let y0 = k as f32 * (band + gap);
+        let (a, b) = (width(st.1), steps.get(k + 1).map(|x| width(x.1)).unwrap_or(width(st.1) * 0.9));
+        let (l0, r0) = (w_px * (1.0 - a) / 2.0, w_px * (1.0 + a) / 2.0);
+        let (l1, r1) = (w_px * (1.0 - b) / 2.0, w_px * (1.0 + b) / 2.0);
+        let shade = t.chart.primary.alpha(0.85 - 0.14 * k as f32);
+        sh = sh.fill(vec![[l0, y0], [r0, y0], [r0 - (r0 - r1) * 0.25, y0 + band], [l0 + (l1 - l0) * 0.25, y0 + band]], shade);
+        if k + 1 < n {
+            // The narrowing to the next step, faint.
+            sh = sh.fill(vec![[l0 + (l1 - l0) * 0.25, y0 + band], [r0 - (r0 - r1) * 0.25, y0 + band], [r1, y0 + band + gap], [l1, y0 + band + gap]], t.chart.primary.alpha(0.08));
+        }
+    }
+    let shape = rune::canvas(sh.view_box(w_px, h)).size(w_px, h).a11y_hidden();
+    let mut labels = col().w(180.0).gap(gap);
+    let mut values = col().w(220.0).gap(gap);
+    for (k, (name, v, d, src)) in steps.iter().enumerate() {
+        labels = labels.child(col().h(band).justify_center().gap(2.0).child(label(name.clone(), type_::SM_MEDIUM, t.foreground)).child(label(src.to_string(), type_::XS, t.muted_foreground)));
+        let mut right = col().h(band).justify_center().gap(2.0).child(row().gap(8.0).center_y()
+            .child(label(crate::insights::int(*v), rune::TextStyle::new(20.0, 600.0).lh(26.0).features("'tnum' 1"), t.foreground))
+            .children(d.map(|d| label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), if d >= 0.0 { t.supported } else { t.wrong }))));
+        if let Some(next) = steps.get(k + 1) {
+            if *v > 0.0 {
+                right = right.child(label(format!("{:.1}% reached the next step", next.1 / v * 100.0), type_::XS, t.muted_foreground).truncate());
+            }
+        }
+        values = values.child(right);
+    }
+    col().w_full().gap(16.0)
+        .child(card(t).key("funnel").w_full().px(28.0).py(28.0).gap(20.0)
+            .child(col().gap(2.0).child(label(format!("The last {} days", i.days), type_::SM_MEDIUM, t.foreground).role("heading")).child(label("From being seen to paying, step by step", type_::XS, t.muted_foreground)))
+            .child(row().w_full().gap(20.0).items_start().justify_center().child(labels.child(el())).child(shape).child(values)))
+        .child(label("Each step comes from its own source and counts in its own way, so the steps are not the same people followed through. Read the rates as a guide, not an exact conversion rate.", type_::XS, t.muted_foreground).wrap())
 }
 
 fn events(s: &App, t: &Theme, i: &Insights) -> El {
