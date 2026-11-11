@@ -16,7 +16,7 @@ import { buildContext, compactToolResults, DEFAULT_CONTEXT_BUDGET, type ContextB
 import { noJournal, type RunJournal, type RunOutcome } from "./agent-run.js"
 import { loadResumeContext } from "./agent-resume.js"
 import { pluginGuidance } from "./plugins.js"
-import { commandTools, EXECUTION_LIMITS, modelRequestBytes } from "./agent-execution-policy.js"
+import { commandTools, EXECUTION_LIMITS, modelRequestBytes, narrowTools } from "./agent-execution-policy.js"
 import { MARKETING_OPERATING_POLICY } from "./marketing-operating-policy.js"
 
 export interface AgentToolCall { readonly tool: string; readonly summary: string }
@@ -200,11 +200,24 @@ export const runConversation = (input: {
     })
     const stepStarted = Date.now()
     let requestStep = step, answerOnly = finalStep
-    const requestTools = finalStep ? [] : tools
+    let requestTools: ReadonlyArray<ToolDeclaration> = finalStep ? [] : tools
     const beforeBytes = modelRequestBytes({ contents, tools: requestTools, system })
-    const contextFits = compactToolResults(contents, contextLimit(requestTools))
+    let contextFits = compactToolResults(contents, contextLimit(requestTools))
+    // Evidence that no longer fits beside every tool schema keeps its room:
+    // this step declares fewer tools rather than stopping research.
+    let narrowed = 0
+    if (!contextFits && requestTools.length) {
+      const evidence = Buffer.byteLength(JSON.stringify(contents), "utf8")
+      const fewer = narrowTools(requestTools, { used: new Set(toolCalls.map(c => c.tool)), text: [input.message, ...toolCalls.map(c => c.summary)].join("\n"),
+        fits: list => contextLimit(list) >= evidence })
+      if (fewer.length && compactToolResults(contents, contextLimit(fewer))) {
+        narrowed = requestTools.length - fewer.length
+        requestTools = fewer
+        contextFits = true
+      }
+    }
     const requestBytes = modelRequestBytes({ contents, tools: requestTools, system })
-    yield* journal.record("MODEL_REQUESTED", { step, requestBytes, toolCount: requestTools.length, contextFits, limitBytes: EXECUTION_LIMITS.requestBytes })
+    yield* journal.record("MODEL_REQUESTED", { step, requestBytes, toolCount: requestTools.length, contextFits, limitBytes: EXECUTION_LIMITS.requestBytes, ...(narrowed ? { toolsNarrowed: narrowed } : {}) })
     if (requestBytes < beforeBytes) yield* journal.record("VERIFICATION", { action: "CONTEXT_COMPACTED", step, beforeBytes, requestBytes,
       note: "Partial evidence projections retain available identifiers and numbers; omitted details require scoped reads, not write replay." })
     const response: ModelResponse = yield* (contextFits ? checkedModel({ contents, tools: requestTools, system, onThought }) : Effect.fail(new AgentModelError({ reason: "CONTEXT_LIMIT", detail: "LOCAL_CONTEXT_LIMIT" }))).pipe(Effect.catchAll(error => Effect.gen(function*() {
@@ -213,7 +226,7 @@ export const runConversation = (input: {
       // Recover inference only: never replay a completed tool or external effect.
       answerOnly = true; finalStep = true
       gaps.push(error.reason === "CONTEXT_LIMIT" && error.detail?.startsWith("LOCAL_")
-        ? "OpenRecord reached its context limit after research; this answer may be incomplete"
+        ? "Answered from shortened research notes, so some details may be missing"
         : "The provider stopped after research; this answer may be incomplete")
       if (step < budget.modelSteps && error.reason !== "RATE_LIMITED" && deadline - Date.now() > 1000) {
         requestStep = step + 1

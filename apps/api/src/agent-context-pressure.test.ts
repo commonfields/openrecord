@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
 import { compactToolResults } from "./agent-context.js"
 import { runConversation } from "./agent.js"
-import { modelRequestBytes, EXECUTION_LIMITS } from "./agent-execution-policy.js"
+import { modelRequestBytes, EXECUTION_LIMITS, narrowTools } from "./agent-execution-policy.js"
 import type { AgentModel, ModelContent } from "./agent-model.js"
 import { memoryJournal } from "./agent-run.js"
 
@@ -83,5 +83,36 @@ describe("inference context pressure", () => {
     const original = JSON.stringify(contents)
     expect(compactToolResults(contents, 100)).toBe(false)
     expect(JSON.stringify(contents)).toBe(original)
+  })
+
+  it("narrows tools to used, core and relevant ones only as far as the evidence needs", () => {
+    const decl = (name: string, description: string) => ({ name, description, parametersJsonSchema: {} })
+    const tools = [decl("read_reviews", "Customer reviews"), decl("read_growth_goal", "The goal"), decl("read_competitors", "Competitors named in AI answers"),
+      decl("prepare_page_change", "Edit a page"), decl("read_results", "Results")]
+    const all = narrowTools(tools, { used: new Set(), text: "who are our competitors", fits: () => true })
+    expect(all.map(t => t.name)).toEqual(["read_growth_goal", "read_competitors"])
+    const tight = narrowTools(tools, { used: new Set(["read_results"]), text: "who are our competitors", fits: list => list.length <= 2 })
+    expect(tight.map(t => t.name)).toEqual(["read_growth_goal", "read_results"])
+  })
+
+  it("declares fewer tools rather than stopping research when the schemas leave no room for evidence", async () => {
+    const big = (name: string) => ({ name, description: "schema ".repeat(4200), parametersJsonSchema: {} })
+    const tools = [big("read_results"), big("read_reviews"), big("read_ad_performance"), big("prepare_page_change")]
+    let steps = 0
+    const { journal, events } = memoryJournal()
+    const model: AgentModel = request => {
+      expect(modelRequestBytes(request)).toBeLessThanOrEqual(EXECUTION_LIMITS.requestBytes)
+      if (++steps === 1) return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "read_results", args: {} } }] }, finishReason: "STOP" }] })
+      expect(request.tools.map(t => (t as { name: string }).name)).toContain("read_results")
+      expect(request.tools.length).toBeLessThan(tools.length)
+      expect(JSON.stringify(request.contents)).toContain('"after":12')
+      return Effect.succeed(answer)
+    }
+    const result = await Effect.runPromise(runConversation({ message: "Check our results", history: [], model, tools, journal,
+      dispatch: () => Effect.succeed({ summary: "12 bookings; attribution unknown", citations: [], data: { campaignId: "campaign-1", revision: 7, before: 9, after: 12, detail: "x".repeat(14000) } }) }))
+    expect(result.outcome).toBe("ANSWERED")
+    expect(result.gaps).toEqual([])
+    expect(events.some(e => e.type === "MODEL_REQUESTED" && Number(e.payload["toolsNarrowed"]) > 0)).toBe(true)
+    expect(events.some(e => e.payload["action"] === "MODEL_FAILED")).toBe(false)
   })
 })
