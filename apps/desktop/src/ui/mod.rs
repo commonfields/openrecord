@@ -71,6 +71,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     let (content, trailing) = match s.view {
         View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
         View::Agent => (choose_business(t), None),
+        // The inbox fills the panel; its list and reading pane scroll on their own.
+        View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), Some(pages::ask_agent(t))),
         View::Workspace => {
             let page = col()
                 .key("page-scroll")

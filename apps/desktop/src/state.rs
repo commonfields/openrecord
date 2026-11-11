@@ -530,6 +530,17 @@ impl App {
         self.decisions.iter().filter(|d| self.active.as_ref().is_none_or(|b| &d.business_id == b)).collect()
     }
 
+    /// Opens the item `by` places above or below the open one.
+    pub fn step_decision(&mut self, by: i32) {
+        let keys: Vec<String> = self.inbox().iter().map(|d| d.key.clone()).collect();
+        let Some(open) = self.open_decision().map(|d| d.key.clone()) else { return };
+        let at = keys.iter().position(|k| k == &open).unwrap_or(0) as i32;
+        let next = (at + by).clamp(0, keys.len() as i32 - 1) as usize;
+        if let Some(k) = keys.get(next).cloned() {
+            self.select_decision(&k);
+        }
+    }
+
     /// The decision open in the inbox.
     pub fn open_decision(&self) -> Option<&Decision> {
         let list = self.inbox();

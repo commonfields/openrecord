@@ -60,6 +60,11 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return true;
     }
+    // ↑ and ↓ move through the inbox.
+    if s.settings.is_none() && s.view == state::View::Workspace && s.page == state::Page::Inbox && matches!(ev.key, rune::Key::Up | rune::Key::Down) && !ev.mods.cmd {
+        s.step_decision(if ev.key == rune::Key::Up { -1 } else { 1 });
+        return true;
+    }
     // F (when no text field has the key) or ⌘K opens it, as on the web.
     if s.settings.is_none() && (ev.is_command('k') || (matches!(&ev.key, rune::Key::Text(c) if c == "f" || c == "F") && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt)) {
         s.toggle_find(tx);
