@@ -1448,6 +1448,11 @@ impl App {
         for r in replies {
             self.apply(r, tx);
         }
+        // The Realtime globe turns while it is on screen.
+        if self.view == View::Workspace && self.page == Page::Overview && self.section == crate::insights::Section::Realtime && !self.prefs.reduce_motion {
+            tx.wake_after(std::time::Duration::from_millis(40));
+            changed = true;
+        }
         // While a turn runs, the thinking glyph steps every 220 milliseconds and the clock ticks.
         if matches!(self.turn, Turn::Working { .. }) && !self.prefs.reduce_motion {
             tx.wake_after(std::time::Duration::from_millis(220));

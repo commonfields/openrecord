@@ -41,7 +41,7 @@ impl Section {
             Section::Revenue => "Revenue and paying customers reported by Stripe.",
             Section::Funnel => "What you can measure across the customer journey, and what is still missing.",
             Section::Events => "Your saved goal event and its daily measurement history.",
-            Section::Realtime => "Live measurement availability for this business.",
+            Section::Realtime => "Who is on your site right now, and where they are.",
             Section::Answers => "What AI assistants say about you, and the visits they send.",
         }
     }
@@ -289,6 +289,28 @@ pub struct Insights {
     pub revenue: Source,
     /// Stripe's numbers, read for the Revenue section's own charts.
     pub revenue_data: Option<RevenueData>,
+    /// Who is on the site now, from the business's Google Analytics.
+    pub realtime: Option<Realtime>,
+}
+
+/// GA4's last 30 minutes: active users, by country and page, and per minute (oldest first).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Realtime {
+    pub active: f64,
+    pub countries: Vec<(String, String, f64)>,
+    pub pages: Vec<(String, f64)>,
+    pub per_minute: Vec<f64>,
+}
+
+fn realtime_of(v: &Value) -> Option<Realtime> {
+    let r = v.get("realtime").filter(|x| !x.is_null())?;
+    let list = |k: &str| r.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    Some(Realtime {
+        active: f(r, "activeUsers").unwrap_or(0.0),
+        countries: list("countries").iter().map(|c| (s(c, "code"), s(c, "name"), f(c, "users").unwrap_or(0.0))).collect(),
+        pages: list("pages").iter().map(|p| (s(p, "title"), f(p, "users").unwrap_or(0.0))).collect(),
+        per_minute: list("perMinute").iter().map(|x| x.as_f64().unwrap_or(0.0)).collect(),
+    })
 }
 
 /// One period of revenue in the main currency, and the period before.
@@ -489,7 +511,8 @@ impl Client {
             },
             Err(e) => Source::Failed(e.message()),
         };
-        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data })
+        let realtime = quiet(self.get::<Value>(&format!("/api/growth/clients/{b}/realtime")))?.ok().and_then(|v| realtime_of(&v));
+        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data, realtime })
     }
 
     fn goal(&self, b: &str, profile: &Value, days: u32) -> Option<Goal> {

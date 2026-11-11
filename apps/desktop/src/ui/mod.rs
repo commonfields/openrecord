@@ -5,6 +5,8 @@ mod answer;
 mod charts;
 mod discovery;
 pub mod find;
+mod globe;
+mod globe_land;
 mod overview;
 mod pages;
 mod shell;

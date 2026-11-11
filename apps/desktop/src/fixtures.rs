@@ -526,6 +526,10 @@ pub fn overview_funnel(s: &mut App) {
     section(s, Section::Funnel);
 }
 
+pub fn overview_realtime(s: &mut App) {
+    section(s, Section::Realtime);
+}
+
 pub fn overview_answers_split(s: &mut App) {
     section(s, Section::Answers);
     s.metric = crate::state::Metric::Answers;
@@ -654,6 +658,13 @@ fn insights() -> Insights {
             metrics: vec![m("Revenue (USD)", "$18,420.00", Some(0.12)), m("Paying customers", "214", Some(0.05)), m("New customers", "19", Some(-0.1))],
             table: None,
             note: None,
+        }),
+        realtime: Some(crate::insights::Realtime {
+            active: 47.0,
+            countries: [("US", "United States", 15.0), ("GB", "United Kingdom", 7.0), ("DE", "Germany", 5.0), ("IN", "India", 4.0), ("ID", "Indonesia", 4.0), ("CA", "Canada", 3.0), ("BR", "Brazil", 3.0), ("AU", "Australia", 2.0), ("FR", "France", 2.0), ("JP", "Japan", 1.0), ("SG", "Singapore", 1.0)]
+                .iter().map(|(c, n, u)| (c.to_string(), n.to_string(), *u)).collect(),
+            pages: vec![("Home".into(), 16.0), ("Pricing".into(), 10.0), ("How assistants pick sources".into(), 7.0), ("Quickstart".into(), 5.0), ("Integrations".into(), 3.0)],
+            per_minute: (0..30).map(|i| (5.0 + 2.5 * (i as f64 / 3.3).sin().abs()).round()).collect(),
         }),
         revenue_data: Some({
             // Thirty days with a weekly rhythm and a gentle climb.

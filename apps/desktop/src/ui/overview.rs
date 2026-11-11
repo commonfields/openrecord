@@ -32,7 +32,7 @@ pub fn view(s: &App, t: &Theme) -> El {
             Section::Revenue => revenue(s, t, i),
             Section::Funnel => funnel(t, i),
             Section::Events => events(s, t, i),
-            Section::Realtime => realtime(t),
+            Section::Realtime => realtime(s, t, i),
             Section::Answers => answers(s, t, i),
         },
         Load::Failed(e) => failure(t, "insights-failed", e, |s: &mut App| s.refresh()),
@@ -796,9 +796,61 @@ fn events(s: &App, t: &Theme, i: &Insights) -> El {
     col().w_full().gap(16.0).child(p).children(goal.map(|_| goal_card(s, t, i)))
 }
 
-fn realtime(t: &Theme) -> El {
-    panel(t, "realtime", "Live visitor tracking is not available yet", None)
-        .child(note(t, "OpenRecord does not currently receive a live visitor or event stream. There is no active-user count to display. Daily reports and imported website logs are historical observations."))
-        .child(note(t, "Connecting a log feed collects AI crawler and referral counts. It does not enable live visitor analytics."))
-        .child(row().child(button(t, "realtime-events", "View recorded goal events", Variant::Outline).on_press(|s: &mut App| s.show_section(Section::Events))))
+/// Who is on the site now: a turning globe with where people are, the
+/// countries ranked, the last 30 minutes and the pages being read.
+fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
+    let Some(r) = &i.realtime else {
+        return panel(t, "realtime", "Connect Google Analytics to see who is on your site now", None)
+            .child(note(t, "Realtime reads your Google Analytics property: people on the site in the last 30 minutes, where they are and what they read."))
+            .child(row().child(button(t, "realtime-connect", "Connect on the Channels page", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
+    };
+    let _ = s;
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+    // A full turn every 90 seconds, starting over the Atlantic.
+    let spin = ((now_ms / 1000.0 * 4.0) % 360.0) as f32 + 40.0;
+    let pulse = (0.55 + 0.45 * (now_ms / 600.0).sin().abs()) as f32;
+    let places: Vec<(String, f64)> = r.countries.iter().map(|c| (c.0.clone(), c.2)).collect();
+    let globe_card = card(t)
+        .key("realtime-globe")
+        .w(0.0)
+        .grow(2.0)
+        .min_w(460.0)
+        .h(560.0)
+        .px(24.0)
+        .py(20.0)
+        .gap(4.0)
+        .child(row().w_full().gap(8.0).center_y()
+            .child(row().size(10.0, 10.0).center().child(el().size(8.0, 8.0).radius(4.0).fill(t.chart.primary.alpha(pulse))))
+            .child(label("Active now", type_::SM_MEDIUM, t.muted_foreground))
+            .child(el().grow(1.0))
+            .child(label("Last 30 minutes, Google Analytics", type_::XS, t.muted_foreground)))
+        .child(label(crate::insights::int(r.active), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.foreground))
+        .child(row().w_full().grow(1.0).center().child(crate::ui::globe::view(t, 420.0, spin, &places)));
+    let most = r.countries.iter().map(|c| c.2).fold(1.0, f64::max);
+    let mut list = col().w_full().gap(12.0);
+    for (k, (code, name, users)) in r.countries.iter().take(14).enumerate() {
+        list = list.child(col().key(format!("rt-country-{k}")).w_full().gap(5.0)
+            .child(row().w_full().gap(10.0).center_y()
+                .child(row().h(18.0).w(28.0).radius(4.0).center().fill(t.accent).child(label(code.clone(), type_::XS2.lh(14.0), t.muted_foreground)))
+                .child(label(name.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
+                .child(label(crate::insights::int(*users), type_::SM_13.features("'tnum' 1"), t.foreground))
+                .child(label(format!("{:.0}%", users / r.active.max(1.0) * 100.0), type_::XS.features("'tnum' 1"), t.muted_foreground).w(36.0)))
+            .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((users / most) as f32).h_full().radius(2.0).fill(t.chart.primary.alpha(0.8)))));
+    }
+    let where_card = board(t, "realtime-countries", "Where they are", Some(format!("{} countries", r.countries.len())), 560.0, list);
+    // The last 30 minutes as columns, newest on the right.
+    let peak = r.per_minute.iter().copied().fold(1.0, f64::max);
+    let mut minutes = row().w_full().h(150.0).gap(3.0).items_end();
+    for (k, v) in r.per_minute.iter().enumerate() {
+        let last = k + 1 == r.per_minute.len();
+        minutes = minutes.child(el().key(format!("rt-min-{k}")).grow(1.0).h((v / peak * 150.0).max(2.0) as f32).radius(2.0).fill(if last { t.chart.primary } else { t.chart.primary.alpha(0.45) }).help(format!("{} minutes ago: {}", r.per_minute.len() - 1 - k, crate::insights::int(*v))));
+    }
+    let minutes_card = board(t, "realtime-minutes", "Each minute", Some("The last 30 minutes, newest on the right".into()), 260.0,
+        col().w_full().gap(8.0).child(minutes).child(row().w_full().child(label("30 min ago", type_::AXIS, t.chart.axis)).child(el().grow(1.0)).child(label("now", type_::AXIS, t.chart.axis))));
+    let pages: Vec<(String, f64, String)> = r.pages.iter().map(|p| (p.0.clone(), p.1, format!("{} reading", crate::insights::int(p.1)))).collect();
+    let pages_card = board(t, "realtime-pages", "What they are reading", None, 260.0, bar_list(t, "rt-pages", &pages));
+    col().w_full().gap(16.0)
+        .child(row().w_full().gap(16.0).items_stretch().flex_wrap().child(globe_card).child(where_card))
+        .child(grid(vec![minutes_card, pages_card]))
 }
+
