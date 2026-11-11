@@ -243,7 +243,7 @@ export function SearchOverviewPage() {
             <Panel>
               <PanelHeader
                 title="Needs attention"
-                description={bucket === "all" ? "Ranked by severity. Each problem carries the exact observed evidence." : `Showing ${String(stats.find((s) => s.key === bucket)?.label ?? "").toLowerCase()}`}
+                description={bucket === "all" ? "Most serious first. Each problem shows exactly what was found." : `Showing ${String(stats.find((s) => s.key === bucket)?.label ?? "").toLowerCase()}`}
               >
                 {bucket !== "all" ? (
                   <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setBucket("all")}>
@@ -343,7 +343,7 @@ export function SearchOverviewPage() {
                       ) : null}
                       {latest.state === "FAILED" ? (
                         <p className="rounded-md bg-wrong-soft px-2.5 py-2 text-[0.6875rem] text-wrong">
-                          Inspection failed: {latest.failureDetailSafe ?? latest.failureClass ?? "No evidence was collected."}
+                          Inspection failed: {latest.failureDetailSafe ?? latest.failureClass ?? "Nothing was found."}
                         </p>
                       ) : null}
                       <Button asChild variant="outline" size="sm" className="w-full">

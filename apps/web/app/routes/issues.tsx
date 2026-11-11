@@ -45,6 +45,7 @@ import { errorMessage, formatDate, formatDateTime, relativeTime, sentenceCase } 
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
+import { Stagger, StaggerItem } from "@/components/motion"
 
 const PAGE_SIZE = 25
 
@@ -111,7 +112,7 @@ export function IssuesPage() {
     <div className="space-y-4 pb-4">
       <PageHeader
         title="AI answers"
-        description="Review open claims from AI answers. Discovery measurements below are separate from this review queue."
+        description="What AI assistants said about you that still needs a look. The numbers below are measured separately."
         actions={
           <>
             <Button
@@ -135,7 +136,7 @@ export function IssuesPage() {
           <PenLineIcon className="size-4 text-review" />
           <p className="min-w-0 flex-1 text-xs">
             <span className="font-medium text-foreground">
-              {queue.length} answer{queue.length === 1 ? "" : "s"} still need a verdict.
+              {queue.length} answer{queue.length === 1 ? "" : "s"} still need a rating.
             </span>{" "}
             <span className="text-muted-foreground">Unreviewed claims are not counted as wrong until someone judges them.</span>
           </p>
@@ -464,14 +465,14 @@ function ClaimGroupRow({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button asChild size="sm" className="h-7 gap-1 px-2 text-xs">
-                  <Link to={occurrenceHref(businessId, toReview[0]!)} aria-label={`Review claim, ${toReview.length} waiting`}>
+                  <Link to={occurrenceHref(businessId, toReview[0]!)} aria-label={`Rate this answer, ${toReview.length} waiting`}>
                     <PenLineIcon className="size-3.5" />
                     Review
                     <span className="tabular-nums opacity-80">{toReview.length}</span>
                   </Link>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Review claim: {toReview.length} answer{toReview.length === 1 ? "" : "s"} waiting</TooltipContent>
+              <TooltipContent>Rate this answer: {toReview.length} answer{toReview.length === 1 ? "" : "s"} waiting</TooltipContent>
             </Tooltip>
           ) : null}
           {reviewed ? (
@@ -532,7 +533,7 @@ function OccurrenceRow({ businessId, issue: o, search }: { businessId: string; i
           </span>
         </span>
         <span className="flex w-24 items-center justify-end gap-1 font-medium text-foreground">
-          {o.state === "NEEDS_REVIEW" ? "Review claim" : "View issue"}
+          {o.state === "NEEDS_REVIEW" ? "Rate this answer" : "View issue"}
           <ChevronRightIcon className="size-3.5 text-muted-foreground" />
         </span>
       </Link>
@@ -590,9 +591,9 @@ function AnswersTable({
         <span>Sources</span>
         <span className="text-right">Seen</span>
       </div>
-      <ul className="divide-y">
+      <Stagger className="divide-y">
         {slice.map((i) => (
-          <li key={i.claim_id}>
+          <StaggerItem key={i.claim_id}>
             <Link
               to={occurrenceHref(businessId, i, search)}
               className="grid items-center gap-x-4 gap-y-1.5 px-4 py-2.5 text-xs outline-none transition-colors hover:bg-muted/40 lg:grid-cols-[9rem_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_3rem_5rem]"
@@ -633,9 +634,9 @@ function AnswersTable({
                 {relativeTime(i.collected_at)}
               </span>
             </Link>
-          </li>
+          </StaggerItem>
         ))}
-      </ul>
+      </Stagger>
       {pages > 1 ? (
         <div className="flex items-center justify-between border-t px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span className="tabular-nums">

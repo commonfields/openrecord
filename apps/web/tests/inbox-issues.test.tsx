@@ -15,7 +15,7 @@ describe("AI answers in the inbox", () => {
     const markup = renderToStaticMarkup(<MemoryRouter>{item.detail}</MemoryRouter>)
     expect(item.summary).toBe("AI answer · Needs review")
     expect(markup).toContain("Example answer")
-    expect(markup).toContain("No citation evidence recorded")
+    expect(markup).toContain("No sources were linked")
     expect(markup).toContain("/observations/observation?claim=claim")
     expect(markup).not.toContain("Marked wrong")
   })

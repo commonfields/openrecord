@@ -95,7 +95,7 @@ const trendTabs: ReadonlyArray<{ key: MetricKey; label: string }> = [
 
 const metricMeta: Record<MetricKey, { label: string; tone?: Stat["tone"]; goodWhenUp?: boolean; percent?: boolean }> = {
   answers: { label: "Answers collected" },
-  accuracy: { label: "Supported share", goodWhenUp: true, percent: true },
+  accuracy: { label: "Correct share", goodWhenUp: true, percent: true },
   wrong: { label: "Wrong", tone: "wrong", goodWhenUp: false },
   partial: { label: "Partial", tone: "partial", goodWhenUp: false },
   unreviewed: { label: "Needs review", tone: "review", goodWhenUp: false },
@@ -248,9 +248,9 @@ export function Today() {
 /* ----------------------------------------------------------- Hero chart */
 
 const verdictShareMeta = {
-  accuracy: { key: "supported", label: "Supported share", cssVar: "--chart-supported" },
+  accuracy: { key: "supported", label: "Correct share", cssVar: "--chart-supported" },
   wrong: { key: "wrong", label: "Wrong share", cssVar: "--chart-wrong" },
-  partial: { key: "partial", label: "Partially correct share", cssVar: "--chart-partial" },
+  partial: { key: "partial", label: "Partly right share", cssVar: "--chart-partial" },
   unreviewed: { key: "unreviewed", label: "Share needing review", cssVar: "--chart-unreviewed" },
 } as const
 type VerdictShareMetric = keyof typeof verdictShareMeta
@@ -284,7 +284,7 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
   // every time a model is hovered.
   const providerRows = useMemo(() => stats?.rows.slice(1) ?? [], [stats])
 
-  const splitLabel = metric === "answers" ? "By provider" : metric === "checks" ? null : "Verdict share"
+  const splitLabel = metric === "answers" ? "By provider" : metric === "checks" ? null : "By rating"
   // The split view answers the complementary question: not how many, but
   // what share of the day's verdicts the selected one represents.
   const shareSeries = useMemo(() => {
@@ -304,10 +304,10 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
     metric === "answers"
       ? "Answers collected per provider, per day"
       : metric === "accuracy"
-        ? "Supported ÷ judged claims (unknown left out), per day"
+        ? "Share of rated answers that were correct, per day"
         : metric === "checks"
           ? "Checks queued for configured providers, per day"
-          : metric === "unreviewed" ? "Claims needing a reviewer's verdict, per day" : `${meta.label === "Partial" ? "Partially correct" : meta.label} claims found in AI answers, per day`
+          : metric === "unreviewed" ? "Answers waiting for your rating, per day" : `${meta.label === "Partial" ? "Partly right" : meta.label} answers, per day`
 
   return (
     <section className="space-y-3">
@@ -331,7 +331,7 @@ function HeroChart({ a, stats, loading, metric, days, switcher }: { a: Analytics
       {loading || !a || !stats ? (
         <Skeleton className="h-[280px] rounded-xl" />
       ) : series.every((r) => r.value === "" || r.value === 0) && totalClaims(a.current) === 0 && stats.total === 0 ? (
-        <ChartEmpty days={days} what={metric === "answers" ? "answers" : "claims"} />
+        <ChartEmpty days={days} what="answers" />
       ) : view === "split" && metric === "answers" ? (
         <div className="space-y-3">
           <ModelSmallMultiples rows={providerRows} series={stats.series} hidden={hidden} focus={focus} />
@@ -515,12 +515,12 @@ function AccuracyByModelCard({ a, stats, loading }: { a: Analytics | null; stats
   const byModel = useMemo(() => (stats ? [...stats.models].filter((m) => m.claims > 0).sort((x, y) => (y.accuracy ?? -1) - (x.accuracy ?? -1) || y.claims - x.claims) : []), [stats])
   return (
     <Panel className="shadow-(--card-shadow-raised)">
-      <PanelHeader title="Supported claims by provider" description={a ? `${pct(accuracy(a.current))} of ${judged(a.current).toLocaleString()} judged claims are supported${a.current.unknown ? ` (${a.current.unknown.toLocaleString()} could not be judged)` : ""}` : "Supported ÷ judged claims"} />
+      <PanelHeader title="Correct answers by assistant" description={a ? `${pct(accuracy(a.current))} of ${judged(a.current).toLocaleString()} rated answers were correct${a.current.unknown ? ` (${a.current.unknown.toLocaleString()} could not be rated)` : ""}` : "Share of rated answers that were correct"} />
       <div className="p-2 pt-2">
         {loading || !stats ? (
           <ListSkeleton />
         ) : byModel.length === 0 ? (
-          <p className="px-2 py-8 text-center text-xs text-muted-foreground">No reviewed claims yet.</p>
+          <p className="px-2 py-8 text-center text-xs text-muted-foreground">Nothing rated yet.</p>
         ) : (
           <>
             <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)_3rem_3.5rem] gap-3 px-2 pb-1 text-[0.6875rem] text-muted-foreground">
@@ -551,7 +551,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
   const [tab, setTab] = useState<"questions" | "facts">("questions")
   return (
     <Panel className="flex h-[26rem] min-w-0 flex-col overflow-hidden shadow-(--card-shadow-raised)">
-      <PanelHeader title="What buyers ask" description="Supported share per question and per approved fact">
+      <PanelHeader title="What buyers ask" description="How often answers were correct, per question and per fact">
         <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
           <Link to={`/businesses/${businessId}/${tab === "questions" ? "checks" : "truth"}`}>
             {tab === "questions" ? "Manage questions" : "Approved facts"}
@@ -595,7 +595,7 @@ function QuestionsCard({ businessId, a, loading, days }: { businessId: string; a
             </>
           )
         ) : a.facts.length === 0 ? (
-          <p className="px-2 py-8 text-center text-xs text-muted-foreground">No reviewed claims were linked to an approved fact in the last {days} days.</p>
+          <p className="px-2 py-8 text-center text-xs text-muted-foreground">No rated answers touched one of your facts in the last {days} days.</p>
         ) : (
           <>
             <div className="grid grid-cols-[minmax(0,1fr)_6rem_3rem_3rem] gap-3 px-2 pb-1 text-[0.6875rem] text-muted-foreground">

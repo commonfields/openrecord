@@ -61,7 +61,7 @@ export function OpportunityForm({ businessId, goal, userId, websiteUrl, done }: 
   const [step, setStep] = useState<1 | 2>(1)
   const [story, setStory] = useState({ title: "", problemStatement: "", audience: "", buyerIntent: "", proposedChange: "" })
   const stepBadge = (n: 1 | 2) => (
-    <span aria-current={step === n ? "step" : undefined} className={step === n ? "font-semibold text-foreground" : "text-muted-foreground"}>{n} · {n === 1 ? "The work" : "Evidence and limits"}</span>
+    <span aria-current={step === n ? "step" : undefined} className={step === n ? "font-semibold text-foreground" : "text-muted-foreground"}>{n} · {n === 1 ? "The work" : "Sources and limits"}</span>
   )
   return <form className="grid gap-4" onSubmit={async e => {
     e.preventDefault()
@@ -149,7 +149,7 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
           <div><dt className="text-muted-foreground">Operator owner</dt><dd className="mt-1">{o.ownerUserId === userId ? "You" : "Another account operator"}</dd></div>
           <div><dt className="text-muted-foreground">Created by</dt><dd className="mt-1">{o.createdByActor === "ASSISTANT" ? "Operator Agent" : "Account operator"}, {formatDateTime(o.createdAt)}</dd></div>
         </dl>
-        <ul className="space-y-2" aria-label="Opportunity evidence">{o.evidence.map(e => <li key={e.id} className="flex flex-wrap items-start gap-2 text-xs">
+        <ul className="space-y-2" aria-label="Why this idea">{o.evidence.map(e => <li key={e.id} className="flex flex-wrap items-start gap-2 text-xs">
           <Badge variant={e.type === "OBSERVED" ? "supported" : "outline"}>{GROWTH_EVIDENCE_LABELS[e.type]}</Badge><span className="min-w-0 flex-1">{e.note}
             {e.type === "OBSERVED" ? <Link to={growthEvidencePath(businessId, e.reference)} className="ml-1 underline">View stored {e.reference.kind.toLowerCase().replaceAll("_", " ")}</Link> : null}</span>
         </li>)}</ul>
@@ -168,7 +168,7 @@ export function OpportunityCard({ businessId, opportunity: o, goal, userId, relo
       </div>
     </details>
     <Dialog open={decision !== null} onOpenChange={open => { if (!open && !busy) setDecision(null) }}><DialogContent><DialogHeader>
-      <DialogTitle>{decision === "review" ? "Record review" : decision === "propose" ? "Propose for review" : decision === "approve" ? "Approve opportunity" : "Reject opportunity"}</DialogTitle><DialogDescription>{o.title}. {decision === "review" ? "Record your conclusion and its limits. A review does not verify publication or causal impact." : decision === "cancel" ? "Rejection cancels this opportunity and preserves its history." : decision === "propose" ? "Request human review of this hypothesis." : "Approval records your decision; it does not publish or deliver a change."}</DialogDescription>
+      <DialogTitle>{decision === "review" ? "Record review" : decision === "propose" ? "Propose for review" : decision === "approve" ? "Approve opportunity" : "Reject opportunity"}</DialogTitle><DialogDescription>{o.title}. {decision === "review" ? "Record your conclusion and its limits. A review does not verify publication or causal impact." : decision === "cancel" ? "Rejection cancels this opportunity and preserves its history." : decision === "propose" ? "Ask someone on your team to review this idea." : "Approval records your decision; it does not publish or deliver a change."}</DialogDescription>
     </DialogHeader><form className="grid gap-4" onSubmit={async e => {
       e.preventDefault(); if (!decision) return; setBusy(true); setError(null)
       try {

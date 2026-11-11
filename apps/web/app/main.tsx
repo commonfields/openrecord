@@ -42,10 +42,12 @@ import { SharedChatPage } from "./routes/shared-chat"
 import { UsagePage } from "./routes/usage"
 import { PublicGrowthReportPage } from "./routes/public-growth-report"
 import { ApprovalsPage, BusinessInboxPage } from "./routes/approvals"
+import { MotionConfig } from "motion/react"
 
 function App() {
   return (
     <BrowserRouter>
+      <MotionConfig reducedMotion="user">
       <PreferencesProvider>
       <TooltipProvider>
         <Routes>
@@ -109,6 +111,7 @@ function App() {
         <Toaster position="bottom-right" />
       </TooltipProvider>
       </PreferencesProvider>
+      </MotionConfig>
     </BrowserRouter>
   )
 }

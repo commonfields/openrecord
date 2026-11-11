@@ -285,7 +285,7 @@ export function InitiativeDecision({ businessId, opportunity, measurement, onDec
         <Detail label="The change">{current.proposedChange}</Detail>
         <Detail label="Why it could help">{current.expectedMechanism}</Detail>
         <Detail label="What we don't know">{current.uncertainty}</Detail>
-        <Detail label="Where this came from">{suggested ? "Suggested by OpenRecord from your brief and homepage. A hypothesis, not a measured result." : current.source}</Detail>
+        <Detail label="Where this came from">{suggested ? "Suggested by OpenRecord from your brief and homepage. An idea to try, not a measured result." : current.source}</Detail>
       </dl>
       {current.status === "PROPOSED" ? (
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -297,7 +297,7 @@ export function InitiativeDecision({ businessId, opportunity, measurement, onDec
         <div className="space-y-2 rounded-xl bg-muted/60 p-3 text-xs">
           <p className="font-medium">Next: make the change, then record it</p>
           <ul className="space-y-1 text-muted-foreground">
-            <li>Recording the work marks it as attested by you. OpenRecord verifies only what it can read back.</li>
+            <li>Logging the work marks it as done by you. OpenRecord only confirms what it can see for itself.</li>
             <li>{measurement === "CONNECTED" ? "Your goal is measured from Google Analytics." : "Import daily numbers or connect Google Analytics so results can be compared."}</li>
           </ul>
           <div className="flex flex-wrap gap-2 pt-1">

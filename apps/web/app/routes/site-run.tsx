@@ -51,7 +51,7 @@ export function SiteRunPage() {
                 <Alert variant="destructive">
                   <TriangleAlertIcon />
                   <AlertTitle className="font-normal">Inspection failed</AlertTitle>
-                  <AlertDescription>{run.failureDetailSafe ?? run.failureClass ?? "No evidence was collected."}</AlertDescription>
+                  <AlertDescription>{run.failureDetailSafe ?? run.failureClass ?? "Nothing was found."}</AlertDescription>
                 </Alert>
               ) : null}
             </CardContent>

@@ -348,7 +348,7 @@ function AgentSection() {
         <Row label="Response style" description={{
           friendly: "The answer first, what it means for your business, and the next step, in plain words.",
           concise: "Just the answer and one next step.",
-          detailed: "The reasoning and evidence behind each point, with alternatives and trade-offs.",
+          detailed: "The reasoning behind each point, with other options and trade-offs.",
         }[preferences.responseStyle]}>
           <Select value={preferences.responseStyle} onValueChange={(v) => setPreference("responseStyle", v as Preferences["responseStyle"])}>
             <SelectTrigger className="w-36" aria-label="Response style">

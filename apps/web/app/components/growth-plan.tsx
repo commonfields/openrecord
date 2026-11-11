@@ -13,7 +13,7 @@ import { formatDateTime } from "@/lib/format"
 import { Growth, growthError, planFromForm } from "@/lib/growth"
 import { ApiError } from "@/lib/api"
 
-const PLAN_FIELDS = [["baselineStart", "Baseline starts"], ["baselineEnd", "Baseline ends"], ["observationStart", "Observation starts"], ["observationEnd", "Observation ends"]] as const
+const PLAN_FIELDS = [["baselineStart", "Baseline starts"], ["baselineEnd", "Baseline ends"], ["observationStart", "Measuring starts"], ["observationEnd", "Measuring ends"]] as const
 const planError = (e: unknown): string => {
   const reason = e instanceof ApiError && typeof e.body["reason"] === "string" ? e.body["reason"] : ""
   if (reason === "InvalidPlanWindow") return "The periods must not overlap, and each can cover at most one year."

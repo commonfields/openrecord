@@ -104,7 +104,7 @@ export function RepresentationDetailPage() {
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <Panel>
-            <PanelHeader title="Current representation" description="Derived from the last successful observation. A failed check never erases it." />
+            <PanelHeader title="Current representation" description="From the last time this page was read. A failed read never erases it." />
             <div className="grid gap-px p-4 pt-3 md:grid-cols-2 md:gap-4">
               <div className="relative rounded-lg bg-muted/40 p-4">
                 <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
@@ -127,7 +127,7 @@ export function RepresentationDetailPage() {
                 <div className={cn("text-xs font-semibold", state === "DRIFT" && "text-wrong", !effective && "text-muted-foreground")}>
                   {effective?.extracted_value ?? "Not observed yet"}
                 </div>
-                <p className="mt-1 text-[0.6875rem] text-muted-foreground">{d.current?.finding.reason ?? "No observation yet."}</p>
+                <p className="mt-1 text-[0.6875rem] text-muted-foreground">{d.current?.finding.reason ?? "Not read yet."}</p>
               </div>
             </div>
             {failedLatest && latest ? (
@@ -137,7 +137,7 @@ export function RepresentationDetailPage() {
                   <AlertTitle className="font-normal">Latest check failed</AlertTitle>
                   <AlertDescription>
                     <p>
-                      {`${formatDateTime(latest.completed_at)}${latest.failure ? ` (${sentenceCase(latest.failure)})` : ""}. The state above still reflects the last good observation.`}
+                      {`${formatDateTime(latest.completed_at)}${latest.failure ? ` (${sentenceCase(latest.failure)})` : ""}. What you see above is still from the last good read.`}
                     </p>
                   </AlertDescription>
                 </Alert>
@@ -146,7 +146,7 @@ export function RepresentationDetailPage() {
           </Panel>
 
           <Panel>
-            <PanelHeader title="History" description="Every observation of this source, newest first. Value changes are marked." />
+            <PanelHeader title="History" description="Every time this page was read, newest first. Changes are marked." />
             <div className="p-4 pt-3">
               {history.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Not observed yet.</p>
