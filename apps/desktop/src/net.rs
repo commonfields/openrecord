@@ -19,6 +19,8 @@ pub enum Reply {
     Decisions(ApiResult<Vec<Decision>>),
     Overview(String, ApiResult<Overview>),
     Issues(String, ApiResult<Vec<Issue>>),
+    /// A business's approved facts, for "Find…".
+    Facts(String, ApiResult<Vec<crate::api::Fact>>),
     Channels(String, ApiResult<Vec<Channel>>),
     Campaigns(String, ApiResult<Vec<Campaign>>),
     Conversation(String, ApiResult<Option<Conversation>>),
@@ -199,6 +201,13 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.issues(&business);
             send(Reply::Issues(business, r));
+        });
+    }
+
+    pub fn facts(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.facts(&business);
+            send(Reply::Facts(business, r));
         });
     }
 

@@ -517,6 +517,15 @@ impl Client {
         Ok(self.get::<R>(&format!("/api/businesses/{}/overview", enc(business)))?.overview)
     }
 
+    /// A business's approved facts (the active versions).
+    pub fn facts(&self, business: &str) -> ApiResult<Vec<Fact>> {
+        #[derive(Deserialize)]
+        struct F {
+            facts: Vec<Fact>,
+        }
+        Ok(self.get::<F>(&format!("/api/businesses/{}/facts", enc(business)))?.facts.into_iter().filter(|f| f.status == "ACTIVE").collect())
+    }
+
     pub fn issues(&self, business: &str) -> ApiResult<Vec<Issue>> {
         #[derive(Deserialize)]
         struct R {

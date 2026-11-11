@@ -760,6 +760,11 @@ pub fn account_update(s: &mut App) {
     s.menu = Some(Menu::Account);
 }
 
+pub fn agent_find(s: &mut App) {
+    agent(s);
+    s.find = Some(crate::state::Find { query: rune::TextEdit::new(""), index: 0 });
+}
+
 pub fn business_menu(s: &mut App) {
     inbox(s);
     s.menu = Some(Menu::Businesses);

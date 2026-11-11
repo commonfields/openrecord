@@ -348,7 +348,7 @@ impl Client {
         let analytics = quiet(self.get::<Value>(&format!("/api/businesses/{b}/analytics?days={days}")))?
             .map(|v| Analytics::read(v.get("analytics").unwrap_or(&Value::Null)))
             .map_err(|e| e.message());
-        let goal = match quiet(self.get::<Value>(&format!("/api/growth/clients/{b}/profile")))? {
+        let goal = match quiet(self.get::<Value>(&format!("/api/growth/clients/{b}")))? {
             Ok(v) => Ok(self.goal(&b, &v, days)),
             Err(ApiError::Status(404, _)) => Ok(None),
             Err(e) => Err(e.message()),

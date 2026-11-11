@@ -4,6 +4,7 @@ mod agent;
 mod answer;
 mod charts;
 mod discovery;
+pub mod find;
 mod overview;
 mod pages;
 mod shell;
@@ -49,6 +50,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if s.view == View::Agent && (s.active.is_some() || s.general) && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }
+        find::layers(s, &t, &mut layers);
         if let Some(n) = &s.new_chat {
             agent::new_chat_dialog(s, &t, &k, n, &mut layers);
         }

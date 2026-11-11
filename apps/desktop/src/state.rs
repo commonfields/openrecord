@@ -237,6 +237,12 @@ pub struct NewChat {
     pub clients: Load<Vec<(String, String)>>,
 }
 
+/// "Find…" (the web's command palette): the query and the highlighted result.
+pub struct Find {
+    pub query: TextEdit,
+    pub index: usize,
+}
+
 /// The "Share this chat" dialog.
 pub struct ShareChat {
     pub conversation: String,
@@ -329,6 +335,9 @@ pub struct App {
     pub general: bool,
     /// "Start a new chat", while it is open.
     pub new_chat: Option<NewChat>,
+    /// "Find…", while it is open, and the approved facts it lists.
+    pub find: Option<Find>,
+    pub find_facts: Load<Vec<crate::api::Fact>>,
     /// The reasoning effort picked for a model (`value`, effort); it applies only to that model.
     pub reasoning: Option<(String, String)>,
     /// A reply that just arrived, revealed word by word (its text, and when the reveal began),
@@ -448,6 +457,8 @@ impl App {
             helper: None,
             settle_next: false,
             new_chat: None,
+            find: None,
+            find_facts: Load::Idle,
             row_hover: None,
             playbooks: Vec::new(),
             followups: Load::Idle,
@@ -897,6 +908,24 @@ impl App {
     }
 
     /// Opens "Start a new chat".
+    /// Opens "Find…", or closes it when it is open (F and ⌘K toggle it, as on the web).
+    /// Claims and facts load only while it is open.
+    pub fn toggle_find(&mut self, tx: &mut Tx) {
+        if self.find.take().is_some() {
+            return;
+        }
+        self.menu = None;
+        self.find = Some(Find { query: TextEdit::new(""), index: 0 });
+        if let Some(b) = self.active.clone() {
+            if self.issues.ready().is_none() {
+                self.net.issues(b.clone());
+            }
+            self.find_facts = Load::Loading;
+            self.net.facts(b);
+        }
+        tx.focus("find-query", false);
+    }
+
     pub fn open_new_chat(&mut self, tx: &mut Tx) {
         self.menu = None;
         self.new_chat = Some(NewChat { query: TextEdit::new(""), clients: Load::Loading });
@@ -1528,6 +1557,8 @@ impl App {
             }
             Reply::Overview(b, r) if here(self, &b) => self.overview = to_load(self.failed(r)),
             Reply::Issues(b, r) if here(self, &b) => self.issues = to_load(self.failed(r)),
+            Reply::Facts(b, r) if here(self, &b) => self.find_facts = to_load(self.failed(r)),
+            Reply::Facts(..) => {}
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
             Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {

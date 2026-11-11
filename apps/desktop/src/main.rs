@@ -49,6 +49,22 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.open_settings(state::SettingsPage::General);
         return true;
     }
+    // "Find…": Escape closes it, the arrows move through its results.
+    if s.find.is_some() {
+        match ev.key {
+            rune::Key::Escape => s.find = None,
+            rune::Key::Up => ui::find::step(s, -1),
+            rune::Key::Down => ui::find::step(s, 1),
+            _ if ev.is_command('k') => s.find = None,
+            _ => return false,
+        }
+        return true;
+    }
+    // F (when no text field has the key) or ⌘K opens it, as on the web.
+    if s.settings.is_none() && (ev.is_command('k') || (matches!(&ev.key, rune::Key::Text(c) if c == "f" || c == "F") && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt)) {
+        s.toggle_find(tx);
+        return true;
+    }
     // Escape closes a helper opened beside the conversation, as on the web.
     if s.settings.is_none() && s.helper.is_some() && ev.key == rune::Key::Escape {
         s.helper = None;
@@ -138,6 +154,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("channels", fixtures::channels),
     ("collapsed", fixtures::collapsed),
     ("business-menu", fixtures::business_menu),
+    ("agent-find", fixtures::agent_find),
     ("account-update", fixtures::account_update),
 ];
 
