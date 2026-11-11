@@ -522,6 +522,9 @@ fn discovery_panel(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
     let cited = d.period.as_ref().and_then(|p| of_pair(&p.3));
     let visits = d.referral.as_ref().map(|r| (r.0, r.1));
     let signups = d.referral.as_ref().and_then(|r| r.3);
+    if mentions.is_none() && cited.is_none() && visits.is_none() && signups.is_none() {
+        return label("Mentions, links and visits from AI assistants show here once they are measured. Ask the agent to set this up.", type_::SM_13, t.muted_foreground).wrap();
+    }
     let signup_tile = card(t).key("ai-signups").w(0.0).grow(1.0).min_w(170.0).h(128.0).px(18.0).py(16.0).gap(6.0)
         .child(label("Sign-ups after those visits", type_::XS_MEDIUM, t.muted_foreground).truncate())
         .child(label(signups.map(int).unwrap_or_else(|| "No data".into()), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))

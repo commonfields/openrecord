@@ -82,7 +82,7 @@ impl Metric {
     fn name(self) -> &'static str {
         match self {
             Metric::Answers => "Answers collected",
-            Metric::Accuracy => "Supported share",
+            Metric::Accuracy => "Correct share",
             Metric::Wrong => "Wrong",
             Metric::Partial => "Partly right",
             Metric::Unreviewed => "Needs review",
@@ -112,7 +112,7 @@ impl Metric {
     /// The split view's share line: its name and the verdict it counts.
     fn share(self, v: &Verdicts) -> Option<(&'static str, i64)> {
         Some(match self {
-            Metric::Accuracy => ("Supported share", v.supported),
+            Metric::Accuracy => ("Correct share", v.supported),
             Metric::Wrong => ("Wrong share", v.wrong),
             Metric::Partial => ("Partially correct share", v.partial),
             Metric::Unreviewed => ("Share needing review", v.unreviewed),
@@ -442,7 +442,7 @@ pub fn answer_collection(t: &Theme, st: &Stats, days: u32) -> El {
             Some(p) => format!("{}{p:.1}", if p > 0.0 { "+" } else { "" }),
         };
         // A bar behind the row, as long as the provider's share of the leader's.
-        let bar = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac((sh / max) as f32).radius(6.0).fill(m.series.color(t).alpha(0.12));
+        let bar = el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac((sh / max) as f32).radius(6.0).fill(t.foreground.alpha(0.06));
         list = list.child(
             row()
                 .key(format!("share-{}", m.series.key))
