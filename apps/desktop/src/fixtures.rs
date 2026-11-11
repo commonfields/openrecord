@@ -754,6 +754,12 @@ pub fn collapsed(s: &mut App) {
     s.sidebar_open = false;
 }
 
+pub fn account_update(s: &mut App) {
+    inbox(s);
+    s.update = crate::update::Update::Available(crate::update::Release { version: "0.2.0".into(), dmg_url: String::new(), page_url: String::new() });
+    s.menu = Some(Menu::Account);
+}
+
 pub fn business_menu(s: &mut App) {
     inbox(s);
     s.menu = Some(Menu::Businesses);

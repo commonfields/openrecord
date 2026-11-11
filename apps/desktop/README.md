@@ -35,6 +35,18 @@ open without a warning: set `MACOS_SIGN_IDENTITY` (and `APPLE_ID`,
 builds an Intel + Apple Silicon `.dmg` on GitHub; a `desktop-v*` tag attaches it
 to a release. The app opened from Finder talks to `http://localhost:3001`.
 
+## Updates
+
+The account menu checks GitHub for a newer release at launch and offers
+"Update to x.y.z". One press downloads that release's `.dmg`, copies the app
+over the running `OpenRecord.app` (staged beside it, then swapped), and
+restarts into it. A dot on the account avatar shows an update is waiting.
+
+To ship one, bump `version` in `Cargo.toml` and push a `desktop-vX.Y.Z` tag
+with the same number; the Desktop workflow attaches the `.dmg` the updater
+downloads. Drafts and pre-releases are skipped. A copy run with `cargo run`
+can check but not install, since it is not inside an `.app`.
+
 ## What it covers
 
 - Sign in, with the demo-account shortcut.

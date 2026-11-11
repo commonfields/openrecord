@@ -341,6 +341,8 @@ pub struct App {
     pub open_logs: std::collections::BTreeSet<(usize, usize)>,
     pub open_sources: std::collections::BTreeSet<usize>,
     pub copied: Option<usize>,
+    /// Where updating the app stands (the account menu's update row).
+    pub update: crate::update::Update,
     /// Chart replies switched to their table view (`msg-part` keys).
     pub visual_tables: std::collections::BTreeSet<String>,
     /// Messages waiting for the turn under way, and files for the next message.
@@ -460,6 +462,7 @@ impl App {
             open_logs: Default::default(),
             open_sources: Default::default(),
             copied: None,
+            update: crate::update::Update::Unknown,
             visual_tables: Default::default(),
             queued: Vec::new(),
             attachments: Vec::new(),
@@ -582,6 +585,27 @@ impl App {
         if self.screen == Screen::Restoring {
             self.net.restore();
         }
+        // Look for a newer version once at launch, so the account menu can offer it.
+        self.check_update();
+    }
+
+    /// Asks GitHub for a newer version, unless a check or an install is under way.
+    pub fn check_update(&mut self) {
+        use crate::update::Update;
+        if !self.net.live() || matches!(self.update, Update::Checking | Update::Installing(_)) {
+            return;
+        }
+        self.update = Update::Checking;
+        self.net.check_update();
+    }
+
+    /// Downloads and installs the newer version, then restarts into it.
+    pub fn install_update(&mut self) {
+        use crate::update::Update;
+        let Update::Available(r) = &self.update else { return };
+        let r = r.clone();
+        self.update = Update::Installing(r.version.clone());
+        self.net.install_update(r);
     }
 
     pub fn submit_signin(&mut self) {
@@ -1792,6 +1816,19 @@ impl App {
             }
             Reply::Insights(b, days, r) if here(self, &b) && days == self.days => self.insights = to_load(self.failed(r)),
             Reply::Insights(..) => {}
+            Reply::UpdateChecked(r) => {
+                use crate::update::Update;
+                // A check that lands during an install leaves the install alone.
+                if !matches!(self.update, Update::Installing(_)) {
+                    self.update = match r {
+                        Ok(Some(rel)) => Update::Available(rel),
+                        Ok(None) => Update::UpToDate,
+                        Err(e) => Update::Failed(e),
+                    };
+                }
+            }
+            Reply::UpdateInstalled(Ok(())) => tx.quit(),
+            Reply::UpdateInstalled(Err(e)) => self.update = crate::update::Update::Failed(e),
             Reply::Models(r) => {
                 self.models = to_load(self.failed(r));
                 if let (Load::Ready(list), None) = (&self.models, &self.model) {

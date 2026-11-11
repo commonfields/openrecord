@@ -21,7 +21,8 @@ pub fn view(s: &App, t: &Theme) -> El {
             .child(label(title, type_::TITLE, t.foreground).role("heading"))
             .child(label(sec.description(), type_::SM, t.muted_foreground).wrap()),
     );
-    if sec.has_period() {
+    // The Summary keeps its range beside its chart, as Kobbe's overview does.
+    if sec.has_period() && sec != Section::Summary {
         head = head.child(periods(s, t));
     }
     let body = match &s.insights {
@@ -49,7 +50,8 @@ fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
 
 /// The 7, 30 and 90 day switch.
 fn periods(s: &App, t: &Theme) -> El {
-    let mut r = row().h(32.0).padding(3.0).gap(2.0).radius(8.0).fill(t.accent).role("radiogroup").label("Time range");
+    // Kobbe's text tabs: plain labels, the chosen one on a soft pill.
+    let mut r = row().h(28.0).gap(2.0).role("radiogroup").label("Time range");
     for d in PERIODS {
         let on = s.days == d;
         let mut chip = row()
@@ -66,9 +68,7 @@ fn periods(s: &App, t: &Theme) -> El {
             .motion(CONTROL)
             .on_press(move |s: &mut App| s.set_days(d))
             .child(label(format!("{d} days"), type_::XS_MEDIUM, if on { t.foreground } else { t.muted_foreground }));
-        if on {
-            chip = shadows(chip.fill(t.control), &t.control_shadow);
-        }
+        chip = if on { chip.fill(t.accent) } else { chip.hover(t.hover_tint) };
         r = r.child(chip);
     }
     r
@@ -83,23 +83,45 @@ fn panel(t: &Theme, key: &str, title: &str, description: Option<String>) -> El {
 }
 
 fn tile(t: &Theme, key: &str, name: &str, value: String, hint: Option<String>, delta: Option<El>, tone: Option<Color>, open: Option<Page>) -> El {
-    let mut head = row().gap(6.0).center_y();
+    kpi(t, key, name, value, hint, delta, tone, false, open)
+}
+
+/// One number in Kobbe's key-number strip: its name with the change on the
+/// right, the value under it, and a short note. Frameless, split from its
+/// neighbour by a hairline; the selected one is raised onto a card.
+#[allow(clippy::too_many_arguments)]
+fn kpi(t: &Theme, key: &str, name: &str, value: String, hint: Option<String>, delta: Option<El>, tone: Option<Color>, selected: bool, open: Option<Page>) -> El {
+    let mut head = row().w_full().gap(6.0).center_y();
     if let Some(c) = tone {
         head = head.child(el().size(6.0, 6.0).radius(3.0).fill(c));
     }
-    head = head.child(label(name, type_::SM_13, t.muted_foreground));
-    let mut value_row = row().gap(8.0).items_end().child(label(value, type_::TITLE.features("'tnum' 1"), t.foreground));
+    head = head.child(label(name, type_::SM_13, if selected { t.foreground } else { t.muted_foreground }).truncate().min_w(0.0)).child(el().grow(1.0));
     if let Some(d) = delta {
-        value_row = value_row.child(d);
+        head = head.child(d);
     }
-    let mut c = col().key(key).grow(1.0).min_w(180.0).px(16.0).py(14.0).gap(6.0).radius(12.0).fill(t.card).child(head).child(value_row);
+    let mut c = col()
+        .key(key)
+        .w(0.0)
+        .grow(1.0)
+        .min_w(150.0)
+        .px(16.0)
+        .py(12.0)
+        .gap(4.0)
+        .radius(12.0)
+        .child(head)
+        .child(label(value, type_::TITLE.features("'tnum' 1"), if selected { t.foreground } else { t.foreground.alpha(0.85) }));
     if let Some(h) = hint {
-        c = c.child(label(h, type_::XS, t.muted_foreground).wrap());
+        c = c.child(label(h, type_::XS, t.muted_foreground).truncate());
     }
     if let Some(p) = open {
         c = c.role("button").label(name).focusable(true).cursor(Cursor::Pointer).hover(t.hover_tint).motion(CONTROL).on_press(move |s: &mut App| s.show_page(p));
     }
-    shadows(c, &t.card_shadow)
+    if selected {
+        shadows(c.fill(t.card), &t.card_shadow)
+    } else {
+        // The hairline on its left, inset from top and bottom.
+        c.child(el().pin(Some(0.0), Some(14.0), None, Some(14.0)).w(1.0).fill(t.border))
+    }
 }
 
 /// A change against the period before: green when better, red when worse.
@@ -109,7 +131,7 @@ fn delta(t: &Theme, text_: String, better: Option<bool>) -> El {
         Some(false) => t.wrong,
         None => t.muted_foreground,
     };
-    label(text_, type_::XS_MEDIUM, ink).pb(2.0)
+    label(text_, type_::XS_MEDIUM.features("'tnum' 1"), ink)
 }
 
 fn change_text(d: f64) -> String {
@@ -144,9 +166,12 @@ fn note(t: &Theme, text_: &str) -> El {
 // ---- Summary ----------------------------------------------------------------
 
 fn summary(s: &App, t: &Theme, i: &Insights) -> El {
+    // Kobbe's overview: the key numbers in one frameless strip, the goal's tile
+    // raised because it drives the chart under it, then the chart on the page
+    // itself, then the panels.
     let mut c = col().w_full().gap(16.0);
-    c = c.child(goal_card(s, t, i));
     c = c.child(health(s, t, i));
+    c = c.child(goal_card(s, t, i).mb(16.0));
     if !i.initiatives.is_empty() {
         c = c.child(initiatives(t, i));
     }
@@ -157,46 +182,51 @@ fn summary(s: &App, t: &Theme, i: &Insights) -> El {
     c
 }
 
+/// The goal's chart, on the page without a frame: its name and range on the
+/// left, the 7, 30 and 90 day switch on the right, the line, then its legend
+/// with where the numbers came from.
 fn goal_card(s: &App, t: &Theme, i: &Insights) -> El {
+    let section = |title: String, sub: String| {
+        row()
+            .w_full()
+            .gap(16.0)
+            .items_start()
+            .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(label(sub, type_::XS, t.muted_foreground).wrap()))
+            .child(periods(s, t))
+    };
     match &i.goal {
         Ok(Some(g)) => {
-            let mut p = panel(t, "goal", &g.label, (!g.statement.is_empty()).then(|| g.statement.clone()));
+            let sub = if g.statement.is_empty() { format!("Last {} days", i.days) } else { format!("{}. Last {} days", g.statement.trim_end_matches('.'), i.days) };
+            let c = col().key("goal").w_full().gap(16.0).child(section(format!("{} over time", g.label), sub));
             let cut = format::iso_date(format::now() - i.days as i64 * 86_400);
-            let current: Vec<(String, f64)> = g.points.iter().filter(|(d, _)| d.as_str() > cut.as_str()).cloned().collect();
-            let before: f64 = g.points.iter().filter(|(d, _)| d.as_str() <= cut.as_str()).map(|p| p.1).sum();
-            let now: f64 = current.iter().map(|p| p.1).sum();
-            let d = (before > 0.0).then(|| (now - before) / before);
-            p = p.child(
-                row()
-                    .gap(10.0)
-                    .items_end()
-                    .child(label(charts::format_count(now), type_::TITLE.features("'tnum' 1"), t.foreground))
-                    .child(label(format!("in the last {} days", i.days), type_::XS, t.muted_foreground).pb(2.0))
-                    .children(d.map(|d| delta(t, format!("{} vs the period before", change_text(d)), Some(d >= 0.0)))),
-            );
-            if current.is_empty() {
-                p.child(note(t, "No daily values recorded for this period yet. Missing days are not zero."))
-            } else {
-                p.child(discovery::goal_trend(s, t, g, i.days, "goal-trend")).child(label(
-                    format!(
-                        "From {}. Missing days are not zero.",
-                        match g.source.as_deref() {
-                            Some("GA4_AGGREGATE_EXPORT") => "Google Analytics",
-                            _ => "imported exports",
-                        }
-                    ),
-                    type_::XS,
-                    t.muted_foreground,
-                ))
+            if !g.points.iter().any(|(d, _)| d.as_str() > cut.as_str()) {
+                return c.child(note(t, "No daily values recorded for this period yet. Missing days are not zero."));
             }
+            let from = match g.source.as_deref() {
+                Some("GA4_AGGREGATE_EXPORT") => "Google Analytics",
+                _ => "imported exports",
+            };
+            c.child(discovery::goal_trend(s, t, g, i.days, "goal-trend")).child(label(format!("From {from}. Missing days are not zero."), type_::XS, t.muted_foreground))
         }
-        Ok(None) => panel(t, "goal", "No goal yet", Some("Set the one result this business is working toward, and the agent measures progress against it.".into())).child(
+        Ok(None) => col().key("goal").w_full().gap(12.0).child(section("No goal yet".into(), "Set the one result this business is working toward, and the agent measures progress against it.".into())).child(
             row().child(button(t, "ask-goal", "Set a goal with the agent", Variant::Outline).on_press(ask(
                 "Help me set the main goal for this business: what we want more of, and how we'll measure it.",
             ))),
         ),
-        Err(e) => panel(t, "goal", "Your goal could not load", Some(e.clone())),
+        Err(e) => col().key("goal").w_full().gap(12.0).child(section("Your goal could not load".into(), e.clone())),
     }
+}
+
+/// The goal's number for the strip: its total over the period and the change
+/// against the period before.
+fn goal_tile(t: &Theme, i: &Insights) -> Option<El> {
+    let g = i.goal.as_ref().ok()?.as_ref()?;
+    let cut = format::iso_date(format::now() - i.days as i64 * 86_400);
+    let start = format::iso_date(format::now() - 2 * i.days as i64 * 86_400);
+    let now: f64 = g.points.iter().filter(|(d, _)| d.as_str() > cut.as_str()).map(|p| p.1).sum();
+    let before: f64 = g.points.iter().filter(|(d, _)| d.as_str() <= cut.as_str() && d.as_str() > start.as_str()).map(|p| p.1).sum();
+    let d = (before > 0.0).then(|| (now - before) / before);
+    Some(kpi(t, "health-goal", &g.label, charts::format_count(now), Some(format!("In the last {} days", i.days)), d.map(|d| delta(t, change_text(d), Some(d >= 0.0))), None, true, None))
 }
 
 fn health(_s: &App, t: &Theme, i: &Insights) -> El {
@@ -228,10 +258,11 @@ fn health(_s: &App, t: &Theme, i: &Insights) -> El {
         }
         if parts.is_empty() { "All match your facts".into() } else { parts.join(", ") }
     };
-    row()
-        .w_full()
-        .gap(12.0)
-        .flex_wrap()
+    let mut strip = row().key("kpis").w_full().gap(0.0).items_stretch().role("group").label("Key numbers");
+    if let Some(g) = goal_tile(t, i) {
+        strip = strip.child(g);
+    }
+    strip
         .child(tile(t, "health-accuracy", "AI answers correct", acc_value, acc_hint, acc_delta, acc_tone, Some(Page::AiAnswers)))
         .child(tile(
             t,

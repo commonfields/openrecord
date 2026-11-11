@@ -65,6 +65,10 @@ pub enum Reply {
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
     Insights(String, u32, ApiResult<crate::insights::Insights>),
+    /// The newest desktop release past this build, if any.
+    UpdateChecked(Result<Option<crate::update::Release>, String>),
+    /// An update was installed (the app restarts), or why it was not.
+    UpdateInstalled(Result<(), String>),
 }
 
 /// A change to the agent's provider connections.
@@ -89,6 +93,11 @@ impl Net {
     pub fn new(base: Option<String>) -> Net {
         let (tx, rx) = channel();
         Net { client: base.map(Client::new), tx, rx, waker: None }
+    }
+
+    /// Whether this worker sends at all (headless scenes have no client).
+    pub fn live(&self) -> bool {
+        self.client.is_some()
     }
 
     pub fn has_session(&self) -> bool {
@@ -163,6 +172,16 @@ impl Net {
             let r = c.insights(&business, days);
             send(Reply::Insights(business, days, r));
         });
+    }
+
+    /// Looks for a newer desktop release (not in headless scenes, which have no client).
+    pub fn check_update(&self) {
+        self.spawn(|_c, send| send(Reply::UpdateChecked(crate::update::check())));
+    }
+
+    /// Downloads and installs `r` in place of the running app.
+    pub fn install_update(&self, r: crate::update::Release) {
+        self.spawn(move |_c, send| send(Reply::UpdateInstalled(crate::update::install(&r))));
     }
 
     pub fn models(&self) {

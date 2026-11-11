@@ -25,6 +25,7 @@ mod state;
 mod surface;
 mod theme;
 mod ui;
+mod update;
 mod visual;
 
 use rune::{AppSpec, Chrome, KeyEvent, Tx, Waker};
@@ -137,6 +138,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("channels", fixtures::channels),
     ("collapsed", fixtures::collapsed),
     ("business-menu", fixtures::business_menu),
+    ("account-update", fixtures::account_update),
 ];
 
 fn main() {

@@ -97,7 +97,13 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .hover(t.hover_tint)
             .motion(CONTROL)
             .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Account) { None } else { Some(Menu::Account) })
-            .child(avatar_sphere(t, 24.0));
+            .child({
+                // A dot on the avatar while a newer version waits in the account menu.
+                let ready = matches!(s.update, crate::update::Update::Available(_));
+                row().size(24.0, 24.0).child(avatar_sphere(t, 24.0)).children(ready.then(|| {
+                    el().absolute(17.0, -1.0).size(9.0, 9.0).radius(4.5).fill(t.primary_ink).border(1.5, t.sidebar).help("A new version is ready")
+                }))
+            });
         if open {
             b = b
                 .w_full()
@@ -153,7 +159,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
         };
         let mut link = row()
             .key(format!("nav-{}", page.key()))
-            .h(36.0)
+            .h(32.0)
             .gap(8.0)
             .radius(6.0)
             .center_y()
@@ -173,7 +179,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             .child(ico(i, 14.0, if active { t.primary_ink } else { t.muted_foreground }));
         if open {
             link = link.w_full().px(8.0).child(
-                label(page.label(), if active { type_::BASE_MEDIUM } else { type_::BASE }, if active { t.foreground } else { t.sidebar_foreground })
+                label(page.label(), if active { type_::SM_MEDIUM } else { type_::SM }, if active { t.foreground } else { t.sidebar_foreground })
                     .truncate()
                     .grow(1.0)
                     .min_w(0.0),
@@ -187,8 +193,9 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                 link = link.child(el().absolute(26.0, 6.0).size(6.0, 6.0).radius(3.0).fill(t.wrong));
             }
         }
+        // Kobbe's active row: a soft pill, no shadow.
         if active {
-            link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
+            link = link.fill(t.sidebar_accent);
         }
         links = links.child(link);
         // The Overview's sections, under it while it is open, as on the web.
@@ -200,7 +207,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                     row()
                         .key(format!("nav-section-{}", sec.key()))
                         .w_full()
-                        .h(30.0)
+                        .h(28.0)
                         .px(8.0)
                         .radius(6.0)
                         .center_y()
@@ -213,7 +220,9 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                         .motion(CONTROL)
                         .fill(if on { t.sidebar_accent } else { rune::Color::TRANSPARENT })
                         .on_press(move |s: &mut App| s.show_section(sec))
-                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.sidebar_foreground })),
+                        .child(label(sec.label(), type_::SM_13, if on { t.foreground } else { t.sidebar_foreground }))
+                        // The open section marks the rail beside it, as Kobbe's nav does.
+                        .children(on.then(|| el().pin(Some(-11.5), Some(6.0), None, Some(6.0)).w(2.0).radius(1.0).fill(t.primary_ink))),
                 );
             }
             links = links.child(row().w_full().pl(22.0).child(sub));
@@ -520,6 +529,53 @@ fn menu_row(t: &Theme, key: String, lead: El, text_: &str, checked: bool) -> El 
     r
 }
 
+/// The account menu's update row: check for a newer version, or, when one is
+/// out, download and install it and restart into it in one press.
+fn update_row(s: &App, t: &Theme) -> El {
+    use crate::update::{Update, current};
+    let spin = |i| ico(i, 16.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
+    let (lead, text_, note, busy): (El, String, String, bool) = match &s.update {
+        Update::Unknown => (ico(&icons::REFRESH_CW, 16.0, t.muted_foreground), "Check for updates".into(), format!("Version {}", current()), false),
+        Update::Checking => (spin(&icons::LOADER), "Checking for updates…".into(), format!("Version {}", current()), true),
+        Update::UpToDate => (ico(&icons::CIRCLE_CHECK, 16.0, t.muted_foreground), "OpenRecord is up to date".into(), format!("Version {}. Press to check again", current()), false),
+        Update::Available(r) => (ico(&icons::DOWNLOAD, 16.0, t.primary_ink), format!("Update to {}", r.version), format!("Installs and restarts. You have {}", current()), false),
+        Update::Installing(v) => (spin(&icons::LOADER), format!("Installing {v}…"), "OpenRecord restarts when it is done".into(), true),
+        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 16.0, t.wrong), "Update failed. Try again".into(), format!("Version {}", current()), false),
+    };
+    let mut r = row()
+        .key("app-update")
+        .w_full()
+        .min_h(48.0)
+        .px(12.0)
+        .py(6.0)
+        .gap(10.0)
+        .radius(8.0)
+        .center_y()
+        .role("menuitem")
+        .label(text_.clone())
+        .live_region(rune::LiveRegion::Polite)
+        .focusable(!busy)
+        .disabled(busy)
+        .cursor(if busy { Cursor::Default } else { Cursor::Pointer })
+        .hover(if busy { rune::Color::TRANSPARENT } else { t.hover_tint })
+        .child(lead)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .child(label(text_, if matches!(s.update, Update::Available(_)) { type_::SM_MEDIUM } else { type_::SM }, t.foreground).truncate())
+                .child(label(note, type_::XS, t.muted_foreground).truncate()),
+        );
+    if let Update::Failed(e) = &s.update {
+        r = r.help(e.clone());
+    }
+    // Pressing it keeps the menu open, so the row can show the check or the install as it goes.
+    r.on_press(|s: &mut App| match s.update {
+        crate::update::Update::Available(_) => s.install_update(),
+        _ => s.check_update(),
+    })
+}
+
 fn separator(t: &Theme) -> El {
     el().w_full().h(1.0).my(6.0).fill(t.border)
 }
@@ -569,6 +625,8 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
                     s.menu = None;
                     s.refresh();
                 }))
+                .child(separator(t))
+                .child(update_row(s, t))
                 .child(separator(t))
                 .child(menu_row(t, "sign-out".into(), ico(&icons::LOG_OUT, 16.0, t.muted_foreground), "Sign out", false).on_press(|s: &mut App| s.sign_out()));
             let side = if s.sidebar_open { Side::Top } else { Side::Right };
