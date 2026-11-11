@@ -406,16 +406,42 @@ fn issue_row(t: &Theme, i: &Issue, rule: bool) -> El {
 }
 
 fn channels(s: &App, t: &Theme) -> El {
-    let header = page_header(t, "Channels", "The accounts the agent works through, and what it can do with each one.");
+    let header = page_header(t, "Channels", "The services OpenRecord works with for this business, and what it can do in each.");
     let body = match &s.channels {
         Load::Ready(list) if list.is_empty() => {
-            empty_state(t, "channels-empty", &icons::PLUG, "No channels yet", "Connect a website or an account on the web to give the agent something to work with.", None)
+            empty_state(t, "channels-empty", &icons::PLUG, "Nothing connected yet", "Add your website or connect an account on the web to get started.", None)
         }
         Load::Ready(list) => {
-            let mut c = card(t).clip_rounded(12.0);
-            let n = list.len();
-            for (i, ch) in list.iter().enumerate() {
-                c = c.child(channel_row(t, ch, i + 1 < n));
+            let group = |c: &Channel| match c.state.as_str() {
+                "CONNECTED" | "ACTIVE" => 0,
+                "PERMISSION_REQUIRED" | "RECONNECT" | "UNHEALTHY" | "REVOKED" => 1,
+                "DISCOVERED" => 2,
+                _ => 3,
+            };
+            let count = |g: usize| list.iter().filter(|c| group(c) == g).count();
+            let stat = |key: &str, name: &str, n: usize, dot: Color| {
+                card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(160.0).h(88.0).px(18.0).py(14.0).gap(6.0)
+                    .child(row().gap(8.0).center_y().child(el().size(8.0, 8.0).radius(4.0).fill(dot)).child(label(name.to_string(), type_::XS_MEDIUM, t.muted_foreground)))
+                    .child(label(n.to_string(), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))
+            };
+            let mut c = col().w_full().gap(32.0).child(
+                row().w_full().gap(16.0).flex_wrap()
+                    .child(stat("ch-connected", "Connected", count(0), t.supported))
+                    .child(stat("ch-attention", "Needs your attention", count(1), t.partial))
+                    .child(stat("ch-found", "Found on your website", count(2), t.review))
+                    .child(stat("ch-unavailable", "Not available yet", count(3), t.muted_foreground.alpha(0.5))),
+            );
+            let business = s.active.clone().unwrap_or_default();
+            for (g, title) in [(0, "Connected"), (1, "Needs your attention"), (2, "Found on your website"), (3, "Not available yet")] {
+                let items: Vec<&Channel> = list.iter().filter(|c| group(c) == g).collect();
+                if items.is_empty() {
+                    continue;
+                }
+                let mut grid = row().w_full().gap(16.0).flex_wrap();
+                for ch in items {
+                    grid = grid.child(channel_card(t, ch, &business));
+                }
+                c = c.child(col().w_full().gap(12.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(grid));
             }
             c
         }
@@ -425,46 +451,64 @@ fn channels(s: &App, t: &Theme) -> El {
     col().w_full().gap(24.0).child(header).child(body)
 }
 
-fn channel_row(t: &Theme, ch: &Channel, rule: bool) -> El {
+/// What OpenRecord can do through a channel, in plain words.
+fn capability(c: &str) -> &'static str {
+    match c {
+        "READ" => "Reads your numbers",
+        "MEASURE" => "Tracks results",
+        "DISCOVER" => "Finds pages",
+        "PROPOSE" => "Suggests fixes",
+        "VERIFY" => "Checks fixes",
+        "EXECUTE" => "Publishes changes",
+        _ => "Works with it",
+    }
+}
+
+/// One service on a fixed-size card: its logo and state, the account, a short
+/// note, what OpenRecord does with it, and where to manage it.
+fn channel_card(t: &Theme, ch: &Channel, business: &str) -> El {
     let (ink, soft, state) = match ch.state.as_str() {
         "CONNECTED" | "ACTIVE" => (t.supported, t.supported_soft, "Connected"),
         "DISCOVERED" => (t.review, t.review_soft, "Found"),
-        "UNSUPPORTED" => (t.muted_foreground, t.accent, "Not available here"),
-        "PERMISSION_REQUIRED" | "RECONNECT" => (t.partial, t.partial_soft, "Needs access"),
+        "UNSUPPORTED" => (t.muted_foreground, t.accent, "Not available yet"),
+        "PERMISSION_REQUIRED" => (t.partial, t.partial_soft, "Needs access"),
+        "RECONNECT" | "UNHEALTHY" | "REVOKED" => (t.partial, t.partial_soft, "Reconnect"),
         _ => (t.muted_foreground, t.accent, "Not connected"),
     };
-    // The service's own mark, as the web's `ChannelMark` draws it; the globe for the website.
     let mark = match crate::channel_marks::for_channel(&ch.key) {
-        Some(i) => rune::icon(i, 16.0).color(t.foreground),
-        None => ico(&icons::GLOBE, 16.0, t.muted_foreground),
+        Some(i) => rune::icon(i, 20.0).color(t.foreground),
+        None => ico(&icons::GLOBE, 20.0, t.muted_foreground),
     };
-    let mut r = row()
-        .key(format!("channel-{}", ch.key))
-        .w_full()
-        .px(18.0)
-        .py(14.0)
-        .gap(14.0)
-        .items_start()
-        .child(shadows(row().size(32.0, 32.0).radius(8.0).center().fill(t.accent.alpha(0.7)).child(mark), &t.control_shadow))
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(3.0)
-                .child(
-                    row()
-                        .gap(8.0)
-                        .center_y()
-                        .child(label(ch.label.clone(), type_::SM_MEDIUM, t.foreground).truncate().min_w(0.0))
-                        .child(status_chip(state, ink, soft)),
-                )
-                .children(ch.identity.clone().filter(|x| !x.is_empty()).map(|x| label(x, type_::XS, t.muted_foreground).truncate()))
-                .child(label(ch.note.clone(), type_::SM_13, t.muted_foreground).wrap()),
-        );
-    if rule {
-        r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
+    let connected = matches!(ch.state.as_str(), "CONNECTED" | "ACTIVE");
+    let mut abilities = row().gap(6.0).flex_wrap();
+    for a in ch.active.iter().take(3) {
+        abilities = abilities.child(row().h(22.0).px(8.0).radius(6.0).center().fill(t.accent).child(label(capability(a), type_::XS2.lh(14.0), t.muted_foreground)));
     }
-    r
+    let path = format!("/businesses/{business}/channels");
+    let action = button(t, &format!("channel-open-{}", ch.key), if connected { "Manage" } else if ch.state == "UNSUPPORTED" { "Learn more" } else { "Connect" }, Variant::Outline)
+        .h(30.0)
+        .on_press_tx(move |_s: &mut App, tx| {
+            let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+            let _ = tx.open_url(&format!("{}{path}", crate::ui::web_url(&api)));
+        });
+    card(t)
+        .key(format!("channel-{}", ch.key))
+        .w(344.0)
+        .h(184.0)
+        .px(18.0)
+        .py(16.0)
+        .gap(10.0)
+        .child(
+            row().w_full().gap(12.0).center_y()
+                .child(shadows(row().size(40.0, 40.0).radius(10.0).center().fill(t.accent.alpha(0.7)).child(mark), &t.control_shadow))
+                .child(col().grow(1.0).min_w(0.0).gap(2.0)
+                    .child(label(ch.label.clone(), type_::SM_MEDIUM, t.foreground).truncate())
+                    .child(label(ch.identity.clone().filter(|x| !x.is_empty()).unwrap_or_else(|| "No account linked".into()), type_::XS, t.muted_foreground).truncate()))
+                .child(status_chip(state, ink, soft)),
+        )
+        .child(label(ch.note.clone(), type_::XS.lh(18.0), t.muted_foreground).wrap().max_lines(2))
+        .child(el().grow(1.0))
+        .child(row().w_full().gap(8.0).center_y().child(abilities.grow(1.0).min_w(0.0)).child(action))
 }
 
 fn title_case(s: &str) -> String {
