@@ -20,7 +20,7 @@ export type Auth =
   /** login:password, sent as HTTP Basic. */
   | { readonly kind: "basic" }
   /** client_id:client_secret, exchanged for a short-lived token at tokenUrl (client credentials grant). */
-  | { readonly kind: "client_credentials"; readonly tokenUrl: string }
+  | { readonly kind: "client_credentials"; readonly tokenUrl: string; readonly scope?: string }
   /** A Google connection the business already made on the Channels page (Analytics, Search Console or Business Profile). */
   | { readonly kind: "google_connection"; readonly connection: "analytics" | "search_console" | "business_profile" }
   /** The business's existing Meta connection (read-only ads scope). */
@@ -36,6 +36,13 @@ export interface Provider {
   readonly connect?: { readonly how: string; readonly url: string; readonly format: RegExp; readonly example: string }
   /** Extra request headers the provider's terms require (for example a declared contact). */
   readonly headers?: (env: NodeJS.ProcessEnv) => Readonly<Record<string, string>> | null
+  /**
+   * For APIs that live on the account's own host (a Shopify store, a Mailchimp
+   * data centre): endpoints address ACCOUNT_HOST, and the host comes from the
+   * saved credential. It must match `pattern`; `split` returns the host and the
+   * credential to send.
+   */
+  readonly accountHost?: { readonly pattern: RegExp; readonly split: (secret: string) => { readonly host: string; readonly secret: string } | null }
   /** Shown with every result: terms, quotas, costs. */
   readonly note: string
   /** Paid by the business's own provider account. Off unless the business connects it. */
@@ -81,3 +88,6 @@ export interface Endpoint<I = unknown> {
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyEndpoint = Endpoint<any>
+
+/** The placeholder host of endpoints whose API lives on the account's own host. */
+export const ACCOUNT_HOST = "account.openrecord.invalid"

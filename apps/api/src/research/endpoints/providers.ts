@@ -4,6 +4,7 @@
 // the business's account and stay unused until the business connects one.
 import { DIRECTORY_PROVIDERS } from "./generated.js"
 import type { Provider } from "./types.js"
+import { BUSINESS_PROVIDERS } from "./defs-business.js"
 
 const contact = (env: NodeJS.ProcessEnv) => env["RESEARCH_CONTACT"]?.trim() || null
 
@@ -55,7 +56,7 @@ const HAND_WRITTEN: ReadonlyArray<Provider> = [
     note: "Billed to the business's own account per request (roughly one to a few cents). Search volume, rankings, traffic and backlink numbers are this provider's estimates from its own databases, not measured visits." },
 ]
 /** Hand-written providers first; generated ones never replace them. */
-export const PROVIDERS: ReadonlyArray<Provider> = [...HAND_WRITTEN, ...DIRECTORY_PROVIDERS.filter(d => !HAND_WRITTEN.some(h => h.id === d.id))]
+export const PROVIDERS: ReadonlyArray<Provider> = [...HAND_WRITTEN, ...BUSINESS_PROVIDERS, ...DIRECTORY_PROVIDERS.filter(d => !HAND_WRITTEN.some(h => h.id === d.id) && !BUSINESS_PROVIDERS.some(b => b.id === d.id))]
 export const provider = (id: string) => PROVIDERS.find(p => p.id === id) ?? null
 /** Providers a business can connect a credential for. */
 export const CONNECTABLE = PROVIDERS.filter(p => p.connect)

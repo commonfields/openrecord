@@ -17,6 +17,7 @@ import { ACCOUNT_ENDPOINTS, CONNECTED_GOOGLE_ENDPOINTS } from "./defs-accounts.j
 import { PUBLIC_ENDPOINTS } from "./defs-public.js"
 import { SEO_ENDPOINTS } from "./defs-seo.js"
 import { CRM_ENDPOINTS } from "./defs-crm.js"
+import { BUSINESS_ENDPOINTS } from "./defs-business.js"
 import { GENERATED_ENDPOINTS } from "./generated.js"
 import { BLUESKY_ENDPOINTS, META_ENDPOINTS, WIKI_MORE } from "./defs-more.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
@@ -24,7 +25,7 @@ import { balanceOf, finishCall, platformServes, priceOf, recentCalls, route, spe
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
-export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...META_ENDPOINTS, ...BLUESKY_ENDPOINTS, ...WIKI_MORE, ...SEO_ENDPOINTS, ...CRM_ENDPOINTS, ...GENERATED_ENDPOINTS]
+export const ENDPOINTS: ReadonlyArray<AnyEndpoint> = [...PUBLIC_ENDPOINTS, ...ACCOUNT_ENDPOINTS, ...CONNECTED_GOOGLE_ENDPOINTS, ...META_ENDPOINTS, ...BLUESKY_ENDPOINTS, ...WIKI_MORE, ...SEO_ENDPOINTS, ...CRM_ENDPOINTS, ...BUSINESS_ENDPOINTS, ...GENERATED_ENDPOINTS]
 const context = (businessId: string, providerId: string) => `research:${businessId}:${providerId}`
 const transport = Effect.map(Effect.serviceOption(ResearchHttp), Option.getOrUndefined)
 
@@ -96,7 +97,7 @@ const runEndpoint = (e: AnyEndpoint, p: Provider) => (ctx: RunContext, input: un
   let bearer: string | null = null
   if (p.auth.kind === "client_credentials" && secret) {
     const key = `${ctx.businessId}:${p.id}:${r.source}`, cached = tokens.get(key)
-    bearer = cached && cached.until > Date.now() ? cached.token : yield* Effect.promise(() => clientToken(p, (p.auth as { tokenUrl: string }).tokenUrl, secret, http))
+    bearer = cached && cached.until > Date.now() ? cached.token : yield* Effect.promise(() => clientToken(p, (p.auth as { tokenUrl: string }).tokenUrl, secret, http, (p.auth as { scope?: string }).scope))
     if (!bearer) return refuse("AUTH", FAILURES.AUTH)
     tokens.set(key, { token: bearer, until: Date.now() + 50 * 60_000 })
   }
