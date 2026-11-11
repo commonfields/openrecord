@@ -48,6 +48,15 @@ Practical notes for running this checkout locally. Architecture lives in
   engines field warning); Vite and tsx are run per-app with `pnpm --filter
   @openrecord/api dev` and `pnpm --filter @openrecord/web dev`.
 
+- Demo business: `DATABASE_URL=... pnpm --filter @openrecord/worker exec tsx
+  ../../scripts/demo-openrecord-seed.ts` adds "OpenRecord" (OpenRecord
+  marketing itself) to the demo login with sample data on every workspace
+  page. It prints an `OPENRECORD_DEMO_BUSINESSES=<id>` line: put it in `.env`
+  and restart the API, and Search Console, ads, Google Business Profile,
+  Stripe and Channels return sample data for that business
+  (`apps/api/src/demo-data.ts`, never in production). All of it is sample
+  data; AI answers are marked synthetic.
+
 ## Database (important)
 
 - Docker runs through **Colima** (`~/.colima/default/docker.sock`), not Docker

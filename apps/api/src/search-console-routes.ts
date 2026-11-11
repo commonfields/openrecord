@@ -14,12 +14,14 @@ import {
 import { listSearchConsoleSites, searchTopRows, searchTotals } from "@openrecord/ga4"
 import { configured, ga4Failure, providerConfig, read } from "./growth-ga4-routes.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
+import { demoSearch, isDemoBusiness } from "./demo-data.js"
 
 const PRIVATE_HEADERS = { "cache-control": "no-store" }
 const refuse = (reason: string) => Effect.fail(new GrowthGa4Refused({ reason }))
 
 /** Live search performance for a business's bound site, or null when no site is bound. */
 export const searchPerformance = (accountId: string, businessId: string, days: SearchPerformanceDays) => Effect.gen(function*() {
+  if (isDemoBusiness(businessId)) return demoSearch(days)
   const binding = yield* (yield* SearchConsoleRepository).binding(accountId, businessId)
   if (!binding) return null
   const config = yield* configured

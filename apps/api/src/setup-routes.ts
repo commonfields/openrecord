@@ -8,9 +8,10 @@ import { GitHubExecution } from "@openrecord/site-operator"
 import type { DraftState } from "./setup-draft.js"
 import type { SqlError } from "@effect/sql/SqlError"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
-import { deriveChannelInventory } from "./channels.js"
+import { deriveChannelInventory, type ChannelFacts } from "./channels.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 import { assessSetup, firstInitiative, setupStep } from "./setup-plan.js"
+import { demoChannelFacts, isDemoBusiness } from "./demo-data.js"
 
 const STATUS: Record<SetupRefused["reason"], number> = {
   SetupNotFound: 404, SetupStale: 409, WebsiteInUse: 409, DiscoveryPending: 409, BriefRequired: 409, ChannelsRequired: 409, NotRetryable: 409, FactsManagedByRepository: 409, SetupComplete: 409,
@@ -39,7 +40,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
   const github = yield* Effect.serviceOption(GitHubExecution)
   const searchConsoleSite = ga4Configured ? yield* (yield* SearchConsoleRepository).binding(accountId, businessId) : null
   const catalog = yield* loadProviderCatalog(false, false)
-  return deriveChannelInventory({
+  const facts: ChannelFacts = {
     businessId,
     websiteUrl: setup?.websiteUrl ?? (counts[0]?.["website_url"] ? String(counts[0]["website_url"]) : null),
     discovery: setup?.discovery ?? null,
@@ -49,7 +50,8 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
     searchConsole: { scopeGranted: connections.some(c => c.status === "ACTIVE" && hasSearchConsoleScope(c.grantedScopes)), site: searchConsoleSite?.siteUrl ?? null },
     answerProviders: catalog.providers.filter(p => p.id !== "mock" && p.enabled).map(p => p.id),
     lastAnswerAt: counts[0]?.["last_answer_at"] ? new Date(counts[0]["last_answer_at"] as string | Date).toISOString() : null,
-  })
+  }
+  return deriveChannelInventory(isDemoBusiness(businessId) ? demoChannelFacts(facts) : facts)
 })
 
 /** Drafts the brief from the website: the agent in production (router.ts), nothing in tests that don't need it. */

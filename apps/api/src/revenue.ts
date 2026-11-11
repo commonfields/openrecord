@@ -12,6 +12,7 @@ import { AD_PERFORMANCE_DAYS, ConnectStripe, adWindows, decodeRouteId, type AdPe
 import { stripeAccount, stripeKeyKind, stripeRevenue } from "@openrecord/ads"
 import { AdsRefused, adsConfig, call } from "./ads.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
+import { demoRevenue, isDemoBusiness } from "./demo-data.js"
 
 const PRIVATE = { "cache-control": "no-store" }
 const refuse = (reason: string) => Effect.fail(new AdsRefused({ reason }))
@@ -30,6 +31,7 @@ const active = (accountId: string, businessId: string) => Effect.gen(function*()
 
 /** Live revenue for the business's Stripe account, or null when none is connected. A refused key is marked so the person reconnects. */
 export const revenuePerformance = (accountId: string, businessId: string, days: AdPerformanceDays) => Effect.gen(function*() {
+  if (isDemoBusiness(businessId)) return demoRevenue(days)
   const c = yield* active(accountId, businessId)
   if (!c) return null
   if (c.status !== "ACTIVE" || !c.ciphertext) return yield* refuse("RevenueKeyRefused")
