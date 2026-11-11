@@ -28,7 +28,7 @@ pub fn view(s: &App, t: &Theme) -> El {
     let body = match &s.insights {
         Load::Ready(i) => match sec {
             Section::Summary => summary(s, t, i),
-            Section::Performance => performance(t, i),
+            Section::Performance => performance(s, t, i),
             Section::Revenue => revenue(s, t, i),
             Section::Funnel => funnel(t, i),
             Section::Events => events(s, t, i),
@@ -257,27 +257,6 @@ fn bar_list(t: &Theme, key: &str, rows: &[(String, f64, String)]) -> El {
     c
 }
 
-/// Every number of a report against the period before, as paired bars.
-fn compare_list(t: &Theme, key: &str, r: &Report) -> El {
-    let mut c = col().key(key.to_string()).w_full().gap(14.0);
-    for (k, m) in r.metrics.iter().enumerate() {
-        let (Some(now), Some(d)) = (number(&m.value), m.delta) else { continue };
-        let before = if (1.0 + d).abs() > f64::EPSILON { now / (1.0 + d) } else { now };
-        let max = now.max(before).max(f64::EPSILON);
-        let line = |v: f64, ink: Color| row().w_full().h(8.0).radius(4.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((v / max) as f32).h_full().radius(4.0).fill(ink));
-        c = c.child(
-            col().key(format!("{key}-{k}")).w_full().gap(5.0)
-                .child(row().w_full().gap(8.0).center_y()
-                    .child(label(m.label.clone(), type_::XS, t.foreground).grow(1.0).min_w(0.0))
-                    .child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), if d >= 0.0 { t.supported } else { t.wrong })))
-                .child(line(now, t.primary_ink))
-                .child(line(before, t.muted_foreground.alpha(0.45))),
-        );
-    }
-    c.child(row().gap(14.0).pt(2.0)
-        .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.primary_ink)).child(label("This period", type_::XS2, t.muted_foreground)))
-        .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.muted_foreground.alpha(0.45))).child(label("Period before", type_::XS2, t.muted_foreground))))
-}
 
 // ---- Summary ----------------------------------------------------------------
 
@@ -570,35 +549,66 @@ fn facts(t: &Theme, a: &Analytics) -> El {
 
 // ---- Performance and revenue ------------------------------------------------
 
-/// One connected account: its key numbers as tiles, then its top rows as bars
-/// beside every number against the period before.
-fn report(t: &Theme, key: &str, r: &Report) -> El {
-    let mut tiles = row().w_full().gap(16.0).flex_wrap();
-    for (k, m) in r.metrics.iter().take(4).enumerate() {
-        let lower_is_better = m.label.to_lowercase().contains("position") || m.label.to_lowercase().contains("cost per") || m.label.to_lowercase().contains("refund");
-        tiles = tiles.child(stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !lower_is_better));
+/// One metric as an analytics card: its value and change, and every day of the
+/// period as a line over the same day of the period before (dashed).
+fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric) -> El {
+    let mut head = row().w_full().gap(8.0).center_y().child(label(m.label.clone(), type_::SM_MEDIUM, t.muted_foreground).grow(1.0).min_w(0.0).truncate());
+    if let Some(d) = m.delta {
+        let good = (d >= 0.0) != m.lower_better;
+        let (ink, soft) = if d.abs() < 0.005 { (t.muted_foreground, t.accent) } else if good { (t.supported, t.supported_soft) } else { (t.wrong, t.wrong_soft) };
+        head = head.child(row().h(22.0).px(8.0).radius(6.0).center().fill(soft).child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), ink)));
     }
-    let mut boards = Vec::new();
-    if let Some((head, rows)) = &r.table {
-        let ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
-            let v = row_.get(1)?;
-            Some((row_.first()?.clone(), number(v)?, format!("{} {}", v, head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())))
-        }).collect();
-        if !ranked.is_empty() {
-            boards.push(board(t, &format!("{key}-top"), head.first().map(String::as_str).unwrap_or("Top"), Some(format!("Ranked by {}", head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())), 340.0, bar_list(t, &format!("{key}-bars"), &ranked)));
+    let mut c = card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(360.0).h(318.0).px(22.0).py(18.0).gap(4.0)
+        .child(head)
+        .child(label(m.value.clone(), rune::TextStyle::new(26.0, 600.0).lh(34.0).features("'tnum' 1"), t.foreground));
+    if let Some(d) = &m.days {
+        let mut tr = charts::Trend::new(key, &m.label, &d.dates, &d.now, t.chart.primary).compare(&d.before, "Period before".into()).height(176.0).width_hint(520.0);
+        if m.percent {
+            tr = tr.percent();
         }
+        c = c.child(el().h(8.0)).child(charts::area_trend(s, t, tr));
     }
-    if r.metrics.iter().any(|m| m.delta.is_some()) {
-        boards.push(board(t, &format!("{key}-compare"), "Against the period before", Some("Same length, just before this one".into()), 340.0, compare_list(t, &format!("{key}-cmp"), r)));
-    }
+    c
+}
+
+/// One connected account: a chart per key number, this period over the one
+/// before, then its top rows as ranked bars.
+fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
+    let charted = r.metrics.iter().any(|m| m.days.is_some());
     let mut c = col().key(key.to_string()).w_full().gap(16.0)
         .child(row().w_full().gap(10.0).center_y()
             .child(el().size(8.0, 8.0).radius(4.0).fill(t.supported))
             .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).role("heading"))
-            .child(label(r.subtitle.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0)))
-        .child(tiles);
-    if !boards.is_empty() {
-        c = c.child(grid(boards));
+            .child(label(r.subtitle.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+            .children(charted.then(|| row().gap(14.0).center_y()
+                .child(row().gap(6.0).center_y().child(el().w(14.0).h(2.0).radius(1.0).fill(t.chart.primary)).child(label("This period", type_::XS11, t.muted_foreground)))
+                .child(charts::dotted_label(t, "Period before")))));
+    if charted {
+        let cards: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| metric_chart(s, t, &format!("{key}-chart-{k}"), m)).collect();
+        let mut it = cards.into_iter();
+        while let Some(a) = it.next() {
+            let mut pair = vec![a];
+            if let Some(b) = it.next() {
+                pair.push(b);
+            }
+            c = c.child(grid(pair));
+        }
+    } else {
+        let mut tiles = row().w_full().gap(16.0).flex_wrap();
+        for (k, m) in r.metrics.iter().take(4).enumerate() {
+            tiles = tiles.child(stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !m.lower_better));
+        }
+        c = c.child(tiles);
+    }
+    if let Some((head, rows)) = &r.table {
+        let mut ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
+            let v = row_.get(1)?;
+            Some((row_.first()?.clone(), number(v)?, format!("{} {}", v, head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())))
+        }).collect();
+        if !ranked.is_empty() {
+            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            c = c.child(grid(vec![board(t, &format!("{key}-top"), head.first().map(String::as_str).unwrap_or("Top"), Some(format!("Ranked by {}", head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())), 320.0, bar_list(t, &format!("{key}-bars"), &ranked))]));
+        }
     }
     if let Some(n) = &r.note {
         c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
@@ -607,12 +617,12 @@ fn report(t: &Theme, key: &str, r: &Report) -> El {
 }
 
 /// A source that isn't connected yet: one quiet row with the way to connect it.
-fn source(t: &Theme, key: &str, title: &str, src: &Source) -> El {
+fn source(s: &App, t: &Theme, key: &str, title: &str, src: &Source) -> El {
     match src {
         Source::Reports(list) => {
             let mut c = col().w_full().gap(40.0);
             for (k, r) in list.iter().enumerate() {
-                c = c.child(report(t, &format!("{key}-{k}"), r));
+                c = c.child(report(s, t, &format!("{key}-{k}"), r));
             }
             c
         }
@@ -626,19 +636,19 @@ fn source(t: &Theme, key: &str, title: &str, src: &Source) -> El {
     }
 }
 
-fn performance(t: &Theme, i: &Insights) -> El {
+fn performance(s: &App, t: &Theme, i: &Insights) -> El {
     col()
         .w_full()
         .gap(40.0)
-        .child(source(t, "search", "Google Search", &i.search))
-        .child(source(t, "ads", "Ads", &i.ads))
-        .child(source(t, "local", "Google Business Profile", &i.local))
+        .child(source(s, t, "search", "Google Search", &i.search))
+        .child(source(s, t, "ads", "Ads", &i.ads))
+        .child(source(s, t, "local", "Google Business Profile", &i.local))
         .child(label("Each source counts in its own way and over its own dates, so their numbers are never added together.", type_::XS, t.muted_foreground).wrap())
 }
 
 fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
     let Some(r) = &i.revenue_data else {
-        return col().w_full().gap(24.0).child(source(t, "revenue", "Stripe", &i.revenue));
+        return col().w_full().gap(24.0).child(source(s, t, "revenue", "Stripe", &i.revenue));
     };
     let cur = r.currency.as_str();
     let change = |now: f64, before: f64| (before > 0.0).then(|| (now - before) / before);

@@ -225,11 +225,36 @@ pub struct Discovery {
 }
 
 /// One connected account's numbers for the period, as label/value pairs, with what changed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Metric {
     pub label: String,
     pub value: String,
     pub delta: Option<f64>,
+    /// Each day of the period, and the same day of the period before, when the source gave them.
+    pub days: Option<Days>,
+    /// Lower is better (average position, cost per conversion).
+    pub lower_better: bool,
+    /// A rate, shown as a percent.
+    pub percent: bool,
+}
+
+/// A metric day by day: the dates, this period's values and the period before's, by position.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Days {
+    pub dates: Vec<String>,
+    pub now: Vec<Option<f64>>,
+    pub before: Vec<Option<f64>>,
+}
+
+/// Picks one field from two lists of daily rows (this period, the one before).
+fn days_of(v: &Value, date: &str, pick: impl Fn(&Value) -> Option<f64>) -> Option<Days> {
+    let d = v.get("daily")?;
+    let rows = |side: &str| d.get(side).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (now, before) = (rows("current"), rows("previous"));
+    if now.is_empty() {
+        return None;
+    }
+    Some(Days { dates: now.iter().map(|r| s(r, date)).collect(), now: now.iter().map(&pick).collect(), before: before.iter().map(&pick).collect() })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -539,7 +564,7 @@ fn window(v: &Value) -> String {
 
 fn metric(label: &str, cur: &Value, prev: &Value, k: &str, fmt: impl Fn(f64) -> String) -> Metric {
     let a = f(cur, k).unwrap_or(0.0);
-    Metric { label: label.into(), value: fmt(a), delta: f(prev, k).and_then(|b| change(a, b)) }
+    Metric { label: label.into(), value: fmt(a), delta: f(prev, k).and_then(|b| change(a, b)), ..Default::default() }
 }
 
 fn search_report(v: &Value) -> Report {
@@ -558,10 +583,17 @@ fn search_report(v: &Value) -> Report {
         title: "Google Search".into(),
         subtitle: format!("{}, {}", s(v, "siteUrl"), window(v)),
         metrics: vec![
-            metric("Clicks", &c, &p, "clicks", int),
-            metric("Impressions", &c, &p, "impressions", int),
-            metric("Click-through rate", &c, &p, "ctr", pct),
-            Metric { label: "Average position".into(), value: f(&c, "position").map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into()), delta: None },
+            Metric { days: days_of(v, "key", |r| f(r, "clicks")), ..metric("Clicks", &c, &p, "clicks", int) },
+            Metric { days: days_of(v, "key", |r| f(r, "impressions")), ..metric("Impressions", &c, &p, "impressions", int) },
+            Metric { days: days_of(v, "key", |r| f(r, "ctr").map(|x| x * 100.0)), percent: true, ..metric("Click-through rate", &c, &p, "ctr", pct) },
+            Metric {
+                label: "Average position".into(),
+                value: f(&c, "position").map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into()),
+                delta: f(&c, "position").zip(f(&p, "position")).and_then(|(a, b)| change(a, b)),
+                days: days_of(v, "key", |r| f(r, "position")),
+                lower_better: true,
+                ..Default::default()
+            },
         ],
         table: (!rows.is_empty()).then(|| (vec!["Top queries".into(), "Clicks".into(), "Impressions".into(), "CTR".into()], rows)),
         note: None,
@@ -592,10 +624,14 @@ fn ad_report(v: &Value) -> Report {
         title: format!("{provider}: {}", s(v, "accountName")),
         subtitle: window(v),
         metrics: vec![
-            metric("Spend", &c, &p, "spend", m),
-            metric("Clicks", &c, &p, "clicks", int),
-            metric("Conversions", &c, &p, "conversions", |x| format!("{x:.1}")),
-            metric("Cost per conversion", &c, &p, "costPerConversion", m),
+            Metric { days: days_of(v, "day", |r| f(r, "spend")), ..metric("Spend", &c, &p, "spend", m) },
+            Metric { days: days_of(v, "day", |r| f(r, "clicks")), ..metric("Clicks", &c, &p, "clicks", int) },
+            Metric { days: days_of(v, "day", |r| f(r, "conversions")), ..metric("Conversions", &c, &p, "conversions", |x| format!("{x:.1}")) },
+            Metric {
+                days: days_of(v, "day", |r| f(r, "spend").zip(f(r, "conversions")).and_then(|(s, c)| (c > 0.0).then(|| s / c))),
+                lower_better: true,
+                ..metric("Cost per conversion", &c, &p, "costPerConversion", m)
+            },
         ],
         table: (!rows.is_empty()).then(|| (vec!["Campaigns".into(), "Spend".into(), "Clicks".into(), "Conversions".into()], rows)),
         note: o(v, "conversionDefinition").map(|d| format!("Conversions as this platform counts them: {d}")),

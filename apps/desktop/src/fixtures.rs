@@ -598,7 +598,18 @@ fn insights() -> Insights {
         daily,
     };
     let reports = |r: Report| Source::Reports(vec![r]);
-    let m = |l: &str, v: &str, d: Option<f64>| insights::Metric { label: l.into(), value: v.into(), delta: d };
+    // Twenty-eight days with a weekly rhythm, the period before a step lower.
+    let series = |l: &str, d: Option<f64>| {
+        let seed = l.len() as f64;
+        let day = |i: usize, k: f64| Some((100.0 * k * (1.0 + 0.18 * ((i as f64 + seed) / 3.1).sin() + if i % 7 >= 5 { -0.3 } else { 0.05 } + i as f64 * 0.004)).max(0.0));
+        let k = 1.0 + d.unwrap_or(0.0);
+        insights::Days {
+            dates: (0..28).map(|i| crate::format::iso_date(crate::format::now() - (31 - i as i64) * 86_400)).collect(),
+            now: (0..28).map(|i| day(i, k)).collect(),
+            before: (0..28).map(|i| day(i, 1.0)).collect(),
+        }
+    };
+    let m = |l: &str, v: &str, d: Option<f64>| insights::Metric { label: l.into(), value: v.into(), delta: d, days: Some(series(l, d)), ..Default::default() };
     Insights {
         days: 30,
         analytics: Ok(analytics),
