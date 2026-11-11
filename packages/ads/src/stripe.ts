@@ -58,6 +58,7 @@ const list = async (c: StripeConfig, key: string, path: string, params: Record<s
 export const stripeRevenue = async (c: StripeConfig, key: string, window: SearchWindow): Promise<RevenueTotals> => {
   const { rows, truncated } = await list(c, key, "/charges", range(window), 30)
   const per = new Map<string, { gross: number; refunded: number; orders: number }>()
+  const days = new Map<string, Map<string, { net: number; orders: number }>>()
   const payers = new Set<string>()
   for (const ch of rows) {
     if (ch["status"] !== "succeeded" || ch["paid"] !== true) continue
@@ -66,11 +67,31 @@ export const stripeRevenue = async (c: StripeConfig, key: string, window: Search
     const t = per.get(currency) ?? { gross: 0, refunded: 0, orders: 0 }
     t.gross += amount(ch["amount"]); t.refunded += amount(ch["amount_refunded"]); t.orders += 1
     per.set(currency, t)
+    const created = typeof ch["created"] === "number" ? ch["created"] * 1000 : NaN
+    if (Number.isFinite(created)) {
+      const day = new Date(created).toISOString().slice(0, 10)
+      const byDay = days.get(currency) ?? new Map<string, { net: number; orders: number }>()
+      const d = byDay.get(day) ?? { net: 0, orders: 0 }
+      d.net += amount(ch["amount"]) - amount(ch["amount_refunded"]); d.orders += 1
+      byDay.set(day, d)
+      days.set(currency, byDay)
+    }
     const who = text(ch["customer"], 80) || text((ch["billing_details"] as { email?: unknown } | undefined)?.email, 200).toLowerCase()
     if (who) payers.add(who)
   }
   const newCustomers = await list(c, key, "/customers", range(window), 10).then(r => r.rows.length).catch(() => null)
+  // Every day of the window in the main currency, with no-sale days as zero.
+  const main = [...per].sort((a, b) => b[1].orders - a[1].orders)[0]?.[0]
+  const daily: Array<{ day: string; currency: string; net: number; orders: number }> = []
+  if (main) {
+    const byDay = days.get(main)
+    for (let ms = Date.parse(`${window.start}T00:00:00Z`); ms <= Date.parse(`${window.end}T00:00:00Z`); ms += 86_400_000) {
+      const day = new Date(ms).toISOString().slice(0, 10), d = byDay?.get(day)
+      daily.push({ day, currency: main.toUpperCase(), net: d ? major(d.net, main) : 0, orders: d?.orders ?? 0 })
+    }
+  }
   return {
+    daily,
     byCurrency: [...per].map(([currency, t]) => {
       const net = major(t.gross - t.refunded, currency)
       return { currency: currency.toUpperCase(), net, gross: major(t.gross, currency), refunded: major(t.refunded, currency), orders: t.orders, averageOrder: t.orders ? net / t.orders : null }

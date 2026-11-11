@@ -74,8 +74,11 @@ export interface AdAccountPerformance {
   readonly topCampaigns: ReadonlyArray<AdCampaignRow>
   /** What this platform counts as a conversion, so totals are never compared as if they meant the same thing. */
   readonly conversionDefinition: string
+  /** Each day of both windows, when the platform was asked for it. */
+  readonly daily?: { readonly current: ReadonlyArray<AdDay>; readonly previous: ReadonlyArray<AdDay> }
   readonly collectedAt: string
 }
+export interface AdDay { readonly day: string; readonly spend: number; readonly impressions: number; readonly clicks: number; readonly conversions: number }
 
 export const adTotals = (raw: { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }): AdTotals => {
   const ratio = (a: number, b: number) => b > 0 ? a / b : null
@@ -133,6 +136,8 @@ export interface RevenueTotals {
   readonly newCustomers: number | null
   /** True when there were more charges than OpenRecord reads at once (3,000). */
   readonly truncated: boolean
+  /** Each day of the window (UTC), in its main currency (the one with the most orders): net revenue and orders. */
+  readonly daily?: ReadonlyArray<{ readonly day: string; readonly currency: string; readonly net: number; readonly orders: number }>
 }
 
 export interface RevenuePerformance {

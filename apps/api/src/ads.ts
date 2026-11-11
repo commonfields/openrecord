@@ -22,6 +22,7 @@ import {
 } from "@openrecord/ads"
 import { Ga4Error, exchangeCode, identityFromIdToken, newOAuthSecret, refreshAccessToken, revokeToken } from "@openrecord/ga4"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
+import { demoAds, demoLocal, isDemoBusiness } from "./demo-data.js"
 
 export class AdsRefused extends Data.TaggedError("AdsRefused")<{ readonly reason: string }> {}
 const refuse = (reason: string) => Effect.fail(new AdsRefused({ reason }))
@@ -156,6 +157,10 @@ const listAccounts = (config: AdsConfig, c: ConnectionRow): Effect.Effect<Readon
 
 /** Live performance of every ad account bound to a business. One account failing never hides the others. */
 export const adPerformance = (accountId: string, businessId: string, days: AdPerformanceDays, provider?: AdProvider) => Effect.gen(function*() {
+  if (isDemoBusiness(businessId)) {
+    const demo = demoAds(days)
+    return { ...demo, accounts: demo.accounts.filter(a => !provider || a.provider === provider) }
+  }
   const config = yield* adsConfig
   const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider !== "google_business" && (!provider || b.provider === provider))
   const windows = adWindows(Date.now(), days)
@@ -180,6 +185,7 @@ export const adPerformance = (accountId: string, businessId: string, days: AdPer
 
 /** Live Google Business Profile performance for each location bound to a business. Search terms and reviews are read separately, so one failing never hides the rest. */
 export const localPerformance = (accountId: string, businessId: string, days: AdPerformanceDays) => Effect.gen(function*() {
+  if (isDemoBusiness(businessId)) return demoLocal(days)
   const config = yield* adsConfig
   const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider === "google_business")
   const windows = adWindows(Date.now(), days)

@@ -48,6 +48,8 @@ export interface SearchPerformance {
   readonly previous: SearchWindow & { readonly totals: SearchTotals }
   readonly topQueries: ReadonlyArray<SearchPerformanceRow>
   readonly topPages: ReadonlyArray<SearchPerformanceRow>
+  /** Each day of both windows that has data (key is the date), when it was read. */
+  readonly daily?: { readonly current: ReadonlyArray<SearchPerformanceRow>; readonly previous: ReadonlyArray<SearchPerformanceRow> }
   readonly collectedAt: string
 }
 
