@@ -36,6 +36,16 @@ pub struct Chart {
     pub unreviewed: Color,
     /// Categorical slots for AI models, in the web's fixed order.
     pub series: [Color; 12],
+    /// A calm palette for analytics, one colour per metric or row: blue, teal,
+    /// amber, violet, rose, sage. Muted, so no chart shouts.
+    pub palette: [Color; 6],
+}
+
+impl Chart {
+    /// The analytics colour for the `i`th metric or row.
+    pub fn tone(&self, i: usize) -> Color {
+        self.palette[i % self.palette.len()]
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +137,7 @@ impl Theme {
                 unknown: black(0.16),
                 unreviewed: black(0.07),
                 series: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948", "#0e7c86", "#64748b", "#65a30d", "#7c3aed"].map(hex),
+                palette: ["#4f6fe0", "#2b8a8f", "#b7832f", "#7d5bbf", "#b85b72", "#5d8a4a"].map(hex),
             },
             panel_shadow: vec![
                 sh(0.0, 0.0, 0.0, 1.0, white(0.95), true),
@@ -213,6 +224,7 @@ impl Theme {
                 unknown: white(0.16),
                 unreviewed: white(0.07),
                 series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767", "#2dd4bf", "#94a3b8", "#a3e635", "#a78bfa"].map(hex),
+                palette: ["#6c84c4", "#4f9ea0", "#c09358", "#9a7fc0", "#bd7d8c", "#7fa36c"].map(hex),
             },
             panel_shadow: vec![
                 sh(0.0, 1.0, 0.0, 0.0, white(0.03), true),

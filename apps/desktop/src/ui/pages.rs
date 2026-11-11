@@ -35,69 +35,51 @@ fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
     }
 }
 
-/// The inbox, as a mail app lays one out: a fixed list on the left, the open
-/// item on the right, and the decision pinned under it. It fills the window;
-/// each side scrolls on its own. ↑ and ↓ move through the list.
+/// The inbox, as the web lays it out: the list on a card at the left, the open
+/// item on a card at the right with its details and the decision under them.
+/// It fills the window; each card scrolls on its own. Up and down move through the list.
 pub fn inbox(s: &App, t: &Theme) -> El {
     let items = s.inbox();
     let now = format::now();
     let n = items.len();
-    let head = row()
-        .w_full()
-        .h(56.0)
-        .px(20.0)
-        .gap(8.0)
-        .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], t.border)
-        .child(label("Inbox", type_::SM_MEDIUM, t.foreground).role("heading"))
-        .child(el().grow(1.0))
-        .child(label(if n == 1 { "1 waiting".to_string() } else { format!("{n} waiting") }, type_::XS.features("'tnum' 1"), t.muted_foreground));
     let open = s.open_decision().map(|d| d.key.clone());
-    let mut list = col().key("decision-list").w_full().padding(8.0).gap(2.0);
+    let mut list = col().key("decision-list").w_full().padding(6.0).gap(2.0);
     for d in &items {
         let on = open.as_deref() == Some(d.key.as_str());
         let key = d.key.clone();
         let mut r = col()
             .key(format!("decision-{}", d.key))
             .w_full()
-            .h(84.0)
-            .pl(14.0)
-            .pr(12.0)
-            .py(10.0)
-            .gap(3.0)
+            .px(12.0)
+            .py(12.0)
+            .gap(4.0)
             .radius(8.0)
             .role("button")
             .label(d.title.clone())
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(if on { t.accent } else { t.hover_tint })
+            .hover(if on { t.accent } else { t.accent.alpha(0.6) })
             .motion(CONTROL)
             .on_press(move |s: &mut App| s.select_decision(&key))
-            .child(
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .center_y()
-                    .child(crate::ui::widgets::business_mark(t, Some(&d.business_name), 16.0, 4.0))
-                    .child(label(d.business_name.clone(), type_::XS_MEDIUM, t.muted_foreground).truncate().min_w(0.0))
-                    .child(label(d.label.clone(), type_::XS, t.muted_foreground.alpha(0.8)).truncate().grow(1.0).min_w(0.0))
-                    .child(label(format::relative(d.created_at.as_deref(), now), type_::XS.features("'tnum' 1"), t.muted_foreground)),
-            )
-            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).truncate())
-            .child(label(d.summary.clone(), type_::XS, t.muted_foreground).truncate());
+            .child(row().w_full().gap(8.0).center_y()
+                .child(label(format!("{}, {}", d.business_name, d.label), type_::XS11, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+                .child(label(format::relative(d.created_at.as_deref(), now), type_::XS11, t.muted_foreground)))
+            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).wrap().max_lines(2))
+            .child(label(d.summary.clone(), type_::XS, t.muted_foreground).wrap().max_lines(2));
         if on {
-            // The open item: a soft fill and the brand's bar on its leading edge.
-            r = r.fill(t.accent).child(el().pin(Some(0.0), Some(14.0), None, Some(14.0)).w(3.0).radius(1.5).fill(t.primary_ink));
+            r = shadows(r.fill(t.accent), &t.control_shadow);
         }
         list = list.child(r);
     }
-    let left = col()
+    let left = card(t)
         .key("inbox-list")
-        .w(360.0)
+        .w(352.0)
         .h_full()
-        .border_sides([0.0, 1.0, 0.0, 0.0], t.border)
-        .child(head)
+        .clip_rounded(12.0)
+        .child(row().w_full().px(16.0).py(12.0).center_y()
+            .child(label("Inbox", type_::SM_MEDIUM, t.foreground).role("heading").grow(1.0))
+            .child(label(if n == 1 { "1 waiting".to_string() } else { format!("{n} waiting") }, type_::XS, t.muted_foreground)))
         .child(if items.is_empty() {
             col().w_full().grow(1.0).center().px(24.0).gap(6.0)
                 .child(ico(&icons::INBOX, 20.0, t.muted_foreground))
@@ -108,7 +90,7 @@ pub fn inbox(s: &App, t: &Theme) -> El {
         });
     let right = match s.open_decision() {
         Some(d) => decision_detail(s, t, d, now),
-        None => col().grow(1.0).h_full().center().gap(10.0)
+        None => card(t).grow(1.0).h_full().center().gap(10.0)
             .child(ico(&icons::INBOX, 28.0, t.muted_foreground.alpha(0.6)))
             .child(label("Your inbox is clear", type_::BASE_MEDIUM, t.foreground))
             .child(label("When the agent needs a decision from you, it shows up here.", type_::SM_13, t.muted_foreground))
@@ -116,37 +98,16 @@ pub fn inbox(s: &App, t: &Theme) -> El {
                 "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.",
             ))),
     };
-    row().key("inbox").w_full().h_full().child(left).child(right)
+    row().key("inbox").w_full().h_full().padding(16.0).gap(16.0).child(left).child(right)
 }
 
 fn decision_detail(s: &App, t: &Theme, d: &Decision, now: i64) -> El {
     let busy = s.deciding.as_deref() == Some(d.key.as_str());
-    let mut body = col()
-        .w_full()
-        .max_w(720.0)
-        .px(40.0)
-        .pt(32.0)
-        .pb(40.0)
-        .gap(20.0)
-        .child(
-            col()
-                .w_full()
-                .gap(10.0)
-                .child(
-                    row()
-                        .gap(8.0)
-                        .center_y()
-                        .child(row().h(22.0).px(8.0).radius(6.0).center().fill(t.accent).child(label(d.label.clone(), type_::XS_MEDIUM, t.foreground)))
-                        .child(label(format!("{}, {}", d.business_name, format::relative(d.created_at.as_deref(), now)), type_::XS, t.muted_foreground)),
-                )
-                .child(label(d.title.clone(), type_::TITLE.lh(26.0), t.foreground).wrap().role("heading").selectable(true))
-                .children((!d.summary.is_empty()).then(|| label(d.summary.clone(), type_::SM.lh(22.0), t.muted_foreground).wrap().selectable(true))),
-        );
+    // The details on an inner bordered panel, as the web's decision card.
+    let mut panel = col().w_full().px(16.0).py(14.0).gap(10.0).radius(10.0).border(1.0, t.border);
     if !d.sections.is_empty() {
-        let mut list = col().w_full().gap(0.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border);
         for (i, sec) in d.sections.iter().enumerate() {
-            let mut cell = col().key(format!("section-{i}")).w_full().py(16.0).gap(8.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border)
-                .child(label(sec.label.clone(), type_::XS_MEDIUM, t.muted_foreground));
+            let mut cell = col().key(format!("section-{i}")).w_full().gap(6.0).child(label(sec.label.clone(), type_::XS_MEDIUM, t.muted_foreground));
             if let Some(b) = &sec.before {
                 let side = |name: &str, text: String, fill: Color, ink: Color| col().grow(1.0).min_w(0.0).px(12.0).py(10.0).gap(4.0).radius(8.0).fill(fill)
                     .child(label(name.to_string(), type_::XS2, t.muted_foreground)).child(label(text, type_::SM_13, ink).wrap().selectable(true));
@@ -154,30 +115,29 @@ fn decision_detail(s: &App, t: &Theme, d: &Decision, now: i64) -> El {
                     .child(side("Now", if b.is_empty() { "(empty)".into() } else { b.clone() }, t.wrong_soft.alpha(0.5), t.muted_foreground))
                     .child(side("After you approve", sec.text.clone(), t.supported_soft, t.foreground)));
             } else {
-                cell = cell.child(label(sec.text.clone(), type_::SM.lh(22.0), t.foreground).wrap().selectable(true));
+                cell = cell.child(label(sec.text.clone(), type_::SM_13.lh(20.0), t.foreground).wrap().selectable(true));
             }
-            list = list.child(cell);
+            panel = panel.child(cell);
         }
-        body = body.child(list);
     }
     if let Some(text) = &d.body {
-        body = body.child(col().key("decision-body").w_full().px(16.0).py(14.0).radius(10.0).fill(t.accent.alpha(0.6)).child(label(text.clone(), type_::SM_13.lh(20.0), t.foreground).wrap().selectable(true)));
+        panel = panel.child(label(text.clone(), type_::SM_13.lh(20.0), t.foreground).wrap().selectable(true));
+    }
+    let blocked = d.blocked(s.model.as_deref());
+    let note = blocked.map(str::to_string).or_else(|| d.note.clone());
+    if let Some(n) = &note {
+        panel = panel.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
     }
     if d.act == Act::Check {
-        body = body.child(model_picker(s, t));
-    }
-    if d.conversation_id.is_some() {
-        body = body.child(label("The agent suggested this in a chat. Open Agent to see the conversation.", type_::XS, t.muted_foreground.alpha(0.8)));
+        panel = panel.child(model_picker(s, t));
     }
     if let Some((key, err)) = &s.decision_error {
         if key == &d.key {
-            body = body.child(label(err.clone(), type_::SM_13, t.wrong).wrap().key("decision-error").live_region(rune::LiveRegion::Polite));
+            panel = panel.child(label(err.clone(), type_::SM_13, t.wrong).wrap().key("decision-error").live_region(rune::LiveRegion::Polite));
         }
     }
-    // The decision, pinned at the bottom of the pane.
-    let blocked = d.blocked(s.model.as_deref());
-    let note = blocked.map(str::to_string).or_else(|| d.note.clone());
-    let bar = if s.declining {
+    // The decision, inline under the details, as on the web.
+    let actions = if s.declining {
         let input = text_input(&s.decline_reason, type_::SM)
             .key("decline-reason")
             .placeholder("Why not? Optional, the agent reads it", t.muted_foreground)
@@ -186,26 +146,33 @@ fn decision_detail(s: &App, t: &Theme, d: &Decision, now: i64) -> El {
             .color(t.foreground)
             .on_edit(|s: &mut App| &mut s.decline_reason)
             .on_submit(|s: &mut App, _| s.confirm_decline());
-        row().w_full().gap(8.0).center_y()
-            .child(shadows(row().grow(1.0).min_w(0.0).h(36.0).px(12.0).radius(8.0).center_y().fill(t.control).child(input), &t.control_shadow))
-            .child(button(t, "decline-cancel", "Cancel", Variant::Outline).on_press(|s: &mut App| s.cancel_decline()))
-            .child(action(t, "decline-confirm", if busy { "Declining…" } else { d.decline.as_str() }, Variant::Primary, !busy, |s: &mut App| s.confirm_decline()))
+        col().w_full().gap(8.0)
+            .child(shadows(row().w_full().h(32.0).px(10.0).radius(6.0).center_y().fill(t.control).child(input), &t.control_shadow))
+            .child(row().gap(8.0)
+                .child(action(t, "decline-confirm", if busy { "Declining…" } else { d.decline.as_str() }, Variant::Primary, !busy, |s: &mut App| s.confirm_decline()))
+                .child(button(t, "decline-cancel", "Cancel", Variant::Outline).on_press(|s: &mut App| s.cancel_decline())))
     } else {
-        row().w_full().gap(8.0).center_y()
-            .child(match note {
-                Some(n) => label(n, type_::XS, t.muted_foreground).wrap().grow(1.0).min_w(0.0),
-                None => el().grow(1.0),
-            })
-            .child(button(t, "decline", d.decline.as_str(), Variant::Outline).disabled(busy).on_press_tx(|s: &mut App, tx| s.start_decline(tx)))
+        row().gap(8.0).center_y()
             .child(action(t, "approve", if busy { "Working…" } else { d.approve.as_str() }, Variant::Primary, !busy && blocked.is_none(), |s: &mut App| s.approve_decision()))
+            .child(button(t, "decline", d.decline.as_str(), Variant::Outline).disabled(busy).on_press_tx(|s: &mut App, tx| s.start_decline(tx)))
     };
-    col()
+    panel = panel.child(actions);
+    let mut body = col().w_full().px(16.0).py(14.0).gap(14.0)
+        .child(col().w_full().gap(3.0)
+            .child(label(format!("{}, {}, {}", d.business_name, d.label, format::relative(d.created_at.as_deref(), now)), type_::XS11, t.muted_foreground))
+            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).wrap().role("heading").selectable(true))
+            .children((!d.summary.is_empty()).then(|| label(d.summary.clone(), type_::XS, t.muted_foreground).wrap().selectable(true))))
+        .child(panel);
+    if d.conversation_id.is_some() {
+        body = body.child(label("The agent suggested this in a chat. Open Agent to see the conversation.", type_::XS, t.muted_foreground.alpha(0.8)));
+    }
+    card(t)
         .key(format!("decision-detail-{}", d.key))
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .child(col().key("decision-scroll").w_full().grow(1.0).min_h(0.0).child(col().w_full().items_center().child(body)).scroll(ScrollSpec { stick_bottom: false }))
-        .child(row().w_full().px(40.0).py(14.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border).fill(t.background).child(col().w_full().max_w(640.0).child(bar)).justify_center())
+        .clip_rounded(12.0)
+        .child(col().key("decision-scroll").w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: false }))
 }
 
 /// A button that is greyed and ignores presses while `enabled` is false.
@@ -477,6 +444,7 @@ fn channel_card(t: &Theme, ch: &Channel, business: &str) -> El {
     };
     let mark = match crate::channel_marks::for_channel(&ch.key) {
         Some(i) => rune::icon(i, 20.0).color(t.foreground),
+        None if ch.key == "profile:EMAIL" => ico(&icons::MAIL, 20.0, t.muted_foreground),
         None => ico(&icons::GLOBE, 20.0, t.muted_foreground),
     };
     let connected = matches!(ch.state.as_str(), "CONNECTED" | "ACTIVE");

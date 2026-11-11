@@ -71,9 +71,9 @@ pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
     };
     let b = row()
         .key(key)
-        .h(32.0)
+        .h(28.0)
         .px(12.0)
-        .radius(8.0)
+        .radius(6.0)
         .center()
         .role("button")
         .label(text_)
@@ -83,7 +83,7 @@ pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
         .hover(if variant == Variant::Primary { Color::WHITE.alpha(0.08) } else { t.hover_tint })
         .press(t.hover_tint)
         .motion(CONTROL)
-        .child(label(text_, type_::SM_MEDIUM, ink));
+        .child(label(text_, rune::TextStyle::new(13.0, 500.0).lh(18.0), ink));
     shadows(b, list)
 }
 

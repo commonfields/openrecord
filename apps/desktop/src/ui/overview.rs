@@ -247,7 +247,7 @@ fn bar_list(t: &Theme, key: &str, rows: &[(String, f64, String)]) -> El {
                 .child(row().w_full().gap(8.0).center_y()
                     .child(label(name.clone(), type_::XS, t.foreground).truncate().grow(1.0).min_w(0.0))
                     .child(label(shown.clone(), type_::XS.features("'tnum' 1"), t.muted_foreground)))
-                .child(row().w_full().h(6.0).radius(3.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((v / max) as f32).h_full().radius(3.0).fill(t.primary_ink.alpha(0.85)))),
+                .child(row().w_full().h(6.0).radius(3.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((v / max) as f32).h_full().radius(3.0).fill(t.chart.tone(k).alpha(0.9)))),
         );
     }
     c
@@ -547,7 +547,7 @@ fn facts(t: &Theme, a: &Analytics) -> El {
 
 /// One metric as an analytics card: its value and change, and every day of the
 /// period as a line over the same day of the period before (dashed).
-fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric) -> El {
+fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric, tone: Color) -> El {
     let mut head = row().w_full().gap(8.0).center_y().child(label(m.label.clone(), type_::SM_MEDIUM, t.muted_foreground).grow(1.0).min_w(0.0).truncate());
     if let Some(d) = m.delta {
         let good = (d >= 0.0) != m.lower_better;
@@ -558,7 +558,7 @@ fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric) -> E
         .child(head)
         .child(label(m.value.clone(), rune::TextStyle::new(26.0, 600.0).lh(34.0).features("'tnum' 1"), t.foreground));
     if let Some(d) = &m.days {
-        let mut tr = charts::Trend::new(key, &m.label, &d.dates, &d.now, t.chart.primary).compare(&d.before, "Period before".into()).height(176.0).width_hint(520.0);
+        let mut tr = charts::Trend::new(key, &m.label, &d.dates, &d.now, tone).compare(&d.before, "Period before".into()).height(176.0).width_hint(520.0);
         if m.percent {
             tr = tr.percent();
         }
@@ -577,10 +577,10 @@ fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
             .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).role("heading"))
             .child(label(r.subtitle.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
             .children(charted.then(|| row().gap(14.0).center_y()
-                .child(row().gap(6.0).center_y().child(el().w(14.0).h(2.0).radius(1.0).fill(t.chart.primary)).child(label("This period", type_::XS11, t.muted_foreground)))
+                .child(row().gap(6.0).center_y().child(el().w(14.0).h(2.0).radius(1.0).fill(t.muted_foreground)).child(label("This period", type_::XS11, t.muted_foreground)))
                 .child(charts::dotted_label(t, "Period before")))));
     if charted {
-        let cards: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| metric_chart(s, t, &format!("{key}-chart-{k}"), m)).collect();
+        let cards: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| metric_chart(s, t, &format!("{key}-chart-{k}"), m, t.chart.tone(k))).collect();
         let mut it = cards.into_iter();
         while let Some(a) = it.next() {
             let mut pair = vec![a];
@@ -677,9 +677,9 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .child(label(money(r.net.0), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.foreground))
         .child(pill)
         .child(el().h(10.0))
-        .child(charts::area_trend(s, t, charts::Trend::new("revenue-daily", "Net revenue", &dates, &values, t.chart.primary).compare(&before, "Period before".into()).height(220.0).width_hint(760.0)))
+        .child(charts::area_trend(s, t, charts::Trend::new("revenue-daily", "Net revenue", &dates, &values, t.chart.tone(1)).compare(&before, "Period before".into()).height(220.0).width_hint(760.0)))
         .child(row().gap(16.0).pt(4.0)
-            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.chart.primary)).child(label("Each day", type_::XS11, t.muted_foreground)))
+            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.chart.tone(1))).child(label("Each day", type_::XS11, t.muted_foreground)))
             .child(charts::dotted_label(t, "Same day, period before")));
 
     // Where the money went: gross, refunds and what was kept, as one bar.
@@ -771,11 +771,11 @@ fn funnel(t: &Theme, i: &Insights) -> El {
         let (a, b) = (width(st.1), steps.get(k + 1).map(|x| width(x.1)).unwrap_or(width(st.1) * 0.9));
         let (l0, r0) = (w_px * (1.0 - a) / 2.0, w_px * (1.0 + a) / 2.0);
         let (l1, r1) = (w_px * (1.0 - b) / 2.0, w_px * (1.0 + b) / 2.0);
-        let shade = t.chart.primary.alpha(0.85 - 0.14 * k as f32);
+        let shade = t.chart.tone(k).alpha(0.82);
         sh = sh.fill(vec![[l0, y0], [r0, y0], [r0 - (r0 - r1) * 0.25, y0 + band], [l0 + (l1 - l0) * 0.25, y0 + band]], shade);
         if k + 1 < n {
             // The narrowing to the next step, faint.
-            sh = sh.fill(vec![[l0 + (l1 - l0) * 0.25, y0 + band], [r0 - (r0 - r1) * 0.25, y0 + band], [r1, y0 + band + gap], [l1, y0 + band + gap]], t.chart.primary.alpha(0.08));
+            sh = sh.fill(vec![[l0 + (l1 - l0) * 0.25, y0 + band], [r0 - (r0 - r1) * 0.25, y0 + band], [r1, y0 + band + gap], [l1, y0 + band + gap]], t.chart.tone(k).alpha(0.1));
         }
     }
     let shape = rune::canvas(sh.view_box(w_px, h)).size(w_px, h).a11y_hidden();
@@ -826,6 +826,16 @@ fn events(s: &App, t: &Theme, i: &Insights) -> El {
     col().w_full().gap(16.0).child(p).children(goal.map(|_| goal_card(s, t, i)))
 }
 
+/// A country's flag (its emoji), or its code on a small tile when the code is not a country.
+fn flag(t: &Theme, code: &str) -> El {
+    let up = code.to_uppercase();
+    if up.len() == 2 && up.chars().all(|c| c.is_ascii_uppercase()) {
+        let emoji: String = up.chars().map(|c| char::from_u32(0x1F1E6 + (c as u32 - 'A' as u32)).unwrap_or(c)).collect();
+        return row().w(28.0).h(20.0).center().help(up).child(rune::text(emoji).font(rune::TextStyle::new(17.0, 400.0).lh(20.0)));
+    }
+    row().h(18.0).w(28.0).radius(4.0).center().fill(t.accent).child(label(up, type_::XS2.lh(14.0), t.muted_foreground))
+}
+
 /// Who is on the site now: a turning globe with where people are, the
 /// countries ranked, the last 30 minutes and the pages being read.
 fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
@@ -861,11 +871,11 @@ fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
     for (k, (code, name, users)) in r.countries.iter().take(14).enumerate() {
         list = list.child(col().key(format!("rt-country-{k}")).w_full().gap(5.0)
             .child(row().w_full().gap(10.0).center_y()
-                .child(row().h(18.0).w(28.0).radius(4.0).center().fill(t.accent).child(label(code.clone(), type_::XS2.lh(14.0), t.muted_foreground)))
+                .child(flag(t, code))
                 .child(label(name.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
                 .child(label(crate::insights::int(*users), type_::SM_13.features("'tnum' 1"), t.foreground))
                 .child(label(format!("{:.0}%", users / r.active.max(1.0) * 100.0), type_::XS.features("'tnum' 1"), t.muted_foreground).w(36.0)))
-            .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((users / most) as f32).h_full().radius(2.0).fill(t.chart.primary.alpha(0.8)))));
+            .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((users / most) as f32).h_full().radius(2.0).fill(t.chart.tone(k).alpha(0.9)))));
     }
     let where_card = board(t, "realtime-countries", "Where they are", Some(format!("{} countries", r.countries.len())), 560.0, list);
     // The last 30 minutes as columns, newest on the right.

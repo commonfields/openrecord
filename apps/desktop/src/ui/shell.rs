@@ -170,7 +170,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
         };
         let mut link = row()
             .key(format!("nav-{}", page.key()))
-            .h(32.0)
+            .h(36.0)
             .gap(8.0)
             .radius(6.0)
             .center_y()
@@ -190,7 +190,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             .child(ico(i, 14.0, if active { t.primary_ink } else { t.muted_foreground }));
         if open {
             link = link.w_full().px(8.0).child(
-                label(page.label(), if active { type_::SM_MEDIUM } else { type_::SM }, if active { t.foreground } else { t.sidebar_foreground })
+                label(page.label(), if active { type_::BASE_MEDIUM } else { type_::BASE }, if active { t.foreground } else { t.sidebar_foreground })
                     .truncate()
                     .grow(1.0)
                     .min_w(0.0),
@@ -204,9 +204,9 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                 link = link.child(el().absolute(26.0, 6.0).size(6.0, 6.0).radius(3.0).fill(t.wrong));
             }
         }
-        // Kobbe's active row: a soft pill, no shadow.
+        // The web's active row: the accent fill with the control shadow.
         if active {
-            link = link.fill(t.sidebar_accent);
+            link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
         }
         links = links.child(link);
         // The Overview's sections, under it while it is open, as on the web.
@@ -218,7 +218,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                     row()
                         .key(format!("nav-section-{}", sec.key()))
                         .w_full()
-                        .h(28.0)
+                        .h(30.0)
                         .px(8.0)
                         .radius(6.0)
                         .center_y()
@@ -231,9 +231,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                         .motion(CONTROL)
                         .fill(if on { t.sidebar_accent } else { rune::Color::TRANSPARENT })
                         .on_press(move |s: &mut App| s.show_section(sec))
-                        .child(label(sec.label(), type_::SM_13, if on { t.foreground } else { t.sidebar_foreground }))
-                        // The open section marks the rail beside it, as Kobbe's nav does.
-                        .children(on.then(|| el().pin(Some(-11.5), Some(6.0), None, Some(6.0)).w(2.0).radius(1.0).fill(t.primary_ink))),
+                        .child(label(sec.label(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.muted_foreground })),
                 );
             }
             links = links.child(row().w_full().pl(22.0).child(sub));
@@ -537,60 +535,78 @@ fn menu_row(t: &Theme, key: String, lead: El, text_: &str, checked: bool) -> El 
     r
 }
 
-/// The account menu, as Rune's kit draws a menu: who is signed in, then
-/// Settings, the browser and Refresh, the update item, and Sign out.
-pub fn account_menu(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut Vec<El>) {
-    use rune_kit::{Menu as KitMenu, MenuItem, Placement};
+/// The account menu, as the web draws it: who is signed in, then Settings,
+/// Account, Keyboard shortcuts and Usage; Businesses and Clients and products;
+/// and Sign out. A waiting update shows above Sign out.
+pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>) {
     if s.menu != Some(Menu::Account) {
         return;
     }
     let email = s.account_email.clone().unwrap_or_else(|| "Signed in".into());
+    let name = email.split('@').next().unwrap_or(&email).to_string();
     let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
-    let _ = KitMenu::new("account")
-        .open(true)
-        .placement(if s.sidebar_open { Placement::TopStart } else { Placement::RightStart })
-        .min_width(if s.sidebar_open { SIDEBAR_WIDTH - 16.0 } else { 240.0 })
-        .group_label(email)
-        .item(MenuItem::new("Settings").icon(&icons::SETTINGS).shortcut("⌘,").on_select(|s: &mut App| {
+    let web = web_url(&api);
+    let item = |key: &str, icon: &'static rune::Icon, text_: &str| {
+        row().key(key.to_string()).w_full().h(34.0).px(10.0).gap(10.0).radius(6.0).center_y()
+            .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer)
+            .hover(t.hover_tint).hover_group().motion(CONTROL)
+            .child(ico(icon, 16.0, t.muted_foreground).group_color(t.foreground))
+            .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+    };
+    let rule = || el().w_full().h(1.0).my(6.0).fill(t.border);
+    let settings = |page: crate::state::SettingsPage| move |s: &mut App| {
+        s.menu = None;
+        s.open_settings(page);
+    };
+    let open = |path: &'static str| {
+        let url = format!("{web}{path}");
+        move |s: &mut App, tx: &mut rune::Tx| {
             s.menu = None;
-            s.open_settings(crate::state::SettingsPage::General);
-        }))
-        .item(MenuItem::new("Open in the browser").icon(&icons::EXTERNAL_LINK).on_select_tx(move |s: &mut App, tx| {
-            s.menu = None;
-            let _ = tx.open_url(&web_url(&api));
-        }))
-        .item(MenuItem::new("Refresh").icon(&icons::REFRESH_CW).on_select(|s: &mut App| {
-            s.menu = None;
-            s.refresh();
-        }))
-        .separator()
-        .item(update_item(s, t))
-        .separator()
-        .item(MenuItem::new("Sign out").icon(&icons::LOG_OUT).on_select(|s: &mut App| s.sign_out()))
-        .on_close(|s: &mut App| s.menu = None)
-        .build(k, layer);
+            let _ = tx.open_url(&url);
+        }
+    };
+    let width = if s.sidebar_open { (SIDEBAR_WIDTH - 16.0).max(256.0) } else { 256.0 };
+    let mut m = menu(t, "account-menu-list", width)
+        .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
+            .child(avatar_sphere(t, 36.0))
+            .child(col().min_w(0.0).gap(1.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate())))
+        .child(rule())
+        .child(item("acct-settings", &icons::SETTINGS, "Settings").on_press(settings(crate::state::SettingsPage::General)))
+        .child(item("acct-account", &icons::USER_ROUND, "Account").on_press(settings(crate::state::SettingsPage::Account)))
+        .child(item("acct-shortcuts", &icons::KEYBOARD, "Keyboard shortcuts").on_press(settings(crate::state::SettingsPage::Shortcuts)))
+        .child(item("acct-usage", &icons::GAUGE, "Usage").on_press_tx(open("/usage")))
+        .child(rule())
+        .child(item("acct-businesses", &icons::BUILDING, "Businesses").on_press_tx(open("/businesses")))
+        .child(item("acct-clients", &icons::BRIEFCASE, "Clients and products").on_press_tx(open("/clients")))
+        .child(rule());
+    if let Some(u) = update_row(s, t) {
+        m = m.child(u).child(rule());
+    }
+    m = m.child(item("sign-out", &icons::LOG_OUT, "Sign out").on_press(|s: &mut App| s.sign_out()));
+    let side = if s.sidebar_open { Side::Top } else { Side::Right };
+    layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
 
-/// The update item: check for a newer version, or, when one is out, install it
-/// and restart into it. Selecting it keeps the menu open so it can show progress.
-fn update_item(s: &App, t: &Theme) -> rune_kit::MenuItem {
-    use crate::update::{Update, current};
-    use rune_kit::MenuItem;
-    let spin = || ico(&icons::LOADER, 14.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
-    let version = format!("Version {}", current());
-    let item = match &s.update {
-        Update::Unknown => MenuItem::new("Check for updates").icon(&icons::REFRESH_CW).description(version),
-        Update::Checking => MenuItem::new("Checking for updates…").lead(spin()).disabled(true),
-        Update::UpToDate => MenuItem::new("Up to date").icon(&icons::CIRCLE_CHECK).description(version),
-        Update::Available(r) => MenuItem::new(format!("Update to {}", r.version)).icon(&icons::DOWNLOAD).badge("New"),
-        Update::Installing(v) => MenuItem::new(format!("Installing {v}…")).lead(spin()).disabled(true),
-        Update::Failed(_) => MenuItem::new("Update failed, try again").icon(&icons::TRIANGLE_ALERT).description(version),
+/// The update row, only while there is something to say: a newer version to
+/// install, an install under way, or one that failed.
+fn update_row(s: &App, t: &Theme) -> Option<El> {
+    use crate::update::Update;
+    let spin = || ico(&icons::LOADER, 16.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
+    let (lead, text_) = match &s.update {
+        Update::Available(r) => (ico(&icons::DOWNLOAD, 16.0, t.primary_ink), format!("Update to {}", r.version)),
+        Update::Installing(v) => (spin(), format!("Installing {v}…")),
+        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 16.0, t.wrong), "Update failed, try again".to_string()),
+        _ => return None,
     };
-    item.on_select(|s: &mut App| match s.update {
-        crate::update::Update::Available(_) => s.install_update(),
-        _ => s.check_update(),
-    })
+    Some(row().key("app-update").w_full().h(34.0).px(10.0).gap(10.0).radius(6.0).center_y().role("menuitem").label(text_.clone())
+        .focusable(true).cursor(Cursor::Pointer).hover(t.hover_tint)
+        .child(lead).child(label(text_, type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+        .on_press(|s: &mut App| match s.update {
+            crate::update::Update::Available(_) => s.install_update(),
+            _ => s.check_update(),
+        }))
 }
+
 
 /// The menu open over the sidebar, if any, anchored to its trigger.
 pub fn menus(s: &App, t: &Theme) -> Option<El> {
