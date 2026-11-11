@@ -219,8 +219,8 @@ pub struct Health {
 pub struct Discovery {
     /// The latest measured period: surface, reviewed, mention and owned-citation rates as "n of d".
     pub period: Option<(String, String, String, String, String)>,
-    /// The latest GA4 import: AI sessions, total sessions, dates, signups.
-    pub referral: Option<String>,
+    /// The latest GA4 import: AI sessions, total sessions, its dates, and signups when measured.
+    pub referral: Option<(f64, f64, String, Option<f64>)>,
     pub limitations: Vec<String>,
 }
 
@@ -468,19 +468,7 @@ fn discovery(r: &Value) -> Discovery {
         .and_then(|x| x.get("imports"))
         .and_then(Value::as_array)
         .and_then(|imports| imports.iter().max_by_key(|i| s(i, "importedAt")))
-        .map(|i| {
-            let signups = match i.get("signups") {
-                Some(Value::Number(x)) => format!("{} signups reported.", int(x.as_f64().unwrap_or(0.0))),
-                _ => "Signups not measured.".into(),
-            };
-            format!(
-                "{} of {} sessions, {} to {}. {signups}",
-                int(f(i, "aiSessions").unwrap_or(0.0)),
-                int(f(i, "totalSessions").unwrap_or(0.0)),
-                s(i, "dateStart"),
-                s(i, "dateEnd")
-            )
-        });
+        .map(|i| (f(i, "aiSessions").unwrap_or(0.0), f(i, "totalSessions").unwrap_or(0.0), format!("{} to {}", s(i, "dateStart"), s(i, "dateEnd")), f(i, "signups")));
     let limitations = r.get("limitations").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
     Discovery { period, referral, limitations }
 }

@@ -163,6 +163,122 @@ fn note(t: &Theme, text_: &str) -> El {
     label(text_.to_string(), type_::SM_13, t.muted_foreground).wrap()
 }
 
+// ---- Dashboard parts ----------------------------------------------------------
+
+/// A fixed-height card with its title and a short line under it; its body fills
+/// the rest and scrolls inside, so a row of these always lines up.
+fn board(t: &Theme, key: &str, title: &str, sub: Option<String>, height: f32, body: El) -> El {
+    let mut head = col().w_full().gap(2.0).child(label(title.to_string(), type_::SM_MEDIUM, t.foreground).role("heading"));
+    if let Some(d) = sub {
+        head = head.child(label(d, type_::XS, t.muted_foreground).truncate());
+    }
+    card(t)
+        .key(key.to_string())
+        .w(0.0)
+        .grow(1.0)
+        .min_w(280.0)
+        .h(height)
+        .px(20.0)
+        .py(18.0)
+        .gap(14.0)
+        .clip_rounded(12.0)
+        .child(head)
+        .child(col().key(format!("{key}-body")).w_full().grow(1.0).min_h(0.0).child(body).scroll(rune::ScrollSpec { stick_bottom: false }))
+}
+
+/// An existing panel held to the dashboard's card height, scrolling inside.
+fn fixed(panel: El, key: &str) -> El {
+    col().key(key.to_string()).w(0.0).grow(1.0).min_w(320.0).h(340.0).child(panel.w_full().h_full().clip_rounded(12.0).scroll(rune::ScrollSpec { stick_bottom: false }))
+}
+
+/// Cards side by side at equal widths, wrapping on narrow windows.
+fn grid(cards: Vec<El>) -> El {
+    let mut r = row().w_full().gap(16.0).items_stretch().flex_wrap();
+    for c in cards {
+        r = r.child(c);
+    }
+    r
+}
+
+/// A number from a formatted value ("1,284", "3%", "$1,204.50").
+fn number(v: &str) -> Option<f64> {
+    let clean: String = v.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+    clean.parse().ok()
+}
+
+/// One key number on a fixed-height card: its name, the value, the change, and
+/// a pair of bars for this period against the one before.
+fn stat_tile(t: &Theme, key: &str, name: &str, value: &str, change: Option<f64>, better_up: bool) -> El {
+    let mut head = row().w_full().gap(6.0).center_y().child(label(name.to_string(), type_::XS_MEDIUM, t.muted_foreground).truncate().grow(1.0).min_w(0.0));
+    if let Some(d) = change {
+        let good = (d >= 0.0) == better_up;
+        let (ink, soft) = if d.abs() < 0.005 { (t.muted_foreground, t.accent) } else if good { (t.supported, t.supported_soft) } else { (t.wrong, t.wrong_soft) };
+        head = head.child(row().h(20.0).px(6.0).radius(5.0).center().fill(soft).child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), ink)));
+    }
+    let mut c = card(t)
+        .key(key.to_string())
+        .w(0.0)
+        .grow(1.0)
+        .min_w(170.0)
+        .h(128.0)
+        .px(18.0)
+        .py(16.0)
+        .gap(6.0)
+        .child(head)
+        .child(label(value.to_string(), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground).truncate());
+    // This period against the one before, as two bars on one scale.
+    if let (Some(d), Some(now)) = (change, number(value)) {
+        let before = if (1.0 + d).abs() > f64::EPSILON { now / (1.0 + d) } else { now };
+        let max = now.max(before).max(f64::EPSILON);
+        let bar = |frac: f64, ink: Color, name: &str| {
+            row().w_full().h(10.0).gap(8.0).center_y()
+                .child(row().grow(1.0).h(4.0).radius(2.0).fill(t.foreground.alpha(0.06)).child(el().w_frac((frac / max) as f32).h_full().radius(2.0).fill(ink)))
+                .child(label(name.to_string(), type_::XS2.lh(10.0), t.muted_foreground).w(44.0))
+        };
+        c = c.child(el().grow(1.0)).child(col().w_full().gap(4.0).child(bar(now, t.primary_ink, "now")).child(bar(before, t.muted_foreground.alpha(0.5), "before")));
+    }
+    c
+}
+
+/// A ranked list drawn as bars: each row's name over a bar sized to its share
+/// of the largest value, the value on the right.
+fn bar_list(t: &Theme, key: &str, rows: &[(String, f64, String)]) -> El {
+    let max = rows.iter().map(|r| r.1).fold(0.0, f64::max).max(f64::EPSILON);
+    let mut c = col().key(key.to_string()).w_full().gap(10.0);
+    for (k, (name, v, shown)) in rows.iter().enumerate() {
+        c = c.child(
+            col().key(format!("{key}-{k}")).w_full().gap(4.0)
+                .child(row().w_full().gap(8.0).center_y()
+                    .child(label(name.clone(), type_::XS, t.foreground).truncate().grow(1.0).min_w(0.0))
+                    .child(label(shown.clone(), type_::XS.features("'tnum' 1"), t.muted_foreground)))
+                .child(row().w_full().h(6.0).radius(3.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((v / max) as f32).h_full().radius(3.0).fill(t.primary_ink.alpha(0.85)))),
+        );
+    }
+    c
+}
+
+/// Every number of a report against the period before, as paired bars.
+fn compare_list(t: &Theme, key: &str, r: &Report) -> El {
+    let mut c = col().key(key.to_string()).w_full().gap(14.0);
+    for (k, m) in r.metrics.iter().enumerate() {
+        let (Some(now), Some(d)) = (number(&m.value), m.delta) else { continue };
+        let before = if (1.0 + d).abs() > f64::EPSILON { now / (1.0 + d) } else { now };
+        let max = now.max(before).max(f64::EPSILON);
+        let line = |v: f64, ink: Color| row().w_full().h(8.0).radius(4.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((v / max) as f32).h_full().radius(4.0).fill(ink));
+        c = c.child(
+            col().key(format!("{key}-{k}")).w_full().gap(5.0)
+                .child(row().w_full().gap(8.0).center_y()
+                    .child(label(m.label.clone(), type_::XS, t.foreground).grow(1.0).min_w(0.0))
+                    .child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), if d >= 0.0 { t.supported } else { t.wrong })))
+                .child(line(now, t.primary_ink))
+                .child(line(before, t.muted_foreground.alpha(0.45))),
+        );
+    }
+    c.child(row().gap(14.0).pt(2.0)
+        .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.primary_ink)).child(label("This period", type_::XS2, t.muted_foreground)))
+        .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.muted_foreground.alpha(0.45))).child(label("Period before", type_::XS2, t.muted_foreground))))
+}
+
 // ---- Summary ----------------------------------------------------------------
 
 fn summary(s: &App, t: &Theme, i: &Insights) -> El {
@@ -171,13 +287,20 @@ fn summary(s: &App, t: &Theme, i: &Insights) -> El {
     // itself, then the panels.
     let mut c = col().w_full().gap(16.0);
     c = c.child(health(s, t, i));
-    c = c.child(goal_card(s, t, i).mb(16.0));
+    c = c.child(card(t).key("goal-card").h(420.0).px(24.0).py(20.0).clip_rounded(12.0).child(goal_card(s, t, i)));
+    let mut boards = Vec::new();
     if !i.initiatives.is_empty() {
-        c = c.child(initiatives(t, i));
+        boards.push(initiatives(t, i));
+    }
+    if let Ok(a) = &i.analytics {
+        boards.push(questions(t, a, i.days));
+    }
+    if !boards.is_empty() {
+        c = c.child(grid(boards));
     }
     if let Ok(a) = &i.analytics {
         let st = discovery::stats(a);
-        c = c.child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(discovery::accuracy_by_model(t, a, &st)));
+        c = c.child(discovery::accuracy_by_model(t, a, &st));
     }
     c
 }
@@ -291,61 +414,51 @@ fn health(_s: &App, t: &Theme, i: &Insights) -> El {
 }
 
 fn initiatives(t: &Theme, i: &Insights) -> El {
-    let mut p = panel(t, "initiatives", "Work in progress", Some("Ideas you approved or that wait on you, and whether the work was done.".into()));
     let mut list = col().w_full();
     let n = i.initiatives.len();
     for (k, x) in i.initiatives.iter().enumerate() {
         let (ink, soft, state) = match (x.status.as_str(), x.progress.as_str()) {
             ("APPROVED", "EXECUTED") => (t.supported, t.supported_soft, "Done, measuring"),
-            ("APPROVED", _) => (t.review, t.review_soft, "Approved, not done yet"),
-            ("PROPOSED", _) => (t.partial, t.partial_soft, "Waiting for your decision"),
+            ("APPROVED", _) => (t.review, t.review_soft, "Approved, to do"),
+            ("PROPOSED", _) => (t.partial, t.partial_soft, "Needs your OK"),
             ("REVIEWED", _) => (t.supported, t.supported_soft, "Reviewed"),
             ("CANCELLED", _) => (t.muted_foreground, t.accent, "Declined"),
-            _ => (t.muted_foreground, t.accent, "Discovered"),
+            _ => (t.muted_foreground, t.accent, "Idea"),
         };
         let mut r = row()
             .key(format!("initiative-{k}"))
             .w_full()
-            .py(10.0)
+            .h(44.0)
             .gap(12.0)
             .center_y()
-            .child(label(x.title.clone(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+            .child(label(x.title.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
             .child(crate::ui::widgets::status_chip(state, ink, soft));
         if k + 1 < n {
             r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
         }
         list = list.child(r);
     }
-    p = p.child(list);
-    p
+    board(t, "initiatives", "Work in progress", Some("What you approved, what waits on you, and what is done".into()), 340.0, list)
 }
 
 fn questions(t: &Theme, a: &Analytics, days: u32) -> El {
-    let p = panel(t, "questions", "Buyer questions", Some(format!("What buyers ask AI assistants, and how the answers held up. Last {days} days.")));
     if a.questions.is_empty() {
-        return p.child(note(t, "No questions were checked in this period."));
+        return board(t, "questions", "Buyer questions", Some(format!("Last {days} days")), 340.0, note(t, "No questions were asked in this period."));
     }
-    let now = format::now();
-    let mut list = col().w_full().gap(12.0);
-    for (k, q) in a.questions.iter().take(8).enumerate() {
+    let mut list = col().w_full().gap(14.0);
+    for (k, q) in a.questions.iter().take(12).enumerate() {
         list = list.child(
             col()
                 .key(format!("question-{k}"))
                 .w_full()
                 .gap(6.0)
-                .child(label(q.prompt.clone(), type_::SM, t.foreground).wrap())
-                .child(
-                    row()
-                        .w_full()
-                        .gap(10.0)
-                        .center_y()
-                        .child(charts::verdict_bar(t, &q.v, 120.0))
-                        .child(label(verdict_hint(&q.v), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
-                        .child(label(format!("{}, {}", plural(q.checks, "check", "checks"), format::relative(q.last_checked.as_deref(), now)), type_::XS, t.muted_foreground)),
-                ),
+                .child(row().w_full().gap(8.0).center_y()
+                    .child(label(q.prompt.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
+                    .child(label(plural(q.checks, "answer", "answers"), type_::XS.features("'tnum' 1"), t.muted_foreground)))
+                .child(charts::verdict_bar_fill(t, &q.v).w_full().h(6.0)),
         );
     }
-    p.grow(1.0).min_w(360.0).child(list)
+    board(t, "questions", "Buyer questions", Some(format!("How assistants answered each one, last {days} days")), 340.0, list)
 }
 
 // ---- AI discovery -----------------------------------------------------------
@@ -367,9 +480,9 @@ fn answers(s: &App, t: &Theme, i: &Insights) -> El {
                             .child(label("AI answer details", type_::SM_MEDIUM, t.foreground).role("heading"))
                             .child(label(format!("Which providers answered, what buyers asked, and the sources they cited, last {} days", i.days), type_::XS, t.muted_foreground)),
                     )
-                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(discovery::answer_collection(t, &st, i.days)).child(discovery::accuracy_by_model(t, a, &st)))
-                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(questions(t, a, i.days)).child(discovery::citations(s, t, a, i.days)))
-                    .child(row().w_full().gap(16.0).items_start().flex_wrap().child(facts(t, a))),
+                    .child(grid(vec![fixed(discovery::answer_collection(t, &st, i.days), "fx-collection"), fixed(discovery::accuracy_by_model(t, a, &st), "fx-models")]))
+                    .child(grid(vec![questions(t, a, i.days), fixed(discovery::citations(s, t, a, i.days), "fx-citations")]))
+                    .child(grid(vec![fixed(facts(t, a), "fx-facts")])),
             );
         }
         Err(e) => c = c.child(panel(t, "answers-failed", "Answer analytics could not load", Some(e.clone()))),
@@ -377,32 +490,52 @@ fn answers(s: &App, t: &Theme, i: &Insights) -> El {
     c
 }
 
+/// A share as a tile: the percentage, what it is out of, and a bar.
+fn share_tile(t: &Theme, key: &str, name: &str, part: Option<(f64, f64)>, of: &str) -> El {
+    let (value, sub, frac) = match part {
+        Some((n, d)) if d > 0.0 => (format!("{:.0}%", n / d * 100.0), format!("{} of {} {of}", int(n), int(d)), (n / d) as f32),
+        _ => ("No data".into(), "Not measured yet".into(), 0.0),
+    };
+    card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(170.0).h(128.0).px(18.0).py(16.0).gap(6.0)
+        .child(label(name.to_string(), type_::XS_MEDIUM, t.muted_foreground).truncate())
+        .child(label(value, rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))
+        .child(el().grow(1.0))
+        .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.06)).child(el().w_frac(frac.clamp(0.0, 1.0)).h_full().radius(2.0).fill(t.primary_ink)))
+        .child(label(sub, type_::XS.features("'tnum' 1"), t.muted_foreground).truncate())
+}
+
+/// "n of d" back into numbers.
+fn of_pair(s: &str) -> Option<(f64, f64)> {
+    let (n, d) = s.split_once(" of ")?;
+    Some((n.trim().replace(',', "").parse().ok()?, d.trim().replace(',', "").parse().ok()?))
+}
+
+/// What AI assistants say about you, and visits they sent, as four tiles.
 fn discovery_panel(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
-    let p = panel(t, "discovery", "AI discovery and referrals", Some("What sampled AI answers say, and separately, visits attributed to AI assistants.".into()));
-    match d {
-        Err(_) => p.child(note(t, "AI discovery evidence is unavailable. This does not mean there are no results.")),
-        Ok(None) => p.child(note(t, "AI answer discovery: not measured yet. AI-attributed website sessions and signups: not measured.")),
-        Ok(Some(d)) => {
-            let mut c = col().w_full().gap(12.0);
-            c = c.child(match &d.period {
-                Some((surface, reviewed, mentions, owned, range)) => col()
-                    .gap(4.0)
-                    .child(label(format!("AI answers on {surface}"), type_::SM_MEDIUM, t.foreground))
-                    .child(note(t, &format!("Reviewed: {reviewed} successful samples. Confirmed mentions: {mentions} clear mention reviews. Owned-site citations: {owned} successful samples.")))
-                    .child(label(format!("{range}. Citations are reported by the provider, not verified support."), type_::XS, t.muted_foreground).wrap()),
-                None => note(t, "AI answer discovery: not measured yet."),
-            });
-            c = c.child(match &d.referral {
-                Some(r) => col()
-                    .gap(4.0)
-                    .child(label("AI-attributed website sessions, from a GA4 export", type_::SM_MEDIUM, t.foreground))
-                    .child(note(t, r))
-                    .child(label("A separate data source: it does not show that a sampled AI answer caused a visit or signup.", type_::XS, t.muted_foreground).wrap()),
-                None => note(t, "AI-attributed website sessions and signups: not measured."),
-            });
-            p.child(c)
-        }
-    }
+    let d = match d {
+        Ok(Some(d)) => d,
+        Ok(None) => return label("Nothing measured yet. Answers and visits from AI assistants show here once they are checked.", type_::SM_13, t.muted_foreground).wrap(),
+        Err(_) => return label("This could not load right now. That does not mean there is nothing to show.", type_::SM_13, t.muted_foreground).wrap(),
+    };
+    let (surface, range) = d.period.as_ref().map(|p| (p.0.clone(), p.4.clone())).unwrap_or_default();
+    let mentions = d.period.as_ref().and_then(|p| of_pair(&p.2));
+    let cited = d.period.as_ref().and_then(|p| of_pair(&p.3));
+    let visits = d.referral.as_ref().map(|r| (r.0, r.1));
+    let signups = d.referral.as_ref().and_then(|r| r.3);
+    let signup_tile = card(t).key("ai-signups").w(0.0).grow(1.0).min_w(170.0).h(128.0).px(18.0).py(16.0).gap(6.0)
+        .child(label("Sign-ups after those visits", type_::XS_MEDIUM, t.muted_foreground).truncate())
+        .child(label(signups.map(int).unwrap_or_else(|| "No data".into()), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))
+        .child(el().grow(1.0))
+        .child(label(d.referral.as_ref().map(|r| r.2.clone()).unwrap_or_else(|| "Not measured yet".into()), type_::XS, t.muted_foreground).truncate());
+    col().key("discovery").w_full().gap(10.0)
+        .child(row().w_full().gap(16.0).flex_wrap()
+            .child(share_tile(t, "ai-mentions", "Answers that mention you", mentions, "answers"))
+            .child(share_tile(t, "ai-cited", "Answers that link to your site", cited, "answers"))
+            .child(share_tile(t, "ai-visits", "Visits from AI assistants", visits, "visits"))
+            .child(signup_tile))
+        .child(label(
+            if surface.is_empty() { "Visits come from your Google Analytics export and are counted separately from the answers.".to_string() } else { format!("Answers from {surface}, {range}. Visits come from your Google Analytics export and are counted separately.") },
+            type_::XS, t.muted_foreground).wrap())
 }
 
 fn facts(t: &Theme, a: &Analytics) -> El {
@@ -434,87 +567,78 @@ fn facts(t: &Theme, a: &Analytics) -> El {
 
 // ---- Performance and revenue ------------------------------------------------
 
+/// One connected account: its key numbers as tiles, then its top rows as bars
+/// beside every number against the period before.
 fn report(t: &Theme, key: &str, r: &Report) -> El {
-    let mut p = panel(t, key, &r.title, Some(r.subtitle.clone()));
-    let mut tiles = row().w_full().gap(12.0).flex_wrap();
-    for (k, m) in r.metrics.iter().enumerate() {
-        let mut c = col().key(format!("{key}-metric-{k}")).grow(1.0).min_w(150.0).px(14.0).py(12.0).gap(4.0).radius(10.0).fill(t.accent.alpha(0.5)).child(label(m.label.clone(), type_::XS, t.muted_foreground));
-        let mut v = row().gap(8.0).items_end().child(label(m.value.clone(), type_::BASE_MEDIUM.features("'tnum' 1"), t.foreground));
-        if let Some(d) = m.delta {
-            v = v.child(delta(t, change_text(d), None));
-        }
-        c = c.child(v);
-        tiles = tiles.child(c);
+    let mut tiles = row().w_full().gap(16.0).flex_wrap();
+    for (k, m) in r.metrics.iter().take(4).enumerate() {
+        let lower_is_better = m.label.to_lowercase().contains("position") || m.label.to_lowercase().contains("cost per") || m.label.to_lowercase().contains("refund");
+        tiles = tiles.child(stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !lower_is_better));
     }
-    p = p.child(tiles);
+    let mut boards = Vec::new();
     if let Some((head, rows)) = &r.table {
-        let mut table = col().w_full();
-        let cells = |cols: &Vec<String>, style: rune::TextStyle, ink: Color| {
-            let mut r = row().w_full().py(8.0).gap(12.0).center_y();
-            for (i, c) in cols.iter().enumerate() {
-                let cell = label(c.clone(), style, ink).truncate();
-                r = r.child(if i == 0 { cell.grow(1.0).min_w(0.0) } else { cell.w(96.0) });
-            }
-            r
-        };
-        table = table.child(cells(head, type_::XS_MEDIUM, t.muted_foreground).border_sides([0.0, 0.0, 1.0, 0.0], t.border));
-        for row_ in rows {
-            table = table.child(cells(row_, type_::SM_13, t.foreground).border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6)));
+        let ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
+            let v = row_.get(1)?;
+            Some((row_.first()?.clone(), number(v)?, format!("{} {}", v, head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())))
+        }).collect();
+        if !ranked.is_empty() {
+            boards.push(board(t, &format!("{key}-top"), head.first().map(String::as_str).unwrap_or("Top"), Some(format!("Ranked by {}", head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())), 340.0, bar_list(t, &format!("{key}-bars"), &ranked)));
         }
-        p = p.child(table);
+    }
+    if r.metrics.iter().any(|m| m.delta.is_some()) {
+        boards.push(board(t, &format!("{key}-compare"), "Against the period before", Some("Same length, just before this one".into()), 340.0, compare_list(t, &format!("{key}-cmp"), r)));
+    }
+    let mut c = col().key(key.to_string()).w_full().gap(16.0)
+        .child(row().w_full().gap(10.0).center_y()
+            .child(el().size(8.0, 8.0).radius(4.0).fill(t.supported))
+            .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).role("heading"))
+            .child(label(r.subtitle.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0)))
+        .child(tiles);
+    if !boards.is_empty() {
+        c = c.child(grid(boards));
     }
     if let Some(n) = &r.note {
-        p = p.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
+        c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
     }
-    p
+    c
 }
 
+/// A source that isn't connected yet: one quiet row with the way to connect it.
 fn source(t: &Theme, key: &str, title: &str, src: &Source) -> El {
     match src {
         Source::Reports(list) => {
-            let mut c = col().w_full().gap(16.0);
+            let mut c = col().w_full().gap(40.0);
             for (k, r) in list.iter().enumerate() {
                 c = c.child(report(t, &format!("{key}-{k}"), r));
             }
             c
         }
-        Source::NotConnected(why) => panel(t, key, title, None).child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .center_y()
-                .child(label("Not connected", type_::XS_MEDIUM, t.muted_foreground).px(8.0).py(2.0).radius(10.0).fill(t.accent))
-                .child(label(why.clone(), type_::SM_13, t.muted_foreground).wrap().grow(1.0).min_w(0.0)),
-        ),
-        Source::Failed(e) => panel(t, key, title, Some(e.clone())),
+        Source::NotConnected(why) => shadows(row().key(key.to_string()).w_full().h(76.0).px(20.0).radius(12.0).fill(t.card).gap(14.0).center_y(), &t.card_shadow)
+            .child(el().size(8.0, 8.0).radius(4.0).fill(t.muted_foreground.alpha(0.5)))
+            .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(title.to_string(), type_::SM_MEDIUM, t.foreground)).child(label(why.clone(), type_::XS, t.muted_foreground).truncate()))
+            .child(button(t, &format!("{key}-connect"), "Connect", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))),
+        Source::Failed(e) => shadows(row().key(key.to_string()).w_full().h(76.0).px(20.0).radius(12.0).fill(t.card).gap(14.0).center_y(), &t.card_shadow)
+            .child(el().size(8.0, 8.0).radius(4.0).fill(t.wrong))
+            .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(format!("{title} could not load"), type_::SM_MEDIUM, t.foreground)).child(label(e.clone(), type_::XS, t.muted_foreground).truncate())),
     }
 }
 
 fn performance(t: &Theme, i: &Insights) -> El {
     col()
         .w_full()
-        .gap(16.0)
-        .child(intro(t, "Each source below has its own date range and attribution. Results appear when its account is connected. Platform conversions are kept separate."))
+        .gap(40.0)
         .child(source(t, "search", "Google Search", &i.search))
-        .child(source(t, "ads", "Advertising", &i.ads))
+        .child(source(t, "ads", "Ads", &i.ads))
         .child(source(t, "local", "Google Business Profile", &i.local))
+        .child(label("Each source counts in its own way and over its own dates, so their numbers are never added together.", type_::XS, t.muted_foreground).wrap())
 }
 
 fn revenue(t: &Theme, i: &Insights) -> El {
     col()
         .w_full()
-        .gap(16.0)
-        .child(intro(t, "Revenue appears when Stripe is connected. Orders and refunds are reported separately from marketing attribution."))
+        .gap(24.0)
         .child(source(t, "revenue", "Stripe", &i.revenue))
-}
-
-fn intro(t: &Theme, text_: &str) -> El {
-    card(t)
-        .px(20.0)
-        .py(16.0)
-        .gap(12.0)
-        .child(note(t, text_))
-        .child(row().child(button(t, "manage-accounts", "Manage accounts", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))))
+        .child(label("Sales come straight from Stripe. They show what was paid, not which marketing brought it in.", type_::XS, t.muted_foreground).wrap())
 }
 
 // ---- Funnel, events, realtime -----------------------------------------------

@@ -618,7 +618,7 @@ fn insights() -> Insights {
         health: insights::Health { sources: 5, in_sync: 4, drift: 1, inspected: true, open_findings: 3, urls_inspected: 12, verified_fixes: 1 },
         discovery: Ok(Some(insights::Discovery {
             period: Some(("ChatGPT search".into(), "38 of 40".into(), "21 of 38".into(), "9 of 38".into(), "2026-10-27 to 2026-11-09".into())),
-            referral: Some("412 of 9,830 sessions, 2026-10-01 to 2026-10-31. 23 signups reported.".into()),
+            referral: Some((412.0, 9830.0, "2026-10-01 to 2026-10-31".into(), Some(23.0))),
             limitations: vec![],
         })),
         search: reports(Report {
