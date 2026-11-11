@@ -3,14 +3,19 @@
 // connection is pinned to it. Redirects are not followed. The credential is
 // added here and nowhere else, and anything echoed back is scrubbed of it.
 import { isForbiddenIp, readCapped, defaultTransport, type HttpTransport } from "@openrecord/representation"
-import type { Provider, Request } from "./types.js"
+import { ACCOUNT_HOST, type Provider, type Request } from "./types.js"
 
 export type CallFailure = "NOT_ALLOWED" | "NOT_PUBLIC" | "AUTH" | "FORBIDDEN" | "NOT_FOUND" | "RATE_LIMITED" | "REDIRECTED" | "INVALID_REQUEST" | "UNAVAILABLE" | "MALFORMED" | "NOT_CONFIGURED"
 export type CallResult = { readonly ok: true; readonly json: unknown } | { readonly ok: false; readonly failure: CallFailure; readonly retryAfterS: number | null }
 
 const MAX_RESPONSE = 6_000_000
 const fail = (failure: CallFailure, retryAfterS: number | null = null): CallResult => ({ ok: false, failure, retryAfterS })
-export const hostAllowed = (provider: Provider, url: string) => { try { const u = new URL(url); return u.protocol === "https:" && provider.hosts.includes(u.hostname.toLowerCase()) } catch { return false } }
+export const hostAllowed = (provider: Provider, url: string) => {
+  try {
+    const u = new URL(url), host = u.hostname.toLowerCase()
+    return u.protocol === "https:" && (provider.hosts.includes(host) || (provider.accountHost?.pattern.test(host) ?? false))
+  } catch { return false }
+}
 
 /** Removes a credential from any text that might echo it (error bodies, next-page links). */
 export const scrub = <T>(value: T, secrets: ReadonlyArray<string>): T => {
@@ -27,6 +32,13 @@ export interface Credentials { readonly secret: string | null; readonly bearer?:
 /** Builds the final request: query, credential, required headers. */
 export const prepare = (provider: Provider, req: Request, creds: Credentials, env: NodeJS.ProcessEnv) => {
   const url = new URL(req.url)
+  // An API on the account's own host: the host comes from the credential.
+  if (url.hostname === ACCOUNT_HOST) {
+    const split = provider.accountHost && creds.secret ? provider.accountHost.split(creds.secret.trim()) : null
+    if (!split || !provider.accountHost!.pattern.test(split.host.toLowerCase())) return { refused: "NOT_CONFIGURED" as const }
+    url.hostname = split.host.toLowerCase()
+    creds = { ...creds, secret: split.secret }
+  }
   for (const [k, v] of Object.entries(req.query ?? {})) if (v !== undefined && v !== "") url.searchParams.set(k, String(v))
   const headers: Record<string, string> = { accept: "application/json", "user-agent": "OpenRecord-Research/1", ...(req.headers ?? {}) }
   const required = provider.headers ? provider.headers(env) : {}
@@ -75,11 +87,11 @@ export async function send(provider: Provider, prepared: { url: string; method: 
 }
 
 /** Client credentials grant: exchanges "id:secret" for a short-lived token. */
-export async function clientToken(provider: Provider, tokenUrl: string, secret: string, transport?: HttpTransport): Promise<string | null> {
+export async function clientToken(provider: Provider, tokenUrl: string, secret: string, transport?: HttpTransport, scope?: string): Promise<string | null> {
   const [id, key] = secret.split(":")
   if (!id || !key) return null
   const r = await send({ ...provider, hosts: [...provider.hosts, new URL(tokenUrl).hostname] }, {
-    url: tokenUrl, method: "POST", body: "grant_type=client_credentials",
+    url: tokenUrl, method: "POST", body: `grant_type=client_credentials${scope ? `&scope=${encodeURIComponent(scope)}` : ""}`,
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded", "user-agent": "OpenRecord-Research/1", authorization: `Basic ${Buffer.from(`${id}:${key}`).toString("base64")}` },
   }, transport)
   const token = r.ok ? (r.json as { access_token?: unknown }).access_token : null
