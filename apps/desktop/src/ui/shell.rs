@@ -300,7 +300,11 @@ fn chat_history(s: &App, t: &Theme) -> El {
                 .role("button")
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
-                .on_press(|s: &mut App| s.show_all_chats = !s.show_all_chats)
+                // Showing more or fewer chats lands at once; the rows' hover keeps its easing.
+                .on_press_tx(|s: &mut App, tx| {
+                    tx.instant();
+                    s.show_all_chats = !s.show_all_chats;
+                })
                 .child(label(text_, type_::SM_13, t.muted_foreground)),
         );
     }

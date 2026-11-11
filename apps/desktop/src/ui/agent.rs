@@ -4,7 +4,7 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Cursor, El, GrowthSpec, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune::{Align, Cursor, El, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
 use rune_kit::{Dialog, Kit, Markdown, Menu, MenuItem, Placement};
 
 use crate::api::Message;
@@ -21,8 +21,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
     let messages = s.transcript();
 
-    // A growth stack: a message added to it eases in instead of jumping in.
-    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0).growth(GrowthSpec::default());
+    // Messages land where they belong: no rise and no glide, so opening a chat
+    // or starting a turn never slides the column up the window.
+    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0);
     match &s.conversation {
         Load::Loading if messages.is_empty() => {
             list = list.child(label("Opening the chat…", type_::SM_13, t.muted_foreground).key("chat-loading"));
@@ -251,17 +252,7 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
         )
 }
 
-// ---- Motion (the web's `step-in`, `bubble-in` and `chip-in`) ----------------
-
-/// A finished step slides up 4 points out of a blur as it lands.
-fn step_in() -> Transition {
-    Transition::offset(0.0, 4.0).combined(Transition::opacity()).combined(Transition::blur(2.0))
-}
-
-/// A new message rises 6 points and fades in.
-fn bubble_in() -> Transition {
-    Transition::offset(0.0, 6.0).combined(Transition::opacity()).combined(Transition::scale(0.985))
-}
+// ---- Motion (the web's `chip-in`) -------------------------------------------
 
 /// Chips follow one another in, 50 milliseconds apart.
 fn chip_in(el_: El, n: usize) -> El {
@@ -310,7 +301,7 @@ fn task_statuses(messages: &[Message]) -> std::collections::HashMap<String, Stri
 
 fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
     let user = m.role == "user";
-    let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group().transition(bubble_in());
+    let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group();
     c = if user { c.items_end() } else { c.items_start() };
     if let Some(o) = &m.origin {
         c = c.child(row().gap(4.0).center_y().child(ico(&icons::CORNER_DOWN_RIGHT, 12.0, t.muted_foreground)).child(label(o.text(), type_::XS11, t.muted_foreground)));
@@ -489,7 +480,7 @@ fn tools_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, l
     let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
     let mut rail = col().key(format!("{key}-rail")).w_full().child(line);
     for (j, a) in list.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")).transition(step_in()));
+        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")));
     }
     let body = col().key(format!("{key}-steps")).w_full().mt(2.0).pb(8.0).mb(4.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6)).child(rail);
     let mut c = col().key(format!("{key}-group")).w_full().clip_soft(0.0).child(head).child(folding(format!("{key}-box"), open, body));
@@ -614,7 +605,7 @@ fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: boo
     let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
     let mut rail = col().key("live-steps").w_full().mt(4.0).label("Steps so far").child(line);
     for (i, a) in p.trace.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("live-step-{i}")).transition(step_in()));
+        rail = rail.child(step(t, a).key(format!("live-step-{i}")));
     }
     // The step under way re-enters whenever the agent moves to another tool.
     let now = shimmer(t, "live-now-text", &p.live(), type_::SM, reduce);
@@ -622,7 +613,7 @@ fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: boo
         Some(tool) => log_row(t, row().size(24.0, 24.0).center().child(live_ring(t)).child(ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7))), now, true, false),
         None => log_row(t, thinking_glyph(t, Some(ms), reduce), now, false, false),
     };
-    rail = rail.child(live.key(format!("live:{}:{}", p.trace.len(), tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).transition(step_in()));
+    rail = rail.child(live.key(format!("live:{}:{}", p.trace.len(), tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))));
     col()
         .key("working")
         .w_full()

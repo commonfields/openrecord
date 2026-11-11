@@ -1394,6 +1394,8 @@ impl App {
         let out = crate::chat::Outgoing { message: text, selection: self.turn_selection(), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
         self.attach_error = None;
         self.net.send(business, conversation, out);
+        // The sent message and the bottom of the chat land at once, with no glide up.
+        tx.instant();
         tx.scroll_to_bottom("transcript");
     }
 
@@ -1540,6 +1542,7 @@ impl App {
                         }
                     }
                     self.conversation = Load::Ready(c);
+                    tx.instant();
                     tx.scroll_to_bottom("transcript");
                     // The reply is in and the revision current: the next queued message goes.
                     if matches!(self.turn, Turn::Idle) && !self.queued.is_empty() {
