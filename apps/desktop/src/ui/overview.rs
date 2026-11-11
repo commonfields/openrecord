@@ -156,7 +156,7 @@ fn verdict_hint(v: &Verdicts) -> String {
     if v.unreviewed > 0 {
         parts.push(format!("{} to review", v.unreviewed));
     }
-    if parts.is_empty() { if v.total() > 0 { "Every judged answer was supported".into() } else { "No answers checked yet".into() } } else { parts.join(", ") }
+    if parts.is_empty() { if v.total() > 0 { "Every rated answer was correct".into() } else { "No answers checked yet".into() } } else { parts.join(", ") }
 }
 
 fn note(t: &Theme, text_: &str) -> El {
@@ -390,7 +390,7 @@ fn health(_s: &App, t: &Theme, i: &Insights) -> El {
         .child(tile(
             t,
             "health-sources",
-            "Sources in sync",
+            "Pages that match your facts",
             if h.sources > 0 { format!("{} of {}", h.in_sync, h.sources) } else { "—".into() },
             Some(sources_hint),
             None,
@@ -646,7 +646,7 @@ fn revenue(t: &Theme, i: &Insights) -> El {
 fn funnel(t: &Theme, i: &Insights) -> El {
     let goal = i.goal.as_ref().ok().and_then(Option::as_ref);
     let rows: [(&str, String, Section, &str); 3] = [
-        ("Discovery", "Search visibility, ad performance and AI answer evidence.".into(), Section::Performance, "View performance"),
+        ("Discovery", "Search, ads and what AI assistants say.".into(), Section::Performance, "View performance"),
         (
             "Goal action",
             match goal {

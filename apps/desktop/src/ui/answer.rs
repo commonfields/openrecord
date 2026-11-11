@@ -61,9 +61,9 @@ fn top_bar(s: &App, t: &Theme) -> El {
 pub fn tone(t: &Theme, state: &str) -> (rune::Color, rune::Color, &'static str) {
     match state {
         "WRONG" => (t.wrong, t.wrong_soft, "Wrong"),
-        "PARTIAL" => (t.partial, t.partial_soft, "Partially correct"),
-        "UNKNOWN" => (t.unknown, t.unknown_soft, "Not enough information"),
-        "RESOLVED" => (t.supported, t.supported_soft, "Supported"),
+        "PARTIAL" => (t.partial, t.partial_soft, "Partly right"),
+        "UNKNOWN" => (t.unknown, t.unknown_soft, "Can't tell"),
+        "RESOLVED" => (t.supported, t.supported_soft, "Correct"),
         _ => (t.review, t.review_soft, "Needs review"),
     }
 }
@@ -146,12 +146,12 @@ fn compared(t: &Theme, d: &AnswerDetail) -> El {
     body = body.child(match &i.verdict {
         Some(v) => {
             let (ink, soft) = verdict_tone(t, v);
-            row().gap(8.0).center_y().child(label("Verdict", type_::XS_MEDIUM, t.muted_foreground)).child(status_chip(verdict_label(v), ink, soft))
+            row().gap(8.0).center_y().child(label("Your rating", type_::XS_MEDIUM, t.muted_foreground)).child(status_chip(verdict_label(v), ink, soft))
         }
-        None => label("Not reviewed yet. Record a verdict to link the facts it touches.", type_::SM_13, t.muted_foreground).wrap(),
+        None => label("Not rated yet. Rate it to link the facts it touches.", type_::SM_13, t.muted_foreground).wrap(),
     });
     if i.verdict.is_some() && i.facts.is_empty() {
-        body = body.child(label("No approved fact was linked to this verdict.", type_::XS, t.muted_foreground).wrap());
+        body = body.child(label("No fact was linked to this rating.", type_::XS, t.muted_foreground).wrap());
     }
     for f in &i.facts {
         body = body.child(fact_line(t, &f.predicate, &f.value_text, f.version));
@@ -206,7 +206,7 @@ fn host(uri: &str) -> String {
 
 /// The verdict form, or the verdict it has with a way to change it.
 fn review(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
-    let c = section(t, "answer-review", "Review", Some("Judge the claim against your approved facts. Supported claims leave the AI answers list."));
+    let c = section(t, "answer-review", "Review", Some("Compare what the assistant said with your facts. Answers you mark correct leave this list."));
     if !a.reviewing {
         let v = d.issue.verdict.as_deref().unwrap_or_default();
         let (ink, soft) = verdict_tone(t, v);
@@ -220,12 +220,12 @@ fn review(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
                 .child(label("Recorded as", type_::SM_13, t.muted_foreground))
                 .child(status_chip(verdict_label(v), ink, soft))
                 .child(el().grow(1.0))
-                .child(button(t, "change-verdict", "Change verdict", Variant::Outline).on_press(|s: &mut App| s.start_review())),
+                .child(button(t, "change-verdict", "Change rating", Variant::Outline).on_press(|s: &mut App| s.start_review())),
         );
     }
     let mut body = col().w_full().gap(14.0).px(18.0).py(14.0);
     // The four verdicts, two to a row.
-    let mut grid = row().w_full().gap(8.0).flex_wrap().role("radiogroup").label("Verdict");
+    let mut grid = row().w_full().gap(8.0).flex_wrap().role("radiogroup").label("Rating");
     for (value, name, hint) in VERDICTS {
         let on = a.verdict == Some(value);
         let (ink, soft) = verdict_tone(t, value);
@@ -250,11 +250,11 @@ fn review(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
         opt = if on { opt.fill(soft).border(1.0, ink.alpha(0.5)) } else { shadows(opt.fill(t.control).hover(t.hover_tint), &t.control_shadow) };
         grid = grid.child(opt);
     }
-    body = body.child(col().w_full().gap(6.0).child(label("Verdict", type_::XS_MEDIUM, t.muted_foreground)).child(grid));
+    body = body.child(col().w_full().gap(6.0).child(label("Rating", type_::XS_MEDIUM, t.muted_foreground)).child(grid));
     body = body.child(fact_picker(t, a, &d.facts));
     let notes = text_input(&a.notes, type_::SM)
         .key("verdict-notes")
-        .placeholder("Optional. What should a teammate know about this verdict?", t.muted_foreground)
+        .placeholder("Optional. A note for your team", t.muted_foreground)
         .label("Reviewer notes")
         .w_full()
         .color(t.foreground)
@@ -268,16 +268,16 @@ fn review(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
     if d.issue.verdict.is_some() {
         bar = bar.child(button(t, "verdict-cancel", "Cancel", Variant::Outline).on_press(|s: &mut App| s.cancel_review()));
     }
-    let submit = button(t, "verdict-record", if a.judging { "Recording…" } else { "Record verdict" }, Variant::Primary).disabled(!ready);
+    let submit = button(t, "verdict-record", if a.judging { "Saving…" } else { "Save rating" }, Variant::Primary).disabled(!ready);
     bar = bar.child(if ready { submit.on_press(|s: &mut App| s.record_verdict()) } else { submit.opacity(0.5).cursor(Cursor::Default) });
     let _ = s;
     c.child(body.child(bar))
 }
 
 fn fact_picker(t: &Theme, a: &AnswerView, facts: &[Fact]) -> El {
-    let mut c = col().w_full().gap(6.0).child(label("Approved facts this claim touches", type_::XS_MEDIUM, t.muted_foreground));
+    let mut c = col().w_full().gap(6.0).child(label("Facts this touches", type_::XS_MEDIUM, t.muted_foreground));
     if facts.is_empty() {
-        return c.child(label("No active facts yet. Add them on the web under Approved facts, or record Not enough information.", type_::SM_13, t.muted_foreground).wrap());
+        return c.child(label("No facts yet. Add them on the web under Approved facts, or rate it Can't tell.", type_::SM_13, t.muted_foreground).wrap());
     }
     let mut list = col().w_full().gap(2.0);
     for f in facts {
@@ -315,7 +315,7 @@ fn field(t: &Theme, input: El) -> El {
 
 /// The hand-kept log of what was done about the claim.
 fn actions(t: &Theme, a: &AnswerView, list: &[Intervention]) -> El {
-    let toggle = button(t, "record-action", if a.recording { "Close" } else { "Record action" }, Variant::Outline).h(28.0).px(10.0).on_press_tx(|s: &mut App, tx| s.toggle_record_action(tx));
+    let toggle = button(t, "record-action", if a.recording { "Close" } else { "Log what you did" }, Variant::Outline).h(28.0).px(10.0).on_press_tx(|s: &mut App, tx| s.toggle_record_action(tx));
     let head = row()
         .w_full()
         .gap(10.0)
@@ -324,14 +324,14 @@ fn actions(t: &Theme, a: &AnswerView, list: &[Intervention]) -> El {
         .pb(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], t.border)
-        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label("Recorded actions", type_::SM_MEDIUM, t.foreground).role("heading")).child(label("A hand-kept log. It changes no verdict and no observation.", type_::XS, t.muted_foreground).wrap()))
+        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label("What you did about it", type_::SM_MEDIUM, t.foreground).role("heading")).child(label("A hand-kept log. It changes no verdict and no observation.", type_::XS, t.muted_foreground).wrap()))
         .child(toggle);
     let mut body = col().w_full().gap(12.0).px(18.0).py(14.0);
     if a.recording {
         body = body.child(action_form(t, a));
     }
     if list.is_empty() {
-        body = body.child(label("No actions recorded for this claim yet.", type_::SM_13, t.muted_foreground));
+        body = body.child(label("Nothing logged yet.", type_::SM_13, t.muted_foreground));
     }
     let superseded: std::collections::BTreeSet<&str> = list.iter().filter_map(|x| x.supersedes_id.as_deref()).collect();
     for x in list {
@@ -391,7 +391,7 @@ fn action_form(t: &Theme, a: &AnswerView) -> El {
         .on_edit(|s: &mut App| &mut s.answer.as_mut().expect("answer open").action_notes)
         .on_submit(|s: &mut App, _| s.save_action());
     let ready = !a.action_target.text.trim().is_empty() && !a.saving_action;
-    let save = button(t, "action-save", if a.saving_action { "Saving…" } else { "Record action" }, Variant::Primary).disabled(!ready);
+    let save = button(t, "action-save", if a.saving_action { "Saving…" } else { "Save" }, Variant::Primary).disabled(!ready);
     let mut c = col()
         .key("action-form")
         .w_full()

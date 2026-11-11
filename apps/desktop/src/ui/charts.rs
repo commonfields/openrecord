@@ -16,7 +16,7 @@ use crate::ui::widgets::label;
 /// The verdict colours in the web's order (`verdictSeries`), with their names.
 pub fn verdict_series(t: &Theme) -> [(&'static str, Color); 5] {
     let c = &t.chart;
-    [("Wrong", c.wrong), ("Not enough information", c.unknown), ("Partially correct", c.partial), ("Waiting for review", c.unreviewed), ("Supported", c.supported)]
+    [("Wrong", c.wrong), ("Can't tell", c.unknown), ("Partly right", c.partial), ("Not checked yet", c.unreviewed), ("Correct", c.supported)]
 }
 
 fn verdict_values(v: &Verdicts) -> [f64; 5] {

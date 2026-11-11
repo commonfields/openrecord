@@ -342,7 +342,7 @@ fn general(s: &App, t: &Theme) -> El {
                 setting(
                     t,
                     "Show issue count in sidebar",
-                    Some("The number next to AI answers counts wrong, unclear and unreviewed claims.".into()),
+                    Some("The number next to AI answers counts answers that are wrong, unclear or not rated yet.".into()),
                     Some(switch(t, "pref-count", "Show issue count in sidebar", s.prefs.show_issue_count, |s| s.set_pref(|p| p.show_issue_count = !p.show_issue_count))),
                 ),
             ],
@@ -881,7 +881,7 @@ fn privacy(t: &Theme) -> El {
             "What is kept",
             None,
             vec![
-                setting(t, "Evidence", Some("Every AI answer is stored exactly as received and cannot be edited. New verdicts are added on top, so history is never rewritten.".into()), None),
+                setting(t, "Answer history", Some("Every AI answer is kept exactly as it came in and can't be edited. New ratings are added on top, so nothing is rewritten.".into()), None),
                 setting(
                     t,
                     "Preferences",

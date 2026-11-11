@@ -51,7 +51,7 @@ fn items(s: &App) -> Vec<Item> {
             ("Channels", Go::Page(Page::Channels), &icons::GLOBE, "channels connect integrations google ads meta stripe wordpress analytics"),
             ("Work", Go::Page(Page::Campaigns), &icons::INBOX, "initiatives approvals executions campaigns"),
             ("Overview", Go::Page(Page::Overview), &icons::LAYOUT_GRID, "results today dashboard analytics overview"),
-            ("AI answers", Go::Page(Page::AiAnswers), &icons::INBOX, "wrong claims review"),
+            ("AI answers", Go::Page(Page::AiAnswers), &icons::INBOX, "wrong answers review rate"),
             ("Facts on the web", web("representations"), &icons::GLOBE, "representations sources drift in sync"),
             ("Approved facts", web("truth"), &icons::BOOK_CHECK, "truth facts approved"),
             ("AI answer checks", web("checks"), &icons::RADAR, "checks questions run"),
@@ -64,7 +64,7 @@ fn items(s: &App) -> Vec<Item> {
         }
         out.push(item("Actions", "Run a check", &icons::RADAR, "ask ai question", web("checks")));
         if let Some(next) = s.issues.ready().and_then(|l| l.iter().find(|i| i.state == "NEEDS_REVIEW")) {
-            out.push(Item { hint: Some("Oldest answers wait longest".into()), ..item("Actions", "Review the next claim", &icons::MESSAGE_QUOTE, "", Go::Claim(next.claim_id.clone())) });
+            out.push(Item { hint: Some("Oldest answers wait longest".into()), ..item("Actions", "Rate the next answer", &icons::MESSAGE_QUOTE, "", Go::Claim(next.claim_id.clone())) });
         }
     }
     out.push(item("Actions", "New business", &icons::PLUS, "set up add website", Go::Web("/start".into())));
@@ -95,7 +95,7 @@ fn items(s: &App) -> Vec<Item> {
                 hint: Some(format!("{}×", list.len())),
                 badge: Some(latest.state.clone()),
                 keywords: questions.join(" "),
-                ..item("Claims", &text, &icons::MESSAGE_QUOTE, "", Go::Claim(target.claim_id.clone()))
+                ..item("Answers", &text, &icons::MESSAGE_QUOTE, "", Go::Claim(target.claim_id.clone()))
             });
         }
         for f in s.find_facts.ready().map(|l| l.iter().collect::<Vec<_>>()).unwrap_or_default() {
@@ -121,7 +121,7 @@ pub fn results(s: &App) -> Vec<Item> {
     let all = items(s);
     let q = s.find.as_ref().map(|f| f.query.text.trim().to_lowercase()).unwrap_or_default();
     if q.is_empty() {
-        let (claims, rest): (Vec<Item>, Vec<Item>) = all.into_iter().filter(|i| i.group != "Approved facts").partition(|i| i.group == "Claims");
+        let (claims, rest): (Vec<Item>, Vec<Item>) = all.into_iter().filter(|i| i.group != "Approved facts").partition(|i| i.group == "Answers");
         return rest.into_iter().chain(claims.into_iter().take(5)).collect();
     }
     let words: Vec<&str> = q.split_whitespace().collect();

@@ -149,10 +149,10 @@ impl SettingsPage {
 
 /// A reviewer's verdict on a claim, as the web's review form offers them.
 pub const VERDICTS: [(&str, &str, &str); 4] = [
-    ("SUPPORTED", "Supported", "Matches your approved facts"),
-    ("CONTRADICTED", "Wrong", "Disagrees with an approved fact"),
-    ("PARTIAL", "Partially correct", "Some of it is right, some is not"),
-    ("INSUFFICIENT_EVIDENCE", "Not enough information", "No approved fact covers it"),
+    ("SUPPORTED", "Correct", "Matches your facts"),
+    ("CONTRADICTED", "Wrong", "Goes against one of your facts"),
+    ("PARTIAL", "Partly right", "Some of it is right, some is not"),
+    ("INSUFFICIENT_EVIDENCE", "Can't tell", "None of your facts cover it"),
 ];
 
 /// What can be recorded as done for an issue (`interventionTypes`).

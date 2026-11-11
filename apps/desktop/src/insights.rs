@@ -42,7 +42,7 @@ impl Section {
             Section::Funnel => "What you can measure across the customer journey, and what is still missing.",
             Section::Events => "Your saved goal event and its daily measurement history.",
             Section::Realtime => "Live measurement availability for this business.",
-            Section::Answers => "What AI answers say about you, buyer questions and referral evidence.",
+            Section::Answers => "What AI assistants say about you, and the visits they send.",
         }
     }
 

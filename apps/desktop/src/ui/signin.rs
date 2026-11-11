@@ -67,7 +67,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
                 col()
                     .gap(6.0)
                     .child(label("Sign in", type_::BASE_MEDIUM, t.foreground).role("heading"))
-                    .child(label("See what AI assistants are saying about your business, with the evidence.", type_::BASE, t.muted_foreground).wrap()),
+                    .child(label("See what AI assistants say about your business, and fix what they get wrong.", type_::BASE, t.muted_foreground).wrap()),
             )
             .child(form),
         &t.float_shadow,

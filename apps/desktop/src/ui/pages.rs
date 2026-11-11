@@ -322,7 +322,7 @@ fn ai_answers(s: &App, t: &Theme) -> El {
     if let Some(a) = &s.answer {
         return crate::ui::answer::view(s, t, a);
     }
-    let header = page_header(t, "AI answers", "Review open claims from AI answers. Each one shows what the assistant said and the question that drew it.");
+    let header = page_header(t, "AI answers", "What AI assistants said about you that still needs a look, with the question that prompted it.");
     let body = match &s.issues {
         Load::Ready(list) => {
             let count = |st: &str| list.iter().filter(|i| i.state == st).count().to_string();
@@ -333,10 +333,10 @@ fn ai_answers(s: &App, t: &Theme) -> El {
                 .child(stat(t, "tile-all", "All open", list.len().to_string(), None))
                 .child(stat(t, "tile-review", "Needs review", count("NEEDS_REVIEW"), Some(t.review)))
                 .child(stat(t, "tile-wrong", "Wrong", count("WRONG"), Some(t.wrong)))
-                .child(stat(t, "tile-partial", "Partially correct", count("PARTIAL"), Some(t.partial)))
-                .child(stat(t, "tile-unknown", "Not enough information", count("UNKNOWN"), Some(t.unknown)));
+                .child(stat(t, "tile-partial", "Partly right", count("PARTIAL"), Some(t.partial)))
+                .child(stat(t, "tile-unknown", "Can't tell", count("UNKNOWN"), Some(t.unknown)));
             let rows = if list.is_empty() {
-                empty_state(t, "issues-empty", &icons::CIRCLE_CHECK, "No open claims", "Every claim from the AI answers checked so far has been reviewed.", None)
+                empty_state(t, "issues-empty", &icons::CIRCLE_CHECK, "All caught up", "Every answer checked so far has been rated.", None)
             } else {
                 let mut c = card(t).clip_rounded(12.0);
                 let n = list.len();
@@ -360,7 +360,7 @@ fn issue_row(t: &Theme, i: &Issue, rule: bool) -> El {
     let mut r = col()
         .key(format!("issue-{}", i.claim_id))
         .role("button")
-        .label(format!("Open the claim {}", i.claim_text))
+        .label(format!("Open: {}", i.claim_text))
         .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)

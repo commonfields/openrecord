@@ -146,7 +146,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
     match &p.payload {
         Some(pl) => {
             let when = pl.generated_at.as_deref().map(crate::format::date_time).unwrap_or_default();
-            c = c.child(label(format!("Snapshot prepared {when}. Accepting this draft does not publish, deliver, execute or record completed work."), type_::XS, t.muted_foreground).wrap());
+            c = c.child(label(format!("Prepared {when}. Accepting it saves the draft. Nothing is published or sent."), type_::XS, t.muted_foreground).wrap());
             if let Some(text_) = pl.text.clone().filter(|x| !x.is_empty()) {
                 let copy = text_.clone();
                 let copied = s.copied == Some(usize::MAX - 2);
@@ -171,7 +171,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
                     );
             }
             if !pl.references.is_empty() {
-                let mut refs = row().w_full().gap(8.0).flex_wrap().label("Draft evidence");
+                let mut refs = row().w_full().gap(8.0).flex_wrap().label("Where this came from");
                 for (j, r) in pl.references.iter().enumerate() {
                     let mut l = label(if r.text.is_empty() { "Evidence".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
                     if let Some(u) = r.url().map(str::to_string) {
@@ -184,7 +184,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
                 c = c.child(refs);
             }
         }
-        None => c = c.child(label("Draft evidence unavailable", type_::XS, t.muted_foreground)),
+        None => c = c.child(label("Sources not available", type_::XS, t.muted_foreground)),
     }
     shadows(c, &t.card_shadow)
 }
@@ -683,7 +683,7 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
         let mut chips = row().gap(6.0).flex_wrap();
         for (j, cit) in m.citations.iter().enumerate() {
             let url = cit.url().map(str::to_string);
-            let name = if cit.text.is_empty() { url.clone().unwrap_or_else(|| "Open evidence".into()) } else { cit.text.clone() };
+            let name = if cit.text.is_empty() { url.clone().unwrap_or_else(|| "Open source".into()) } else { cit.text.clone() };
             let mut chip = row()
                 .key(format!("source-{i}-{j}"))
                 .gap(4.0)
