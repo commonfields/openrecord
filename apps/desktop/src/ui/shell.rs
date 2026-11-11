@@ -61,38 +61,24 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
     };
 
     let agent = s.view == View::Agent;
-    // A search bar that opens "Find…" (F or ⌘K anywhere). New chat sits with the
-    // chat list's filter and archive while the agent is open, here otherwise.
+    // The web's row: the Find icon on the left; the chat filter and archive (while
+    // the agent is open) and New chat on the right.
     let tools = {
+        let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
         let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat", false).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx));
+        let mut right = if open { row().gap(2.0).center_y() } else { col().gap(4.0).items_center() };
+        if agent {
+            let archived = s.show_archived;
+            let filtered = s.chat_filter.as_ref().and_then(|f| s.businesses.iter().find(|b| &b.id == f)).map(|b| b.name.clone());
+            right = right
+                .child(icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some()).on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)))
+                .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).on_press(|s: &mut App| s.toggle_archived()));
+        }
+        right = right.child(new_chat);
         if open {
-            let bar = row()
-                .key("find-trigger")
-                .grow(1.0)
-                .min_w(0.0)
-                .h(32.0)
-                .px(10.0)
-                .gap(8.0)
-                .radius(8.0)
-                .center_y()
-                .role("button")
-                .label("Find in OpenRecord (F)")
-                .focusable(true)
-                .cursor(Cursor::Pointer)
-                .fill(if s.find.is_some() { t.accent } else { t.foreground.alpha(0.04) })
-                .border(1.0, t.foreground.alpha(0.06))
-                .hover(t.hover_tint)
-                .hover_group()
-                .motion(CONTROL)
-                .on_press_tx(|s: &mut App, tx| s.toggle_find(tx))
-                .child(ico(&icons::SEARCH, 14.0, t.muted_foreground).group_color(t.foreground))
-                .child(label("Find…", type_::SM_13, t.muted_foreground).grow(1.0).min_w(0.0).truncate())
-                .child(row().min_w(18.0).h(18.0).px(4.0).radius(4.0).center().border(1.0, t.foreground.alpha(0.1)).child(label("F", type_::XS2.lh(14.0), t.muted_foreground)));
-            let r = row().w_full().gap(6.0).center_y().child(bar);
-            if agent { r } else { r.child(new_chat) }
+            row().w_full().center_y().justify_between().child(find).child(right)
         } else {
-            let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
-            col().gap(4.0).items_center().child(find).child(new_chat)
+            col().gap(4.0).items_center().child(find).child(right)
         }
     };
 
@@ -290,20 +276,11 @@ fn chat_history(s: &App, t: &Theme) -> El {
                 .child(ico(&icons::ARROW_LEFT, 14.0, t.muted_foreground)),
         );
     }
-    header = header.child(label(if archived { "Archived" } else { "Chats" }, type_::SM_MEDIUM, t.muted_foreground));
+    // As the web draws it: "Chats" on the left, the count on the right.
+    header = header.child(label(if archived { "Archived" } else { "Chats" }, type_::SM_MEDIUM, t.muted_foreground)).child(el().grow(1.0));
     if !all.is_empty() {
-        header = header.child(label(all.len().to_string(), type_::XS2.features("'tnum' 1"), t.muted_foreground).pl(4.0));
+        header = header.child(label(all.len().to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground));
     }
-    let filtered = s.chat_filter.as_ref().and_then(|f| s.businesses.iter().find(|b| &b.id == f)).map(|b| b.name.clone());
-    header = header
-        .child(el().grow(1.0))
-        .child(
-            icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some())
-                .size(24.0, 24.0)
-                .on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)),
-        )
-        .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).size(24.0, 24.0).on_press(|s: &mut App| s.toggle_archived()))
-        .child(icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat", false).size(24.0, 24.0).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx)));
 
     let mut list = col().w_full().gap(2.0);
     if archived && matches!(s.archived, crate::state::Load::Loading) && shown.is_empty() {
