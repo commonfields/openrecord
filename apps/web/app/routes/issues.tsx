@@ -45,6 +45,7 @@ import { errorMessage, formatDate, formatDateTime, relativeTime, sentenceCase } 
 import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
+import { Stagger, StaggerItem } from "@/components/motion"
 
 const PAGE_SIZE = 25
 
@@ -590,9 +591,9 @@ function AnswersTable({
         <span>Sources</span>
         <span className="text-right">Seen</span>
       </div>
-      <ul className="divide-y">
+      <Stagger className="divide-y">
         {slice.map((i) => (
-          <li key={i.claim_id}>
+          <StaggerItem key={i.claim_id}>
             <Link
               to={occurrenceHref(businessId, i, search)}
               className="grid items-center gap-x-4 gap-y-1.5 px-4 py-2.5 text-xs outline-none transition-colors hover:bg-muted/40 lg:grid-cols-[9rem_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_3rem_5rem]"
@@ -633,9 +634,9 @@ function AnswersTable({
                 {relativeTime(i.collected_at)}
               </span>
             </Link>
-          </li>
+          </StaggerItem>
         ))}
-      </ul>
+      </Stagger>
       {pages > 1 ? (
         <div className="flex items-center justify-between border-t px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span className="tabular-nums">

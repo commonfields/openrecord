@@ -51,6 +51,7 @@ import { ChatActivityProvider, chatPath, notifyAgentChats, useAgentChats, useArc
 import { ProviderLogo } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
+import { PageFade } from "@/components/motion"
 
 type SidebarState = { collapsed: boolean; inSheet: boolean }
 const SidebarStateContext = createContext<SidebarState>({ collapsed: false, inSheet: false })
@@ -285,9 +286,10 @@ export function AppShell() {
           <div ref={setHeaderSlot} className="ml-auto flex shrink-0 items-center gap-2 [&_[data-slot=button]]:h-8 [&_[data-slot=button]]:px-2.5 [&_[data-slot=button]]:text-xs [&_[data-slot=button]_svg]:size-3.5" />
         </header>
         <main className={cn("relative min-h-0 flex-1", workspace ? "overflow-hidden" : "overflow-y-auto")}>
-          <div className={cn("flex w-full flex-col", workspace ? "h-full" : cn("mx-auto min-h-full px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8", !wide && !fullWidthPage && "max-w-[1400px]"))}>
+          {/* Pages cross-fade as you move between them; the chat inside a page does not animate in. */}
+          <PageFade id={location.pathname} className={cn("flex w-full flex-col", workspace ? "h-full" : cn("mx-auto min-h-full px-4 pt-6 pb-10 sm:px-6 lg:px-10 lg:pt-8", !wide && !fullWidthPage && "max-w-[1400px]"))}>
             <Outlet />
-          </div>
+          </PageFade>
         </main>
         </div>
       </div>

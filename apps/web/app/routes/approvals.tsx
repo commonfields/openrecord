@@ -16,6 +16,7 @@ import { useApi } from "@/lib/use-api"
 import { cn } from "@/lib/utils"
 import { AskAgentButton } from "@/components/workspace-agent"
 import { decisionLabel } from "@/lib/decisions"
+import { Stagger, StaggerItem } from "@/components/motion"
 
 type InboxItem = { id: string; business: string; businessId?: string; conversationId?: string; kind: string; title: string; summary: string; time: string; detail: ReactNode }
 
@@ -90,15 +91,15 @@ function DecisionInbox({ items }: { items: InboxItem[] }) {
     <div className="grid min-h-0 min-w-0 flex-1 gap-4 grid-rows-[minmax(8rem,35%)_minmax(0,1fr)] lg:grid-rows-1 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
       <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3"><h2 className="text-sm font-medium">Inbox</h2><span className="text-xs text-muted-foreground">{items.length} waiting</span></div>
-        <div aria-label="Decisions" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        <Stagger as="div" label="Decisions" className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {items.map(item => (
-            <button key={item.id} type="button" aria-pressed={item.id === selected.id} onClick={() => setSelectedId(item.id)} className={cn("w-full rounded-lg px-3 py-3 text-left transition-[background-color,box-shadow] hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", item.id === selected.id && "bg-accent shadow-(--control-shadow)")}>
+            <StaggerItem as="div" key={item.id}><button aria-label={item.title} type="button" aria-pressed={item.id === selected.id} onClick={() => setSelectedId(item.id)} className={cn("w-full rounded-lg px-3 py-3 text-left transition-[background-color,box-shadow] hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", item.id === selected.id && "bg-accent shadow-(--control-shadow)")}>
               <span className="flex items-center justify-between gap-2 text-[0.6875rem] text-muted-foreground"><span className="truncate font-medium">{item.business} · {item.kind}</span><span className="shrink-0">{item.time}</span></span>
               <span className="mt-1 block line-clamp-2 text-sm font-medium">{item.title}</span>
               <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">{item.summary}</span>
-            </button>
+            </button></StaggerItem>
           ))}
-        </div>
+        </Stagger>
       </Panel>
       <section aria-label="Decision details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-(--card-shadow)">
         <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 px-4 py-3"><div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">{selected.business} · {selected.kind} · {selected.time}</p><h2 className="mt-1 text-sm font-medium">{selected.title}</h2><p className="mt-1 text-xs text-muted-foreground">{selected.summary}</p></div></div>

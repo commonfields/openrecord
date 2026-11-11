@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { Link } from "react-router"
 import { ChevronLeftIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { CountUp } from "@/components/motion"
 
 // The shell's top bar exposes a slot; pages render their controls into it so
 // the content area starts with the work, not a toolbar.
@@ -150,7 +151,7 @@ export function StatStrip({ stats, className }: { stats: Stat[]; className?: str
               </span>
               {s.delta ? <span className="shrink-0 text-xs font-medium tabular-nums">{s.delta}</span> : null}
             </span>
-            <span className="mt-1.5 text-sm leading-none font-semibold tracking-tight tabular-nums">{s.value}</span>
+            <span className="mt-1.5 text-sm leading-none font-semibold tracking-tight tabular-nums"><CountUp value={s.value} /></span>
             {s.hint ? <span className="mt-1.5 w-full truncate text-[0.6875rem] text-muted-foreground">{s.hint}</span> : null}
           </>
         )
