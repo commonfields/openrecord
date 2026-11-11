@@ -62,6 +62,12 @@ describe("deterministic conversational contract evaluations (not live model accu
     expect(answer.toolCalls).toEqual([{ tool: "propose_check_run", summary: receipt.summary }])
     expect(JSON.stringify(receipt)).toBe(before)
   })
+  it("names an internal ID by the title its tool gave it, and drops its code formatting", async () => {
+    const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [],
+      model: fixture([tool("find_research_capabilities"), text("Use `geo.citation_targets` to list targets, then geo.citation_check.")]),
+      dispatch: () => Effect.succeed({ ...result, data: { capabilities: [{ id: "geo.citation_targets", title: "Sources AI cites" }, { id: "geo.citation_check", title: "Citation check" }] } }) }))
+    expect(answer.reply).toBe("Use Sources AI cites to list targets, then Citation check.")
+  })
   it("keeps short or numeric tool ids that read as ordinary words and counts", async () => {
     const prose = "3 of 3 facts were checked in 2026; slot 1 needs review."
     const answer = await Effect.runPromise(runConversation({ message: "Explain", history: [], model: fixture([tool("read_record_outcomes"), text(prose)]),

@@ -3,24 +3,36 @@ export interface ReplyInternals {
   readonly ids: Set<string>
   readonly fields: Set<string>
   readonly codes: Map<string, string>
+  /** What a tool called an item it identified (its title, name or label), by lower-cased ID. */
+  readonly labels: Map<string, string>
 }
 
-export const replyInternals = (): ReplyInternals => ({ ids: new Set(), fields: new Set(), codes: new Map([
+export const replyInternals = (): ReplyInternals => ({ ids: new Set(), fields: new Set(), labels: new Map(), codes: new Map([
   ["REFERRAL_DATA_UNAVAILABLE", "referral data unavailable"], ["SIGNUPS_NOT_MEASURED", "signups not measured"],
   ["PROPOSED", "proposed"], ["APPROVED", "approved"], ["EXECUTED", "executed"], ["REJECTED", "rejected"],
 ]) })
+
+const LABEL_KEYS = ["title", "name", "label"]
+const REFERENCE = "the referenced item"
+/** The words that stand in for an internal ID in prose: its own name when a tool gave one. */
+const referenceFor = (id: string, internals: ReplyInternals) => internals.labels.get(id.toLowerCase()) ?? REFERENCE
 
 export const collectReplyInternals = (value: unknown, internals: ReplyInternals): void => {
   if (Array.isArray(value)) {
     for (const item of value) collectReplyInternals(item, internals)
   } else if (value !== null && typeof value === "object") {
+    // An item's own name, beside its ID, reads better than a placeholder.
+    const label = LABEL_KEYS.map(k => (value as Record<string, unknown>)[k]).find((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 120)
     for (const [key, item] of Object.entries(value)) {
       internals.fields.add(key)
       if (/^ids?$/i.test(key) || /(?:_[iI][dD][sS]?|Id|Ids|ID|IDs)$/.test(key)) {
         for (const id of Array.isArray(item) ? item : [item]) {
           // Short or numeric values ("3", "2026") also occur as ordinary words and
           // counts in prose; only distinctive identifiers are redacted by value.
-          if (typeof id === "string" && id.trim().length >= 8 && !/^\d+$/.test(id.trim())) internals.ids.add(id)
+          if (typeof id === "string" && id.trim().length >= 8 && !/^\d+$/.test(id.trim())) {
+            internals.ids.add(id)
+            if (label && /^ids?$/i.test(key) && !internals.ids.has(label)) internals.labels.set(id.toLowerCase(), label.trim())
+          }
         }
       }
       if (/^(?:status|state|kind|code|reason|limitations?|missingRequirements|availability)$/i.test(key)) {
@@ -41,6 +53,8 @@ const plainToolLanguage = (text: string, internals: ReplyInternals): string => {
   const inline = (fragment: string) => fragment.replace(/`([^`\n]+)`/g, (original: string, content: string) => {
     const field = /^\s*["']?([a-zA-Z_][a-zA-Z0-9_]*)["']?\s*:/.exec(content)?.[1]
     if (field && internals.fields.has(field)) return ""
+    // A whole code span holding an internal ID becomes plain words, not code.
+    if (internals.ids.has(content.trim())) return referenceFor(content.trim(), internals)
     const code = internals.codes.get(content.trim())
     return code ?? original
   })
@@ -80,10 +94,10 @@ export const sanitiseAgentReply = (text: string, internals: ReplyInternals): str
   }
   // Drop the whole internal URL, including UUID-bearing paths, rather than leave a broken link.
   const links = plainToolLanguage(text, internals).replace(/\[([^\]\n]*)\]\((https?:\/\/[^\s)]*)\)/gi,
-    (link: string, label: string, url: string) => containsId(url) ? label.trim() || "the referenced item" : link)
+    (link: string, label: string, url: string) => containsId(url) ? label.trim() || REFERENCE : link)
   // Match URLs before IDs so a legitimate URL is kept as a whole, never partly rewritten.
   return links.replace(new RegExp(`https?:\\/\\/[^\\s<>"\x60]+|${identifier.source}`, "giu"), token => {
-    if (!/^https?:\/\//i.test(token)) return "the referenced item"
-    return containsId(token) ? `the referenced item${token.match(/[.,!?;:)\]]+$/)?.[0] ?? ""}` : token
+    if (!/^https?:\/\//i.test(token)) return referenceFor(token.replace(/^\{\s*|\s*\}$/g, ""), internals)
+    return containsId(token) ? `${REFERENCE}${token.match(/[.,!?;:)\]]+$/)?.[0] ?? ""}` : token
   })
 }
