@@ -203,13 +203,13 @@ impl Theme {
             chart: Chart {
                 // Brand periwinkle for this period, quiet grey for the one
                 // before; ratings in one blue family with coral only for wrong.
-                primary: hex("#7f9cf2"),
-                compare: white(0.32),
-                grid: white(0.05),
-                axis: white(0.38),
-                supported: hex("#7f9cf2"),
-                wrong: hex("#d98b7c"),
-                partial: hex("#3e4f7d"),
+                primary: hex("#6c84c4"),
+                compare: white(0.22),
+                grid: white(0.04),
+                axis: white(0.3),
+                supported: hex("#6c84c4"),
+                wrong: hex("#b97a6e"),
+                partial: hex("#36456b"),
                 unknown: white(0.16),
                 unreviewed: white(0.07),
                 series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767", "#2dd4bf", "#94a3b8", "#a3e635", "#a78bfa"].map(hex),

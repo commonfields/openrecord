@@ -200,27 +200,35 @@ pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
     if let Some(i) = hover {
         shape = shape.line([x(i), TOP], [x(i), VIEW_H], 1.0, LineCap::Butt, t.border);
     }
-    // A rate reads as its trailing average, the solid line; each day's own
-    // value is a faint dot behind it. Counts are a straight line through every day.
-    let rate_avg = tr.percent && tr.compare.is_some();
-    if rate_avg {
-        for p in line_of(tr.values) {
-            shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 4.0, LineCap::Round, tr.color.alpha(0.35));
+    // A rate, or a count only taken every few days (mostly zero days), reads as
+    // its trailing average, the solid line; each day that has a value is a
+    // faint dot behind it. Otherwise the line runs through every day.
+    let zeros = tr.values.iter().filter(|v| matches!(v, Some(x) if *x == 0.0)).count();
+    let sparse = !tr.percent && zeros * 3 >= n.max(1);
+    // A chart compared with its own trailing average is read as that average.
+    let averaged = tr.compare.as_ref().is_some_and(|c| c.1.to_lowercase().contains("average"));
+    let smooth = (tr.percent || sparse || averaged) && tr.compare.is_some();
+    if smooth {
+        for p in tr.values.iter().enumerate().filter_map(|(i, v)| v.filter(|v| *v > 0.0 || tr.percent).map(|v| [x(i), y(v)])) {
+            shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 3.5, LineCap::Round, tr.color.alpha(0.28));
         }
     }
-    let main = if rate_avg { monotone(&line_of(tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]))) } else { line_of(tr.values) };
+    let main = if smooth { monotone(&line_of(tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]))) } else { line_of(tr.values) };
+    let points = if smooth { tr.compare.as_ref().map(|c| c.0.iter().flatten().count()).unwrap_or(0) } else { tr.values.iter().flatten().count() };
     if main.len() >= 2 {
-        let mut area = vec![[main[0][0], VIEW_H]];
-        area.extend(main.iter().copied());
-        area.push([main[main.len() - 1][0], VIEW_H]);
-        // A soft wash, strongest along the line, standing in for the web's gradient.
-        shape = shape.fill(area, tr.color.alpha(0.06));
-        shape = shape.stroke(main.clone(), 1.75, tr.color);
+        // A soft wash under the line only when there is enough of it to read as a trend.
+        if points >= 5 {
+            let mut area = vec![[main[0][0], VIEW_H]];
+            area.extend(main.iter().copied());
+            area.push([main[main.len() - 1][0], VIEW_H]);
+            shape = shape.fill(area, tr.color.alpha(0.045));
+        }
+        shape = shape.stroke(main.clone(), 1.6, tr.color);
     } else if let Some(p) = main.first() {
         shape = shape.stroke_with(vec![*p, [p[0] + 0.0001, p[1]]], false, 5.0, LineCap::Round, tr.color);
     }
     // The comparison (the period before, or an average) as a dashed grey line.
-    if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !rate_avg) {
+    if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !smooth) {
         let pts = dots(&line_of(vals), tr.width_hint, tr.height, 3.0);
         for pair in pts.chunks(2).filter(|c| c.len() == 2) {
             shape = shape.stroke_with(vec![pair[0], pair[1]], false, 1.5, LineCap::Butt, t.chart.compare);

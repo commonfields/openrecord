@@ -27,7 +27,7 @@ pub fn centre(code: &str) -> Option<(f32, f32)> {
 /// The globe, `size` points square, turned to `spin` degrees of longitude.
 pub fn view(t: &Theme, size: f32, spin: f32, places: &[(String, f64)]) -> El {
     let (r, c) = (size / 2.0 - 6.0, size / 2.0);
-    let tilt = 18f32.to_radians();
+    let tilt = 16f32.to_radians();
     // Orthographic projection: x, y on screen and how far the point faces us (1 at the centre, 0 at the edge).
     let project = |lat: f32, lon: f32| {
         let (phi, lam) = (lat.to_radians(), (lon + spin).to_radians());
@@ -43,35 +43,47 @@ pub fn view(t: &Theme, size: f32, spin: f32, places: &[(String, f64)]) -> El {
         }).collect();
         sh.fill(pts, color)
     };
-    let land = if t.dark { Color::WHITE } else { Color::BLACK };
-    // The sphere itself: a faint disc with a soft rim.
-    let mut sh = disc(c, c, r, t.chart.primary.alpha(0.035), Shape::new());
-    let rim: Vec<[f32; 2]> = (0..=96).map(|k| {
-        let a = k as f32 / 96.0 * std::f32::consts::TAU;
-        [c + r * a.cos(), c + r * a.sin()]
-    }).collect();
-    sh = sh.stroke_with(rim, false, 1.0, LineCap::Butt, land.alpha(0.06));
-    // Land, dimmer toward the edge.
-    for &(lat, lon) in LAND.iter() {
-        let (p, facing) = project(lat as f32 / 10.0, lon as f32 / 10.0);
-        if facing > 0.02 {
-            let a = 0.1 + 0.32 * facing;
-            sh = sh.stroke_with(vec![p, [p[0] + 0.01, p[1]]], false, 2.6, LineCap::Round, land.alpha(a));
+    let ink = if t.dark { Color::WHITE } else { Color::BLACK };
+    // The sphere: a whisper of colour and a hairline rim.
+    let mut sh = disc(c, c, r, ink.alpha(0.02), Shape::new());
+    let circle = |rad: f32| -> Vec<[f32; 2]> { (0..=120).map(|k| { let a = k as f32 / 120.0 * std::f32::consts::TAU; [c + rad * a.cos(), c + rad * a.sin()] }).collect() };
+    sh = sh.stroke_with(circle(r), false, 1.0, LineCap::Butt, ink.alpha(0.08));
+    // Latitude lines every 30 degrees, only on the side facing us.
+    for lat in [-60.0f32, -30.0, 0.0, 30.0, 60.0] {
+        let mut run: Vec<[f32; 2]> = Vec::new();
+        for k in 0..=144 {
+            let (p, facing) = project(lat, -180.0 + k as f32 * 2.5);
+            if facing > 0.0 {
+                run.push(p);
+            } else if run.len() > 1 {
+                sh = sh.stroke_with(std::mem::take(&mut run), false, 0.75, LineCap::Butt, ink.alpha(0.04));
+            } else {
+                run.clear();
+            }
+        }
+        if run.len() > 1 {
+            sh = sh.stroke_with(run, false, 0.75, LineCap::Butt, ink.alpha(0.04));
         }
     }
-    // Where people are now: a halo and a bright core, sized by share of the busiest.
+    // Land as fine dots, fading toward the edge.
+    for &(lat, lon) in LAND.iter() {
+        let (p, facing) = project(lat as f32 / 10.0, lon as f32 / 10.0);
+        if facing > 0.03 {
+            sh = sh.stroke_with(vec![p, [p[0] + 0.01, p[1]]], false, 1.9, LineCap::Round, ink.alpha(0.05 + 0.17 * facing));
+        }
+    }
+    // Where people are now: a soft halo and a small core, sized by share of the busiest.
     let most = places.iter().map(|p| p.1).fold(1.0, f64::max);
     for (code, users) in places {
         let Some((lat, lon)) = centre(code) else { continue };
         let (p, facing) = project(lat, lon);
-        if facing <= 0.05 {
+        if facing <= 0.08 {
             continue;
         }
         let k = (users / most).sqrt() as f32;
         let fade = facing.min(1.0);
-        sh = disc(p[0], p[1], 8.0 + 20.0 * k, t.chart.primary.alpha(0.16 * fade), sh);
-        sh = disc(p[0], p[1], 4.0 + 7.0 * k, t.chart.primary.alpha(0.35 * fade), sh);
-        sh = disc(p[0], p[1], 2.5 + 3.5 * k, t.chart.primary.alpha(fade), sh);
+        sh = disc(p[0], p[1], 5.0 + 11.0 * k, t.chart.primary.alpha(0.1 * fade), sh);
+        sh = disc(p[0], p[1], 1.8 + 2.4 * k, t.chart.primary.alpha(0.85 * fade), sh);
     }
     canvas(sh.view_box(size, size)).size(size, size).a11y_hidden()
 }

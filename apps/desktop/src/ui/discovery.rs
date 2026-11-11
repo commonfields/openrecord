@@ -462,7 +462,7 @@ pub fn answer_collection(t: &Theme, st: &Stats, days: u32) -> El {
     }
     p.child(header(t, &[("Provider", None), ("Share, change", Some(120.0))]))
         .child(list)
-        .child(row().w_full().px(8.0).pt(4.0).child(label(format!("Share of collected answers, not visibility. Change in share points vs the previous {days} days."), type_::XS11, t.muted_foreground).wrap()))
+        .child(col().w_full().px(8.0).pt(4.0).child(label(format!("Share of collected answers, not visibility. Change in share points against the previous {days} days."), type_::XS11, t.muted_foreground).wrap()))
 }
 
 fn pct_1(x: f64) -> String {

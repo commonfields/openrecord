@@ -172,23 +172,19 @@ fn board(t: &Theme, key: &str, title: &str, sub: Option<String>, height: f32, bo
     if let Some(d) = sub {
         head = head.child(label(d, type_::XS, t.muted_foreground).truncate());
     }
-    card(t)
-        .key(key.to_string())
-        .w(0.0)
-        .grow(1.0)
-        .min_w(280.0)
-        .h(height)
-        .px(20.0)
-        .py(18.0)
-        .gap(14.0)
-        .clip_rounded(12.0)
-        .child(head)
-        .child(col().key(format!("{key}-body")).w_full().grow(1.0).min_h(0.0).child(body).scroll(rune::ScrollSpec { stick_bottom: false }))
+    // A height of 0 lets the card follow its content.
+    let c = card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(280.0).px(20.0).py(18.0).gap(14.0).child(head);
+    if height > 0.0 {
+        c.h(height).clip_rounded(12.0).child(col().key(format!("{key}-body")).w_full().grow(1.0).min_h(0.0).child(body).scroll(rune::ScrollSpec { stick_bottom: false }))
+    } else {
+        c.child(col().key(format!("{key}-body")).w_full().child(body))
+    }
 }
 
-/// An existing panel held to the dashboard's card height, scrolling inside.
+/// An existing panel on the dashboard grid, at equal width beside its neighbour.
 fn fixed(panel: El, key: &str) -> El {
-    col().key(key.to_string()).w(0.0).grow(1.0).min_w(320.0).h(340.0).child(panel.w_full().h_full().clip_rounded(12.0).scroll(rune::ScrollSpec { stick_bottom: false }))
+    // As tall as its content; cards side by side stretch to match each other.
+    col().key(key.to_string()).w(0.0).grow(1.0).min_w(320.0).child(panel.w_full().h_full())
 }
 
 /// Cards side by side at equal widths, wrapping on narrow windows.
@@ -272,7 +268,7 @@ fn summary(s: &App, t: &Theme, i: &Insights) -> El {
         boards.push(initiatives(t, i));
     }
     if let Ok(a) = &i.analytics {
-        boards.push(questions(t, a, i.days));
+        boards.push(questions(t, a, i.days, 340.0));
     }
     if !boards.is_empty() {
         c = c.child(grid(boards));
@@ -420,9 +416,9 @@ fn initiatives(t: &Theme, i: &Insights) -> El {
     board(t, "initiatives", "Work in progress", Some("What you approved, what waits on you, and what is done".into()), 340.0, list)
 }
 
-fn questions(t: &Theme, a: &Analytics, days: u32) -> El {
+fn questions(t: &Theme, a: &Analytics, days: u32, height: f32) -> El {
     if a.questions.is_empty() {
-        return board(t, "questions", "Buyer questions", Some(format!("Last {days} days")), 340.0, note(t, "No questions were asked in this period."));
+        return board(t, "questions", "Buyer questions", Some(format!("Last {days} days")), height, note(t, "No questions were asked in this period."));
     }
     let mut list = col().w_full().gap(14.0);
     for (k, q) in a.questions.iter().take(12).enumerate() {
@@ -437,7 +433,7 @@ fn questions(t: &Theme, a: &Analytics, days: u32) -> El {
                 .child(charts::verdict_bar_fill(t, &q.v).w_full().h(6.0)),
         );
     }
-    board(t, "questions", "Buyer questions", Some(format!("How assistants answered each one, last {days} days")), 340.0, list)
+    board(t, "questions", "Buyer questions", Some(format!("How assistants answered each one, last {days} days")), height, list)
 }
 
 // ---- AI discovery -----------------------------------------------------------
@@ -460,7 +456,7 @@ fn answers(s: &App, t: &Theme, i: &Insights) -> El {
                             .child(label(format!("Which providers answered, what buyers asked, and the sources they cited, last {} days", i.days), type_::XS, t.muted_foreground)),
                     )
                     .child(grid(vec![fixed(discovery::answer_collection(t, &st, i.days), "fx-collection"), fixed(discovery::accuracy_by_model(t, a, &st), "fx-models")]))
-                    .child(grid(vec![questions(t, a, i.days), fixed(discovery::citations(s, t, a, i.days), "fx-citations")]))
+                    .child(grid(vec![questions(t, a, i.days, 0.0), fixed(discovery::citations(s, t, a, i.days), "fx-citations")]))
                     .child(grid(vec![fixed(facts(t, a), "fx-facts")])),
             );
         }
