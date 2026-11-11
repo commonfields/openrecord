@@ -191,9 +191,9 @@ describe("Stripe revenue", () => {
       return new Response(JSON.stringify(page2
         ? { data: [{ id: "ch_3", status: "succeeded", paid: true, amount: 5000, amount_refunded: 0, currency: "jpy", customer: "cus_9" }], has_more: false }
         : { data: [
-            { id: "ch_1", status: "succeeded", paid: true, amount: 12000, amount_refunded: 2000, currency: "usd", customer: "cus_1" },
+            { id: "ch_1", status: "succeeded", paid: true, amount: 12000, amount_refunded: 2000, currency: "usd", customer: "cus_1", created: Date.parse("2026-10-03T10:00:00Z") / 1000 },
             { id: "ch_x", status: "failed", paid: false, amount: 99999, amount_refunded: 0, currency: "usd" },
-            { id: "ch_2", status: "succeeded", paid: true, amount: 3000, amount_refunded: 0, currency: "usd", billing_details: { email: "A@x.test" } }], has_more: true }))
+            { id: "ch_2", status: "succeeded", paid: true, amount: 3000, amount_refunded: 0, currency: "usd", billing_details: { email: "A@x.test" }, created: Date.parse("2026-10-03T22:00:00Z") / 1000 }], has_more: true }))
     }
     const t = await stripeRevenue({ endpoint: "https://stripe.test/v1", fetch: f }, "rk_test_key", window)
     expect(t.byCurrency).toEqual([
@@ -201,6 +201,10 @@ describe("Stripe revenue", () => {
       { currency: "JPY", net: 5000, gross: 5000, refunded: 0, orders: 1, averageOrder: 5000 },
     ])
     expect(t).toMatchObject({ payingCustomers: 3, newCustomers: 2, truncated: false })
+    // Every day of the window in the main currency (USD, the most orders); no-sale days are zero.
+    expect(t.daily).toHaveLength(28)
+    expect(t.daily?.find(d => d.day === "2026-10-03")).toEqual({ day: "2026-10-03", currency: "USD", net: 130, orders: 2 })
+    expect(t.daily?.filter(d => d.orders === 0)).toHaveLength(27)
     const first = new URL(calls[0]!.url)
     expect(first.searchParams.get("created[gte]")).toBe(String(Date.parse("2026-10-01T00:00:00Z") / 1000))
     expect(calls.every(c => c.init.method === "GET" && (c.init.headers as Record<string, string>)["authorization"] === "Bearer rk_test_key")).toBe(true)

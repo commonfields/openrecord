@@ -133,6 +133,8 @@ export interface RevenueTotals {
   readonly newCustomers: number | null
   /** True when there were more charges than OpenRecord reads at once (3,000). */
   readonly truncated: boolean
+  /** Each day of the window (UTC), in its main currency (the one with the most orders): net revenue and orders. */
+  readonly daily?: ReadonlyArray<{ readonly day: string; readonly currency: string; readonly net: number; readonly orders: number }>
 }
 
 export interface RevenuePerformance {

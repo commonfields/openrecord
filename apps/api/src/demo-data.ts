@@ -91,11 +91,18 @@ export const demoLocal = (days: AdPerformanceDays): { locations: LocalProfilePer
 
 export const demoRevenue = (days: AdPerformanceDays): RevenuePerformance => {
   const w = adWindows(Date.now(), days)
-  const t = (k: number): RevenueTotals => {
-    const orders = volume(days, 2.6, k), gross = round(orders * 61.5), refunded = round(gross * 0.03)
-    return { byCurrency: [{ currency: "USD", net: round(gross - refunded), gross, refunded, orders, averageOrder: round(gross / orders) }], payingCustomers: Math.round(orders * 0.92), newCustomers: volume(days, 1.1, k), truncated: false }
+  // Each day: a weekly rhythm and a steady climb, more in the current window.
+  const daily = (start: string, k: number) => Array.from({ length: days }, (_, i) => {
+    const ms = Date.parse(`${start}T00:00:00Z`) + i * 86_400_000, day = new Date(ms).toISOString().slice(0, 10)
+    const weekday = new Date(ms).getUTCDay(), wave = 1 + 0.25 * Math.sin(i / 2.2) + (weekday === 0 || weekday === 6 ? -0.45 : 0.1)
+    const orders = Math.max(0, Math.round(2.6 * k * wave * (0.85 + i / days * 0.3)))
+    return { day, currency: "USD", net: round(orders * 61.5 * 0.97), orders }
+  })
+  const t = (start: string, k: number): RevenueTotals => {
+    const d = daily(start, k), orders = d.reduce((s, x) => s + x.orders, 0), net = round(d.reduce((s, x) => s + x.net, 0)), gross = round(net / 0.97)
+    return { byCurrency: [{ currency: "USD", net, gross, refunded: round(gross - net), orders, averageOrder: orders ? round(net / orders) : null }], payingCustomers: Math.round(orders * 0.92), newCustomers: volume(days, 1.1, k), truncated: false, daily: d }
   }
-  return { provider: "stripe", accountName: "OpenRecord", livemode: false, days, current: { ...w.current, totals: t(1.21) }, previous: { ...w.previous, totals: t(1) }, collectedAt: new Date().toISOString() }
+  return { provider: "stripe", accountName: "OpenRecord", livemode: false, days, current: { ...w.current, totals: t(w.current.start, 1.21) }, previous: { ...w.previous, totals: t(w.previous.start, 1) }, collectedAt: new Date().toISOString() }
 }
 
 /** The Channels page as it reads once GA4, Search Console and the usual profiles are connected. */
