@@ -22,7 +22,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
     ];
     let mut nav = col().w(224.0).px(8.0).pt(12.0).pb(8.0).gap(20.0).child(label("Settings", type_::BASE_MEDIUM, t.foreground).px(8.0));
     for (name, pages) in groups {
-        let mut g = col().w_full().gap(2.0).child(label(name, type_::SM_13, t.muted_foreground).px(8.0).pb(6.0));
+        let mut g = col().w_full().gap(2.0).child(label(name, type_::XS_MEDIUM, t.muted_foreground).px(8.0).pb(4.0));
         for p in pages {
             let p = *p;
             let on = p == page;
@@ -43,9 +43,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
                 .motion(CONTROL)
                 .on_press(move |s: &mut App| s.show_settings(p))
                 .child(ico(page_icon(p), 14.0, if on { t.primary_ink } else { t.muted_foreground }))
-                .child(label(p.title(), if on { type_::SM_MEDIUM } else { type_::SM }, if on { t.foreground } else { t.sidebar_foreground }));
+                .child(label(p.title(), type_::SM, if on { t.foreground } else { t.sidebar_foreground }));
             if on {
-                item = shadows(item.fill(t.sidebar_accent), &t.control_shadow);
+                item = item.fill(t.sidebar_accent);
             }
             g = g.child(item);
         }
@@ -148,41 +148,41 @@ fn page_icon(p: SettingsPage) -> &'static rune::Icon {
 
 // ---- Parts ------------------------------------------------------------------
 
-/// A titled card of rows (`SettingGroup`).
+/// A titled card of rows, as Rune's settings draw one: a small muted title
+/// above a hairline-bordered card whose rows are split by inset rules.
 fn group(t: &Theme, key: &str, title: &str, description: Option<&str>, rows: Vec<El>) -> El {
-    let mut head = col().w_full().gap(4.0).child(label(title.to_string(), type_::BASE_MEDIUM.lh(20.0), t.foreground).role("heading"));
+    let mut head = col().w_full().gap(2.0).px(12.0).child(label(title.to_string(), type_::SM_MEDIUM.lh(18.0), t.muted_foreground).role("heading"));
     if let Some(d) = description {
-        head = head.child(label(d.to_string(), type_::SM_13, t.muted_foreground).wrap());
+        head = head.child(label(d.to_string(), type_::XS.lh(16.0), t.muted_foreground.alpha(0.8)).wrap());
     }
-    let mut card = col().w_full().radius(10.0).fill(t.card).clip_rounded(10.0);
+    let mut card = col().w_full().padding(4.0).radius(12.0).fill(t.card).border(1.0, t.foreground.alpha(0.07));
     for (i, r) in rows.into_iter().enumerate() {
         if i > 0 {
-            card = card.child(el().w_full().h(1.0).fill(t.border));
+            card = card.child(el().h(1.0).mx(12.0).fill(t.foreground.alpha(0.07)).a11y_hidden());
         }
         card = card.child(r);
     }
-    col().key(key.to_string()).w_full().gap(12.0).child(head).child(shadows(card, &t.card_shadow))
+    col().key(key.to_string()).w_full().gap(8.0).child(head).child(shadows(card, &t.card_shadow))
 }
 
-/// A row: name and description on the left, its control on the right (`SettingRow`).
+/// A row: its name (and a short note under it) on the left, its control on the right.
 fn setting(t: &Theme, name: &str, description: Option<String>, control: Option<El>) -> El {
-    let mut left = col().grow(1.0).min_w(0.0).gap(2.0).child(label(name.to_string(), type_::SM_MEDIUM, t.foreground));
+    let mut left = col().grow(1.0).min_w(0.0).gap(2.0).child(label(name.to_string(), type_::SM, t.foreground));
+    let tall = description.is_some();
     if let Some(d) = description {
-        left = left.child(label(d, type_::SM_13, t.muted_foreground).wrap());
+        left = left.child(label(d, type_::XS.lh(16.0), t.muted_foreground).wrap());
     }
-    row().w_full().min_h(80.0).padding(14.0).gap(20.0).center_y().child(left).children(control)
+    row().w_full().min_h(if tall { 56.0 } else { 44.0 }).px(12.0).py(8.0).gap(20.0).center_y().radius(8.0).child(left).children(control)
 }
 
-/// An on/off switch.
+/// An on/off switch, as Rune draws one: a 38 by 22 track and a white knob with a soft shadow.
 fn switch(t: &Theme, key: &str, name: &str, on: bool, act: impl Fn(&mut App) + 'static) -> El {
-    let knob = el().size(16.0, 16.0).radius(8.0).fill(Color::WHITE);
-    let mut track = row()
+    let (w, h, k) = (38.0, 22.0, 18.0);
+    let inset = (h - k) / 2.0;
+    el()
         .key(key.to_string())
-        .w(36.0)
-        .h(20.0)
-        .padding(2.0)
-        .radius(10.0)
-        .center_y()
+        .size(w, h)
+        .radius(h / 2.0)
         .role("switch")
         .label(name.to_string())
         .checked(on)
@@ -190,21 +190,29 @@ fn switch(t: &Theme, key: &str, name: &str, on: bool, act: impl Fn(&mut App) + '
         .cursor(Cursor::Pointer)
         .motion(CONTROL)
         .fill(if on { t.primary_ink } else { t.muted_foreground.alpha(0.3) })
-        .on_press(move |s: &mut App| act(s));
-    track = if on { track.child(el().grow(1.0)).child(knob) } else { track.child(knob).child(el().grow(1.0)) };
-    track
+        .on_press(move |s: &mut App| act(s))
+        .child(
+            el().key(format!("{key}-knob"))
+                .size(k, k)
+                .absolute(if on { w - k - inset } else { inset }, inset)
+                .radius(k / 2.0)
+                .fill(Color::WHITE)
+                .shadow(1.0, 3.0, Color::BLACK.alpha(0.25))
+                .motion(CONTROL),
+        )
 }
 
 /// A choice between a few options, in the tab style.
 fn choice<T: Copy + PartialEq + 'static>(t: &Theme, key: &str, value: T, options: &[(T, &str)], act: impl Fn(&mut App, T) + Clone + 'static) -> El {
-    let mut r = row().key(key.to_string()).h(32.0).padding(3.0).gap(2.0).radius(8.0).fill(t.accent).role("radiogroup");
+    let mut r = row().key(key.to_string()).h(28.0).padding(2.0).gap(0.0).radius(8.0).fill(t.accent).role("radiogroup");
     for (i, (v, name)) in options.iter().enumerate() {
         let on = *v == value;
         let (v, act) = (*v, act.clone());
         let mut chip = row()
             .key(format!("{key}-{i}"))
             .h_full()
-            .px(10.0)
+            .min_w(64.0)
+            .px(12.0)
             .radius(6.0)
             .center()
             .role("radio")

@@ -45,6 +45,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
         }
+        shell::account_menu(s, &t, &k, &mut layers);
         if s.view == View::Agent && (s.active.is_some() || s.general) && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }

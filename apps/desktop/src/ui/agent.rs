@@ -5,7 +5,7 @@
 //! the composer with its model picker at the bottom.
 
 use rune::{Align, Cursor, El, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
-use rune_kit::{Dialog, Kit, Markdown, Menu, MenuItem, Placement};
+use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement};
 
 use crate::api::Message;
 use crate::brands;
@@ -299,6 +299,20 @@ fn task_statuses(messages: &[Message]) -> std::collections::HashMap<String, Stri
     messages.iter().flat_map(|m| m.tasks.iter()).map(|t| (t.id.clone(), t.status.clone())).collect()
 }
 
+/// A reply's prose, as Rune's chat sets it: 14 point Inter on a 22.4 line,
+/// bold at 600 rather than 670, and headings only a step above the body.
+fn prose(t: &Theme, k: &Kit) -> MarkdownStyle {
+    let body = TextStyle::new(14.0, 400.0).lh(22.4);
+    MarkdownStyle::from_kit(k)
+        .text(t.foreground)
+        .body_font(body)
+        .strong_weight(600.0)
+        .heading_font(1, TextStyle::new(16.0, 600.0).lh(24.0))
+        .heading_font(2, TextStyle::new(15.0, 600.0).lh(24.0))
+        .heading_font(3, TextStyle::new(14.0, 600.0).lh(22.4))
+        .heading_font(4, TextStyle::new(14.0, 600.0).lh(22.4))
+}
+
 fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
     let user = m.role == "user";
     let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group();
@@ -322,7 +336,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
                     .py(10.0)
                     .radius(16.0)
                     .fill(t.accent)
-                    .child(label(m.text.clone(), type_::BASE.lh(26.0), t.foreground).wrap().selectable(true)),
+                    .child(label(m.text.clone(), type_::SM.lh(22.0), t.foreground).wrap().selectable(true)),
             );
         }
         return c.child(copy_button(s, t, i, &m.text));
@@ -338,7 +352,14 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     let mut reply = col().key(format!("reply-{i}")).w_full().gap(6.0);
     for (j, part) in crate::visual::split(&shown).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md).selectable(revealing.is_none()).streaming(revealing.is_some()).reveal(if revealing.is_some() { 0.18 } else { 0.0 }).build(k).w_full().opacity(if muted { 0.7 } else { 0.9 }),
+            crate::visual::Part::Text(md) => Markdown::new(md)
+                .style(prose(t, k))
+                .selectable(revealing.is_none())
+                .streaming(revealing.is_some())
+                .reveal(if revealing.is_some() { 0.18 } else { 0.0 })
+                .build(k)
+                .w_full()
+                .opacity(if muted { 0.7 } else { 1.0 }),
             crate::visual::Part::Chart(raw) => crate::ui::visual::view(s, t, format!("visual-{i}-{j}"), &raw).my(4.0),
             crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("surface-{i}-{j}"), &raw).my(4.0),
         });
@@ -456,7 +477,7 @@ fn fold(t: &Theme, k: &Kit, key: String, open: bool, at: (usize, usize), parts: 
 
 fn thought_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, texts: &[&str], ms: i64) -> El {
     let name = if ms > 0 { format!("Thought for {}", chat::elapsed(ms)) } else { "Thought".to_string() };
-    let head = fold(t, k, key.clone(), open, at, vec![label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
+    let head = fold(t, k, key.clone(), open, at, vec![thought_mark(t), label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
     let mut body = col().w_full().pl(22.0).pb(6.0).gap(6.0);
     for x in texts.iter().filter(|x| !x.trim().is_empty()) {
         body = body.child(label(x.to_string(), type_::SM_13.italic(), t.muted_foreground.alpha(0.85)).wrap().selectable(open));
@@ -515,8 +536,8 @@ fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity]) -> El
 
 // ---- The turn still running (the web's `LiveTrace`) -----------------------------
 
-/// Thinking, as the web draws it: one glyph that grows and settles in the
-/// brand's periwinkle, a step every 220 milliseconds (`ThinkingGlyph`).
+/// Thinking, as Claude Code draws it: one glyph that grows and settles, a step
+/// every 220 milliseconds, in the text's own ink.
 const GLYPHS: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
 
 fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
@@ -524,7 +545,12 @@ fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
         Some(ms) if !reduce => GLYPHS[((ms / 220) as usize) % GLYPHS.len()],
         _ => "✻",
     };
-    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(secondary(t)))
+    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(t.foreground.alpha(0.85)))
+}
+
+/// A finished thought's mark, as Claude Code sets one: a quiet "∴".
+fn thought_mark(t: &Theme) -> El {
+    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text("∴").font(type_::SM).color(t.muted_foreground))
 }
 
 /// The web's `.thinking` text: muted, with a soft band of foreground light that
@@ -547,28 +573,6 @@ fn shimmer(t: &Theme, key: &str, text_: &str, style: TextStyle, reduce: bool) ->
     row().key(key.to_string()).child(dim).child(sheen)
 }
 
-/// The arc that turns around the tool under way (`.live-ring`): a thin brand
-/// arc fading in from nothing, 1.5 points wide, one turn every 1.1 seconds.
-fn live_ring(t: &Theme) -> El {
-    let c = secondary(t);
-    let (cx, r) = (15.0f32, 14.25f32);
-    let mut shape = rune::Shape::new();
-    let seg = 40;
-    for k in 0..seg {
-        let f0 = 0.55 + 0.45 * k as f32 / seg as f32;
-        let f1 = 0.55 + 0.45 * (k + 1) as f32 / seg as f32;
-        let mid = (f0 + f1) / 2.0;
-        // conic-gradient(transparent 0 55%, secondary 85%, transparent 100%)
-        let a = if mid < 0.85 { (mid - 0.55) / 0.30 } else { (1.0 - mid) / 0.15 };
-        let pt = |f: f32| {
-            let ang = f * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
-            [cx + r * ang.cos(), cx + r * ang.sin()]
-        };
-        shape = shape.stroke_with(vec![pt(f0), pt(f1)], false, 1.5, rune::LineCap::Butt, c.alpha(a.clamp(0.0, 1.0)));
-    }
-    rune::canvas(shape.view_box(30.0, 30.0)).size(30.0, 30.0).absolute(-3.0, -3.0).looping(LoopSpec::rotation(1.1)).a11y_hidden()
-}
-
 /// One line on the rail: a node and its text. Tool steps sit in a small round
 /// node; reasoning is a lighter aside with its glyph.
 fn log_row(t: &Theme, node: El, body: El, boxed: bool, wrap: bool) -> El {
@@ -582,7 +586,7 @@ fn log_row(t: &Theme, node: El, body: El, boxed: bool, wrap: bool) -> El {
 
 fn step(t: &Theme, a: &Activity) -> El {
     match a {
-        Activity::Thought { text: x, .. } => log_row(t, thinking_glyph(t, None, true), label(x.clone(), type_::SM.italic(), t.muted_foreground.alpha(0.8)).wrap().max_lines(4).pt(2.0), false, true),
+        Activity::Thought { text: x, .. } => log_row(t, thought_mark(t), label(x.clone(), type_::SM.italic(), t.muted_foreground.alpha(0.8)).wrap().max_lines(4).pt(2.0), false, true),
         Activity::Tool { tool, text: x, failed } => {
             let icon = if *failed { ico(&icons::X, 14.0, t.wrong) } else { ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7)) };
             log_row(t, icon, label(x.clone(), type_::SM, if *failed { t.wrong.alpha(0.8) } else { t.foreground.alpha(0.8) }).truncate(), true, false)
@@ -590,37 +594,45 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
-/// The work log of a turn still running: "Thinking for 4s" (or "Working for"
-/// once a tool runs) with a live clock, the finished steps on the rail, and the
-/// step under way at the bottom.
+/// The work log of a turn still running, as Claude Code shows one: the finished
+/// steps on the rail, then one turning glyph with "Thinking…" (or "Working…"
+/// once a tool runs) and the time so far, and under it, after a "⎿", the step
+/// under way.
 fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
     let reduce = s.prefs.reduce_motion;
     let working = p.phase != chat::Phase::Thinking || p.trace.iter().any(|a| matches!(a, Activity::Tool { .. }));
-    let head = if stopping { "Stopping".to_string() } else { format!("{} for {}", if working { "Working" } else { "Thinking" }, chat::elapsed(ms)) };
+    let head = if stopping { "Stopping…" } else if working { "Working…" } else { "Thinking…" };
     let tool = match (p.phase, &p.current_tool) {
         (chat::Phase::Working, Some(tool)) => Some(tool.clone()),
         _ => None,
     };
-    // Finished steps stay mounted, so only the newest slides in.
-    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
-    let mut rail = col().key("live-steps").w_full().mt(4.0).label("Steps so far").child(line);
-    for (i, a) in p.trace.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("live-step-{i}")));
+    let mut c = col().key("working").w_full().role("status").live_region(LiveRegion::Polite).label(format!("{head} {}. {}", chat::elapsed(ms), p.live()));
+    if !p.trace.is_empty() {
+        let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
+        let mut rail = col().key("live-steps").w_full().mb(4.0).label("Steps so far").child(line);
+        for (i, a) in p.trace.iter().enumerate() {
+            rail = rail.child(step(t, a).key(format!("live-step-{i}")));
+        }
+        c = c.child(rail);
     }
-    // The step under way re-enters whenever the agent moves to another tool.
-    let now = shimmer(t, "live-now-text", &p.live(), type_::SM, reduce);
-    let live = match &tool {
-        Some(tool) => log_row(t, row().size(24.0, 24.0).center().child(live_ring(t)).child(ico(chat::tool_icon(tool), 14.0, t.foreground.alpha(0.7))), now, true, false),
-        None => log_row(t, thinking_glyph(t, Some(ms), reduce), now, false, false),
-    };
-    rail = rail.child(live.key(format!("live:{}:{}", p.trace.len(), tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))));
-    col()
-        .key("working")
-        .w_full()
-        .role("status")
-        .live_region(LiveRegion::Polite)
-        .child(row().h(24.0).px(2.0).center_y().child(shimmer(t, "live-head", &head, type_::SM.features("'tnum' 1"), reduce)))
-        .child(rail)
+    let headline = row()
+        .key("live-head")
+        .h(24.0)
+        .gap(8.0)
+        .center_y()
+        .child(row().size(24.0, 24.0).center().child(thinking_glyph(t, Some(ms), reduce)))
+        .child(shimmer(t, "live-head-text", head, type_::SM, reduce))
+        .child(label(chat::elapsed(ms), type_::SM.features("'tnum' 1"), t.muted_foreground.alpha(0.7)));
+    // What it is doing now, hung under the headline.
+    let now_text = p.live();
+    let mut now = row().key(format!("live-now:{}", tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).w_full().min_h(22.0).pl(12.0).gap(8.0).center_y()
+        .child(label("⎿", type_::SM, t.muted_foreground.alpha(0.6)));
+    if let Some(tool) = &tool {
+        now = now.child(ico(chat::tool_icon(tool), 13.0, t.muted_foreground));
+    }
+    let now_label = if tool.is_some() { label(now_text, type_::SM_13, t.muted_foreground) } else { label(now_text, type_::SM_13.italic(), t.muted_foreground.alpha(0.85)) };
+    now = now.child(now_label.truncate().grow(1.0).min_w(0.0));
+    c.child(headline).child(now)
 }
 
 /// At the top of a helper session: what it is for and where it came from.
@@ -704,7 +716,7 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
     for task in &m.tasks {
         let status = statuses.get(&task.id).unwrap_or(&task.status).as_str();
         let (icon, ink) = match status {
-            "RUNNING" => (&icons::LOADER, secondary(t)),
+            "RUNNING" => (&icons::LOADER, t.foreground.alpha(0.7)),
             "COMPLETED" => (&icons::CHECK, t.muted_foreground),
             _ => (&icons::X, t.wrong),
         };
