@@ -230,7 +230,7 @@ export function buildActions(businessId: string, data: Pick<OverviewData, "issue
         key: `claim:${g.key}`,
         tone: "review",
         title: `Review: “${g.text}”`,
-        detail: "Decide whether this AI claim matches your facts",
+        detail: "Check whether this answer matches your facts",
         cta: "Review",
         to: `/observations/${g.latest.observation_id}?claim=${g.latest.claim_id}`,
         rank: 30,

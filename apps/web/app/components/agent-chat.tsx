@@ -534,7 +534,7 @@ function SourceChip({ businessId, citation: c }: { businessId: string | null; ci
       <FileTextIcon className="size-3 shrink-0" />
       <span className="truncate">{c.text || "Open evidence"}</span>
     </Link>
-  ) : <span className="text-xs text-muted-foreground">Evidence unavailable</span>
+  ) : <span className="text-xs text-muted-foreground">Sources not available</span>
 }
 
 export function AnswerResources({ businessId, citations }: { businessId: string | null; citations: AgentCitation[] }) {
@@ -1539,22 +1539,22 @@ function SavedDraft({ businessId, proposal, onDone }: { businessId: string; prop
       void recordDecision(businessId, { kind: "AGENT_DRAFT", itemId: proposal.id, verdict: accept ? "APPROVED" : "REJECTED", title: proposal.message, reason })
       onDone()
     }
-    catch { setError("This draft could not be updated. It may have expired or its evidence context changed. Reload before continuing.") }
+    catch { setError("This draft could not be updated. It may have expired or its sources changed. Reload and try again.") }
     finally { setWorking(false) }
   }
   return <section aria-label="Saved private draft" className="group/msg space-y-3 rounded-[10px] bg-card shadow-(--card-shadow) p-4 text-xs">
-    <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : proposal.kind === "PROPOSE_QUESTION_SET" ? "Buyer-question proposal" : "Source action hypothesis"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
+    <p className="font-medium">{proposal.kind === "PREPARE_CLIENT_REPORT" ? "Private client report" : proposal.kind === "PROPOSE_QUESTION_SET" ? "Buyer-question proposal" : "Suggested fix"} ({proposal.status === "APPROVED" ? "accepted" : "awaiting review"})</p>
     <p>{proposal.message}</p>
     {proposal.payload ? <>
       <p className="text-muted-foreground">Snapshot prepared {proposal.payload.generatedAt}. Accepting this draft does not publish, deliver, execute or record completed work.</p>
       <p className="max-h-96 overflow-auto whitespace-pre-wrap leading-relaxed">{proposal.payload.text}</p>
       <CopyButton text={proposal.payload.text} />
-      <ul className="flex flex-wrap gap-2" aria-label="Draft evidence">{proposal.payload.references.map(c => {
+      <ul className="flex flex-wrap gap-2" aria-label="Where this came from">{proposal.payload.references.map(c => {
         const path = agentEvidencePath(businessId, c)
         const web = webSourceUrl(c)
-        return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : web ? <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="underline">{c.text}</a> : <span>Evidence unavailable</span>}</li>
+        return <li key={`${c.kind}:${c.id}`}>{path ? <Link to={path} className="underline">{c.text}</Link> : web ? <a href={web} rel="noopener noreferrer nofollow" target="_blank" className="underline">{c.text}</a> : <span>Sources not available</span>}</li>
       })}</ul>
-    </> : <p>Draft evidence unavailable</p>}
+    </> : <p>Sources not available</p>}
     {proposal.status === "PROPOSED" ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={working || !proposal.payload} onClick={() => void decide(true)}>Accept draft</Button><RejectWithReason disabled={working} onReject={reason => decide(false, reason)} /></div> : null}
     {error ? <p role="alert">{error}</p> : null}
   </section>

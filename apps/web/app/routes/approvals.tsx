@@ -76,8 +76,8 @@ export function issueInboxItem(businessId: string, issue: IssueWithEvidence, bus
     detail: <Panel className="space-y-3 p-5"><div><p className="text-xs text-muted-foreground">{label}</p><h2 className="mt-1 text-sm font-medium">{issue.claim_text}</h2></div>
       {issue.question_prompt ? <p className="text-xs text-muted-foreground">Question: {issue.question_prompt}</p> : null}
       <p className="whitespace-pre-wrap text-sm">{issue.answer_text}</p>
-      <p className="text-xs text-muted-foreground">{issue.facts.length ? `${issue.facts.length} fact${issue.facts.length === 1 ? "" : "s"} linked to this claim.` : "No fact is linked to this claim."} {issue.citation_evidence.length ? `${issue.citation_evidence.length} citation${issue.citation_evidence.length === 1 ? "" : "s"} recorded.` : "No citation evidence recorded."}</p>
-      <Button asChild size="sm" variant="outline"><Link to={occurrenceHref(businessId, issue)}>{issue.state === "NEEDS_REVIEW" ? "Review this answer" : "View evidence and follow-up"}</Link></Button>
+      <p className="text-xs text-muted-foreground">{issue.facts.length ? `${issue.facts.length} fact${issue.facts.length === 1 ? "" : "s"} linked to this claim.` : "No fact is linked to this answer."} {issue.citation_evidence.length ? `${issue.citation_evidence.length} citation${issue.citation_evidence.length === 1 ? "" : "s"} recorded.` : "No sources were linked."}</p>
+      <Button asChild size="sm" variant="outline"><Link to={occurrenceHref(businessId, issue)}>{issue.state === "NEEDS_REVIEW" ? "Review this answer" : "See sources and follow-up"}</Link></Button>
     </Panel>,
   }
 }

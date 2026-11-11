@@ -45,7 +45,7 @@ export function AnswerEvidence({ answer }: { answer: PublicAnswer }) {
         <dt className="text-muted-foreground">Live web retrieval</dt>
         <dd>{answer.retrieval.observed ? `Used${answer.retrieval.tool ? ` (${answer.retrieval.tool})` : ""}` : answer.retrieval.requested ? "Requested, but this answer did not use it" : "Not used"}</dd>
         <dt className="text-muted-foreground">Checked</dt><dd>{date(answer.checkedAt)}</dd>
-        <dt className="text-muted-foreground">Evidence digest</dt><dd className="break-all font-mono text-xs">sha256:{answer.evidenceDigest}</dd>
+        <dt className="text-muted-foreground">Fingerprint</dt><dd className="break-all font-mono text-xs">sha256:{answer.evidenceDigest}</dd>
       </dl>
       <div>
         <p className="text-muted-foreground">Sources the AI cited</p>

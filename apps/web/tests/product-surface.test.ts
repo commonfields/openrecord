@@ -83,7 +83,7 @@ describe("truth", () => {
     const fs = await import("node:fs")
     const text = fs.readFileSync(new URL("../app/routes/truth.tsx", import.meta.url), "utf8")
     expect(text).toContain("<ManifestProvenance provenance={h.provenance} />")
-    expect(text).toContain("Entered by hand — no repository provenance.")
+    expect(text).toContain("Entered by hand.")
     const component = fs.readFileSync(new URL("../app/routes/truth.tsx", import.meta.url), "utf8")
     for (const field of ["Manifest key", "Source URL", "Source revision", "Last synchronized", "Manifest digest"]) {
       expect(component).toContain(field)
@@ -104,8 +104,8 @@ describe("truth", () => {
 
 describe("representations", () => {
   it("finding labels reuse the supported/wrong/unknown color language", () => {
-    expect(representationStateMeta.IN_SYNC).toMatchObject({ label: "In sync", variant: "supported" })
-    expect(representationStateMeta.DRIFT).toMatchObject({ label: "Drift", variant: "wrong" })
+    expect(representationStateMeta.IN_SYNC).toMatchObject({ label: "Matches", variant: "supported" })
+    expect(representationStateMeta.DRIFT).toMatchObject({ label: "Out of date", variant: "wrong" })
     expect(representationStateMeta.UNKNOWN).toMatchObject({ label: "Unknown", variant: "unknown" })
   })
 
@@ -135,11 +135,11 @@ describe("issues", () => {
   it("issue detail renders claim, truth, citation, verdict without causality", async () => {
     const fs = await import("node:fs")
     const detail = fs.readFileSync(new URL("../app/routes/issue.tsx", import.meta.url), "utf8")
-    for (const section of ["AI said", "Approved truth", "Source evidence", "Reviewer decision"]) {
+    for (const section of ["AI said", "Approved truth", "Sources", "Reviewer decision"]) {
       expect(detail).toContain(section)
     }
     expect(detail).toContain("Not tracked")
-    expect(detail).toContain("No source citation was returned with this observation.")
+    expect(detail).toContain("The assistant didn't link a source for this answer.")
     expect(detail.replace(/\s+/g, " ")).toContain("does not prove the source caused the answer")
     expect(detail).not.toContain("CAUSED_BY")
   })
@@ -148,7 +148,7 @@ describe("issues", () => {
     const fs = await import("node:fs")
     const list = fs.readFileSync(new URL("../app/routes/issues.tsx", import.meta.url), "utf8")
     expect(list).toContain("View issue")
-    expect(list).toContain("Review claim")
+    expect(list).toContain("Rate this answer")
     expect(list).toContain("No source citation returned.")
   })
 
@@ -167,7 +167,7 @@ describe("observation", () => {
   it("citations render only when present with tracked links", async () => {
     const fs = await import("node:fs")
     const page = fs.readFileSync(new URL("../app/routes/observation.tsx", import.meta.url), "utf8")
-    expect(page).toContain("No source citation was returned with this observation.")
+    expect(page).toContain("The assistant didn't link a source for this answer.")
     expect(page).toContain("View tracked representation")
   })
 })
@@ -175,9 +175,9 @@ describe("observation", () => {
 describe("issue states keep existing reviewer language", () => {
   it("wrong/partial/unknown/review labels unchanged", () => {
     expect(issueStateMeta.WRONG.label).toBe("Wrong")
-    expect(issueStateMeta.PARTIAL.label).toBe("Partially correct")
-    expect(issueStateMeta.UNKNOWN.label).toBe("Not enough information")
-    expect(issueStateMeta.NEEDS_REVIEW.label).toBe("Needs review")
+    expect(issueStateMeta.PARTIAL.label).toBe("Partly right")
+    expect(issueStateMeta.UNKNOWN.label).toBe("Can't tell")
+    expect(issueStateMeta.NEEDS_REVIEW.label).toBe("Not rated yet")
   })
 })
 
@@ -185,7 +185,7 @@ describe("today analytics labels", () => {
   it("uses reviewer language and honest collection wording", async () => {
     const fs = await import("node:fs")
     const today = fs.readFileSync(new URL("../app/routes/today.tsx", import.meta.url), "utf8")
-    for (const s of ["Answers collected", "Needs review", "Share needing review", "Supported share", "Citations", "Recorded outcomes", "tracked to a source"]) {
+    for (const s of ["Answers collected", "Needs review", "Share needing review", "Correct share", "Citations", "Recorded outcomes", "tracked to a source"]) {
       expect(today).toContain(s)
     }
     for (const s of ["AI mentions", "Waiting-for-review share", "To review"]) {

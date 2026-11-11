@@ -15,7 +15,7 @@ export function FunnelMeasurement({ businessId, data }: { businessId: string; da
       <PanelHeader title="Measurement coverage" description="Where to find each part of the journey. These are separate reports, not a measured funnel." />
       <dl className="divide-y px-4">
         {[
-          { title: "Discovery", detail: "Search visibility, ad performance and AI answer evidence.", section: "performance", label: "View performance" },
+          { title: "Discovery", detail: "Search, ads and what AI assistants say.", section: "performance", label: "View performance" },
           { title: "Goal action", detail: metric ? `${metric.label}. ${metric.eventName ? `Configured event: ${metric.eventName}.` : "No event name saved."}` : "No goal event has been defined yet.", section: "events", label: "View events" },
           { title: "Revenue", detail: "Paid orders, refunds and customers from Stripe, kept separate by currency.", section: "revenue", label: "View revenue" },
         ].map(row => <div key={row.title} className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="min-w-0 flex-1"><dt className="text-sm font-medium">{row.title}</dt><dd className="mt-1 text-xs text-muted-foreground">{row.detail}</dd></div><Link className="text-sm underline underline-offset-4" to={`/businesses/${businessId}/results/${row.section}`}>{row.label}</Link></div>)}

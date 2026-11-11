@@ -69,7 +69,7 @@ const REFUSALS: Record<string, string> = {
   InvalidSamples: "A run checks each fact 1 to 5 times.",
   SamplingPolicyChanged: "A re-check must reuse the first check's number of samples per fact.",
   FactNotValidAtObservation: "The approved fact was not valid when this was observed; save the version that was.",
-  InvalidClaim: "The quoted claim must come from the observed answer.",
+  InvalidClaim: "The quote must come from the answer itself.",
   Conflict: "Someone else just changed this. Reload and try again.",
 }
 const failure = (e: unknown) => {
@@ -370,7 +370,7 @@ function Review({ clientId, check, approvedValue, reload, onJudged }: {
             ) : (
               <strong className="font-medium text-partial">{check.retrievalRequested ? "retrieval requested but not used" : "no live web"}</strong>
             )}
-            {o.synthetic ? <strong className="font-medium text-partial"> · synthetic fixture</strong> : null}
+            {o.synthetic ? <strong className="font-medium text-partial"> · sample data</strong> : null}
           </span>
           <button type="button" className="shrink-0 font-medium hover:text-foreground" onClick={() => setRaw((v) => !v)}>
             {raw ? "Formatted" : "Exact text"}

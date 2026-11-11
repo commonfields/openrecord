@@ -249,7 +249,7 @@ function ComparisonCard({ issue, reviewHref }: { issue: IssueDetail; reviewHref:
             </dl>
           ) : (
             <p className="text-xs text-muted-foreground">
-              {reviewed ? "No approved fact was linked to this verdict." : "Not compared yet. Review the claim to link the facts it touches."}
+              {reviewed ? "No approved fact was linked to this verdict." : "Not rated yet. Rate it to link the facts it touches."}
             </p>
           )}
         </div>
@@ -261,7 +261,7 @@ function ComparisonCard({ issue, reviewHref }: { issue: IssueDetail; reviewHref:
         <Button asChild variant={reviewed ? "ghost" : "default"} size="sm">
           <Link to={reviewHref}>
             <PenLineIcon />
-            {reviewed ? "Change verdict" : "Review claim"}
+            {reviewed ? "Change verdict" : "Rate this answer"}
           </Link>
         </Button>
       </div>
@@ -310,10 +310,10 @@ function AnswerCard({ issue }: { issue: IssueDetail }) {
 function SourceEvidenceCard({ businessId, citations }: { businessId: string; citations: CitationEvidence[] }) {
   return (
     <Card className="gap-0 py-0">
-      <PanelHeader title="Source evidence" description="What the AI cited, and what OpenRecord observed there" icon={<LinkIcon />} />
+      <PanelHeader title="Sources" description="What the AI cited, and what OpenRecord observed there" icon={<LinkIcon />} />
       <div className="p-4">
         {citations.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No source citation was returned with this observation.</p>
+          <p className="text-xs text-muted-foreground">The assistant didn't link a source for this answer.</p>
         ) : (
           <ul className="space-y-3">
             {citations.map((c) => (
@@ -651,7 +651,7 @@ function IssueLoopSection({
                 action: (
                   <Button size="sm" className="h-7 text-xs" onClick={() => navigate(reviewHref)}>
                     <PenLineIcon />
-                    Review claim
+                    Rate this answer
                   </Button>
                 ),
               }),
@@ -756,7 +756,7 @@ function IssueLoopSection({
               ))}
             </ol>
           )}
-          <p className="mt-4 border-t pt-3 text-[0.6875rem] leading-relaxed text-muted-foreground">New observations never rewrite earlier stages.</p>
+          <p className="mt-4 border-t pt-3 text-[0.6875rem] leading-relaxed text-muted-foreground">New answers never change earlier steps.</p>
         </div>
       </Card>
 
@@ -993,7 +993,7 @@ function EvidencePacketButton({ businessId, claimId }: { businessId: string; cla
       <TooltipContent className="max-w-64">
         <span className="flex items-start gap-1.5">
           <FileJsonIcon className="mt-0.5 size-3.5 shrink-0" />
-          Sealed V1 packet as JSON: digest plus claims, judgments, interventions, and re-observations. The digest lets anyone verify the bytes.
+          A sealed copy of this history as JSON, with a fingerprint anyone can use to check it was not changed.
         </span>
       </TooltipContent>
     </Tooltip>

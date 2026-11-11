@@ -137,7 +137,7 @@ function FindingEvidence({ finding }: { finding: AssayFinding }) {
             <li key={sample.sampleNumber} className={cn("space-y-1.5 px-3 py-2", openSample === sample.sampleNumber && "bg-review-soft/60")}>
               <div className="flex flex-wrap items-center gap-2 text-[0.6875rem]">
                 <span aria-hidden className={cn("size-2 rounded-full", sampleTone(sample))} />
-                <span className="font-medium">Sample {sample.sampleNumber}{sample.synthetic ? " (synthetic fixture)" : ""}</span>
+                <span className="font-medium">Sample {sample.sampleNumber}{sample.synthetic ? " (sample data)" : ""}</span>
                 <ProviderChip provider={sample.provider} model={sample.observedModel} />
                 <span className="text-muted-foreground">{sample.comparison ? human(sample.comparison) : human(sample.status)} · retrieval: {sample.retrievalMode ? human(sample.retrievalMode) : "unknown"}</span>
               </div>
@@ -251,7 +251,7 @@ export function AssayPage() {
               <section className="space-y-3" aria-label="Findings awaiting review">
                 <h2 className="sr-only">Findings awaiting review</h2>
                 {!findings.length ? (
-                  <EmptyState icon={<ScaleIcon />} title="No candidate findings awaiting review" description="Run repeated observations for a question. Unconfirmed facts do not contribute to comparisons." className="py-10" />
+                  <EmptyState icon={<ScaleIcon />} title="No candidate findings awaiting review" description="Ask the same question several times to see how answers vary. Facts you haven't confirmed are left out of comparisons." className="py-10" />
                 ) : findings.map(finding => (
                   <article key={finding.id} className="overflow-hidden rounded-lg ring-1 ring-border">
                     <div className="p-4"><FindingEvidence finding={finding} /></div>
@@ -311,7 +311,7 @@ export function AssayPage() {
                 <div className="grid gap-1"><Label className="text-[0.6875rem]">Provider</Label><Select value={provider} onValueChange={v => { setProvider(v as "mock" | "9router"); setModel(""); setRetrieval("NONE") }}><SelectTrigger aria-label="Provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{enabledProviders.map(p => <SelectItem key={p.id} value={p.id}>{p.id === "9router" ? "9Router" : sentenceCase(p.id)}</SelectItem>)}</SelectContent></Select></div>
                 <div className="grid gap-1"><Label htmlFor="sample-count" className="text-[0.6875rem]">Samples (1–20)</Label><Input id="sample-count" type="number" min={1} max={20} value={n} onChange={e => setN(e.target.value)} /></div>
               </div>
-              {provider === "9router" ? <div className="grid gap-1"><Label className="text-[0.6875rem]">Model</Label><Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Model" className="w-full"><SelectValue placeholder="Choose a model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div> : <p className="text-xs text-muted-foreground">Mock observations are synthetic fixtures.</p>}
+              {provider === "9router" ? <div className="grid gap-1"><Label className="text-[0.6875rem]">Model</Label><Select value={model} onValueChange={setModel}><SelectTrigger aria-label="Model" className="w-full"><SelectValue placeholder="Choose a model" /></SelectTrigger><SelectContent>{models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div> : <p className="text-xs text-muted-foreground">Test answers are sample data.</p>}
               <div className="grid gap-1"><Label className="text-[0.6875rem]">Requested retrieval</Label><Select value={retrieval} onValueChange={v => setRetrieval(v as typeof AssayRetrievalMode.Type)}><SelectTrigger aria-label="Requested retrieval" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{(provider === "mock" ? ["NONE", "WEB_SEARCH", "PROVIDER_GROUNDING", "MANUAL_CAPTURE"] : ["NONE"]).map(m => <SelectItem key={m} value={m}>{human(m)}</SelectItem>)}</SelectContent></Select></div>
               {enabledProviders.length === 0 && !providers.loading ? <p className="text-[0.6875rem] text-partial">No provider is enabled on this server.</p> : null}
               <Button size="sm" disabled={busy !== null || !questionId || !enabledProviders.some(p => p.id === provider) || (provider === "9router" && !model) || !Number.isInteger(Number(n)) || Number(n) < 1 || Number(n) > 20} onClick={() => void action("run", () => Assay.run(id, { questionId, provider, requestedModel: provider === "9router" ? model : null, retrievalMode: retrieval, n: Number(n) }))}>

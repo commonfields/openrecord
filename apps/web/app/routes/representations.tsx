@@ -94,7 +94,7 @@ export function RepresentationsPage() {
     await reload()
     const n = bindingIds.length
     if (failed) toast.error(`${failed} of ${n} source check${n === 1 ? "" : "s"} failed`, { description: "The last good observation stays in place." })
-    else toast.success(`Checked ${n} source${n === 1 ? "" : "s"}`, { description: drift ? `${drift} still differ from the approved value.` : "Every checked source matches or could not be compared." })
+    else toast.success(`Checked ${n} source${n === 1 ? "" : "s"}`, { description: drift ? `${drift} still differ from your facts.` : "Every checked source matches or could not be compared." })
   }
 
   const stats: Stat[] = representationFilters.map((f) => ({
@@ -347,8 +347,8 @@ function CoverageMatrix({ businessId, rows }: { businessId: string; rows: Repres
         </tbody>
       </table>
       <div className="mt-3 flex flex-wrap gap-4 px-2 text-[0.6875rem] text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-supported" />In sync</span>
-        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-wrong" />Drift, page differs from approved</span>
+        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-supported" />Matches</span>
+        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-wrong" />Out of date, the page differs from your facts</span>
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-unknown" />Unknown, could not compare</span>
         <span className="flex items-center gap-1.5"><TriangleAlertIcon className="size-3 text-partial" />Latest check failed</span>
       </div>

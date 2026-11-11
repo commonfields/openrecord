@@ -112,7 +112,7 @@ export function Home() {
           <StatStrip
             stats={[
               { key: "n", label: "Businesses", value: businesses.length, hint: "In this account" },
-              { key: "attention", label: "Need attention", value: stat(totals.attention), hint: "Wrong or partial claims", tone: "wrong" },
+              { key: "attention", label: "Need attention", value: stat(totals.attention), hint: "Wrong or partly right answers", tone: "wrong" },
               { key: "review", label: "Needs review", value: stat(totals.unreviewed), hint: "Answers needing a verdict", tone: "review" },
               { key: "never", label: "Never checked", value: stat(totals.never), hint: "Run a first check", tone: "partial" },
             ]}

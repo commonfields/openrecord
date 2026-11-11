@@ -214,7 +214,7 @@ export function TruthPage() {
                         <span className="font-medium tabular-nums">
                           {u.sources} source{u.sources === 1 ? "" : "s"}
                         </span>
-                        {u.drift ? <span className="text-wrong"> · {u.drift} drift</span> : null}
+                        {u.drift ? <span className="text-wrong"> · {u.drift} out of date</span> : null}
                       </Link>
                     ) : (
                       <span className="text-muted-foreground">Not watched</span>
@@ -412,7 +412,7 @@ function FactCard({
             <span className="text-muted-foreground">Published at</span>
             {sources.length ? (
               <Link to={`/businesses/${businessId}/representations`} className={cn("font-medium hover:underline", drift && "text-wrong")}>
-                {drift ? `${drift} drift` : "In sync"}
+                {drift ? `${drift} out of date` : "Matches"}
               </Link>
             ) : null}
           </div>
@@ -478,7 +478,7 @@ function HistoryDialog({ businessId, fact, onOpenChange }: { businessId: string;
                     <ManifestProvenance provenance={h.provenance} />
                   </div>
                 ) : (
-                  <p className="border-t pt-2 text-xs text-muted-foreground">Entered by hand — no repository provenance.</p>
+                  <p className="border-t pt-2 text-xs text-muted-foreground">Entered by hand.</p>
                 )}
               </li>
             ))}

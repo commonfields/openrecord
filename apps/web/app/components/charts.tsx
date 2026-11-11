@@ -11,10 +11,10 @@ import { cn } from "@/lib/utils"
 // never adjacent. Keep this order everywhere verdicts are drawn.
 export const verdictSeries = [
   { key: "wrong", label: "Wrong", cssVar: "--chart-wrong" },
-  { key: "unknown", label: "Not enough information", cssVar: "--chart-unknown" },
-  { key: "partial", label: "Partially correct", cssVar: "--chart-partial" },
+  { key: "unknown", label: "Can't tell", cssVar: "--chart-unknown" },
+  { key: "partial", label: "Partly right", cssVar: "--chart-partial" },
   { key: "unreviewed", label: "Waiting for review", cssVar: "--chart-unreviewed" },
-  { key: "supported", label: "Supported", cssVar: "--chart-supported" },
+  { key: "supported", label: "Correct", cssVar: "--chart-supported" },
 ] as const satisfies ReadonlyArray<{ key: keyof VerdictCounts; label: string; cssVar: string }>
 
 export type VerdictKey = (typeof verdictSeries)[number]["key"]
@@ -57,7 +57,7 @@ export function Legend({ items }: { items: ReadonlyArray<{ label: string; cssVar
 /** Part-to-whole bar for one row. Segments keep a 2px surface gap. */
 export function VerdictBar({ counts, className }: { counts: VerdictCounts; className?: string }) {
   const total = totalClaims(counts)
-  if (total === 0) return <div className={cn("h-2 rounded-full bg-muted", className)} aria-label="No claims" />
+  if (total === 0) return <div className={cn("h-2 rounded-full bg-muted", className)} aria-label="No answers" />
   return (
     <Tooltip>
       <TooltipTrigger asChild>

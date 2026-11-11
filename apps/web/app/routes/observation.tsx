@@ -20,10 +20,10 @@ import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace"
 
 const verdicts = [
-  { value: "SUPPORTED", label: "Supported", hint: "Matches your approved facts", tone: "supported" },
-  { value: "CONTRADICTED", label: "Wrong", hint: "Disagrees with an approved fact", tone: "wrong" },
-  { value: "PARTIAL", label: "Partially correct", hint: "Some of it is right, some is not", tone: "partial" },
-  { value: "INSUFFICIENT_EVIDENCE", label: "Not enough information", hint: "No approved fact covers it", tone: "unknown" },
+  { value: "SUPPORTED", label: "Correct", hint: "Matches your facts", tone: "supported" },
+  { value: "CONTRADICTED", label: "Wrong", hint: "Goes against one of your facts", tone: "wrong" },
+  { value: "PARTIAL", label: "Partly right", hint: "Some of it is right, some is not", tone: "partial" },
+  { value: "INSUFFICIENT_EVIDENCE", label: "Can't tell", hint: "None of your facts cover it", tone: "unknown" },
 ] as const
 
 const toneRing: Record<(typeof verdicts)[number]["tone"], string> = {
@@ -132,7 +132,7 @@ export function ObservationPage() {
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-supported/25 bg-supported-soft/60 px-4 py-2.5 shadow-(--card-shadow)">
           <CheckIcon className="size-4 text-supported" />
           <p className="min-w-0 flex-1 text-xs">
-            <span className="font-medium">Every claim in this answer has a verdict.</span>{" "}
+            <span className="font-medium">Every part of this answer is rated.</span>{" "}
             <span className="text-muted-foreground">
               {nextElsewhere ? `${queue.length} answer${queue.length === 1 ? "" : "s"} still wait in the queue.` : "The review queue is empty."}
             </span>
@@ -177,7 +177,7 @@ export function ObservationPage() {
               title="Claims"
               description={
                 claims.length
-                  ? `${claims.length} transcribed · ${pendingHere.length ? `${pendingHere.length} waiting for a verdict` : "all reviewed"}`
+                  ? `${claims.length} transcribed · ${pendingHere.length ? `${pendingHere.length} waiting for a rating` : "all reviewed"}`
                   : "Transcribe one statement at a time, in the AI's words"
               }
             />
@@ -190,7 +190,7 @@ export function ObservationPage() {
                   Claims.create(observationId, claimText)
                     .then(() => {
                       setClaimText("")
-                      toast.success("Claim saved", { description: "Record a verdict for it below." })
+                      toast.success("Saved", { description: "Rate it below." })
                       reloadOverview()
                       return Promise.all([obs.reload(), issues.reload()])
                     })
@@ -259,7 +259,7 @@ export function ObservationPage() {
             <PanelHeader title="Cited sources" description="As returned by the provider" icon={<LinkIcon />} />
             <div className="p-2 pt-1">
               {citations.length === 0 ? (
-                <p className="px-2 py-3 text-xs text-muted-foreground">No source citation was returned with this observation.</p>
+                <p className="px-2 py-3 text-xs text-muted-foreground">The assistant didn't link a source for this answer.</p>
               ) : (
                 <ul>
                   {citations.map((c, i) => (
@@ -360,15 +360,15 @@ function ClaimReview({
     setPending(true)
     Judgments.create(claimId, verdict, selected, notes || undefined)
       .then(() => {
-        toast.success("Verdict recorded", {
-          description: verdict === "SUPPORTED" ? "Supported claims stay out of the issues inbox." : "It now shows in the issues inbox.",
+        toast.success("Rating saved", {
+          description: verdict === "SUPPORTED" ? "Correct answers leave the AI answers list." : "It now shows in AI answers.",
         })
         setOpen(false)
         setNotes("")
         setVerdict(null)
         onRecorded()
       })
-      .catch((err: unknown) => toast.error("Could not record the verdict", { description: errorMessage(err) }))
+      .catch((err: unknown) => toast.error("Could not save the rating", { description: errorMessage(err) }))
       .finally(() => setPending(false))
   }
 
@@ -396,7 +396,7 @@ function ClaimReview({
                 </Button>
               ) : null}
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)}>
-                Change verdict
+                Change rating
               </Button>
             </>
           ) : null}
@@ -422,8 +422,8 @@ function ClaimReview({
         >
           <div className="space-y-4 px-4 py-4">
             <div className="grid content-start gap-2">
-              <span className="text-xs font-medium">Verdict</span>
-              <div role="radiogroup" aria-label="Verdict" className="grid gap-1.5 sm:grid-cols-2">
+              <span className="text-xs font-medium">Rating</span>
+              <div role="radiogroup" aria-label="Rating" className="grid gap-1.5 sm:grid-cols-2">
                 {verdicts.map((v, i) => {
                   const on = verdict === v.value
                   return (
@@ -489,7 +489,7 @@ function ClaimReview({
                 className="text-xs"
                 value={notes}
                 onChange={(e) => setNotes(e.currentTarget.value)}
-                placeholder="Optional. What should a teammate know about this verdict?"
+                placeholder="Optional. A note for your team"
               />
             </div>
             </div>
@@ -504,7 +504,7 @@ function ClaimReview({
               ) : null}
               <Button type="submit" size="sm" className="h-8 text-xs" disabled={pending || !verdict}>
                 {pending ? <Spinner /> : null}
-                Record verdict
+                Save rating
               </Button>
             </div>
           </div>

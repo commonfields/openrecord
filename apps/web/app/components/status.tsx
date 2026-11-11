@@ -7,9 +7,9 @@ import { sentenceCase } from "@/lib/format"
 
 export const issueStateMeta: Record<IssueState, { label: string; variant: "wrong" | "partial" | "unknown" | "review"; icon: typeof CircleXIcon }> = {
   WRONG: { label: "Wrong", variant: "wrong", icon: CircleXIcon },
-  PARTIAL: { label: "Partially correct", variant: "partial", icon: CircleAlertIcon },
-  UNKNOWN: { label: "Not enough information", variant: "unknown", icon: CircleHelpIcon },
-  NEEDS_REVIEW: { label: "Needs review", variant: "review", icon: CircleDashedIcon },
+  PARTIAL: { label: "Partly right", variant: "partial", icon: CircleAlertIcon },
+  UNKNOWN: { label: "Can't tell", variant: "unknown", icon: CircleHelpIcon },
+  NEEDS_REVIEW: { label: "Not rated yet", variant: "review", icon: CircleDashedIcon },
 }
 
 export function IssueStateBadge({ state }: { state: IssueState }) {
@@ -66,8 +66,8 @@ export function FactStatusBadge({ status }: { status: string }) {
 export type RepresentationState = "IN_SYNC" | "DRIFT" | "UNKNOWN"
 
 export const representationStateMeta: Record<RepresentationState, { label: string; variant: "supported" | "wrong" | "unknown"; icon: typeof CircleXIcon }> = {
-  IN_SYNC: { label: "In sync", variant: "supported", icon: CircleCheckIcon },
-  DRIFT: { label: "Drift", variant: "wrong", icon: CircleXIcon },
+  IN_SYNC: { label: "Matches", variant: "supported", icon: CircleCheckIcon },
+  DRIFT: { label: "Out of date", variant: "wrong", icon: CircleXIcon },
   UNKNOWN: { label: "Unknown", variant: "unknown", icon: CircleHelpIcon },
 }
 
@@ -109,16 +109,16 @@ export function ProviderChip({ provider, model, className }: { provider: string;
   )
 }
 
-// Reviewer verdicts in the same words the review form uses.
+// Ratings in the same words the rating form uses.
 const verdictLabels: Record<string, string> = {
-  SUPPORTED: "Supported",
+  SUPPORTED: "Correct",
   CONTRADICTED: "Wrong",
-  PARTIAL: "Partially correct",
-  INSUFFICIENT_EVIDENCE: "Not enough information",
+  PARTIAL: "Partly right",
+  INSUFFICIENT_EVIDENCE: "Can't tell",
 }
 
 export function verdictLabel(verdict: string | null | undefined): string {
-  if (!verdict) return "Needs review"
+  if (!verdict) return "Not rated yet"
   return verdictLabels[verdict] ?? sentenceCase(verdict)
 }
 
@@ -128,7 +128,7 @@ export function VerdictBadge({ verdict }: { verdict: string | null | undefined }
     return (
       <Badge variant="supported">
         <CircleCheckIcon />
-        Supported
+        Correct
       </Badge>
     )
   }
