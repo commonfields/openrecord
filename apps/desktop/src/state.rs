@@ -47,6 +47,10 @@ pub enum Page {
     Campaigns,
     AiAnswers,
     Channels,
+    /// The account menu's pages, in the app rather than the browser.
+    Usage,
+    Businesses,
+    Clients,
 }
 
 impl Page {
@@ -59,7 +63,15 @@ impl Page {
             Page::Campaigns => "Campaigns",
             Page::AiAnswers => "AI answers",
             Page::Channels => "Channels",
+            Page::Usage => "Usage",
+            Page::Businesses => "Businesses",
+            Page::Clients => "Clients and products",
         }
+    }
+
+    /// An account page, not one of a business's.
+    pub fn account(self) -> bool {
+        matches!(self, Page::Usage | Page::Businesses | Page::Clients)
     }
 
     pub fn key(self) -> &'static str {
@@ -69,8 +81,20 @@ impl Page {
             Page::Campaigns => "campaigns",
             Page::AiAnswers => "ai-answers",
             Page::Channels => "channels",
+            Page::Usage => "usage",
+            Page::Businesses => "businesses",
+            Page::Clients => "clients",
         }
     }
+}
+
+/// The Businesses list's order, as the web's sort select offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortfolioSort {
+    Attention,
+    Accuracy,
+    Recent,
+    Name,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +314,27 @@ pub struct App {
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
+    /// The Campaigns page: the status shown ("" for all) and the campaign open, by id.
+    pub campaign_filter: String,
+    pub campaign_open: Option<String>,
+    /// The account pages: usage and its period, the businesses and clients
+    /// lists, and the search and order those lists are in.
+    pub usage: Load<crate::account::Usage>,
+    pub usage_days: u32,
+    pub portfolio: Load<Vec<crate::account::Portfolio>>,
+    pub client_rows: Load<Vec<crate::account::ClientRow>>,
+    pub list_query: TextEdit,
+    pub portfolio_sort: PortfolioSort,
+    /// The conversation split's width, measured, for the helper's share of it.
+    pub split_w: f32,
+    /// The drag edge held right now, if any.
+    pub resizing: Option<crate::ui::Resize>,
+    /// The Realtime map: how far in, and the point at its centre (longitude, latitude).
+    pub map_zoom: f32,
+    pub map_center: (f32, f32),
+    /// The map's measured width, and where its centre was when a drag began.
+    pub map_w: f32,
+    pub map_drag: Option<(f32, f32)>,
     /// The AI answer open from the AI answers list.
     pub answer: Option<AnswerView>,
     /// The Overview section on screen and its period in days.
@@ -325,6 +370,18 @@ pub struct App {
     pub row_hover: Option<String>,
     /// The next loaded conversation was opened, not answered: it lands as it is, without animation.
     pub settle_next: bool,
+    /// A background look at the open chat is out (a pending turn, or a newer revision).
+    pub syncing: bool,
+    /// The agent open in its pane beside a workspace page (`WorkspaceAgentProvider`).
+    pub pane: bool,
+    /// The pane's share of the space beside the sidebar, 30 to 70 percent.
+    pub pane_split: f32,
+    /// That space's width, measured.
+    pub pane_row_w: f32,
+    /// The pane folded the sidebar away when it opened, and gives it back on close.
+    pub pane_folded_sidebar: bool,
+    /// When the open chat was last looked at in the background.
+    pub synced_at: std::time::Instant,
     /// The business's agent proposals, for the chat's work pane.
     pub proposals: Load<Vec<crate::api::Proposal>>,
     /// Accepted drafts in the work pane, folded open.
@@ -435,6 +492,20 @@ impl App {
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
+            campaign_filter: String::new(),
+            campaign_open: None,
+            usage: Load::Idle,
+            usage_days: 30,
+            portfolio: Load::Idle,
+            client_rows: Load::Idle,
+            list_query: TextEdit::new(""),
+            portfolio_sort: PortfolioSort::Attention,
+            split_w: 0.0,
+            resizing: None,
+            map_zoom: 1.0,
+            map_center: crate::ui::world::HOME,
+            map_w: 0.0,
+            map_drag: None,
             answer: None,
             section: Section::Summary,
             days: 30,
@@ -456,6 +527,12 @@ impl App {
             drafts_open: false,
             helper: None,
             settle_next: false,
+            syncing: false,
+            pane: false,
+            pane_split: PANE_DEFAULT,
+            pane_row_w: 0.0,
+            pane_folded_sidebar: false,
+            synced_at: std::time::Instant::now(),
             new_chat: None,
             find: None,
             find_facts: Load::Idle,
@@ -660,11 +737,14 @@ impl App {
             return;
         }
         self.active = Some(id.to_string());
+        // Another business closes the pane: it belongs to the business it opened on.
+        self.close_pane();
         self.overview = Load::Idle;
         self.issues = Load::Idle;
         self.channels = Load::Idle;
         self.campaigns = Load::Idle;
         self.answer = None;
+        self.campaign_open = None;
         self.insights = Load::Idle;
         self.memory = Load::Idle;
         self.new_chat();
@@ -690,6 +770,9 @@ impl App {
     }
 
     pub fn show_view(&mut self, view: View) {
+        if view == View::Agent {
+            self.close_pane();
+        }
         self.view = view;
         if view == View::Workspace {
             self.load_page();
@@ -741,21 +824,57 @@ impl App {
         }
     }
 
+    pub fn set_usage_days(&mut self, days: u32) {
+        if self.usage_days != days {
+            self.usage_days = days;
+            self.usage = Load::Loading;
+            self.net.usage(days);
+        }
+    }
+
+    /// Opens one of a business's pages from an account page: that business, its Overview.
+    pub fn open_business(&mut self, id: &str) {
+        self.select_business(id);
+        self.show_page(Page::Overview);
+    }
+
     pub fn show_page(&mut self, page: Page) {
         self.view = View::Workspace;
         self.page = page;
         self.answer = None;
+        self.campaign_open = None;
+        self.list_query.clear();
         self.load_page();
     }
 
     /// Fetches what the page on screen shows, every time it opens, as the
     /// web pages do on mount.
     fn load_page(&mut self) {
-        let Some(id) = self.active.clone() else { return };
         if self.view != View::Workspace {
             return;
         }
+        // The account pages need no business.
         match self.page {
+            Page::Usage => {
+                self.usage = keep_or_load(&self.usage);
+                self.net.usage(self.usage_days);
+                return;
+            }
+            Page::Businesses => {
+                self.portfolio = keep_or_load(&self.portfolio);
+                self.net.portfolio(self.businesses.iter().map(|b| (b.id.clone(), b.name.clone())).collect());
+                return;
+            }
+            Page::Clients => {
+                self.client_rows = keep_or_load(&self.client_rows);
+                self.net.client_rows();
+                return;
+            }
+            _ => {}
+        }
+        let Some(id) = self.active.clone() else { return };
+        match self.page {
+            Page::Usage | Page::Businesses | Page::Clients => {}
             Page::Inbox => {
                 self.net.decisions();
                 self.load_models();
@@ -794,6 +913,8 @@ impl App {
 
     pub fn close_answer(&mut self) {
         self.answer = None;
+        self.campaign_open = None;
+        self.list_query.clear();
         self.load_page();
     }
 
@@ -895,7 +1016,12 @@ impl App {
             }
         }
         if let (Some(scope), Some(chat)) = (self.chat_scope(), self.chat_id.clone()) {
-            self.net.conversation(scope, chat);
+            if matches!(self.turn, Turn::Working { .. }) {
+                self.net.conversation(scope, chat);
+            } else {
+                self.syncing = true;
+                self.net.sync(scope, chat);
+            }
         }
     }
 
@@ -962,8 +1088,101 @@ impl App {
         }
     }
 
-    pub fn new_chat(&mut self) {
+    /// Hands the agent a request, as the web's "Ask the agent" links do: the
+    /// business's current conversation opens with it typed in, never sent until
+    /// the person sends it. On a workspace page it opens in the pane beside the
+    /// page; elsewhere in the Agent view.
+    pub fn ask_agent(&mut self, request: &str) {
+        if self.pane_allowed() {
+            self.open_pane(Some(request));
+            return;
+        }
+        self.business_chat();
+        self.enter_agent();
+        self.composer.replace_text(request);
+    }
+
+    /// A general chat or a helper session on screen gives way to a new chat
+    /// about the business; the business's own chat stays.
+    fn business_chat(&mut self) {
+        let helper = self.conversation.ready().is_some_and(|c| c.session.as_ref().is_some_and(|i| i.parent_session_id.is_some()));
+        if self.general || helper || self.active.is_none() {
+            let view = self.view;
+            self.new_chat();
+            self.view = view;
+        }
+    }
+
+    /// Whether the page on screen is one the agent pane can open beside: a
+    /// business's workspace page, not an account page.
+    pub fn pane_allowed(&self) -> bool {
+        self.view == View::Workspace && self.active.is_some() && !self.page.account() && self.settings.is_none()
+    }
+
+    /// Whether the agent pane is on screen.
+    pub fn pane_shown(&self) -> bool {
+        self.pane && self.pane_allowed()
+    }
+
+    /// Whether a conversation is on screen, full or in the pane.
+    pub fn chat_shown(&self) -> bool {
+        (self.view == View::Agent && (self.active.is_some() || self.general)) || self.pane_shown()
+    }
+
+    /// Opens the agent beside the page, with a request typed in when there is
+    /// one. The sidebar folds away so the page keeps its room.
+    pub fn open_pane(&mut self, request: Option<&str>) {
+        self.menu = None;
+        self.business_chat();
+        if !self.pane {
+            self.pane = true;
+            if self.sidebar_open {
+                self.sidebar_open = false;
+                self.pane_folded_sidebar = true;
+            }
+        }
+        if let Some(r) = request {
+            self.composer.replace_text(r);
+        }
+        if let (Some(scope), Some(id)) = (self.chat_scope(), self.chat_id.clone()) {
+            if self.conversation.ready().is_none_or(|c| c.id != id) && !matches!(self.conversation, Load::Loading) {
+                self.conversation = Load::Loading;
+                self.syncing = true;
+                self.net.sync(scope, id);
+            }
+        }
+    }
+
+    /// Closes the pane and gives the sidebar back if the pane folded it.
+    pub fn close_pane(&mut self) {
+        if !self.pane {
+            return;
+        }
+        self.pane = false;
+        self.helper = None;
+        if std::mem::take(&mut self.pane_folded_sidebar) {
+            self.sidebar_open = true;
+        }
+    }
+
+    /// Goes to the full Agent view; the pane gives way to it.
+    fn enter_agent(&mut self) {
+        self.close_pane();
         self.view = View::Agent;
+    }
+
+    /// Opens one of a business's conversations, such as the one a decision came from.
+    pub fn open_business_chat(&mut self, business: &str, id: &str) {
+        if !business.is_empty() && self.active.as_deref() != Some(business) {
+            self.select_business(business);
+        }
+        self.general = business.is_empty();
+        self.helper = None;
+        self.open_session(id);
+    }
+
+    pub fn new_chat(&mut self) {
+        self.enter_agent();
         self.general = false;
         self.chat_id = None;
         self.conversation = Load::Idle;
@@ -978,13 +1197,14 @@ impl App {
         }
         // A chat without a business is a general chat.
         self.general = chat.business_id.is_none();
-        self.view = View::Agent;
+        self.enter_agent();
         self.chat_id = Some(chat.id.clone());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
         self.settle_next = true;
         if let Some(scope) = self.chat_scope() {
-            self.net.conversation(scope, chat.id.clone());
+            self.syncing = true;
+            self.net.sync(scope, chat.id.clone());
         }
     }
 
@@ -1143,7 +1363,7 @@ impl App {
 
     /// Opens another session of this business, such as a helper, in the chat.
     pub fn open_session(&mut self, id: &str) {
-        self.view = View::Agent;
+        self.enter_agent();
         self.chat_id = Some(id.to_string());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
@@ -1151,15 +1371,16 @@ impl App {
         self.open_logs.clear();
         self.open_sources.clear();
         if let Some(scope) = self.chat_scope() {
-            self.net.conversation(scope, id.to_string());
+            self.syncing = true;
+            self.net.sync(scope, id.to_string());
         }
     }
 
     pub fn stop_turn(&mut self) {
         let (Some(b), Some(c)) = (self.chat_scope(), self.chat_id.clone()) else { return };
-        if let Turn::Working { stopping, .. } = &mut self.turn {
+        if let Turn::Working { stopping, request, .. } = &mut self.turn {
             *stopping = true;
-            self.net.cancel(b, c);
+            self.net.cancel(b, c, request.clone());
         }
     }
 
@@ -1458,6 +1679,7 @@ impl App {
             tx.wake_after(std::time::Duration::from_millis(220));
             changed = true;
         }
+        self.sync_open_chat(tx);
         // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.
         if let Some((text, started)) = &self.reveal {
             if crate::chat::reveal_prefix(text, started.elapsed()).is_some() {
@@ -1469,6 +1691,28 @@ impl App {
             }
         }
         changed
+    }
+
+    /// Keeps the open chat current while it sits idle on screen, as the web's
+    /// chat does: every 4 seconds while a helper it started still works (its
+    /// result and the turn after it land on the server), otherwise every 20
+    /// seconds, which also picks up a turn started on another device or a
+    /// follow-up posted into the chat.
+    fn sync_open_chat(&mut self, tx: &mut Tx) {
+        if self.screen != Screen::Workspace || !self.chat_shown() || self.syncing || !matches!(self.turn, Turn::Idle) {
+            return;
+        }
+        let (Some(scope), Some(id)) = (self.chat_scope(), self.chat_id.clone()) else { return };
+        let Some(c) = self.conversation.ready().filter(|c| c.id == id) else { return };
+        let every = std::time::Duration::from_secs(if helpers_working(&c.messages) { 4 } else { 20 });
+        let since = self.synced_at.elapsed();
+        if since >= every {
+            self.syncing = true;
+            self.synced_at = std::time::Instant::now();
+            self.net.sync(scope, id);
+        } else {
+            tx.wake_after(every - since);
+        }
     }
 
     /// The prefix of a reply still being revealed, or `None` once it is whole.
@@ -1577,30 +1821,53 @@ impl App {
             Reply::Facts(..) => {}
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
-            Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
-                Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
-                    // A chat opened from the history shows as it is: no message slides in.
-                    if std::mem::take(&mut self.settle_next) {
-                        tx.settle();
+            Reply::Usage(days, r) if days == self.usage_days => self.usage = to_load(self.failed(r)),
+            Reply::Usage(..) => {}
+            Reply::Portfolio(r) => self.portfolio = to_load(self.failed(r)),
+            Reply::ClientRows(r) => self.client_rows = to_load(self.failed(r)),
+            Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => {
+                self.syncing = false;
+                self.synced_at = std::time::Instant::now();
+                match self.failed(r) {
+                    // Nothing new since the chat on screen: leave it, and its scroll, as they are.
+                    Ok(Some(c)) if self.conversation.ready().is_some_and(|o| o.id == c.id && o.revision >= c.revision) && matches!(self.turn, Turn::Idle) && self.queued.is_empty() => {
+                        std::mem::take(&mut self.settle_next);
+                        std::mem::take(&mut self.reveal_next);
                     }
-                    if std::mem::take(&mut self.reveal_next) {
-                        if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
-                            self.reveal = Some((m.text.clone(), std::time::Instant::now()));
+                    Ok(Some(c)) if Some(&c.id) == self.chat_id.as_ref() => {
+                        // Newer work landed while the chat sat idle (a helper's result or
+                        // a follow-up): what it saved may wait for a decision.
+                        if matches!(self.turn, Turn::Idle) && self.conversation.ready().is_some_and(|o| o.id == c.id) && c.messages.iter().any(|m| !m.decisions.is_empty()) {
+                            self.net.decisions();
+                            if !b.is_empty() {
+                                self.net.proposals(b.clone());
+                            }
+                        }
+                        // A chat opened from the history shows as it is: no message slides in.
+                        if std::mem::take(&mut self.settle_next) {
+                            tx.settle();
+                        }
+                        if std::mem::take(&mut self.reveal_next) {
+                            if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
+                                self.reveal = Some((m.text.clone(), std::time::Instant::now()));
+                            }
+                        }
+                        self.conversation = Load::Ready(c);
+                        tx.instant();
+                        tx.scroll_to_bottom("transcript");
+                        // The reply is in and the revision current: the next queued message goes.
+                        if matches!(self.turn, Turn::Idle) && !self.queued.is_empty() {
+                            let next = self.queued.remove(0);
+                            self.dispatch(next, tx);
                         }
                     }
-                    self.conversation = Load::Ready(c);
-                    tx.instant();
-                    tx.scroll_to_bottom("transcript");
-                    // The reply is in and the revision current: the next queued message goes.
-                    if matches!(self.turn, Turn::Idle) && !self.queued.is_empty() {
-                        let next = self.queued.remove(0);
-                        self.dispatch(next, tx);
-                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
+                    // A background look that failed keeps the chat on screen; the next one tries again.
+                    Err(_) if self.conversation.ready().is_some_and(|o| Some(&o.id) == self.chat_id.as_ref()) => {}
+                    Err(e) => self.conversation = Load::Failed(e),
                 }
-                Ok(Some(_)) => {}
-                Ok(None) => self.conversation = Load::Failed("This chat no longer exists.".into()),
-                Err(e) => self.conversation = Load::Failed(e),
-            },
+            }
             Reply::TurnQueued { business, conversation, request: id } if self.chat_scope().as_deref() == Some(business.as_str()) => {
                 if self.chat_id.is_none() {
                     self.chat_id = Some(conversation);
@@ -1639,9 +1906,38 @@ impl App {
                     }
                 }
             }
-            Reply::TurnDone { business, conversation, result } => {
+            Reply::TurnResumed { business, conversation, request, message } => {
+                self.syncing = false;
+                self.synced_at = std::time::Instant::now();
+                if self.chat_scope().as_deref() == Some(business.as_str()) && self.chat_id.as_deref() == Some(conversation.as_str()) && matches!(self.turn, Turn::Idle) {
+                    self.open_logs.retain(|(i, _)| *i != usize::MAX);
+                    self.turn = Turn::Working { message, request: Some(request), progress: Default::default(), started: std::time::Instant::now(), stopping: false };
+                    // What the chat said before the turn shows while it runs.
+                    if self.conversation.ready().is_none_or(|c| c.id != conversation) {
+                        self.net.conversation(business, conversation);
+                    }
+                    tx.scroll_to_bottom("transcript");
+                }
+            }
+            Reply::CancelFailed => {
+                if let Turn::Working { stopping, .. } = &mut self.turn {
+                    *stopping = false;
+                }
+                self.notice = Some("Couldn't stop the agent. Try again.".into());
+            }
+            Reply::TurnDone { business, conversation, request, result } => {
                 self.net.chats();
                 if self.chat_scope().as_deref() != Some(business.as_str()) || self.chat_id.as_deref().is_some_and(|c| c != conversation) {
+                    return;
+                }
+                // A turn this window no longer follows, such as one picked up while
+                // another was being sent: the turn on screen settles on its own.
+                if let (Turn::Working { request: Some(on_screen), .. }, Some(done)) = (&self.turn, &request) {
+                    if on_screen != done {
+                        return;
+                    }
+                }
+                if request.is_some() && !matches!(self.turn, Turn::Working { .. }) {
                     return;
                 }
                 match self.failed(result) {
@@ -1918,6 +2214,20 @@ impl App {
     }
 }
 
+/// The agent pane's share when it first opens, and on a double-click of its edge.
+pub const PANE_DEFAULT: f32 = 50.0;
+
+/// Whether a helper session the chat started is still working: each task's
+/// latest status, since a later message (its posted result) supersedes the
+/// card that started it.
+fn helpers_working(messages: &[Message]) -> bool {
+    let mut latest = std::collections::HashMap::new();
+    for t in messages.iter().flat_map(|m| m.tasks.iter()) {
+        latest.insert(t.id.as_str(), t.status.as_str());
+    }
+    latest.values().any(|s| *s == "RUNNING")
+}
+
 fn keep_or_load<T: Clone>(l: &Load<T>) -> Load<T> {
     match l {
         Load::Ready(v) => Load::Ready(v.clone()),
@@ -1953,5 +2263,20 @@ fn remember_email(email: &str) {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(p, email);
+    }
+}
+
+#[cfg(test)]
+mod agent_sync_tests {
+    use super::*;
+
+    #[test]
+    fn a_helper_works_until_its_result_supersedes_its_card() {
+        let msg = |status: &str| -> Message {
+            serde_json::from_value(serde_json::json!({ "role": "agent", "text": "", "tasks": [{ "id": "t1", "sessionId": "s2", "title": "Research", "role": "researcher", "status": status }] })).unwrap()
+        };
+        assert!(helpers_working(&[msg("RUNNING")]));
+        assert!(!helpers_working(&[msg("RUNNING"), msg("COMPLETED")]));
+        assert!(!helpers_working(&[]));
     }
 }

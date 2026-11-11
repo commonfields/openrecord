@@ -6,6 +6,7 @@
 //! `cargo run` opens the window. Headless, with fixture data and no network:
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
+mod account;
 mod api;
 mod brand_marks;
 mod brands;
@@ -75,6 +76,11 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.helper = None;
         return true;
     }
+    // Then the agent pane beside a page, unless the composer's "/" menu takes the key.
+    if s.settings.is_none() && s.pane_shown() && ev.key == rune::Key::Escape && s.menu.is_none() && s.menu_entries().is_empty() {
+        s.close_pane();
+        return true;
+    }
     if s.settings.is_some() {
         if ev.key == rune::Key::Escape {
             s.settings = None;
@@ -83,7 +89,7 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     // With "Send with Enter" off, ⌘Return sends.
-    if ev.key == rune::Key::Enter && ev.mods.cmd && !s.prefs.enter_to_send && s.view == state::View::Agent {
+    if ev.key == rune::Key::Enter && ev.mods.cmd && !s.prefs.enter_to_send && s.chat_shown() {
         s.send_message(tx);
         return true;
     }
@@ -136,6 +142,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-ui-invalid", fixtures::agent_ui_invalid),
     ("agent-compose", fixtures::agent_compose),
     ("agent-archived", fixtures::agent_archived),
+    ("overview-agent", fixtures::overview_agent),
     ("settings-general", fixtures::settings_general),
     ("settings-agent", fixtures::settings_agent),
     ("settings-account", fixtures::settings_account),
@@ -154,6 +161,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("overview-realtime", fixtures::overview_realtime),
     ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
+    ("campaign", fixtures::campaign_open),
     ("ai-answers", fixtures::ai_answers),
     ("ai-answer", fixtures::ai_answer),
     ("ai-answer-review", fixtures::ai_answer_review),
@@ -162,6 +170,10 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("business-menu", fixtures::business_menu),
     ("agent-find", fixtures::agent_find),
     ("account-update", fixtures::account_update),
+    ("account-menu", fixtures::account_menu),
+    ("usage", fixtures::usage),
+    ("businesses", fixtures::businesses),
+    ("clients", fixtures::clients),
 ];
 
 fn main() {

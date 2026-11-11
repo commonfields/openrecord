@@ -394,15 +394,17 @@ fn model_chips(s: &App, t: &Theme, st: &Stats) -> El {
     r
 }
 
+/// A card in the details grid. The rows inside keep 8 points of their own
+/// padding for their hover tint, so the card's edge is 12 and text lines up
+/// at 20, as on the other cards.
 fn panel(t: &Theme, key: &str, title: &str, description: String) -> El {
     card(t)
         .key(key)
-        .grow(1.0)
-        .min_w(360.0)
-        .px(8.0)
-        .pt(16.0)
-        .pb(8.0)
-        .gap(8.0)
+        .w_full()
+        .px(12.0)
+        .pt(18.0)
+        .pb(12.0)
+        .gap(10.0)
         .child(col().w_full().px(8.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(label(description, type_::XS, t.muted_foreground).wrap()))
 }
 

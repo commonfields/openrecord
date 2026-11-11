@@ -95,7 +95,7 @@ Every screen has a scene built from fixture data, with no network:
 ```sh
 cargo build
 ./target/debug/openrecord-desktop --snap agent.png --scene agent [--theme dark] [--chrome]
-# scenes: signin agent agent-empty agent-helper agent-work agent-diagram agent-ui agent-ui-invalid new-chat agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
+# scenes: signin agent overview-agent agent-empty agent-helper agent-work agent-diagram agent-ui agent-ui-invalid new-chat agent-commands agent-actions agent-save-playbook agent-share agent-followups agent-chart agent-working agent-models-many inbox inbox-wordpress inbox-check inbox-decline overview overview-answers overview-performance overview-revenue overview-funnel overview-events campaigns ai-answers ai-answer ai-answer-review channels collapsed business-menu
 ```
 
 `--chrome` draws the traffic lights and reports any element under them.

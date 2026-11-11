@@ -39,8 +39,13 @@ pub enum Reply {
     SettingFailed(String),
     /// A chat was archived (`true`) or restored.
     Archived { archived: bool, result: ApiResult<()> },
-    /// A turn finished (or failed) in this conversation.
-    TurnDone { business: String, conversation: String, result: ApiResult<()> },
+    /// A turn finished (or failed) in this conversation; `request` once the API accepted it.
+    TurnDone { business: String, conversation: String, request: Option<String>, result: ApiResult<()> },
+    /// A turn already under way in this conversation, started elsewhere or
+    /// before the app last quit; it is followed until it settles.
+    TurnResumed { business: String, conversation: String, request: String, message: String },
+    /// Stop was pressed but the API did not take it.
+    CancelFailed,
     /// A decision was approved (`true`) or declined, or the call failed.
     Decided { key: String, approved: bool, result: ApiResult<()> },
     /// The models a re-check can run on.
@@ -71,6 +76,12 @@ pub enum Reply {
     UpdateChecked(Result<Option<crate::update::Release>, String>),
     /// An update was installed (the app restarts), or why it was not.
     UpdateInstalled(Result<(), String>),
+    /// The account's usage over a number of days.
+    Usage(u32, ApiResult<crate::account::Usage>),
+    /// Every business with its overview and 30 days of answers.
+    Portfolio(ApiResult<Vec<crate::account::Portfolio>>),
+    /// The account's clients with their marketing progress.
+    ClientRows(ApiResult<Vec<crate::account::ClientRow>>),
 }
 
 /// A change to the agent's provider connections.
@@ -252,6 +263,18 @@ impl Net {
         });
     }
 
+    pub fn usage(&self, days: u32) {
+        self.spawn(move |c, send| send(Reply::Usage(days, c.usage(days))));
+    }
+
+    pub fn portfolio(&self, businesses: Vec<(String, String)>) {
+        self.spawn(move |c, send| send(Reply::Portfolio(c.portfolio(&businesses))));
+    }
+
+    pub fn client_rows(&self) {
+        self.spawn(|c, send| send(Reply::ClientRows(c.client_rows())));
+    }
+
     pub fn clients(&self) {
         self.spawn(|c, send| send(Reply::Clients(c.clients())));
     }
@@ -323,13 +346,34 @@ impl Net {
         });
     }
 
-    /// Sends one message: makes the conversation first when there is none,
-    /// queues the turn, then follows it until it settles, as the web
-    /// client's `waitForAgentRequest` does.
-    /// Asks the API to stop the turn running in a conversation.
-    pub fn cancel(&self, business: String, conversation: String) {
-        self.spawn(move |c, _send| {
-            let _ = c.cancel(&business, &conversation);
+    /// Opens a conversation as the web does on load: a turn still in flight
+    /// (or one that failed since the chat last changed) is attached to and
+    /// followed, never sent again; then the conversation loads.
+    pub fn sync(&self, business: String, id: String) {
+        self.spawn(move |c, send| {
+            if let Ok(Some(p)) = c.pending_request(&id) {
+                let request = p.request_id;
+                send(Reply::TurnResumed { business: business.clone(), conversation: id.clone(), request: request.clone(), message: p.message.unwrap_or_default() });
+                let result = follow(c, &request, &send);
+                send(Reply::TurnDone { business, conversation: id, request: Some(request), result });
+                return;
+            }
+            let r = c.conversation(&business, Some(&id));
+            send(Reply::Conversation(business, r));
+        });
+    }
+
+    /// Asks the API to stop a turn: the request itself once it is known
+    /// (`cancelRequest`), otherwise whatever runs in the conversation.
+    pub fn cancel(&self, business: String, conversation: String, request: Option<String>) {
+        self.spawn(move |c, send| {
+            let r = match &request {
+                Some(id) => c.cancel_request(id),
+                None => c.cancel(&business, &conversation),
+            };
+            if r.is_err() {
+                send(Reply::CancelFailed);
+            }
         });
     }
 
@@ -408,6 +452,9 @@ impl Net {
         self.spawn(|c, send| send(Reply::Catalog(c.catalog())));
     }
 
+    /// Sends one message: makes the conversation first when there is none,
+    /// queues the turn, then follows it until it settles, as the web
+    /// client's `waitForAgentRequest` does.
     pub fn send(&self, business: String, conversation: Option<(String, i64)>, out: crate::chat::Outgoing) {
         self.spawn(move |c, send| {
             let (conversation, revision) = match conversation {
@@ -415,19 +462,19 @@ impl Net {
                 None => match c.new_conversation(&business, &crate::api::uuid()) {
                     Ok(conv) => (conv.id, conv.revision),
                     Err(e) => {
-                        send(Reply::TurnDone { business, conversation: String::new(), result: Err(e) });
+                        send(Reply::TurnDone { business, conversation: String::new(), request: None, result: Err(e) });
                         return;
                     }
                 },
             };
             let request = crate::api::uuid();
             if let Err(e) = c.send(&business, &conversation, revision, &request, &out) {
-                send(Reply::TurnDone { business, conversation, result: Err(e) });
+                send(Reply::TurnDone { business, conversation, request: None, result: Err(e) });
                 return;
             }
             send(Reply::TurnQueued { business: business.clone(), conversation: conversation.clone(), request: request.clone() });
             let result = follow(c, &request, &send);
-            send(Reply::TurnDone { business, conversation, result });
+            send(Reply::TurnDone { business, conversation, request: Some(request), result });
         });
     }
 }

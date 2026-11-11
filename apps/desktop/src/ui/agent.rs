@@ -88,7 +88,14 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let main = col().key("agent").w_full().h_full().min_h(0.0).child(transcript).child(composer(s, t, &business));
     match &s.helper {
         // A helper opened beside the conversation takes the right half.
-        Some((id, load)) => row().key("agent-split").w_full().h_full().child(main.w(0.0).grow(1.0)).child(helper_pane(s, t, k, id, load)),
+        // Its share is the web's 30 to 70 percent, dragged from its left edge.
+        Some((id, load)) => row()
+            .key("agent-split")
+            .w_full()
+            .h_full()
+            .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
+            .child(main.w(0.0).grow(1.0).min_w(0.0))
+            .child(helper_pane(s, t, k, id, load)),
         None => main,
     }
 }
@@ -189,6 +196,100 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
     shadows(c, &t.card_shadow)
 }
 
+/// The agent beside a workspace page (`AgentPane` in `workspace-agent.tsx`):
+/// the business's conversation on its own card left of the page, sliding in
+/// from the left at half the space by default, its right edge dragged within
+/// 30 to 70 percent. "Open full chat" moves it to the Agent view; the close
+/// button, Escape or "Hide the agent" slides it away.
+pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
+    let title = s.conversation.ready().and_then(|c| c.title.clone()).filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "New chat".into());
+    let head = row()
+        .w_full()
+        .h(44.0)
+        .pl(16.0)
+        .pr(8.0)
+        .gap(8.0)
+        .center_y()
+        .child(label(title, type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0))
+        .child(
+            label("Open full chat", type_::XS_MEDIUM, t.muted_foreground)
+                .key("pane-full")
+                .role("button")
+                .focusable(true)
+                .px(8.0)
+                .py(4.0)
+                .radius(6.0)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(|s: &mut App| s.show_view(View::Agent)),
+        )
+        .child(icon_button(t, "pane-close", &icons::X, "Close the agent (Esc)", false).on_press(|s: &mut App| s.close_pane()));
+    let w = if s.pane_row_w > 0.0 { (s.pane_row_w * s.pane_split.clamp(30.0, 70.0) / 100.0).round() } else { 0.0 };
+    col()
+        .key("agent-pane")
+        .w(w)
+        .grow(if w > 0.0 { 0.0 } else { 1.0 })
+        .min_w(0.0)
+        .h_full()
+        .pt(8.0)
+        .pb(8.0)
+        .pr(8.0)
+        .role("complementary")
+        .label("Agent")
+        .transition(Transition::offset(-64.0, 0.0).combined(Transition::opacity()))
+        .child(
+            shadows(
+                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(el().w_full().h(1.0).fill(t.border)).child(col().w_full().grow(1.0).min_h(0.0).child(view(s, t, k))),
+                &t.panel_shadow,
+            ),
+        )
+        .child(pane_edge(t, s.resizing == Some(crate::ui::Resize::AgentPane)))
+}
+
+/// The pane's right edge: drag to resize within 30 to 70 percent of the space
+/// beside the sidebar, double-click for half, arrow keys to nudge.
+fn pane_edge(t: &Theme, held: bool) -> El {
+    use crate::state::PANE_DEFAULT;
+    el().key("pane-edge")
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize agent panel")
+        .help("Drag to resize; double-click for half and half")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.pane_split;
+                    s.resizing = Some(crate::ui::Resize::AgentPane);
+                }
+                // Dragging right widens the pane.
+                rune::Phase::Move if s.pane_row_w > 0.0 => s.pane_split = (d.data + d.dx / s.pane_row_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move => {}
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.pane_split = d.data;
+                    }
+                    s.resizing = None;
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| s.pane_split = PANE_DEFAULT)
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => -2.0,
+                rune::Key::Right => 2.0,
+                _ => return false,
+            };
+            s.pane_split = (s.pane_split + step).clamp(30.0, 70.0);
+            true
+        })
+}
+
 /// A helper session opened from the conversation, to review (`HelperPane`): its
 /// own card over the right half, sliding in from the right. Read-only; "Open as
 /// main chat" is where to reply. Escape or the close button slides it away.
@@ -238,18 +339,68 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
     };
     col()
         .key(format!("helper-{id}"))
-        .w(0.0)
-        .grow(1.0)
+        .w(if s.split_w > 0.0 { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 })
+        .grow(if s.split_w > 0.0 { 0.0 } else { 1.0 })
         .h_full()
         .padding(6.0)
         .transition(Transition::offset(64.0, 0.0).combined(Transition::opacity()))
         .label("Helper session")
+        .child(helper_edge(t, s.resizing == Some(crate::ui::Resize::Helper)))
         .child(
             shadows(
                 col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
                 &t.panel_shadow,
             ),
         )
+}
+
+/// The helper's left edge: drag to resize within 30 to 70 percent of the
+/// split, double-click for half, arrow keys to nudge, as the web's pane does.
+fn helper_edge(t: &Theme, held: bool) -> El {
+    use crate::prefs::HELPER_DEFAULT;
+    el().key("helper-edge")
+        .pin(Some(0.0), Some(0.0), None, Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize helper panel")
+        .help("Drag to resize; double-click for half and half")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.prefs.helper();
+                    s.resizing = Some(crate::ui::Resize::Helper);
+                }
+                // Dragging left widens the helper.
+                rune::Phase::Move if s.split_w > 0.0 => s.prefs.helper_width = (d.data - d.dx / s.split_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move => {}
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.prefs.helper_width = d.data;
+                    }
+                    s.resizing = None;
+                    s.prefs.save();
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| {
+            s.prefs.helper_width = HELPER_DEFAULT;
+            s.prefs.save();
+        })
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => 2.0,
+                rune::Key::Right => -2.0,
+                _ => return false,
+            };
+            s.prefs.helper_width = (s.prefs.helper() + step).clamp(30.0, 70.0);
+            s.prefs.save();
+            true
+        })
 }
 
 // ---- Motion (the web's `chip-in`) -------------------------------------------
@@ -1199,39 +1350,94 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
     r.child(label(name, type_::XS, ink).group_color(if s.model_unavailable() { t.wrong } else { t.foreground }).truncate()).child(ico(&icons::CHEVRON_DOWN, 14.0, t.muted_foreground).group_color(t.foreground))
 }
 
+/// How much thinking an effort asks for, as cube rows lit: none for off, all
+/// three for high, and the whole face bright past that. None is the model's default.
+fn effort_level(effort: Option<&str>) -> Option<usize> {
+    Some(match effort? {
+        "none" => 0,
+        "minimal" | "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        _ => 4,
+    })
+}
+
+/// One twist every third of the cycle: hold, turn a cell, hold, as a hand
+/// turns a cube's row.
+const TWIST: [[f32; 2]; 8] = [[0.0, 0.0], [0.18, 0.0], [0.3, 1.0 / 3.0], [0.51, 1.0 / 3.0], [0.63, 2.0 / 3.0], [0.84, 2.0 / 3.0], [0.96, 1.0], [1.0, 1.0]];
+
+/// The thinking knob: a 3 by 3 cube face. Its lit rows say how hard the model
+/// thinks; while it thinks, the rows turn one cell at a time like a Rubik's
+/// cube, the middle row against the others, each a beat apart.
+pub fn cube(t: &Theme, key: &str, level: Option<usize>, turning: bool, cell: f32) -> El {
+    let gap = (cell / 4.0).max(1.0);
+    let step = cell + gap;
+    let palette = [t.chart.tone(0), t.chart.tone(1), t.chart.tone(2), t.chart.tone(3)];
+    let mut face = col().key(key.to_string()).size(step * 3.0, step * 3.0).a11y_hidden();
+    for r in 0..3 {
+        // Rows light from the bottom up.
+        let lit = level.is_some_and(|l| l >= 3 - r || l >= 4);
+        let bright = level == Some(4);
+        let color = |k: usize| {
+            if lit {
+                palette[(r + k) % palette.len()].alpha(if bright { 1.0 } else { 0.85 })
+            } else if level.is_none() {
+                t.muted_foreground.alpha(0.45)
+            } else {
+                t.muted_foreground.alpha(0.2)
+            }
+        };
+        // Six cells, the face twice, so a full turn of three lands where it began.
+        let mut strip = row().w(step * 6.0).h(step);
+        for k in 0..6 {
+            strip = strip.child(row().size(step, step).padding(gap / 2.0).child(el().size(cell, cell).radius(cell * 0.28).fill(color(k % 3))));
+        }
+        if turning {
+            let (from, to) = if r == 1 { ([-0.5, 0.0], [0.0, 0.0]) } else { ([0.0, 0.0], [-0.5, 0.0]) };
+            let mut spec = rune::LoopSpec::slide(3.6, from, to).easing(rune::Easing::Piecewise(&TWIST));
+            spec.delay = r as f64 * 0.4;
+            strip = strip.looping(spec);
+        }
+        face = face.child(row().w(step * 3.0).h(step).clip_rounded(cell * 0.3).child(strip));
+    }
+    face
+}
+
 /// The reasoning effort for the next reply, beside the model, when the model reports any.
 fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
     // Always shown, as on the web; disabled while the model reports no reasoning controls.
     let none = s.chosen_model().filter(|_| !s.model_unavailable()).is_none_or(|m| m.efforts.is_empty());
+    let working = matches!(s.turn, Turn::Working { .. });
     let locked = locked || none;
     let name = s.reasoning_effort().map(chat::effort_label).unwrap_or_else(|| "Reasoning".into());
-    {
-        row()
-            .key("reasoning-picker")
-            .gap(4.0)
-            .center_y()
-            .role("button")
-            .label("Reasoning effort")
-            .help(if none { "This provider hasn't reported reasoning controls for this model." } else { "Reasoning effort for the next reply" })
-            .disabled(locked)
-            .focusable(!locked)
-            .cursor(if locked { Cursor::Default } else { Cursor::Pointer })
-            .hover_group()
-            .on_press(move |s: &mut App| {
-                if !locked && !matches!(s.turn, Turn::Working { .. }) {
-                    s.menu = Some(crate::state::Menu::Reasoning);
-                }
-            })
-            .child(label(name, type_::XS, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
-            .child(ico(&icons::CHEVRON_DOWN, 16.0, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
-    }
+    let level = if none { Some(0) } else { effort_level(s.reasoning_effort()) };
+    row()
+        .key("reasoning-picker")
+        .gap(6.0)
+        .center_y()
+        .role("button")
+        .label("Reasoning effort")
+        .help(if none { "This provider hasn't reported reasoning controls for this model." } else { "Reasoning effort for the next reply" })
+        .disabled(locked)
+        .focusable(!locked)
+        .cursor(if locked { Cursor::Default } else { Cursor::Pointer })
+        .hover_group()
+        .on_press(move |s: &mut App| {
+            if !locked && !matches!(s.turn, Turn::Working { .. }) {
+                s.menu = Some(crate::state::Menu::Reasoning);
+            }
+        })
+        // Turns while the agent thinks, unless motion is reduced.
+        .child(cube(t, "reasoning-cube", level, working && !none && !s.prefs.reduce_motion, 4.0))
+        .child(label(name, type_::XS, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
+        .child(ico(&icons::CHEVRON_DOWN, 16.0, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
 }
 
 /// Default and the efforts the model offers, each a 40-point row as the web's select draws them.
 pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     let efforts = s.chosen_model().map(|m| m.efforts.clone()).unwrap_or_default();
     let current = s.reasoning_effort().map(str::to_string);
-    let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
+    let mut m = shadows(col().key("reasoning-menu").w(196.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
     let row_ = |key: String, name: String, on: bool, effort: Option<String>| {
         let hk = format!("effort:{key}");
         let r = row()
@@ -1247,6 +1453,8 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
             .focusable(true)
             .cursor(Cursor::Pointer)
             .on_hover_change(hover_key(hk.clone()))
+            .gap(10.0)
+            .child(cube(t, &format!("{hk}-cube"), effort_level(effort.as_deref()), false, 3.5))
             .on_press(move |s: &mut App| s.choose_reasoning(effort.clone()))
             .child(label(name, type_::SM, t.foreground).grow(1.0))
             .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))));

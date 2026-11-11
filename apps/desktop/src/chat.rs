@@ -651,6 +651,14 @@ fn model_path() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(home).join("Library/Application Support/OpenRecord/agent-model"))
 }
 
+/// A request the server holds for a conversation (`GET /api/agent/requests`).
+#[derive(Clone, Debug, Deserialize)]
+pub struct PendingRequest {
+    pub request_id: String,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
 // ---- Calls ------------------------------------------------------------------
 
 impl Client {
@@ -662,6 +670,22 @@ impl Client {
             events: Vec<RunEvent>,
         }
         Ok(self.get::<R>(&format!("/api/agent/runs/progress?requestId={}&after={after}", enc(request)))?.events)
+    }
+
+    /// The turn still in flight in a conversation, or one that failed since
+    /// the conversation last changed, so a reopened chat attaches to it rather
+    /// than sending again (`pendingRequest` on the web).
+    pub fn pending_request(&self, conversation: &str) -> ApiResult<Option<PendingRequest>> {
+        #[derive(Deserialize)]
+        struct R {
+            request: Option<PendingRequest>,
+        }
+        Ok(self.get::<R>(&format!("/api/agent/requests?conversationId={}", enc(conversation)))?.request)
+    }
+
+    /// Stops one request; it settles on its own after this.
+    pub fn cancel_request(&self, request: &str) -> ApiResult<()> {
+        self.post::<Value>(&format!("/api/agent/requests/{}/cancel", enc(request)), json!({})).map(|_| ())
     }
 
     /// Stops the turn in flight; the request settles on its own after this.

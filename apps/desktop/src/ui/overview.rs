@@ -7,7 +7,7 @@ use crate::format;
 use crate::insights::{Analytics, Discovery, Goal, Insights, PERIODS, Report, Section, Source, Verdicts, int, pct};
 use crate::state::{App, Load, Page};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::{charts, discovery};
+use crate::ui::{charts, discovery, kit};
 use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleton};
 
 pub fn view(s: &App, t: &Theme) -> El {
@@ -30,7 +30,7 @@ pub fn view(s: &App, t: &Theme) -> El {
             Section::Summary => summary(s, t, i),
             Section::Performance => performance(s, t, i),
             Section::Revenue => revenue(s, t, i),
-            Section::Funnel => funnel(t, i),
+            Section::Funnel => funnel(s, t, i),
             Section::Events => events(s, t, i),
             Section::Realtime => realtime(s, t, i),
             Section::Answers => answers(s, t, i),
@@ -43,8 +43,7 @@ pub fn view(s: &App, t: &Theme) -> El {
 
 fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
     move |s: &mut App| {
-        s.new_chat();
-        s.composer.replace_text(request);
+        s.ask_agent(request);
     }
 }
 
@@ -181,12 +180,6 @@ fn board(t: &Theme, key: &str, title: &str, sub: Option<String>, height: f32, bo
     }
 }
 
-/// An existing panel on the dashboard grid, at equal width beside its neighbour.
-fn fixed(panel: El, key: &str) -> El {
-    // As tall as its content; cards side by side stretch to match each other.
-    col().key(key.to_string()).w(0.0).grow(1.0).min_w(320.0).child(panel.w_full().h_full())
-}
-
 /// Cards side by side at equal widths, wrapping on narrow windows.
 fn grid(cards: Vec<El>) -> El {
     let mut r = row().w_full().gap(16.0).items_stretch().flex_wrap();
@@ -197,7 +190,7 @@ fn grid(cards: Vec<El>) -> El {
 }
 
 /// A number from a formatted value ("1,284", "3%", "$1,204.50").
-fn number(v: &str) -> Option<f64> {
+pub fn number(v: &str) -> Option<f64> {
     let clean: String = v.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
     clean.parse().ok()
 }
@@ -290,7 +283,8 @@ fn goal_card(s: &App, t: &Theme, i: &Insights) -> El {
             .gap(16.0)
             .items_start()
             .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(label(sub, type_::XS, t.muted_foreground).wrap()))
-            .child(periods(s, t))
+            // Other sections keep the range in the page header.
+            .children((s.section == Section::Summary).then(|| periods(s, t)))
     };
     match &i.goal {
         Ok(Some(g)) => {
@@ -356,7 +350,7 @@ fn health(_s: &App, t: &Theme, i: &Insights) -> El {
         }
         if parts.is_empty() { "All match your facts".into() } else { parts.join(", ") }
     };
-    let mut strip = row().key("kpis").w_full().gap(0.0).items_stretch().role("group").label("Key numbers");
+    let mut strip = row().key("kpis").w_full().gap(0.0).items_stretch().flex_wrap().role("group").label("Key numbers");
     if let Some(g) = goal_tile(t, i) {
         strip = strip.child(g);
     }
@@ -455,9 +449,9 @@ fn answers(s: &App, t: &Theme, i: &Insights) -> El {
                             .child(label("AI answer details", type_::SM_MEDIUM, t.foreground).role("heading"))
                             .child(label(format!("Which providers answered, what buyers asked, and the sources they cited, last {} days", i.days), type_::XS, t.muted_foreground)),
                     )
-                    .child(grid(vec![fixed(discovery::answer_collection(t, &st, i.days), "fx-collection"), fixed(discovery::accuracy_by_model(t, a, &st), "fx-models")]))
-                    .child(grid(vec![questions(t, a, i.days, 0.0), fixed(discovery::citations(s, t, a, i.days), "fx-citations")]))
-                    .child(grid(vec![fixed(facts(t, a), "fx-facts")])),
+                    .child(kit::cols(vec![discovery::answer_collection(t, &st, i.days), discovery::accuracy_by_model(t, a, &st)]))
+                    .child(kit::cols(vec![questions(t, a, i.days, 0.0), discovery::citations(s, t, a, i.days)]))
+                    .child(kit::cols(vec![ratings(t, a, i.days), facts(t, a)])),
             );
         }
         Err(e) => c = c.child(panel(t, "answers-failed", "Answer analytics could not load", Some(e.clone()))),
@@ -516,10 +510,32 @@ fn discovery_panel(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
             type_::XS, t.muted_foreground).wrap())
 }
 
+/// How every answer of the period was rated, against the period before.
+fn ratings(t: &Theme, a: &Analytics, days: u32) -> El {
+    let (v, p) = (&a.current, &a.previous);
+    let c = &t.chart;
+    let part = |name: &str, now: i64, before: i64, ink: Color| (name.to_string(), now as f64, ink, if before > 0 || p.total() > 0 { format!("{} ({}{})", int(now as f64), if now >= before { "+" } else { "" }, now - before) } else { int(now as f64) });
+    let parts = vec![
+        part("Correct", v.supported, p.supported, c.supported),
+        part("Partly right", v.partial, p.partial, c.partial),
+        part("Wrong", v.wrong, p.wrong, c.wrong),
+        part("Can't tell", v.unknown, p.unknown, c.unknown),
+        part("Not checked yet", v.unreviewed, p.unreviewed, c.unreviewed),
+    ];
+    let shift = v.accuracy().zip(p.accuracy()).map(|(x, y)| (x - y) * 100.0);
+    let sub = match (v.accuracy(), shift) {
+        (Some(x), Some(d)) => format!("{} correct, {}{d:.0} points against the {days} days before", pct(x), if d >= 0.0 { "+" } else { "" }),
+        (Some(x), None) => format!("{} correct in the last {days} days", pct(x)),
+        _ => "Nothing rated yet".into(),
+    };
+    let body = if v.total() == 0 { note(t, "No answers were rated in this period.") } else { kit::split(t, "ratings-split", &parts) };
+    panel(t, "ratings", "How answers were rated", Some(sub)).child(body).child(label("Counts of rated answers; the change in brackets is against the period before.", type_::XS, t.muted_foreground).wrap())
+}
+
 fn facts(t: &Theme, a: &Analytics) -> El {
     let p = panel(t, "facts", "Your facts in AI answers", Some("How answers held up against each approved fact.".into()));
     if a.facts.is_empty() {
-        return p.grow(1.0).min_w(360.0).child(note(t, "No approved fact was tested in this period."));
+        return p.child(note(t, "No approved fact was tested in this period."));
     }
     let mut list = col().w_full().gap(10.0);
     for (k, f) in a.facts.iter().take(10).enumerate() {
@@ -540,7 +556,7 @@ fn facts(t: &Theme, a: &Analytics) -> El {
                 .child(charts::verdict_bar(t, &f.v, 120.0)),
         );
     }
-    p.grow(1.0).min_w(360.0).child(list)
+    p.child(list)
 }
 
 // ---- Performance and revenue ------------------------------------------------
@@ -568,8 +584,10 @@ fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric, tone
 }
 
 /// One connected account: a chart per key number, this period over the one
-/// before, then its top rows as ranked bars.
+/// before, then what the source sends beyond them (its queries, campaigns or
+/// profile actions).
 fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
+    use crate::insights::Detail;
     let charted = r.metrics.iter().any(|m| m.days.is_some());
     let mut c = col().key(key.to_string()).w_full().gap(16.0)
         .child(row().w_full().gap(10.0).center_y()
@@ -587,26 +605,32 @@ fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
             if let Some(b) = it.next() {
                 pair.push(b);
             }
+            // Wraps to one per row when the window is too narrow for two charts.
             c = c.child(grid(pair));
         }
-    } else {
-        let mut tiles = row().w_full().gap(16.0).flex_wrap();
-        for (k, m) in r.metrics.iter().take(4).enumerate() {
-            tiles = tiles.child(stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !m.lower_better));
-        }
-        c = c.child(tiles);
+    } else if !matches!(r.detail, Detail::Local(_)) {
+        let tiles: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !m.lower_better)).collect();
+        c = c.child(kit::cols(tiles));
     }
-    if let Some((head, rows)) = &r.table {
-        let mut ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
-            let v = row_.get(1)?;
-            Some((row_.first()?.clone(), number(v)?, format!("{} {}", v, head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())))
-        }).collect();
-        if !ranked.is_empty() {
-            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            c = c.child(grid(vec![board(t, &format!("{key}-top"), head.first().map(String::as_str).unwrap_or("Top"), Some(format!("Ranked by {}", head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())), 320.0, bar_list(t, &format!("{key}-bars"), &ranked))]));
+    match &r.detail {
+        Detail::Search { queries, pages } => c = c.child(crate::ui::sources::search(s, t, key, queries, pages)),
+        Detail::Ads(d) => c = c.child(crate::ui::sources::ads(t, key, d)),
+        Detail::Local(d) => c = c.child(crate::ui::sources::local(t, key, d)),
+        Detail::None => {
+            if let Some((head, rows)) = &r.table {
+                let mut ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
+                    let v = row_.get(1)?;
+                    Some((row_.first()?.clone(), number(v)?, format!("{} {}", v, head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())))
+                }).collect();
+                if !ranked.is_empty() {
+                    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    c = c.child(board(t, &format!("{key}-top"), head.first().map(String::as_str).unwrap_or("Top"), Some(format!("Ranked by {}", head.get(1).map(|h| h.to_lowercase()).unwrap_or_default())), 0.0, bar_list(t, &format!("{key}-bars"), &ranked)));
+                }
+            }
         }
     }
-    if let Some(n) = &r.note {
+    // A profile's note repeats its reviews, which the detail already shows.
+    if let Some(n) = r.note.as_ref().filter(|_| !matches!(r.detail, Detail::Local(_))) {
         c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
     }
     c
@@ -636,10 +660,34 @@ fn performance(s: &App, t: &Theme, i: &Insights) -> El {
     col()
         .w_full()
         .gap(40.0)
+        .child(coverage(t, i))
         .child(source(s, t, "search", "Google Search", &i.search))
         .child(source(s, t, "ads", "Ads", &i.ads))
         .child(source(s, t, "local", "Google Business Profile", &i.local))
         .child(label("Each source counts in its own way and over its own dates, so their numbers are never added together.", type_::XS, t.muted_foreground).wrap())
+}
+
+/// Which sources report into this page, as a row of small chips, so a gap is visible before scrolling.
+fn coverage(t: &Theme, i: &Insights) -> El {
+    let chip = |name: &str, src: &Source| {
+        let (dot, state) = match src {
+            Source::Reports(_) => (t.supported, "Connected"),
+            Source::NotConnected(_) => (t.muted_foreground.alpha(0.5), "Not connected"),
+            Source::Failed(_) => (t.wrong, "Could not load"),
+        };
+        row().gap(8.0).px(12.0).h(32.0).radius(8.0).center_y().fill(t.card)
+            .child(el().size(7.0, 7.0).radius(4.0).fill(dot))
+            .child(label(name.to_string(), type_::XS_MEDIUM, t.foreground))
+            .child(label(state, type_::XS, t.muted_foreground))
+    };
+    let mut r = row().key("perf-coverage").w_full().gap(8.0).flex_wrap().center_y()
+        .child(chip("Google Search", &i.search))
+        .child(chip("Ads", &i.ads))
+        .child(chip("Google Business Profile", &i.local));
+    if i.realtime.is_some() {
+        r = r.child(row().gap(8.0).px(12.0).h(32.0).radius(8.0).center_y().fill(t.card).child(el().size(7.0, 7.0).radius(4.0).fill(t.supported)).child(label("Google Analytics", type_::XS_MEDIUM, t.foreground)).child(label("Connected", type_::XS, t.muted_foreground)));
+    }
+    r
 }
 
 fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
@@ -720,6 +768,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
     if let Some(n) = &r.note {
         c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
     }
+    c = c.child(crate::ui::sources::revenue(s, t, i, r));
     c.child(label(format!("{}. Sales come straight from Stripe: what was paid, not which marketing brought it in.", r.subtitle), type_::XS, t.muted_foreground).wrap().pt(8.0))
 }
 
@@ -728,7 +777,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
 /// The journey as a funnel: seen in search, clicked, the goal, paid. Each
 /// step is a band narrowing to the next, with its count, its change and the
 /// share that reached the next step.
-fn funnel(t: &Theme, i: &Insights) -> El {
+fn funnel(s: &App, t: &Theme, i: &Insights) -> El {
     let metric = |src: &Source, name: &str| match src {
         Source::Reports(list) => list.first().and_then(|r| r.metrics.iter().find(|m| m.label == name)).and_then(|m| number(&m.value).map(|v| (v, m.delta))),
         _ => None,
@@ -798,32 +847,27 @@ fn funnel(t: &Theme, i: &Insights) -> El {
             .child(col().gap(2.0).child(label(format!("The last {} days", i.days), type_::SM_MEDIUM, t.foreground).role("heading")).child(label("From being seen to paying, step by step", type_::XS, t.muted_foreground)))
             .child(row().w_full().gap(20.0).items_start().justify_center().child(labels.child(el())).child(shape).child(values)))
         .child(label("Each step comes from its own source and counts in its own way, so the steps are not the same people followed through. Read the rates as a guide, not an exact conversion rate.", type_::XS, t.muted_foreground).wrap())
+        .child(crate::ui::sources::funnel(s, t, i, &steps))
 }
 
 fn events(s: &App, t: &Theme, i: &Insights) -> El {
     let goal: Option<&Goal> = i.goal.as_ref().ok().and_then(Option::as_ref);
-    if let Err(e) = &i.goal {
-        return panel(t, "events", "Your saved goal could not load", Some(e.clone()));
+    let mut c = col().w_full().gap(16.0);
+    match (&i.goal, goal) {
+        (Err(e), _) => c = c.child(panel(t, "events", "Your saved goal could not load", Some(e.clone()))),
+        (_, None) => {
+            c = c.child(panel(t, "events", "No goal event configured", Some("Choose the one action that matters most, such as a sign-up or a booking, and it is tracked here day by day.".into())).child(
+                row().child(button(t, "ask-goal-event", "Set a goal with the agent", Variant::Outline).on_press(ask(
+                    "Help me set the main goal for this business: what we want more of, and the event that measures it.",
+                ))),
+            ))
+        }
+        (_, Some(g)) => {
+            let chart = card(t).key("goal-card").h(420.0).px(24.0).py(20.0).clip_rounded(12.0).child(goal_card(s, t, i));
+            c = c.child(crate::ui::sources::events(s, t, i, g, chart));
+        }
     }
-    let field = |name: &str, value: String| col().grow(1.0).min_w(180.0).gap(4.0).child(label(name, type_::XS, t.muted_foreground)).child(label(value, type_::SM, t.foreground).wrap());
-    let counting = match goal.map(|g| g.counting.as_str()) {
-        Some("EVENT_COUNT") => "Event occurrences, not distinct people",
-        Some("SUM") => "Sum of values in the source report",
-        _ => "See the saved metric definition",
-    };
-    let p = panel(t, "events", goal.map(|g| g.label.as_str()).unwrap_or("No goal event configured"), None)
-        .child(
-            row()
-                .w_full()
-                .gap(16.0)
-                .flex_wrap()
-                .child(field("Event name", goal.and_then(|g| g.event_name.clone()).unwrap_or_else(|| "Not configured".into())))
-                .child(field("Counting method", counting.into()))
-                .child(field("Reporting timezone", goal.and_then(|g| g.time_zone.clone()).unwrap_or_else(|| "Not configured".into()))),
-        )
-        .child(label("This is the daily history of the saved goal metric. A list of individual events, custom event exploration and live event delivery are not available. Missing days are not zero.", type_::XS, t.muted_foreground).wrap())
-        .child(row().child(button(t, "events-accounts", "Manage measurement accounts", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
-    col().w_full().gap(16.0).child(p).children(goal.map(|_| goal_card(s, t, i)))
+    c.child(crate::ui::sources::other_actions(t, i))
 }
 
 /// A country's flag (its emoji), or its code on a small tile when the code is not a country.
@@ -836,61 +880,103 @@ fn flag(t: &Theme, code: &str) -> El {
     row().h(18.0).w(28.0).radius(4.0).center().fill(t.accent).child(label(up, type_::XS2.lh(14.0), t.muted_foreground))
 }
 
-/// Who is on the site now: a turning globe with where people are, the
-/// countries ranked, the last 30 minutes and the pages being read.
+/// Who is on the site now: the key numbers, a world map of where people are
+/// (zoom and pan), then the latest activity and the countries ranked.
 fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
     let Some(r) = &i.realtime else {
         return panel(t, "realtime", "Connect Google Analytics to see who is on your site now", None)
             .child(note(t, "Realtime reads your Google Analytics property: people on the site in the last 30 minutes, where they are and what they read."))
             .child(row().child(button(t, "realtime-connect", "Connect on the Channels page", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
     };
-    let _ = s;
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
-    // A full turn every 90 seconds, starting over the Atlantic.
-    let spin = ((now_ms / 1000.0 * 4.0) % 360.0) as f32 + 40.0;
     let pulse = (0.55 + 0.45 * (now_ms / 600.0).sin().abs()) as f32;
-    let places: Vec<(String, f64)> = r.countries.iter().map(|c| (c.0.clone(), c.2)).collect();
-    let globe_card = card(t)
-        .key("realtime-globe")
-        .w(0.0)
-        .grow(2.0)
-        .min_w(460.0)
-        .h(560.0)
-        .px(24.0)
-        .py(20.0)
-        .gap(4.0)
-        .child(row().w_full().gap(8.0).center_y()
-            .child(row().size(10.0, 10.0).center().child(el().size(8.0, 8.0).radius(4.0).fill(t.chart.primary.alpha(pulse))))
-            .child(label("Active now", type_::SM_MEDIUM, t.muted_foreground))
-            .child(el().grow(1.0))
-            .child(label("Last 30 minutes, Google Analytics", type_::XS, t.muted_foreground)))
-        .child(label(crate::insights::int(r.active), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.foreground))
-        .child(row().w_full().grow(1.0).center().child(crate::ui::globe::view(t, 420.0, spin, &places)));
+    let opt = |x: Option<f64>| x.map(crate::insights::int).unwrap_or_else(|| "—".into());
+    let live = row().gap(6.0).center_y().child(el().size(7.0, 7.0).radius(4.0).fill(t.chart.primary.alpha(pulse))).child(label("Live", type_::XS11, t.muted_foreground));
+    let thirty = || label("30 min", type_::XS11, t.muted_foreground);
+    let strip = row()
+        .key("rt-kpis")
+        .w_full()
+        .gap(0.0)
+        .items_stretch()
+        .flex_wrap()
+        .child(kpi(t, "rt-online", "Online now", crate::insights::int(r.active), None, Some(live), None, false, None))
+        .child(kpi(t, "rt-visitors", "Visitors", opt(r.visitors), None, Some(thirty()), None, false, None))
+        .child(kpi(t, "rt-views", "Views", opt(r.views), None, Some(thirty()), None, false, None))
+        .child(kpi(t, "rt-events", "Events", opt(r.events), None, Some(thirty()), None, false, None));
+    let located = r.countries.iter().filter(|c| crate::ui::world::centre(&c.0).is_some()).count();
+    let map = card(t)
+        .key("realtime-map")
+        .w_full()
+        .px(16.0)
+        .pt(16.0)
+        .pb(16.0)
+        .gap(12.0)
+        .child(
+            row()
+                .w_full()
+                .px(4.0)
+                .gap(8.0)
+                .center_y()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(label("Online visitors", type_::SM_MEDIUM, t.foreground).role("heading"))
+                        .child(label(format!("{} online now, last 30 minutes, {located} {}", crate::insights::int(r.active), if located == 1 { "location" } else { "locations" }), type_::XS, t.muted_foreground)),
+                )
+                .child(label("Pinch or ⌘ and scroll to zoom, drag to move", type_::XS11, t.muted_foreground)),
+        )
+        .child(crate::ui::world::view(s, t, 520.0, &r.countries));
+
+    // The latest events, when the source reports them; otherwise the pages being read.
+    let activity = if r.activity.is_empty() {
+        let pages: Vec<(String, f64, String)> = r.pages.iter().map(|p| (p.0.clone(), p.1, format!("{} reading", crate::insights::int(p.1)))).collect();
+        kit::panel(t, "rt-activity", "What they are reading", Some("Last 30 minutes".into()), None, 340.0, if pages.is_empty() { note(t, "No pages reported yet.") } else { kit::bars(t, "rt-pages", &pages, Some(t.chart.primary)) })
+    } else {
+        const COLS: [kit::Column; 3] = [kit::column("Event", 0.0, false), kit::column("Page", 0.0, false), kit::column("Time", 84.0, true)];
+        let rows: Vec<Vec<El>> = r
+            .activity
+            .iter()
+            .map(|(e, p, m)| vec![label(e.clone(), type_::SM_13, t.foreground).truncate(), kit::faint(t, p.clone()).truncate(), kit::faint(t, if *m < 1.0 { "Just now".to_string() } else { format!("{m:.0} min ago") })])
+            .collect();
+        kit::panel(t, "rt-activity", "Activity", Some("Last 30 minutes, newest first".into()), None, 340.0, kit::table(t, "rt-activity-table", &COLS, rows))
+    };
     let most = r.countries.iter().map(|c| c.2).fold(1.0, f64::max);
-    let mut list = col().w_full().gap(12.0);
-    for (k, (code, name, users)) in r.countries.iter().take(14).enumerate() {
-        list = list.child(col().key(format!("rt-country-{k}")).w_full().gap(5.0)
-            .child(row().w_full().gap(10.0).center_y()
-                .child(flag(t, code))
-                .child(label(name.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
-                .child(label(crate::insights::int(*users), type_::SM_13.features("'tnum' 1"), t.foreground))
-                .child(label(format!("{:.0}%", users / r.active.max(1.0) * 100.0), type_::XS.features("'tnum' 1"), t.muted_foreground).w(36.0)))
-            .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((users / most) as f32).h_full().radius(2.0).fill(t.chart.tone(k).alpha(0.9)))));
+    let mut list = col().w_full().gap(6.0);
+    for (k, (code, name, users)) in r.countries.iter().take(20).enumerate() {
+        list = list.child(
+            row()
+                .key(format!("rt-country-{k}"))
+                .w_full()
+                .h(28.0)
+                .gap(10.0)
+                .center_y()
+                .child(
+                    // The bar sits behind the flag and name, as long as the country's share of the busiest.
+                    row()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .h_full()
+                        .px(6.0)
+                        .gap(8.0)
+                        .center_y()
+                        .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w_frac((users / most) as f32).radius(5.0).fill(t.chart.primary.alpha(0.16)))
+                        .child(flag(t, code))
+                        .child(label(name.clone(), type_::XS_MEDIUM, t.foreground).truncate().min_w(0.0)),
+                )
+                .child(label(crate::insights::int(*users), type_::XS.features("'tnum' 1"), t.muted_foreground).w(32.0)),
+        );
     }
-    let where_card = board(t, "realtime-countries", "Where they are", Some(format!("{} countries", r.countries.len())), 560.0, list);
+    let countries = kit::panel(t, "rt-countries", "Countries", Some("Last 30 minutes".into()), None, 340.0, list);
     // The last 30 minutes as columns, newest on the right.
     let peak = r.per_minute.iter().copied().fold(1.0, f64::max);
-    let mut minutes = row().w_full().h(150.0).gap(3.0).items_end();
+    let mut minutes = row().w_full().h(120.0).gap(3.0).items_end();
     for (k, v) in r.per_minute.iter().enumerate() {
         let last = k + 1 == r.per_minute.len();
-        minutes = minutes.child(el().key(format!("rt-min-{k}")).grow(1.0).h((v / peak * 150.0).max(2.0) as f32).radius(2.0).fill(if last { t.chart.primary } else { t.chart.primary.alpha(0.45) }).help(format!("{} minutes ago: {}", r.per_minute.len() - 1 - k, crate::insights::int(*v))));
+        minutes = minutes.child(el().key(format!("rt-min-{k}")).grow(1.0).h((v / peak * 120.0).max(2.0) as f32).radius(2.0).fill(if last { t.chart.primary } else { t.chart.primary.alpha(0.45) }).help(format!("{} minutes ago: {}", r.per_minute.len() - 1 - k, crate::insights::int(*v))));
     }
-    let minutes_card = board(t, "realtime-minutes", "Each minute", Some("The last 30 minutes, newest on the right".into()), 260.0,
+    let minutes_card = kit::panel(t, "rt-minutes", "Each minute", Some("Active people, the last 30 minutes, newest on the right".into()), None, 0.0,
         col().w_full().gap(8.0).child(minutes).child(row().w_full().child(label("30 min ago", type_::AXIS, t.chart.axis)).child(el().grow(1.0)).child(label("now", type_::AXIS, t.chart.axis))));
-    let pages: Vec<(String, f64, String)> = r.pages.iter().map(|p| (p.0.clone(), p.1, format!("{} reading", crate::insights::int(p.1)))).collect();
-    let pages_card = board(t, "realtime-pages", "What they are reading", None, 260.0, bar_list(t, "rt-pages", &pages));
-    col().w_full().gap(16.0)
-        .child(row().w_full().gap(16.0).items_stretch().flex_wrap().child(globe_card).child(where_card))
-        .child(grid(vec![minutes_card, pages_card]))
+    col().w_full().gap(16.0).child(strip).child(map).child(kit::cols(vec![activity, countries])).child(minutes_card)
 }
-

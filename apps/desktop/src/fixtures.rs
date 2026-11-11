@@ -505,6 +505,16 @@ pub fn overview(s: &mut App) {
     s.insights = Load::Ready(insights());
 }
 
+/// The agent open beside the Overview, with a request typed in.
+pub fn overview_agent(s: &mut App) {
+    overview(s);
+    s.chat_id = Some("c1".into());
+    s.catalog = Load::Ready(models());
+    s.agent_model = Some("i1:claude-sonnet-5-5".into());
+    s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages(), session: None });
+    s.open_pane(Some("Why did visits from AI assistants dip last week?"));
+}
+
 fn section(s: &mut App, sec: Section) {
     overview(s);
     s.section = sec;
@@ -649,18 +659,107 @@ fn insights() -> Insights {
                 ],
             )),
             note: None,
+            detail: insights::Detail::Search {
+                queries: [
+                    ("northstar analytics", 402.0, 1980.0, 1.2),
+                    ("northstar pricing", 131.0, 860.0, 1.8),
+                    ("ai answer monitoring", 96.0, 7420.0, 8.6),
+                    ("snowflake dashboard tool", 44.0, 5120.0, 12.4),
+                    ("brand mentions in chatgpt", 38.0, 6310.0, 9.1),
+                    ("how to track ai search visibility", 27.0, 4880.0, 14.7),
+                    ("northstar vs looker", 21.0, 640.0, 4.2),
+                    ("generative engine optimization tool", 12.0, 3920.0, 22.5),
+                ]
+                .iter()
+                .map(|(k, c, i, p)| insights::SearchRow { key: k.to_string(), clicks: *c, impressions: *i, ctr: c / i, position: Some(*p) })
+                .collect(),
+                pages: [
+                    ("/", 488.0, 9200.0, 4.1),
+                    ("/pricing", 214.0, 3100.0, 3.2),
+                    ("/blog/how-assistants-pick-sources", 176.0, 14200.0, 9.8),
+                    ("/integrations/snowflake", 92.0, 6800.0, 11.3),
+                    ("/docs/quickstart", 61.0, 2400.0, 6.5),
+                ]
+                .iter()
+                .map(|(k, c, i, p)| insights::SearchRow { key: k.to_string(), clicks: *c, impressions: *i, ctr: c / i, position: Some(*p) })
+                .collect(),
+            },
         }),
-        ads: Source::NotConnected("Connect Google Ads or Meta on the web to see spend, clicks and conversions.".into()),
-        local: Source::NotConnected("Connect a Google Business Profile on the web to see calls, direction requests and reviews.".into()),
+        ads: reports({
+            let t = |spend: f64, impressions: f64, clicks: f64, conversions: f64, value: f64| insights::AdTotals {
+                spend,
+                impressions,
+                clicks,
+                conversions,
+                value,
+                ctr: Some(clicks / impressions),
+                cpc: Some(spend / clicks),
+                cpa: (conversions > 0.0).then(|| spend / conversions),
+                roas: Some(value / spend),
+            };
+            Report {
+                title: "Google Ads: Northstar".into(),
+                subtitle: "2026-10-12 to 2026-11-08".into(),
+                metrics: vec![m("Spend", "$2,140.00", Some(0.06)), m("Clicks", "1,912", Some(0.11)), m("Conversions", "64.0", Some(0.16)), insights::Metric { lower_better: true, ..m("Cost per conversion", "$33.44", Some(-0.09)) }],
+                table: None,
+                note: Some("Conversions as this platform counts them: Trial sign-up (website, 30-day click).".into()),
+                detail: insights::Detail::Ads(insights::AdDetail {
+                    provider: "Google Ads".into(),
+                    currency: "USD".into(),
+                    now: t(2140.0, 61200.0, 1912.0, 64.0, 5180.0),
+                    before: t(2020.0, 58800.0, 1722.0, 55.0, 4310.0),
+                    campaigns: vec![
+                        ("Brand search".into(), Some("ENABLED".into()), t(420.0, 6100.0, 840.0, 31.0, 2480.0)),
+                        ("AI visibility, non-brand".into(), Some("ENABLED".into()), t(980.0, 31800.0, 702.0, 22.0, 1760.0)),
+                        ("Competitor terms".into(), Some("ENABLED".into()), t(510.0, 14900.0, 268.0, 9.0, 720.0)),
+                        ("Display retargeting".into(), Some("PAUSED".into()), t(230.0, 8400.0, 102.0, 2.0, 220.0)),
+                    ],
+                }),
+            }
+        }),
+        local: reports(Report {
+            title: "Google Business Profile: Northstar HQ".into(),
+            subtitle: "2026-10-12 to 2026-11-08".into(),
+            metrics: vec![m("Calls", "38", Some(0.12)), m("Website clicks", "214", Some(0.2)), m("Direction requests", "17", Some(-0.06)), m("Profile views", "3,940", Some(0.08))]
+                .into_iter()
+                .map(|x| insights::Metric { days: None, ..x })
+                .collect(),
+            table: None,
+            note: Some("26 reviews, average 4.6, 2 unanswered.".into()),
+            detail: insights::Detail::Local(insights::LocalDetail {
+                now: insights::LocalTotals { calls: 38.0, website: 214.0, directions: 17.0, bookings: 6.0, conversations: 4.0, views: 3940.0, search: 2810.0, maps: 1130.0 },
+                before: insights::LocalTotals { calls: 34.0, website: 178.0, directions: 18.0, bookings: 3.0, conversations: 5.0, views: 3650.0, search: 2560.0, maps: 1090.0 },
+                terms: Some(("2026-10".into(), vec![("northstar analytics".into(), 820.0, false), ("analytics software".into(), 310.0, false), ("ai visibility tool".into(), 140.0, false), ("dashboard consultants".into(), 15.0, true)])),
+                reviews: Some(insights::Reviews {
+                    average: Some(4.6),
+                    total: 26.0,
+                    unanswered: 2.0,
+                    in_window: 4.0,
+                    recent: vec![
+                        (Some(5.0), "Set up in an afternoon and the pricing page finally matches what ChatGPT says about us.".into(), "2026-11-04T10:00:00Z".into(), true),
+                        (Some(4.0), "Good product, the onboarding call was very helpful.".into(), "2026-10-28T10:00:00Z".into(), false),
+                        (Some(3.0), "Works, but the Snowflake connector took a while to configure.".into(), "2026-10-19T10:00:00Z".into(), false),
+                    ],
+                }),
+            }),
+        }),
         revenue: reports(Report {
             title: "Stripe: Northstar Analytics".into(),
             subtitle: "2026-10-12 to 2026-11-08".into(),
             metrics: vec![m("Revenue (USD)", "$18,420.00", Some(0.12)), m("Paying customers", "214", Some(0.05)), m("New customers", "19", Some(-0.1))],
             table: None,
             note: None,
+            detail: insights::Detail::None,
         }),
         realtime: Some(crate::insights::Realtime {
             active: 47.0,
+            visitors: Some(312.0),
+            views: Some(846.0),
+            events: Some(129.0),
+            activity: [("Trial sign-up", "/pricing", 0.0), ("page_view", "/integrations", 1.0), ("page_view", "/pricing", 1.0), ("cta_click", "/", 2.0), ("Newsletter sign-up", "/blog/how-assistants-pick-sources", 3.0), ("page_view", "/docs/quickstart", 4.0), ("page_view", "/", 5.0)]
+                .iter()
+                .map(|(e, p, m)| (e.to_string(), p.to_string(), *m))
+                .collect(),
             countries: [("US", "United States", 15.0), ("GB", "United Kingdom", 7.0), ("DE", "Germany", 5.0), ("IN", "India", 4.0), ("ID", "Indonesia", 4.0), ("CA", "Canada", 3.0), ("BR", "Brazil", 3.0), ("AU", "Australia", 2.0), ("FR", "France", 2.0), ("JP", "Japan", 1.0), ("SG", "Singapore", 1.0)]
                 .iter().map(|(c, n, u)| (c.to_string(), n.to_string(), *u)).collect(),
             pages: vec![("Home".into(), 16.0), ("Pricing".into(), 10.0), ("How assistants pick sources".into(), 7.0), ("Quickstart".into(), 5.0), ("Integrations".into(), 3.0)],
@@ -688,6 +787,7 @@ fn insights() -> Insights {
                 paying: (81.0, 67.0),
                 new_customers: (Some(37.0), Some(31.0)),
                 daily,
+                currencies: vec![("USD".into(), net, net / 0.97, net / 0.97 - net, (net / 59.7).round(), Some(prev)), ("EUR".into(), 1240.0, 1290.0, 50.0, 22.0, Some(1010.0))],
                 before,
                 note: None,
             }
@@ -697,13 +797,120 @@ fn insights() -> Insights {
 
 pub fn campaigns(s: &mut App) {
     page(s, Page::Campaigns);
-    s.campaigns = Load::Ready(vec![Campaign {
-        id: "cp1".into(),
-        title: "Pricing guide launch".into(),
-        stage: "PLANNED".into(),
-        goal: "More trial sign-ups from people who asked an assistant about pricing.".into(),
-        updated_at: ago(60 * 5),
-    }]);
+    let today = |d: i64| crate::format::iso_date(crate::format::now() + d * 86_400);
+    let task = |title: &str, owner: &str, due: i64, channel: &str, status: &str| crate::api::CampaignTask {
+        title: title.into(),
+        owner: owner.into(),
+        due: today(due),
+        channel: channel.into(),
+        status: status.into(),
+    };
+    s.campaigns = Load::Ready(vec![
+        Campaign {
+            id: "cp1".into(),
+            revision: 4,
+            title: "Pricing guide launch".into(),
+            status: "ACTIVE".into(),
+            goal: "More trial sign-ups from people who asked an assistant about pricing.".into(),
+            audience: "Data leads at 50 to 500 person SaaS companies comparing analytics tools.".into(),
+            offer: "A transparent pricing and onboarding guide, with a 14-day trial.".into(),
+            message: "Know what you'll pay before you talk to sales.".into(),
+            hypothesis: "If assistants quote our real price, more pricing-question visitors start a trial.".into(),
+            metric: "Trial sign-ups (GA4 sign_up)".into(),
+            baseline: "9 a day over the last 30 days".into(),
+            target: "12 a day by the review".into(),
+            owner: "Maya".into(),
+            launch_date: today(-12),
+            review_date: today(9),
+            tasks: vec![
+                task("Publish the pricing guide", "Maya", -10, "WEBSITE", "DONE"),
+                task("Update pricing facts on the site", "Agent", -8, "WEBSITE", "DONE"),
+                task("Email the trial list", "Sam", -3, "EMAIL", "DONE"),
+                task("Brand search ads with the new price", "Sam", 2, "PAID", "IN_PROGRESS"),
+                task("LinkedIn carousel", "Ana", 5, "SOCIAL", "TODO"),
+            ],
+            decision: "UNDECIDED".into(),
+            channel: "Website and search".into(),
+            motion: "HYBRID".into(),
+            funnel_stage: "CONVERSION".into(),
+            budget: "$1,500".into(),
+            cadence: "Weekly check-in".into(),
+            conversion_event: "sign_up".into(),
+            tracking_plan: "GA4 sign_up with utm_campaign=pricing-guide".into(),
+            updated_at: ago(60 * 5),
+            created_by: "ASSISTANT".into(),
+            ..Default::default()
+        },
+        Campaign {
+            id: "cp2".into(),
+            revision: 2,
+            title: "Snowflake integration week".into(),
+            status: "REVIEW".into(),
+            goal: "Win searches for Snowflake dashboards.".into(),
+            audience: "Analytics engineers on Snowflake.".into(),
+            offer: "Free dashboard templates.".into(),
+            message: "Dashboards on Snowflake in ten minutes.".into(),
+            hypothesis: "Templates rank for snowflake dashboard queries.".into(),
+            metric: "Search clicks to /integrations/snowflake".into(),
+            baseline: "60 clicks a month".into(),
+            target: "150 clicks a month".into(),
+            owner: "Ana".into(),
+            launch_date: today(-40),
+            review_date: today(-2),
+            tasks: vec![task("Template gallery page", "Ana", -35, "WEBSITE", "DONE"), task("Partner newsletter", "Sam", -30, "EMAIL", "DONE"), task("Webinar recap post", "Ana", -20, "SOCIAL", "BLOCKED")],
+            decision: "UNDECIDED".into(),
+            channel: "Organic search".into(),
+            motion: "OWNED".into(),
+            funnel_stage: "CONSIDERATION".into(),
+            updated_at: ago(60 * 30),
+            created_by: "OPERATOR".into(),
+            ..Default::default()
+        },
+        Campaign {
+            id: "cp3".into(),
+            revision: 1,
+            title: "Answer the questions buyers ask AI assistants".into(),
+            status: "DRAFT".into(),
+            goal: "Correct answers about SOC 2 and pricing in ChatGPT and Perplexity.".into(),
+            audience: "Security reviewers and buyers asking assistants.".into(),
+            owner: "Maya".into(),
+            tasks: vec![task("FAQ page with sourced answers", "", 0, "WEBSITE", "TODO")],
+            decision: "UNDECIDED".into(),
+            funnel_stage: "AWARENESS".into(),
+            motion: "EARNED".into(),
+            updated_at: ago(60 * 50),
+            created_by: "ASSISTANT".into(),
+            ..Default::default()
+        },
+        Campaign {
+            id: "cp4".into(),
+            revision: 6,
+            title: "Q3 webinar series".into(),
+            status: "CLOSED".into(),
+            goal: "Pipeline from mid-market data teams.".into(),
+            metric: "Demo requests".into(),
+            baseline: "20 a month".into(),
+            target: "35 a month".into(),
+            owner: "Sam".into(),
+            launch_date: today(-120),
+            review_date: today(-60),
+            tasks: vec![task("Three webinars", "Sam", -90, "OTHER", "DONE"), task("Follow-up sequence", "Sam", -80, "EMAIL", "DONE")],
+            result: "31 demo requests a month at the peak; attendance fell after the second session.".into(),
+            decision: "CHANGE".into(),
+            learning: "Shorter, single-topic sessions held attendance better.".into(),
+            next_move: "Run two 20-minute sessions on pricing questions.".into(),
+            funnel_stage: "CONSIDERATION".into(),
+            motion: "OWNED".into(),
+            updated_at: ago(60 * 24 * 40),
+            created_by: "OPERATOR".into(),
+            ..Default::default()
+        },
+    ]);
+}
+
+pub fn campaign_open(s: &mut App) {
+    campaigns(s);
+    s.campaign_open = Some("cp1".into());
 }
 
 pub fn ai_answers(s: &mut App) {
@@ -816,4 +1023,85 @@ pub fn agent_find(s: &mut App) {
 pub fn business_menu(s: &mut App) {
     inbox(s);
     s.menu = Some(Menu::Businesses);
+}
+
+pub fn account_menu(s: &mut App) {
+    inbox(s);
+    s.menu = Some(Menu::Account);
+}
+
+pub fn usage(s: &mut App) {
+    page(s, Page::Usage);
+    let day = |i: i64| crate::format::iso_date(crate::format::now() - (29 - i) * 86_400);
+    let model = |p: &str, m: &str, turns: f64, i: f64, o: f64, usd: Option<f64>| crate::account::ModelUse {
+        provider: p.into(),
+        model: m.into(),
+        turns,
+        tokens_in: Some(i),
+        tokens_out: Some(o),
+        usd,
+        priced: usd.is_some(),
+    };
+    s.usage = Load::Ready(crate::account::Usage {
+        days: 30,
+        turns: 412.0,
+        tool_calls: 2_380.0,
+        model_steps: 1_904.0,
+        tokens: Some(18_400_000.0),
+        tokens_in: Some(16_900_000.0),
+        tokens_out: Some(1_500_000.0),
+        without_counts: 0.0,
+        usd: Some(41.37),
+        unpriced: 12.0,
+        by_model: vec![model("anthropic", "claude-opus-5-5", 288.0, 12_100_000.0, 1_020_000.0, Some(36.2)), model("openai", "gpt-5.2", 112.0, 4_600_000.0, 430_000.0, Some(5.17)), model("9router", "kimi-k2", 12.0, 200_000.0, 50_000.0, None)],
+        by_business: vec![("Northstar Analytics".into(), 301.0, Some(13_900_000.0), 1_810.0), ("Harbor Coffee".into(), 88.0, Some(3_700_000.0), 470.0), ("General".into(), 23.0, Some(800_000.0), 100.0)],
+        daily: (0..30).map(|i| (day(i), (8.0 + 9.0 * ((i as f64) / 3.0).sin().abs() + if i % 7 >= 5 { -5.0 } else { 3.0 }).max(0.0).round())).collect(),
+        research_calls: 640.0,
+        research_usd: 3.84,
+        research: vec![("Web search".into(), 410.0, 6.0, 120.0, 2.4), ("Search Console".into(), 160.0, 0.0, 0.0, 0.0), ("Page reader".into(), 70.0, 2.0, 72.0, 1.44)],
+        answers: 119.0,
+        checks: vec![("OpenAI".into(), 41.0), ("Claude".into(), 36.0), ("Gemini".into(), 22.0), ("Perplexity".into(), 14.0), ("DeepSeek".into(), 6.0)],
+        note: "Token counts are as each provider reported them. Estimated cost is not a bill.".into(),
+    });
+}
+
+pub fn businesses(s: &mut App) {
+    page(s, Page::Businesses);
+    let o = |c: i64, last: Option<i64>, u: i64, a: i64| crate::api::Overview { completed: c, last_checked: last.and_then(ago), unreviewed: u, needs_attention: a };
+    let v = |sup: i64, w: i64, p: i64| Some(Verdicts { supported: sup, wrong: w, partial: p, unknown: 1, unreviewed: 0 });
+    let days = |k: f64| (0..30).map(|i| ((i as f64 * 0.7 + k).sin().abs() * 6.0).round()).collect::<Vec<_>>();
+    s.portfolio = Load::Ready(
+        s.businesses
+            .iter()
+            .enumerate()
+            .map(|(k, b)| crate::account::Portfolio {
+                id: b.id.clone(),
+                name: b.name.clone(),
+                overview: Some(o(40, if k == 2 { None } else { Some(60 * (k as i64 + 1) * 7) }, k as i64 % 3, (3 - k as i64).max(0))),
+                verdicts: if k == 2 { None } else { v(80 - 10 * k as i64, 10 + 4 * k as i64, 6) },
+                per_day: days(k as f64),
+            })
+            .collect(),
+    );
+}
+
+pub fn clients(s: &mut App) {
+    page(s, Page::Clients);
+    let c = |id: &str, name: &str, web: &str, shared: bool, goal: Option<&str>, ideas: usize, approved: usize, verified: usize| crate::account::ClientRow {
+        id: id.into(),
+        name: name.into(),
+        website: web.into(),
+        shared,
+        known: true,
+        goal: goal.map(str::to_string),
+        metric: goal.map(|_| "Trial sign-ups".to_string()),
+        ideas,
+        approved,
+        verified,
+    };
+    s.client_rows = Load::Ready(vec![
+        c("b1", "Northstar Analytics", "https://northstar.test", true, Some("More trial sign-ups"), 6, 3, 1),
+        c("b2", "Harbor Coffee", "https://harbor.coffee", false, Some("More online orders"), 2, 0, 0),
+        c("b3", "Atlas Legal", "https://atlas.legal", false, None, 0, 0, 0),
+    ]);
 }

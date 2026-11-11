@@ -7,7 +7,7 @@ use crate::api::{Channel, Decision, Issue};
 use crate::decisions::Act;
 use crate::format;
 use crate::icons;
-use crate::state::{App, Load, Page, View};
+use crate::state::{App, Load, Page};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, Variant, button, card, empty_state, failure, ico, label, page_header, skeleton, status_chip};
 
@@ -15,23 +15,30 @@ pub fn view(s: &App, t: &Theme) -> El {
     let body = match s.page {
         Page::Inbox => inbox(s, t),
         Page::Overview => crate::ui::overview::view(s, t),
-        Page::Campaigns => campaigns(s, t),
+        Page::Campaigns => crate::ui::campaigns::view(s, t),
         Page::AiAnswers => ai_answers(s, t),
         Page::Channels => channels(s, t),
+        Page::Usage => crate::ui::account_pages::usage(s, t),
+        Page::Businesses => crate::ui::account_pages::businesses(s, t),
+        Page::Clients => crate::ui::account_pages::clients(s, t),
     };
     body.key(format!("page-{}", s.page.key()))
 }
 
 /// The header's trailing action on workspace pages.
-pub fn ask_agent(t: &Theme) -> El {
-    button(t, "ask-agent", "Ask the agent", Variant::Outline).on_press(|s: &mut App| s.show_view(View::Agent))
+/// The header's "Ask the agent": opens the agent beside the page, or hides it.
+pub fn ask_agent(s: &App, t: &Theme) -> El {
+    if s.pane_shown() {
+        button(t, "ask-agent", "Hide the agent", Variant::Outline).on_press(|s: &mut App| s.close_pane())
+    } else {
+        button(t, "ask-agent", "Ask the agent", Variant::Outline).on_press(|s: &mut App| s.open_pane(None))
+    }
 }
 
 /// Opens the agent with a request typed in the composer, ready to send.
 fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
     move |s: &mut App| {
-        s.new_chat();
-        s.composer.replace_text(request);
+        s.ask_agent(request);
     }
 }
 
@@ -163,8 +170,13 @@ fn decision_detail(s: &App, t: &Theme, d: &Decision, now: i64) -> El {
             .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).wrap().role("heading").selectable(true))
             .children((!d.summary.is_empty()).then(|| label(d.summary.clone(), type_::XS, t.muted_foreground).wrap().selectable(true))))
         .child(panel);
-    if d.conversation_id.is_some() {
-        body = body.child(label("The agent suggested this in a chat. Open Agent to see the conversation.", type_::XS, t.muted_foreground.alpha(0.8)));
+    if let Some(chat) = d.conversation_id.clone() {
+        let business = d.business_id.clone();
+        body = body.child(
+            row().w_full().gap(10.0).center_y()
+                .child(label("The agent suggested this in a chat.", type_::XS, t.muted_foreground.alpha(0.8)).wrap().grow(1.0).min_w(0.0))
+                .child(button(t, "decision-chat", "Open the conversation", Variant::Outline).on_press(move |s: &mut App| s.open_business_chat(&business, &chat))),
+        );
     }
     card(t)
         .key(format!("decision-detail-{}", d.key))
@@ -235,54 +247,6 @@ fn stat(t: &Theme, key: &str, name: &str, value: String, dot: Option<Color>) -> 
             .child(label(value, type_::TITLE.features("'tnum' 1"), t.foreground)),
         &t.card_shadow,
     )
-}
-
-fn campaigns(s: &App, t: &Theme) -> El {
-    let header = page_header(t, "Campaigns", "Plans the agent drafted with you, and what was measured against each one.");
-    let body = match &s.campaigns {
-        Load::Ready(list) if list.is_empty() => empty_state(
-            t,
-            "campaigns-empty",
-            &icons::BRIEFCASE,
-            "No campaigns yet",
-            "Plan one from an approved idea. The agent drafts it and asks before anything is published, sent or spent.",
-            Some(button(t, "plan-campaign", "Plan a campaign with the agent", Variant::Outline).on_press(ask(
-                "/campaign Plan a campaign for our most promising approved idea. Do not publish, send or spend without approval.",
-            ))),
-        ),
-        Load::Ready(list) => {
-            let now = format::now();
-            let mut c = card(t).clip_rounded(12.0);
-            let n = list.len();
-            for (i, cp) in list.iter().enumerate() {
-                let mut r = col()
-                    .key(format!("campaign-{}", cp.id))
-                    .w_full()
-                    .px(18.0)
-                    .py(16.0)
-                    .gap(6.0)
-                    .child(
-                        row()
-                            .gap(8.0)
-                            .center_y()
-                            .child(label(if cp.title.is_empty() { "Untitled campaign".to_string() } else { cp.title.clone() }, type_::SM_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0))
-                            .child(status_chip(&title_case(&cp.stage), t.review, t.review_soft))
-                            .child(label(format::relative(cp.updated_at.as_deref(), now), type_::XS, t.muted_foreground)),
-                    );
-                if !cp.goal.is_empty() {
-                    r = r.child(label(cp.goal.clone(), type_::SM_13, t.muted_foreground).wrap().max_lines(2));
-                }
-                if i + 1 < n {
-                    r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
-                }
-                c = c.child(r);
-            }
-            c
-        }
-        Load::Failed(e) => failure(t, "campaigns-failed", e, |s: &mut App| s.refresh()),
-        _ => skeleton(t, 2),
-    };
-    col().w_full().gap(24.0).child(header).child(body)
 }
 
 fn ai_answers(s: &App, t: &Theme) -> El {
@@ -479,11 +443,3 @@ fn channel_card(t: &Theme, ch: &Channel, business: &str) -> El {
         .child(row().w_full().gap(8.0).center_y().child(abilities.grow(1.0).min_w(0.0)).child(action))
 }
 
-fn title_case(s: &str) -> String {
-    let s = s.replace('_', " ").to_lowercase();
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => "Draft".into(),
-    }
-}

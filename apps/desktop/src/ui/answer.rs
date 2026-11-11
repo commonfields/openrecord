@@ -126,7 +126,7 @@ fn detail(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
         .child(row().w_full().gap(16.0).items_start().child(main).child(side))
 }
 
-/// Opens a new chat with a request to fix the claim, ready to send.
+/// Hands the agent a request to fix the claim, typed in and ready to send.
 fn ask_agent(t: &Theme, claim: String, state: String) -> El {
     let request = if state == "RESOLVED" {
         format!("An AI assistant said \"{claim}\" about us, and it was reviewed as supported. Check it is still true and tell me if anything should change.")
@@ -134,8 +134,7 @@ fn ask_agent(t: &Theme, claim: String, state: String) -> El {
         format!("An AI assistant said \"{claim}\" about us. Work out why it says this, which of our sources would correct it, and prepare the fix for me to approve.")
     };
     row().w_full().child(button(t, "answer-ask", "Ask the agent to fix this", Variant::Outline).on_press(move |s: &mut App| {
-        s.new_chat();
-        s.composer.replace_text(&request);
+        s.ask_agent(&request);
     }))
 }
 

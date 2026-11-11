@@ -12,7 +12,6 @@ use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico, icon_button, label};
 
-pub const SIDEBAR_WIDTH: f32 = 256.0;
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights.
 pub const TITLEBAR: f32 = 36.0;
@@ -131,13 +130,17 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         b
     };
 
-    col()
+    let mut side = col()
         .key("sidebar")
-        .w(if open { SIDEBAR_WIDTH } else { RAIL_WIDTH })
+        .w(if open { s.prefs.sidebar() } else { RAIL_WIDTH })
         .h_full()
         .fill(t.sidebar)
         .motion(PANE)
-        .clip_rounded(0.0)
+        .clip_rounded(0.0);
+    if open {
+        side = side.child(resize_edge(t, s.resizing == Some(Resize::Sidebar)));
+    }
+    side
         .child(el().key("titlebar-band").w_full().h(TITLEBAR).window_drag())
         .child(
             col()
@@ -150,6 +153,63 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         )
         .child(nav)
         .child(col().w_full().py(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(account))
+}
+
+/// What a drag edge is resizing, while one is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resize {
+    Sidebar,
+    Helper,
+    AgentPane,
+}
+
+/// The sidebar's right edge: drag to resize between the web's 224 and 448
+/// points, double-click for the default, arrow keys to nudge. The width is
+/// kept between launches.
+fn resize_edge(t: &Theme, held: bool) -> El {
+    use crate::prefs::{SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN};
+    el().key("sidebar-edge")
+        .pin(None, Some(0.0), Some(0.0), Some(0.0))
+        .w(8.0)
+        .role("separator")
+        .label("Resize sidebar")
+        .help("Drag to resize; double-click for the default width")
+        .focusable(true)
+        .cursor(Cursor::ResizeColumn)
+        // A hairline that shows while the edge is held or hovered.
+        .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(2.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
+        .hover(t.primary_ink.alpha(0.08))
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            match d.phase {
+                rune::Phase::Down => {
+                    d.data = s.prefs.sidebar();
+                    s.resizing = Some(Resize::Sidebar);
+                }
+                rune::Phase::Move => s.prefs.sidebar_width = (d.data + d.dx).clamp(SIDEBAR_MIN, SIDEBAR_MAX).round(),
+                rune::Phase::Up => {
+                    if d.cancelled() {
+                        s.prefs.sidebar_width = d.data;
+                    }
+                    s.resizing = None;
+                    s.prefs.save();
+                }
+            }
+        })
+        .on_double_press(|s: &mut App| {
+            s.prefs.sidebar_width = SIDEBAR_DEFAULT;
+            s.prefs.save();
+        })
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let step = match ev.key {
+                rune::Key::Left => -16.0,
+                rune::Key::Right => 16.0,
+                _ => return false,
+            };
+            s.prefs.sidebar_width = (s.prefs.sidebar() + step).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+            s.prefs.save();
+            true
+        })
 }
 
 fn group_label(t: &Theme, text_: &str) -> El {
@@ -167,6 +227,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             Page::Campaigns => (&icons::BRIEFCASE, 0),
             Page::AiAnswers => (&icons::CIRCLE_ALERT, if s.prefs.show_issue_count { s.attention() } else { 0 }),
             Page::Channels => (&icons::PLUG, 0),
+            Page::Usage | Page::Businesses | Page::Clients => continue,
         };
         let mut link = row()
             .key(format!("nav-{}", page.key()))
@@ -425,7 +486,20 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
         .on_press(|s: &mut App| s.sidebar_open = !s.sidebar_open);
     let mut h = row().key("header").w_full().h(48.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag().child(toggle);
 
-    if let Some(b) = s.active_business() {
+    if s.view == View::Workspace && s.page.account() {
+        // An account page belongs to no business.
+        h = h.child(
+            row()
+                .key("breadcrumbs")
+                .gap(6.0)
+                .center_y()
+                .role("navigation")
+                .label("Breadcrumb")
+                .child(label("Account", type_::XS, t.muted_foreground))
+                .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground.alpha(0.7)))
+                .child(label(s.page.label(), type_::XS_MEDIUM, t.foreground)),
+        );
+    } else if let Some(b) = s.active_business() {
         h = h.child(tabs(s, t)).child(el().w(1.0).h(16.0).mx(4.0).fill(t.border));
         let here = match s.view {
             View::Agent if s.general => "General chat",
@@ -558,14 +632,15 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         s.menu = None;
         s.open_settings(page);
     };
-    let open = |path: &'static str| {
-        let url = format!("{web}{path}");
-        move |s: &mut App, tx: &mut rune::Tx| {
+    let _ = web;
+    // Opens in the app, as the web opens them in its own shell.
+    let page = |p: Page| {
+        move |s: &mut App| {
             s.menu = None;
-            let _ = tx.open_url(&url);
+            s.show_page(p);
         }
     };
-    let width = if s.sidebar_open { (SIDEBAR_WIDTH - 16.0).max(256.0) } else { 256.0 };
+    let width = if s.sidebar_open { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
     let mut m = menu(t, "account-menu-list", width)
         .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
             .child(avatar_sphere(t, 36.0))
@@ -574,43 +649,69 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         .child(item("acct-settings", &icons::SETTINGS, "Settings").on_press(settings(crate::state::SettingsPage::General)))
         .child(item("acct-account", &icons::USER_ROUND, "Account").on_press(settings(crate::state::SettingsPage::Account)))
         .child(item("acct-shortcuts", &icons::KEYBOARD, "Keyboard shortcuts").on_press(settings(crate::state::SettingsPage::Shortcuts)))
-        .child(item("acct-usage", &icons::GAUGE, "Usage").on_press_tx(open("/usage")))
+        .child(item("acct-usage", &icons::GAUGE, "Usage").on_press(page(Page::Usage)))
         .child(rule())
-        .child(item("acct-businesses", &icons::BUILDING, "Businesses").on_press_tx(open("/businesses")))
-        .child(item("acct-clients", &icons::BRIEFCASE, "Clients and products").on_press_tx(open("/clients")))
+        .child(item("acct-businesses", &icons::BUILDING, "Businesses").on_press(page(Page::Businesses)))
+        .child(item("acct-clients", &icons::BRIEFCASE, "Clients and products").on_press(page(Page::Clients)))
+        .child(rule())
+        .child(update_row(s, t))
         .child(rule());
-    if let Some(u) = update_row(s, t) {
-        m = m.child(u).child(rule());
-    }
     m = m.child(item("sign-out", &icons::LOG_OUT, "Sign out").on_press(|s: &mut App| s.sign_out()));
     let side = if s.sidebar_open { Side::Top } else { Side::Right };
     layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
 
-/// The update row, only while there is something to say: a newer version to
-/// install, an install under way, or one that failed.
-fn update_row(s: &App, t: &Theme) -> Option<El> {
-    use crate::update::Update;
+/// The update row, always there: check for a newer version, install one that
+/// is waiting, or show how the last attempt went, with this build's version.
+fn update_row(s: &App, t: &Theme) -> El {
+    use crate::update::{Update, current};
     let spin = || ico(&icons::LOADER, 16.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
-    let (lead, text_) = match &s.update {
-        Update::Available(r) => (ico(&icons::DOWNLOAD, 16.0, t.primary_ink), format!("Update to {}", r.version)),
-        Update::Installing(v) => (spin(), format!("Installing {v}…")),
-        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 16.0, t.wrong), "Update failed, try again".to_string()),
-        _ => return None,
+    let (lead, text_, note, busy) = match &s.update {
+        Update::Available(r) => (ico(&icons::DOWNLOAD, 16.0, t.primary_ink), format!("Update to {}", r.version), Some("Restarts the app".to_string()), false),
+        Update::Installing(v) => (spin(), format!("Installing {v}…"), None, true),
+        Update::Checking => (spin(), "Checking for updates…".to_string(), None, true),
+        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 16.0, t.wrong), "Update failed, try again".to_string(), None, false),
+        Update::UpToDate => (ico(&icons::CHECK, 16.0, t.muted_foreground), "Up to date".to_string(), Some("Check again".to_string()), false),
+        Update::Unknown => (ico(&icons::DOWNLOAD, 16.0, t.muted_foreground), "Check for updates".to_string(), None, false),
     };
-    Some(row().key("app-update").w_full().h(34.0).px(10.0).gap(10.0).radius(6.0).center_y().role("menuitem").label(text_.clone())
-        .focusable(true).cursor(Cursor::Pointer).hover(t.hover_tint)
-        .child(lead).child(label(text_, type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
-        .on_press(|s: &mut App| match s.update {
-            crate::update::Update::Available(_) => s.install_update(),
-            _ => s.check_update(),
-        }))
+    let available = matches!(s.update, Update::Available(_));
+    let mut r = row()
+        .key("app-update")
+        .w_full()
+        .h(44.0)
+        .px(10.0)
+        .gap(10.0)
+        .radius(6.0)
+        .center_y()
+        .role("menuitem")
+        .label(text_.clone())
+        .disabled(busy)
+        .focusable(!busy)
+        .cursor(if busy { Cursor::Default } else { Cursor::Pointer })
+        .hover(t.hover_tint)
+        .child(lead)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .child(label(text_, type_::SM, t.foreground).truncate())
+                .child(label(format!("OpenRecord {}{}", current(), note.map(|n| format!(", {}", n.to_lowercase())).unwrap_or_default()), type_::XS11, t.muted_foreground).truncate()),
+        );
+    if available {
+        r = r.fill(t.primary_ink.alpha(0.08));
+    }
+    if busy {
+        return r;
+    }
+    r.on_press(|s: &mut App| match s.update {
+        crate::update::Update::Available(_) => s.install_update(),
+        _ => s.check_update(),
+    })
 }
-
 
 /// The menu open over the sidebar, if any, anchored to its trigger.
 pub fn menus(s: &App, t: &Theme) -> Option<El> {
-    let width = if s.sidebar_open { SIDEBAR_WIDTH - 16.0 } else { 256.0 };
+    let width = if s.sidebar_open { s.prefs.sidebar() - 16.0 } else { 256.0 };
     let side = if s.sidebar_open { Side::Bottom } else { Side::Right };
     match s.menu? {
         Menu::Businesses => {
