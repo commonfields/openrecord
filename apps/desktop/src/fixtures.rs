@@ -644,6 +644,32 @@ fn insights() -> Insights {
             table: None,
             note: None,
         }),
+        revenue_data: Some({
+            // Thirty days with a weekly rhythm and a gentle climb.
+            let day = |i: usize, k: f64| {
+                let wave = 1.0 + 0.25 * (i as f64 / 2.2).sin() + if i % 7 >= 5 { -0.45 } else { 0.1 };
+                (2.6 * k * wave * (0.85 + i as f64 / 30.0 * 0.3)).round().max(0.0) * 59.7
+            };
+            let daily: Vec<(String, f64)> = (0..30).map(|i| (crate::format::iso_date(crate::format::now() - (30 - i as i64) * 86_400), day(i, 1.21))).collect();
+            let before: Vec<f64> = (0..30).map(|i| day(i, 1.0)).collect();
+            let net = daily.iter().map(|d| d.1).sum::<f64>();
+            let prev = before.iter().sum::<f64>();
+            crate::insights::RevenueData {
+                account: "Northstar Analytics".into(),
+                subtitle: "Last 30 days".into(),
+                currency: "USD".into(),
+                net: (net, prev),
+                gross: (net / 0.97, prev / 0.97),
+                refunded: (net / 0.97 - net, prev / 0.97 - prev),
+                orders: ((net / 59.7).round(), (prev / 59.7).round()),
+                average: (Some(59.7), Some(59.1)),
+                paying: (81.0, 67.0),
+                new_customers: (Some(37.0), Some(31.0)),
+                daily,
+                before,
+                note: None,
+            }
+        }),
     }
 }
 

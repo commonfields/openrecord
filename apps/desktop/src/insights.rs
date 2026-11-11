@@ -262,6 +262,57 @@ pub struct Insights {
     pub ads: Source,
     pub local: Source,
     pub revenue: Source,
+    /// Stripe's numbers, read for the Revenue section's own charts.
+    pub revenue_data: Option<RevenueData>,
+}
+
+/// One period of revenue in the main currency, and the period before.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RevenueData {
+    pub account: String,
+    pub subtitle: String,
+    pub currency: String,
+    /// (this period, the period before)
+    pub net: (f64, f64),
+    pub gross: (f64, f64),
+    pub refunded: (f64, f64),
+    pub orders: (f64, f64),
+    pub average: (Option<f64>, Option<f64>),
+    pub paying: (f64, f64),
+    pub new_customers: (Option<f64>, Option<f64>),
+    /// Each day: its date and net revenue; and the period before, day by day.
+    pub daily: Vec<(String, f64)>,
+    pub before: Vec<f64>,
+    pub note: Option<String>,
+}
+
+fn revenue_data_of(v: &Value) -> Option<RevenueData> {
+    let (c, p) = (totals(v, "current"), totals(v, "previous"));
+    let first = |t: &Value| t.get("byCurrency").and_then(Value::as_array).and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+    let (cc, pc) = (first(&c), first(&p));
+    let currency = s(&cc, "currency");
+    let pc = if s(&pc, "currency") == currency { pc } else { Value::Null };
+    let pair = |a: &Value, b: &Value, k: &str| (f(a, k).unwrap_or(0.0), f(b, k).unwrap_or(0.0));
+    let days = |t: &Value| t.get("daily").and_then(Value::as_array).cloned().unwrap_or_default();
+    let daily: Vec<(String, f64)> = days(&c).iter().map(|d| (s(d, "day"), f(d, "net").unwrap_or(0.0))).collect();
+    if daily.is_empty() && currency.is_empty() {
+        return None;
+    }
+    Some(RevenueData {
+        account: s(v, "accountName"),
+        subtitle: format!("{}{}", window(v), if v.get("livemode").and_then(Value::as_bool) == Some(false) { ", test mode" } else { "" }),
+        currency: currency.to_uppercase(),
+        net: pair(&cc, &pc, "net"),
+        gross: pair(&cc, &pc, "gross"),
+        refunded: pair(&cc, &pc, "refunded"),
+        orders: pair(&cc, &pc, "orders"),
+        average: (f(&cc, "averageOrder"), f(&pc, "averageOrder")),
+        paying: pair(&c, &p, "payingCustomers"),
+        new_customers: (f(&c, "newCustomers"), f(&p, "newCustomers")),
+        daily,
+        before: days(&p).iter().map(|d| f(d, "net").unwrap_or(0.0)).collect(),
+        note: c.get("truncated").and_then(Value::as_bool).filter(|t| *t).map(|_| "More charges than OpenRecord reads at once; totals cover the first 3,000.".to_string()),
+    })
 }
 
 fn n(v: &Value, k: &str) -> i64 {
@@ -402,14 +453,18 @@ impl Client {
             }
             Err(e) => Source::Failed(e.message()),
         };
+        let mut revenue_data = None;
         let revenue = match quiet(self.get::<Value>(&format!("/api/revenue/clients/{b}/performance?days={ad}")))? {
             Ok(v) => match v.get("revenue").filter(|x| !x.is_null()) {
-                Some(r) => Source::Reports(vec![revenue_report(r)]),
+                Some(r) => {
+                    revenue_data = revenue_data_of(r);
+                    Source::Reports(vec![revenue_report(r)])
+                }
                 None => Source::NotConnected("Connect Stripe on the web to see paid orders, refunds and paying customers.".into()),
             },
             Err(e) => Source::Failed(e.message()),
         };
-        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue })
+        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data })
     }
 
     fn goal(&self, b: &str, profile: &Value, days: u32) -> Option<Goal> {

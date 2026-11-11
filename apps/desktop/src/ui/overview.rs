@@ -29,7 +29,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         Load::Ready(i) => match sec {
             Section::Summary => summary(s, t, i),
             Section::Performance => performance(t, i),
-            Section::Revenue => revenue(t, i),
+            Section::Revenue => revenue(s, t, i),
             Section::Funnel => funnel(t, i),
             Section::Events => events(s, t, i),
             Section::Realtime => realtime(t),
@@ -636,12 +636,85 @@ fn performance(t: &Theme, i: &Insights) -> El {
         .child(label("Each source counts in its own way and over its own dates, so their numbers are never added together.", type_::XS, t.muted_foreground).wrap())
 }
 
-fn revenue(t: &Theme, i: &Insights) -> El {
-    col()
-        .w_full()
-        .gap(24.0)
-        .child(source(t, "revenue", "Stripe", &i.revenue))
-        .child(label("Sales come straight from Stripe. They show what was paid, not which marketing brought it in.", type_::XS, t.muted_foreground).wrap())
+fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
+    let Some(r) = &i.revenue_data else {
+        return col().w_full().gap(24.0).child(source(t, "revenue", "Stripe", &i.revenue));
+    };
+    let cur = r.currency.as_str();
+    let change = |now: f64, before: f64| (before > 0.0).then(|| (now - before) / before);
+    let money = |x: f64| crate::insights::money(x, cur);
+    // The hero: net revenue, its change, and every day of the period as a
+    // column with the period before as a dotted line behind it.
+    let dates: Vec<String> = r.daily.iter().map(|d| d.0.clone()).collect();
+    let values: Vec<Option<f64>> = r.daily.iter().map(|d| Some(d.1)).collect();
+    let before: Vec<Option<f64>> = (0..values.len()).map(|k| r.before.get(k).copied()).collect();
+    let d = change(r.net.0, r.net.1);
+    let mut pill = row().gap(8.0).center_y();
+    if let Some(d) = d {
+        let (ink, soft) = if d >= 0.0 { (t.supported, t.supported_soft) } else { (t.wrong, t.wrong_soft) };
+        pill = pill.child(row().h(22.0).px(8.0).radius(6.0).center().fill(soft).child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), ink)));
+    }
+    pill = pill.child(label(format!("vs {} the period before", money(r.net.1)), type_::XS, t.muted_foreground));
+    let hero = card(t)
+        .key("revenue-hero")
+        .w(0.0)
+        .grow(2.0)
+        .min_w(420.0)
+        .h(432.0)
+        .px(24.0)
+        .py(20.0)
+        .gap(6.0)
+        .child(row().w_full().gap(8.0).center_y()
+            .child(label("Net revenue", type_::SM_MEDIUM, t.muted_foreground))
+            .child(el().grow(1.0))
+            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(4.0).fill(t.supported)).child(label(format!("Stripe, {}", r.account), type_::XS, t.muted_foreground))))
+        .child(label(money(r.net.0), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.foreground))
+        .child(pill)
+        .child(el().h(10.0))
+        .child(charts::area_trend(s, t, charts::Trend::new("revenue-daily", "Net revenue", &dates, &values, t.chart.primary).compare(&before, "Period before".into()).height(220.0).width_hint(760.0)))
+        .child(row().gap(16.0).pt(4.0)
+            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.chart.primary)).child(label("Each day", type_::XS11, t.muted_foreground)))
+            .child(charts::dotted_label(t, "Same day, period before")));
+
+    // Where the money went: gross, refunds and what was kept, as one bar.
+    let kept = if r.gross.0 > 0.0 { (r.net.0 / r.gross.0) as f32 } else { 1.0 };
+    let line = |name: &str, value: String, dot: Color| row().w_full().h(30.0).gap(10.0).center_y()
+        .child(el().size(8.0, 8.0).radius(2.0).fill(dot))
+        .child(label(name.to_string(), type_::SM_13, t.muted_foreground).grow(1.0))
+        .child(label(value, type_::SM_13.features("'tnum' 1"), t.foreground));
+    let split = card(t)
+        .key("revenue-split")
+        .w(0.0)
+        .grow(1.0)
+        .min_w(300.0)
+        .h(432.0)
+        .px(24.0)
+        .py(20.0)
+        .gap(14.0)
+        .child(col().gap(2.0).child(label("Where it went", type_::SM_MEDIUM, t.foreground).role("heading")).child(label("From what was charged to what you kept", type_::XS, t.muted_foreground)))
+        .child(row().w_full().h(14.0).radius(7.0).clip_rounded(7.0).gap(2.0)
+            .child(el().h_full().grow(kept.max(0.001)).fill(t.chart.supported))
+            .child(el().h_full().grow((1.0 - kept).max(0.001)).fill(t.chart.wrong)))
+        .child(col().w_full()
+            .child(line("Charged", money(r.gross.0), t.foreground.alpha(0.25)))
+            .child(line("Refunded", format!("−{}", money(r.refunded.0)), t.chart.wrong))
+            .child(line("Kept", money(r.net.0), t.chart.supported)))
+        .child(el().grow(1.0))
+        .child(col().w_full().gap(4.0).pt(12.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border)
+            .child(label("Refund rate", type_::XS, t.muted_foreground))
+            .child(label(if r.gross.0 > 0.0 { format!("{:.1}%", r.refunded.0 / r.gross.0 * 100.0) } else { "—".into() }, rune::TextStyle::new(22.0, 600.0).lh(28.0).features("'tnum' 1"), t.foreground)));
+
+    let opt = |x: Option<f64>| x.unwrap_or(0.0);
+    let tiles = row().w_full().gap(16.0).flex_wrap()
+        .child(stat_tile(t, "rev-orders", "Orders", &crate::insights::int(r.orders.0), change(r.orders.0, r.orders.1), true))
+        .child(stat_tile(t, "rev-average", "Average order", &r.average.0.map(money).unwrap_or_else(|| "—".into()), r.average.0.zip(r.average.1).and_then(|(a, b)| change(a, b)), true))
+        .child(stat_tile(t, "rev-paying", "Paying customers", &crate::insights::int(r.paying.0), change(r.paying.0, r.paying.1), true))
+        .child(stat_tile(t, "rev-new", "New customers", &r.new_customers.0.map(crate::insights::int).unwrap_or_else(|| "—".into()), change(opt(r.new_customers.0), opt(r.new_customers.1)), true));
+    let mut c = col().w_full().gap(16.0).child(row().w_full().gap(16.0).items_stretch().flex_wrap().child(hero).child(split)).child(tiles);
+    if let Some(n) = &r.note {
+        c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
+    }
+    c.child(label(format!("{}. Sales come straight from Stripe: what was paid, not which marketing brought it in.", r.subtitle), type_::XS, t.muted_foreground).wrap().pt(8.0))
 }
 
 // ---- Funnel, events, realtime -----------------------------------------------
