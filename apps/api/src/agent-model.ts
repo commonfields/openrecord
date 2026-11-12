@@ -86,6 +86,24 @@ const refuseStatus = async (response: Response) => {
   throw new AgentModelError({ reason: response.status === 429 ? "RATE_LIMITED" : response.status === 401 || response.status === 403 ? "UNCONFIGURED" : "UNAVAILABLE", httpStatus: response.status })
 }
 
+/**
+ * Gemini resolves a JSON Schema reference it finds inside a function response
+ * and refuses the whole request when the target is not one of its own parts.
+ * Tool evidence can hold such schemas (a research capability's inputs, a
+ * tool's own input schema), so any object that carries a `$`-prefixed key is
+ * sent as its JSON text. Function calls and plain text are left alone.
+ */
+const schemaAsText = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(schemaAsText)
+  if (value === null || typeof value !== "object") return value
+  const entries = Object.entries(value)
+  return entries.some(([key]) => key.startsWith("$")) ? JSON.stringify(value) : Object.fromEntries(entries.map(([key, v]) => [key, schemaAsText(v)]))
+}
+export const geminiContents = (contents: ReadonlyArray<ModelContent>): ReadonlyArray<ModelContent> => contents.map(content => ({ ...content, parts: content.parts.map(part => {
+  const response = (part as { functionResponse?: { name: string; response: unknown } } | null)?.functionResponse
+  return response ? { ...(part as object), functionResponse: { ...response, response: schemaAsText(response.response) } } : part
+}) }))
+
 export const configuredAgentModel = Effect.gen(function*() {
   const consent = yield* Config.boolean("AGENT_EXTERNAL_PROCESSING_ENABLED").pipe(Config.withDefault(false))
   const model = yield* Config.option(Config.string("AGENT_MODEL"))
@@ -101,7 +119,7 @@ export const configuredAgentModel = Effect.gen(function*() {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`, {
       method: "POST", signal, redirect: "error",
       headers: { "content-type": "application/json", "x-goog-api-key": Redacted.value(cfg.apiKey) },
-      body: JSON.stringify({ contents: input.contents, systemInstruction: { parts: [{ text: input.system }] },
+      body: JSON.stringify({ contents: geminiContents(input.contents), systemInstruction: { parts: [{ text: input.system }] },
         ...(input.tools.length ? { tools: [{ functionDeclarations: input.tools }] } : {}),
         // Thinking models return a summary of the reasoning they already do; it adds no thinking.
         generationConfig: { maxOutputTokens: cfg.maxOutputTokens, ...(THINKING_GEMINI.test(cfg.model) ? { thinkingConfig: { includeThoughts: true } } : {}) } }),
