@@ -409,6 +409,8 @@ Built: `agent-tool-cards.ts`, `agent-prompt.ts`, and the run loop in
   call keeps its place in the order.
 - **Large reads.** A read over the per-result limit is shortened with the
   existing evidence projection and marked partial. It is no longer refused.
+- **Pace.** A run that passes eight model steps is told once to finish with
+  the reads the answer still needs.
 
 What a general business turn costs before any conversation, measured with
 `modelRequestBytes` on the same turn:
@@ -422,6 +424,23 @@ What a general business turn costs before any conversation, measured with
 
 `agent-lean-context.test.ts` holds the fixed request to half the request
 limit, so a new tool or rule that breaks the budget fails the build.
+
+Live check on the dev stack, hosted Gemini, the demo business, two runs per
+prompt on each side, read from `agent_run_events`:
+
+| Prompt | Before | After |
+| --- | --- | --- |
+| "hello" | answered, 31,300 prompt tokens | answered, 17,100 prompt tokens |
+| Google search against last month | cut short at the context limit after 6 and 8 steps | answered in 2 and 8 steps |
+| What to focus on this week | cut short after 3 and 4 steps, about 34 s | answered in 7 and 9 steps, about 77 s |
+| Compare pricing with two competitors | cut short after 4 and 5 steps, about 44 s | answered in 9 and 10 steps, about 105 s |
+| `/campaign` with a goal | draft saved in 3 and 4 steps, about 59 s | draft saved in 6 and 7 steps, about 83 s |
+
+Before, all six research runs ended with "reached its context limit". After,
+none of eight did. The complete answers cost more steps and more prompt
+tokens than the truncated ones: the context limit was also the only brake on
+a run that keeps reading. The pace notice after eight steps is the
+replacement brake. Two runs per prompt show direction, not a rate.
 
 Not changed: authority. A card grants nothing, dispatch still refuses
 undeclared tools, and every save and prepared change is validated by its own
