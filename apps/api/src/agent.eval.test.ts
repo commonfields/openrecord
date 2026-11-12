@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { AcquisitionRepository, BusinessRepository, type AcqSnapshot } from "@openrecord/db"
 import { runConversation, AGENT_SYSTEM, agentDeclarations } from "./agent.js"
+import { READING_RULES } from "./agent-prompt.js"
 import { readAgentReferralEvidence } from "./agent-referral-tools.js"
 import { configuredAgentModel, AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
 import { AgentUnknownTool } from "./agent-tools.js"
@@ -147,9 +148,14 @@ describe("deterministic conversational contract evaluations (not live model accu
       expect(tooMany.right.gaps).toContain("Budget used up before every check could run")
       expect(tooMany.right.toolCalls.length).toBeLessThanOrEqual(48)
     }
-    const huge = await Effect.runPromise(runConversation({ message: "read", history: [], model: fixture([tool("read_observation"), text("Narrow the request")]), dispatch: () => Effect.succeed({ ...result, data: "x".repeat(20000) }) }))
-    expect(huge.citations).toEqual([])
-    expect(huge.toolCalls[0]?.summary).toContain("exceeds")
+    // A read too large for one step reaches the model shortened and marked partial, with its references kept.
+    const shortened: string[] = []
+    const huge = await Effect.runPromise(runConversation({ message: "read", history: [],
+      model: input => { shortened.push(JSON.stringify(input.contents)); return Effect.succeed(shortened.length === 1 ? tool("read_observation") : text("Read a shortened copy")) },
+      dispatch: () => Effect.succeed({ ...result, data: "x".repeat(20000) }) }))
+    expect(huge.citations).toEqual(result.citations)
+    expect(shortened[1]).toContain('"partial":true')
+    expect(shortened[1]!.length).toBeLessThan(6000)
     const empty = await Effect.runPromise(Effect.either(runConversation({ message: "x", history: [], model: fixture([text("")]), dispatch: () => Effect.succeed(result) })))
     expect(empty._tag).toBe("Left")
   })
@@ -193,15 +199,18 @@ describe("referral interpretation contract (deterministic fixtures, no live mode
     expect(decl?.description).toMatch(/SIGNUPS_NOT_MEASURED/)
     expect(decl?.description).toMatch(/not measured AI recommendations/)
     expect(decl?.parametersJsonSchema).toMatchObject({ properties: { importId: {}, beforeImportId: {} } })
-    for (const rule of ["A GA4 Gemini session is not a measured Gemini recommendation", "REFERRAL_DATA_UNAVAILABLE and SIGNUPS_NOT_MEASURED mean unknown, never zero",
-      "never add, extrapolate or recompute", "Never state or imply that a recommendation caused a referral"]) expect(AGENT_SYSTEM).toContain(rule)
+    for (const rule of ["never add, extrapolate or recompute", "Never state or imply that a recommendation caused a referral"]) expect(AGENT_SYSTEM).toContain(rule)
+    for (const rule of ["A GA4 Gemini session is not a measured Gemini recommendation", "REFERRAL_DATA_UNAVAILABLE and SIGNUPS_NOT_MEASURED mean unknown, never zero"])
+      expect(READING_RULES["read_ai_referral_evidence"]).toContain(rule)
   })
   it("hands the model separate measured-recommendation, GA4 referral and unmeasured-signup evidence", async () => {
     let step = 0
     const model: AgentModel = input => {
       if (step++ === 0) return Effect.succeed(tool("read_ai_referral_evidence"))
       const seen = JSON.stringify(input.contents)
-      expect(input.system).toContain("A GA4 Gemini session is not a measured Gemini recommendation")
+      // The surface rule arrives beside the evidence it governs, outside the untrusted payload.
+      expect((input.contents.at(-1)!.parts[0] as { functionResponse: { response: { openrecordNote: string } } }).functionResponse.response.openrecordNote)
+        .toContain("A GA4 Gemini session is not a measured Gemini recommendation")
       expect(seen).toContain("Gemini API with Google Search grounding (gemini-fixture)")
       expect(seen).toMatch(/"assistant":"ChatGPT","sessions":12/)
       expect(seen).toMatch(/"assistant":"Claude","sessions":4/)

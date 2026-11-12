@@ -383,6 +383,51 @@ cases.
 - The manifests, the deny-by-default filter and the replay harness remain as
   the gate for that decision.
 
+## M1.5 increment 3: tool cards instead of routing (2026-11-12)
+
+Increment 2 showed that no routed selection of the 73 tools keeps coverage:
+the agent reads broadly, and a tool that is not declared cannot be chosen.
+This increment keeps every tool declared and sends less of each one.
+
+Built: `agent-tool-cards.ts`, `agent-prompt.ts`, and the run loop in
+`agent.ts`.
+
+- **Cards.** Each step declares every tool as a card: the first sentence of
+  its description and its near-miss (`whenNotToUse` from the manifests). A
+  small input schema stays on the card. A schema over 900 bytes (the saves and
+  prepared changes) is declared as an open object until the run calls
+  `tool_details`, or until a call is refused for its inputs, which returns the
+  schema with the refusal.
+- **Layered instructions.** The core holds the rules that apply to every
+  request. A slash command adds its own guide. The marketing operating loop
+  loads on its commands and while the conversation is about marketing work or
+  a campaign. Rules for reading one tool's evidence travel beside that tool's
+  first result in a run (`READING_RULES`).
+- **Reads together.** A step that asks only for reads, research and helper
+  tasks runs them concurrently: six reads at a time, three when the step
+  includes research or a helper. Beside a save or a prepared change, every
+  call keeps its place in the order.
+- **Large reads.** A read over the per-result limit is shortened with the
+  existing evidence projection and marked partial. It is no longer refused.
+
+What a general business turn costs before any conversation, measured with
+`modelRequestBytes` on the same turn:
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Instructions, voice and view catalog | 23,957 characters | 10,923 characters |
+| Tool declarations | 82,192 bytes | 42,765 bytes |
+| Fixed request | 106,413 bytes | 53,943 bytes |
+| Room for history and evidence in a 128,000-byte request | 21,331 bytes | 73,801 bytes |
+
+`agent-lean-context.test.ts` holds the fixed request to half the request
+limit, so a new tool or rule that breaks the budget fails the build.
+
+Not changed: authority. A card grants nothing, dispatch still refuses
+undeclared tools, and every save and prepared change is validated by its own
+schema on the server. `commandTools` and `narrowTools` stay as they were.
+The keyword router stays unwired.
+
 ## M2 design: deliverable to outcome binding (approved 2026-11-09 with conditions, implemented locally)
 
 Target chain, every link a structured row and never prose: approved revision,
