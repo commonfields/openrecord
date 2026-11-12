@@ -24,6 +24,25 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
     expect(result).toMatchObject({ _tag: "Left", left: { reason: "UNCONFIGURED" } })
     expect(fetch).not.toHaveBeenCalled()
   })
+  it("sends a schema held in tool evidence as text, since Gemini refuses a function response that carries a schema reference", async () => {
+    const sent: unknown[] = []
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)))
+      return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] }), { status: 200 })
+    }))
+    const schema = { $defs: { Int: { type: "integer" } }, type: "object", properties: { count: { $ref: "#/$defs/Int" } } }
+    const call = { functionCall: { name: "find_research_capabilities", args: { $note: "arguments are the model's own and stay as sent" } } }
+    const contents = [{ role: "user" as const, parts: [{ text: "$ref in plain text is untouched" }] }, { role: "model" as const, parts: [call] },
+      { role: "user" as const, parts: [{ functionResponse: { name: "find_research_capabilities", response: { untrustedEvidence: { summary: "1 capability", data: [{ id: "seo.serp", inputSchema: schema }] } } } }] }]
+    await Effect.runPromise(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents, tools: [], system: "x" })).pipe(Effect.withConfigProvider(config)))
+    const body = sent[0] as { contents: Array<{ parts: Array<Record<string, any>> }> }
+    expect(body.contents[0]!.parts[0]).toEqual(contents[0]!.parts[0])
+    expect(body.contents[1]!.parts[0]).toEqual(call)
+    const evidence = body.contents[2]!.parts[0]!["functionResponse"].response.untrustedEvidence
+    expect(evidence.summary).toBe("1 capability")
+    expect(evidence.data[0].id).toBe("seo.serp")
+    expect(JSON.parse(evidence.data[0].inputSchema)).toEqual(schema)
+  })
   it("uses a dedicated model, preserves tool signatures and records observed usage", async () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
       expect(_url).toContain("/fixture-model:generateContent")

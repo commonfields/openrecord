@@ -40,12 +40,12 @@ describe("inference context pressure", () => {
   })
 
   it("continues real loop inference after a six-read batch rather than forcing a partial recovery", async () => {
-    const tools = [{ name: "read_results", description: "schema overhead ".repeat(5400), parametersJsonSchema: {} }]
+    const tools = [{ name: "read_ledger_fixture", description: "schema overhead ".repeat(5400), parametersJsonSchema: {} }]
     let steps = 0, dispatches = 0
     const { journal, events } = memoryJournal()
     const model: AgentModel = request => {
       expect(modelRequestBytes(request)).toBeLessThanOrEqual(EXECUTION_LIMITS.requestBytes)
-      if (++steps === 1) return Effect.succeed({ candidates: [{ content: { role: "model", parts: Array.from({ length: 6 }, () => ({ functionCall: { name: "read_results", args: {} } })) }, finishReason: "STOP" }] })
+      if (++steps === 1) return Effect.succeed({ candidates: [{ content: { role: "model", parts: Array.from({ length: 6 }, () => ({ functionCall: { name: "read_ledger_fixture", args: {} } })) }, finishReason: "STOP" }] })
       expect(request.tools).toHaveLength(1)
       expect(JSON.stringify(request.contents)).toContain("compactedEvidence")
       expect(JSON.stringify(request.contents)).toContain('"after":12')
@@ -64,7 +64,7 @@ describe("inference context pressure", () => {
   })
 
   it("allocates initial history after schemas and UTF-8 overhead without changing the current request", async () => {
-    const tools = [{ name: "read_results", description: "schema ".repeat(10000), parametersJsonSchema: {} }]
+    const tools = [{ name: "read_ledger_fixture", description: "schema ".repeat(10000), parametersJsonSchema: {} }]
     const message = "Continue the campaign, preserving the approved offer"
     const model: AgentModel = request => {
       expect(modelRequestBytes(request)).toBeLessThanOrEqual(EXECUTION_LIMITS.requestBytes)
@@ -97,13 +97,13 @@ describe("inference context pressure", () => {
 
   it("declares fewer tools rather than stopping research when the schemas leave no room for evidence", async () => {
     const big = (name: string) => ({ name, description: "schema ".repeat(4200), parametersJsonSchema: {} })
-    const tools = [big("read_results"), big("read_reviews"), big("read_ad_performance"), big("prepare_page_change")]
+    const tools = [big("read_results_fixture"), big("read_reviews_fixture"), big("read_ad_performance_fixture"), big("read_page_fixture")]
     let steps = 0
     const { journal, events } = memoryJournal()
     const model: AgentModel = request => {
       expect(modelRequestBytes(request)).toBeLessThanOrEqual(EXECUTION_LIMITS.requestBytes)
-      if (++steps === 1) return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "read_results", args: {} } }] }, finishReason: "STOP" }] })
-      expect(request.tools.map(t => (t as { name: string }).name)).toContain("read_results")
+      if (++steps === 1) return Effect.succeed({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name: "read_results_fixture", args: {} } }] }, finishReason: "STOP" }] })
+      expect(request.tools.map(t => (t as { name: string }).name)).toContain("read_results_fixture")
       expect(request.tools.length).toBeLessThan(tools.length)
       expect(JSON.stringify(request.contents)).toContain('"after":12')
       return Effect.succeed(answer)

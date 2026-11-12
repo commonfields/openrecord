@@ -118,6 +118,8 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
 
 export const findToolSpec = (name: string) => AGENT_TOOL_SPECS.find(s => s.declaration.name === name)
 export const toolEffect = (name: string): ToolEffect => findToolSpec(name)?.effect ?? (STARTS_WORK.has(name) ? "delegate" : "read")
+/** Calls that do not depend on each other within one step: reads, helper tasks, and research, whose saved observations are separate rows. */
+export const runsTogether = (name: string) => toolEffect(name) !== "propose" && (toolEffect(name) !== "record" || RESEARCH_SAVES.has(name))
 
 export const dispatchToolSpec = (ctx: ToolContext, name: string, args: unknown) => Effect.gen(function*() {
   const spec = findToolSpec(name)

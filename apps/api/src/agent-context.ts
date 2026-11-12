@@ -106,6 +106,17 @@ const PROJECTION_LEVELS: readonly ProjectionLimits[] = [
   { text: 80, items: 1, depth: 2, keys: 8 },
 ]
 
+/** One result that is too large for a step, shortened to the first projection
+ * level that fits. Null when even the smallest does not fit. */
+export const fitEvidence = (value: unknown, maxChars: number): { value: unknown; partial: boolean; note: string } | null => {
+  if (JSON.stringify(value).length <= maxChars) return { value, partial: false, note: "" }
+  for (const limits of PROJECTION_LEVELS) {
+    const projected = projectEvidence(value, limits)
+    if (JSON.stringify(projected).length <= maxChars) return { value: projected, partial: true, note: PROJECTION_NOTICE }
+  }
+  return null
+}
+
 /** Within one run, shrink older tool evidence first, preserving source IDs,
  * receipts and numeric context. If the latest batch itself cannot fit, project
  * that batch too rather than abandoning inference after successful tool reads.
