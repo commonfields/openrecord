@@ -249,7 +249,7 @@ pub fn businesses(s: &App, t: &Theme) -> El {
             ]
         })
         .collect();
-    let body = if rows.is_empty() { kit::note(t, format!("No business matches \"{}\".", s.list_query.text.trim())) } else { kit::table_plain(t, "b-table", &COLS, rows) };
+    let body = if rows.is_empty() { kit::note(t, format!("No business matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "b-table", &COLS, rows) };
     let panel = kit::panel(t, "b-list", "Portfolio", Some("Open a business for its Overview".into()), Some(sorts), 0.0, col().w_full().gap(12.0).child(search(s, t, "b-search", "Search businesses")).child(body));
     col().w_full().gap(16.0).child(top).child(strip).child(panel)
 }
@@ -311,7 +311,7 @@ pub fn clients(s: &App, t: &Theme) -> El {
             ]
         })
         .collect();
-    let body = if rows.is_empty() { kit::note(t, format!("No client matches \"{}\".", s.list_query.text.trim())) } else { kit::table_plain(t, "c-table", &COLS, rows) };
+    let body = if rows.is_empty() { kit::note(t, format!("No client matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "c-table", &COLS, rows) };
     let panel = kit::panel(t, "c-list", "Clients and products", None, None, 0.0, col().w_full().gap(12.0).child(search(s, t, "c-search", "Search clients")).child(body));
     col().w_full().gap(16.0).child(top).child(strip).child(panel)
 }

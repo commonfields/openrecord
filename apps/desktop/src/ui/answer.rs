@@ -82,7 +82,7 @@ fn verdict_label(v: &str) -> &'static str {
 }
 
 fn section(t: &Theme, key: &str, title: &str, description: Option<&str>) -> El {
-    let mut head = col().w_full().gap(2.0).px(18.0).pt(14.0).pb(12.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading"));
+    let mut head = col().w_full().gap(2.0).px(18.0).pt(14.0).pb(12.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading"));
     if let Some(d) = description {
         head = head.child(label(d, type_::XS, t.muted_foreground).wrap());
     }
@@ -322,7 +322,6 @@ fn actions(t: &Theme, a: &AnswerView, list: &[Intervention]) -> El {
         .pt(14.0)
         .pb(12.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], t.border)
         .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label("What you did about it", type_::SM_MEDIUM, t.foreground).role("heading")).child(label("A hand-kept log. It changes no verdict and no observation.", type_::XS, t.muted_foreground).wrap()))
         .child(toggle);
     let mut body = col().w_full().gap(12.0).px(18.0).py(14.0);

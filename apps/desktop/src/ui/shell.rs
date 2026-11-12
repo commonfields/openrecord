@@ -788,7 +788,8 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
         Menu::Reasoning => Some(crate::ui::agent::reasoning_menu(s, t)),
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),
         Menu::IssueModel | Menu::IssueFact | Menu::IssueSort => crate::ui::issues::menu(s, t, s.menu?),
-        Menu::Choice => crate::ui::campaigns::choice_menu(s, t),
+        // The campaign brief editor that opened this menu is not on the page.
+        Menu::Choice => None,
     }
 }
 

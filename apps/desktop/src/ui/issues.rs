@@ -323,8 +323,8 @@ pub fn view(s: &App, t: &Theme) -> El {
         let (from, to) = issues.iter().map(time).fold((i64::MAX, i64::MIN), |a, x| (a.0.min(x), a.1.max(x)));
         let mut list = col().w_full();
         let single = groups.len() == 1;
-        for (k, g) in groups.iter().enumerate() {
-            list = list.child(claim_row(s, t, g, from, to, single, k + 1 < groups.len()));
+        for g in &groups {
+            list = list.child(claim_row(s, t, g, from, to, single));
         }
         list
     });
@@ -335,7 +335,6 @@ pub fn view(s: &App, t: &Theme) -> El {
                 .px(16.0)
                 .py(8.0)
                 .center_y()
-                .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
                 .child(label(format!("Showing {} of {} open answers", crate::insights::int(visible.len() as f64), crate::insights::int(issues.len() as f64)), type_::XS11, t.muted_foreground))
                 .child(el().grow(1.0))
                 .child(label("Clear filters", XS11_MEDIUM, t.foreground).key("issues-clear-foot").role("button").cursor(Cursor::Pointer).on_press(|s: &mut App| s.clear_issue_filters())),
@@ -486,7 +485,6 @@ fn toolbar(s: &App, t: &Theme, issues: &[Issue], groups: usize, answers: usize) 
         .gap(8.0)
         .center_y()
         .flex_wrap()
-        .border_sides([0.0, 0.0, 1.0, 0.0], t.border)
         .child(tabs)
         .child(search)
         .child(picker(t, "issue-model", model, 128.0, Menu::IssueModel, s.menu == Some(Menu::IssueModel)))
@@ -576,7 +574,7 @@ pub fn menu(s: &App, t: &Theme, which: Menu) -> Option<El> {
 }
 
 /// One claim and every answer that said it (`ClaimGroupRow`).
-fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool, rule: bool) -> El {
+fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool) -> El {
     let open = single || s.issue_query.open.contains(&g.key);
     let all = s.issue_query.all.contains(&g.key);
     let to_review: Vec<&&Issue> = g.occurrences.iter().filter(|o| o.state == "NEEDS_REVIEW").collect();
@@ -693,10 +691,9 @@ fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool
     if open {
         let shown: Vec<&&Issue> = if all { g.occurrences.iter().collect() } else { g.occurrences.iter().take(6).collect() };
         let mut list = shadows(col().w_full().radius(10.0).fill(t.card).clip_rounded(10.0), &t.card_shadow);
-        let n = shown.len();
-        for (k, o) in shown.into_iter().enumerate() {
+        for o in shown {
             let id = o.claim_id.clone();
-            let mut r = row()
+            let r = row()
                 .key(format!("occ-{}", o.claim_id))
                 .w_full()
                 .px(12.0)
@@ -714,9 +711,6 @@ fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool
                 .child(badge(t, &o.state))
                 .child(row().w(80.0).child(el().grow(1.0)).child(label(when(o), type_::XS.features("'tnum' 1"), t.muted_foreground)).help(o.collected_at.as_deref().map(format::date_time).unwrap_or_default()))
                 .child(row().w(110.0).gap(4.0).center_y().child(el().grow(1.0)).child(label(if o.state == "NEEDS_REVIEW" { "Rate this answer" } else { "View issue" }, type_::XS_MEDIUM, t.foreground)).child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground)));
-            if k + 1 < n {
-                r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
-            }
             list = list.child(r);
         }
         let mut under = col().w_full().pl(40.0).pr(16.0).pb(12.0).gap(8.0).child(list);
@@ -727,9 +721,6 @@ fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool
             }));
         }
         c = c.child(under);
-    }
-    if rule {
-        c = c.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
     }
     c
 }
@@ -746,7 +737,6 @@ fn answers_table(t: &Theme, rows: &[&Issue], page: usize) -> El {
         .py(6.0)
         .gap(16.0)
         .fill(t.accent.alpha(0.3))
-        .border_sides([0.0, 0.0, 1.0, 0.0], t.border)
         .child(cell(144.0, false, label("State", type_::XS11, t.muted_foreground)))
         .child(cell(2.0, true, label("AI said", type_::XS11, t.muted_foreground)))
         .child(cell(1.0, true, label("Your approved fact", type_::XS11, t.muted_foreground)))
@@ -754,8 +744,7 @@ fn answers_table(t: &Theme, rows: &[&Issue], page: usize) -> El {
         .child(cell(48.0, false, label("Sources", type_::XS11, t.muted_foreground)))
         .child(row().w(80.0).child(el().grow(1.0)).child(label("Seen", type_::XS11, t.muted_foreground)));
     let mut c = col().w_full().child(head);
-    let n = slice.len();
-    for (k, i) in slice.iter().enumerate() {
+    for i in slice {
         let id = i.claim_id.clone();
         let facts = if i.facts.is_empty() {
             label(if i.state == "NEEDS_REVIEW" { "Not compared yet" } else { "No fact linked" }, type_::XS, t.muted_foreground).truncate()
@@ -771,7 +760,7 @@ fn answers_table(t: &Theme, rows: &[&Issue], page: usize) -> El {
         } else {
             row().gap(4.0).center_y().child(ico(&icons::LINK, 12.0, t.foreground)).child(label(i.citation_evidence.len().to_string(), type_::XS_MEDIUM, t.foreground))
         };
-        let mut r = row()
+        let r = row()
             .key(format!("answer-{}", i.claim_id))
             .w_full()
             .px(16.0)
@@ -798,9 +787,6 @@ fn answers_table(t: &Theme, rows: &[&Issue], page: usize) -> El {
             .child(cell(1.0, true, provider_chip(t, &i.provider, i.observed_model.as_deref())))
             .child(cell(48.0, false, sources))
             .child(row().w(80.0).child(el().grow(1.0)).child(label(when(i), type_::XS.features("'tnum' 1"), t.muted_foreground)));
-        if k + 1 < n {
-            r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
-        }
         c = c.child(r);
     }
     if pages > 1 {
@@ -814,7 +800,6 @@ fn answers_table(t: &Theme, rows: &[&Issue], page: usize) -> El {
                 .px(16.0)
                 .py(6.0)
                 .center_y()
-                .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
                 .child(label(format!("{}–{} of {}", (current - 1) * PAGE_SIZE + 1, (current * PAGE_SIZE).min(rows.len()), rows.len()), type_::XS11.features("'tnum' 1"), t.muted_foreground))
                 .child(el().grow(1.0))
                 .child(nav("answers-prev", &icons::CHEVRON_LEFT, "Previous page", current.saturating_sub(1), current > 1))

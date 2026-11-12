@@ -384,7 +384,6 @@ fn health(_s: &App, t: &Theme, i: &Insights) -> El {
 
 fn initiatives(t: &Theme, i: &Insights) -> El {
     let mut list = col().w_full();
-    let n = i.initiatives.len();
     for (k, x) in i.initiatives.iter().enumerate() {
         let (ink, soft, state) = match (x.status.as_str(), x.progress.as_str()) {
             ("APPROVED", "EXECUTED") => (t.supported, t.supported_soft, "Done, measuring"),
@@ -394,7 +393,7 @@ fn initiatives(t: &Theme, i: &Insights) -> El {
             ("CANCELLED", _) => (t.muted_foreground, t.accent, "Declined"),
             _ => (t.muted_foreground, t.accent, "Idea"),
         };
-        let mut r = row()
+        let r = row()
             .key(format!("initiative-{k}"))
             .w_full()
             .h(44.0)
@@ -402,9 +401,6 @@ fn initiatives(t: &Theme, i: &Insights) -> El {
             .center_y()
             .child(label(x.title.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
             .child(crate::ui::widgets::status_chip(t, state, ink, soft));
-        if k + 1 < n {
-            r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
-        }
         list = list.child(r);
     }
     board(t, "initiatives", "Work in progress", Some("What you approved, what waits on you, and what is done".into()), 340.0, list)

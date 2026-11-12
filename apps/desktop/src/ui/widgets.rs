@@ -259,7 +259,6 @@ pub fn skeleton(t: &Theme, rows: usize) -> El {
                 .gap(10.0)
                 .py(18.0)
                 .px(18.0)
-                .border_sides([0.0, 0.0, if i + 1 < rows { 1.0 } else { 0.0 }, 0.0], t.border)
                 .child(bar(120.0, 18.0))
                 .child(bar(560.0, 14.0))
                 .child(bar(280.0, 10.0)),
