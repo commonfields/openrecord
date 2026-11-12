@@ -2,14 +2,13 @@
 // Channels, continuing the business's current conversation (the same one the
 // Agent tab shows). Any part of a workspace page can hand it a request: the
 // pane opens with that request typed in the composer, never sent until the
-// person sends it.
+// person sends it. The pane opens from a page's own asks and closes from its
+// own button; the page header carries no toggle for it.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { PanelLeftCloseIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentPane, useAgentSession, type ComposerSeed } from "@/components/agent-chat"
 import { useChrome } from "@/components/app-shell"
-import { HeaderActions } from "@/components/page"
 import { askAgentPath } from "@/lib/nav"
 
 type WorkspaceAgent = { readonly open: boolean; readonly ask: (request?: string) => void; readonly close: () => void }
@@ -55,18 +54,6 @@ export function WorkspaceAgentProvider({ businessId, businessName, children }: {
   if (onAgentTab) return <>{children}</>
   return (
     <WorkspaceAgentContext.Provider value={value}>
-      <HeaderActions>
-        {open ? (
-          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={close}>
-            <PanelLeftCloseIcon />
-            Hide the agent
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => ask()}>
-            Ask the agent
-          </Button>
-        )}
-      </HeaderActions>
       <AgentPane open={open} session={session} businessName={businessName} placeholder={`Ask about ${businessName}`} onClose={close}
         onCommand={command => session.send(`/${command}`)} context={{ kind: "business", name: businessName }} seed={seed} />
       {children}

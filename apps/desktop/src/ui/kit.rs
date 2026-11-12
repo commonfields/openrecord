@@ -100,14 +100,6 @@ pub fn tile(t: &Theme, key: &str, name: &str, value: String, change: Option<(f64
     c
 }
 
-/// Tiles in one row, wrapping on narrow windows.
-pub fn tiles(list: Vec<El>) -> El {
-    let mut r = row().w_full().gap(16.0).flex_wrap();
-    for c in list {
-        r = r.child(c);
-    }
-    r
-}
 
 /// Tiles in rows of `n`, each row at equal widths.
 pub fn rows_of(list: Vec<El>, n: usize) -> El {
@@ -142,7 +134,22 @@ fn cell(c: &Column, content: El) -> El {
 
 /// A table: a muted header, then rows split by hairlines.
 pub fn table(t: &Theme, key: &str, columns: &[Column], rows: Vec<Vec<El>>) -> El {
-    let mut head = row().w_full().gap(12.0).pb(8.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border);
+    table_ruled(t, key, columns, rows, true)
+}
+
+/// A table without lines between rows: rows show only under the pointer, as the
+/// web's portfolio lists do.
+pub fn table_plain(t: &Theme, key: &str, columns: &[Column], rows: Vec<Vec<El>>) -> El {
+    table_ruled(t, key, columns, rows, false)
+}
+
+fn table_ruled(t: &Theme, key: &str, columns: &[Column], rows: Vec<Vec<El>>, ruled: bool) -> El {
+    let mut head = row().w_full().gap(12.0).pb(8.0);
+    if ruled {
+        head = head.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
+    } else {
+        head = head.px(8.0);
+    }
     for c in columns {
         head = head.child(cell(c, label(c.name, type_::XS11, t.muted_foreground)));
     }
@@ -150,10 +157,13 @@ pub fn table(t: &Theme, key: &str, columns: &[Column], rows: Vec<Vec<El>>) -> El
     let n = rows.len();
     for (k, r) in rows.into_iter().enumerate() {
         let mut line = row().key(format!("{key}-{k}")).w_full().gap(12.0).min_h(40.0).py(6.0).center_y().hover(t.hover_tint);
+        if !ruled {
+            line = line.px(8.0).radius(8.0);
+        }
         for (c, content) in columns.iter().zip(r) {
             line = line.child(cell(c, content));
         }
-        if k + 1 < n {
+        if ruled && k + 1 < n {
             line = line.border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6));
         }
         out = out.child(line);

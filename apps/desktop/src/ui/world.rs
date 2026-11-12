@@ -163,7 +163,7 @@ pub fn view(s: &App, t: &Theme, height: f32, places: &[(String, String, f64)]) -
         .h(h)
         .clip_rounded(10.0)
         .cursor(if s.map_drag.is_some() { Cursor::Grabbing } else { Cursor::Grab })
-        .on_layout(|s: &mut App, r: [f32; 4]| s.map_w = r[2])
+        .on_layout(|s: &mut App, r: [f32; 4]| s.map_w = r[2] / s.zoom())
         .on_drag(move |s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {
@@ -171,7 +171,7 @@ pub fn view(s: &App, t: &Theme, height: f32, places: &[(String, String, f64)]) -
                 rune::Phase::Move => {
                     if let Some(from) = s.map_drag {
                         let cam = Camera::new(s.map_zoom, from, w, h);
-                        s.map_center = cam.unproject(w / 2.0 - d.dx, h / 2.0 - d.dy);
+                        s.map_center = cam.unproject(w / 2.0 - d.dx / s.zoom(), h / 2.0 - d.dy / s.zoom());
                     }
                 }
                 rune::Phase::Up => {

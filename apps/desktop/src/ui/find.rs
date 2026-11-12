@@ -245,17 +245,18 @@ pub fn layers(s: &App, t: &Theme, layer: &mut Vec<El>) {
             })
             .on_press_tx(move |s: &mut App, tx| run(s, go.clone(), tx))
             .child(ico(item.icon, 16.0, t.muted_foreground))
-            .child(label(item.label.clone(), type_::XS, if on { t.foreground } else { t.sidebar_foreground }).truncate().grow(1.0).min_w(0.0));
+            .child(label(item.label.clone(), type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0));
         if let Some(b) = &item.badge {
             r = r.child(badge(t, b));
         }
         if let Some(h) = &item.hint {
             r = r.child(label(h.clone(), type_::XS.features("'tnum' 1"), t.muted_foreground));
         }
-        if on {
-            r = shadows(r.fill(t.accent).child(ico(&icons::CORNER_DOWN_LEFT, 14.0, t.muted_foreground)), &t.control_shadow);
-        }
-        body = body.child(r);
+        // The chat's "/" menu highlight: the accent fill and control shadow ease in
+        // under the pointer or the arrows. The ↵ mark is always there, only shown on
+        // the highlighted row, so nothing shifts as the highlight moves.
+        r = r.child(row().size(14.0, 14.0).center().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(ico(&icons::CORNER_DOWN_LEFT, 14.0, t.muted_foreground)));
+        body = body.child(crate::ui::widgets::highlight(t, r, on, false));
     }
     let footer = row()
         .w_full()

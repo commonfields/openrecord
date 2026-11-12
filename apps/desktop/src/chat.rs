@@ -157,6 +157,9 @@ impl Attachment {
 
 /// At most three files, 80,000 characters together (`AgentMessageRequest`).
 pub const MAX_FILES: usize = 3;
+/// Pasted text longer than this becomes an attachment instead of filling the composer.
+pub const PASTE_AS_FILE_CHARS: usize = 1_500;
+pub const PASTE_AS_FILE_LINES: usize = 30;
 pub const MAX_ATTACHMENT_CHARS: usize = 80_000;
 
 /// Reads a file to attach: text only, within what is left of the limit.

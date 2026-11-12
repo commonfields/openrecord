@@ -58,21 +58,27 @@ pub fn icon_button(t: &Theme, key: &str, i: &'static Icon, name: &str, on: bool)
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
-    /// Navy (white in dark mode) with a crisp dark outline.
+    /// `default`: the primary fill with its crisp shadow; 90% under the pointer.
     Primary,
-    /// The control surface with a lit top edge.
+    /// `outline`: the control surface and its shadow; `--control-hover` under the pointer.
     Outline,
+    /// `ghost`: no surface until the pointer is over it, then the accent fill.
+    Ghost,
 }
 
+/// The web's `Button` (`components/ui/button.tsx`): 28 points tall, 6-point
+/// corners, 13-point medium text, 12 points either side.
 pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
-    let (fill, ink, list) = match variant {
-        Variant::Primary => (t.primary, t.primary_foreground, &t.primary_shadow),
-        Variant::Outline => (t.control, t.foreground, &t.control_shadow),
+    let (fill, hover, ink) = match variant {
+        Variant::Primary => (t.primary, t.primary.alpha(0.9), t.primary_foreground),
+        Variant::Outline => (t.control, t.control_hover, t.foreground),
+        Variant::Ghost => (t.accent.alpha(0.0), t.accent, t.foreground),
     };
     let b = row()
         .key(key)
         .h(28.0)
         .px(12.0)
+        .gap(6.0)
         .radius(6.0)
         .center()
         .role("button")
@@ -80,11 +86,15 @@ pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
         .focusable(true)
         .cursor(Cursor::Pointer)
         .fill(fill)
-        .hover(if variant == Variant::Primary { Color::WHITE.alpha(0.08) } else { t.hover_tint })
-        .press(t.hover_tint)
-        .motion(CONTROL)
+        .hover(hover)
+        .press(hover)
+        .motion(HOVER)
         .child(label(text_, rune::TextStyle::new(13.0, 500.0).lh(18.0), ink));
-    shadows(b, list)
+    match variant {
+        Variant::Primary => shadows(b, &t.primary_shadow),
+        Variant::Outline => shadows(b, &t.control_shadow),
+        Variant::Ghost => b,
+    }
 }
 
 /// A business's mark: its initial on a glossy tile in its colour.
@@ -138,21 +148,67 @@ pub fn avatar_sphere(t: &Theme, size: f32) -> El {
 
 /// A small count on a soft red pill (the sidebar's "AI answers 4").
 pub fn count_badge(t: &Theme, n: i64) -> El {
-    let b = row().px(6.0).h(17.0).radius(9.0).center().fill(t.wrong_soft).label(format!("{n} open")).child(label(n.to_string(), type_::COUNT, t.wrong));
+    let b = row().px(6.0).h(16.0).radius(8.0).center().fill(t.wrong_soft).label(format!("{n} open")).child(label(n.to_string(), type_::COUNT, t.wrong));
     shadows(b, &t.badge_shadow)
 }
 
-/// A verdict or state chip: a soft tint with a dot in the status colour.
-pub fn status_chip(text_: &str, ink: Color, soft: Color) -> El {
-    row()
-        .h(22.0)
-        .px(8.0)
-        .gap(6.0)
-        .radius(11.0)
+/// The web's `Badge` (`components/ui/badge.tsx`): a fully rounded pill, 11-point
+/// medium text, a hairline ring in the status colour over its soft fill, and the
+/// badge shadow so it sits on the surface.
+pub fn status_chip(t: &Theme, text_: &str, ink: Color, soft: Color) -> El {
+    badge(t, text_, ink, soft, None)
+}
+
+/// [`status_chip`] with a leading 12-point icon, as `IssueStateBadge` draws one.
+pub fn badge(t: &Theme, text_: &str, ink: Color, soft: Color, icon_: Option<&'static Icon>) -> El {
+    let b = row()
+        .h(18.0)
+        .px(6.0)
+        .gap(4.0)
+        .radius(9.0)
         .center_y()
         .fill(soft)
-        .child(el().size(6.0, 6.0).radius(3.0).fill(ink))
-        .child(label(text_, type_::XS_MEDIUM, ink))
+        .border(1.0, ink.alpha(0.2))
+        .children(icon_.map(|i| ico(i, 12.0, ink)))
+        .child(label(text_, rune::TextStyle::new(11.0, 500.0).lh(16.0), ink));
+    shadows(b, &t.badge_shadow)
+}
+
+/// The hovered row, by key, for highlights that also carry a shadow (Rune's own
+/// hover only swaps a fill).
+pub fn track_hover(key: String) -> impl Fn(&mut App, bool, &mut rune::Tx) + 'static {
+    move |s: &mut App, inside, _tx| {
+        if inside {
+            s.row_hover = Some(key.clone());
+        } else if s.row_hover.as_deref() == Some(key.as_str()) {
+            s.row_hover = None;
+        }
+    }
+}
+
+/// The web's sidebar link and menu row highlight: hovered, the accent at 70%
+/// with the control shadow; current, the full accent with the shadow. Both ease.
+pub fn nav_highlight(t: &Theme, r: El, hovered: bool, active: bool) -> El {
+    let fill = if active { t.sidebar_accent } else if hovered { t.sidebar_accent.alpha(0.7) } else { t.sidebar_accent.alpha(0.0) };
+    let on = active || hovered;
+    let list: Vec<rune::Shadow> = t.control_shadow.iter().map(|s| rune::Shadow { color: if on { s.color } else { s.color.alpha(0.0) }, ..*s }).collect();
+    shadows(r.fill(fill).motion(HOVER), &list)
+}
+
+/// The web's `Alert`: a card with a hairline border, 8-point corners, 16 by 12
+/// padding and 12-point text.
+pub fn alert(t: &Theme, key: &str, title: Option<&str>, body: El) -> El {
+    col()
+        .key(key.to_string())
+        .w_full()
+        .px(16.0)
+        .py(12.0)
+        .gap(2.0)
+        .radius(8.0)
+        .fill(t.card)
+        .border(1.0, t.border)
+        .children(title.map(|x| label(x.to_string(), type_::XS_MEDIUM, t.foreground)))
+        .child(body)
 }
 
 /// A raised surface: the card colour held by a white rim inside a hairline.

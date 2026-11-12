@@ -17,6 +17,7 @@ import { LiveTrace, RunTrace, initialProgress, progressOf, type Progress } from 
 import { Agent, ApiError, Providers, Questions, notifyDecisionsChanged, type AgentActivity, type AgentAttachment, type AgentCitation, type AgentContextUse, type AgentDecisionRef, type AgentMessage, type AgentMessageOrigin, type AgentProposal, type AgentRunRef, type AgentSessionInfo, type AgentTaskRef, type AgentTaskStatus } from "@/lib/api"
 import type { GrowthOpportunity } from "@openrecord/contracts"
 import { InitiativeDecision } from "@/components/setup-flow"
+import { ComposerEditor, type ComposerEditorHandle } from "@/components/composer-editor"
 import { SetupInChat } from "@/components/setup-card"
 import { Growth } from "@/lib/growth"
 import { agentEvidencePath, webSourceUrl } from "@/lib/agent-evidence"
@@ -1133,6 +1134,16 @@ function ModelSelector({ session, locked }: { session: AgentSession; locked: boo
   )
 }
 
+// Pasted text longer than this becomes an attachment instead of filling the composer.
+const PASTE_AS_FILE_CHARS = 1500
+const PASTE_AS_FILE_LINES = 30
+
+// Drafts in this browser, one per chat. Storage can be unavailable (a private
+// window, blocked site data): the composer then simply keeps no draft.
+const readDraft = (key: string) => { try { return localStorage.getItem(key) ?? "" } catch { return "" } }
+const writeDraft = (key: string, text: string) => { try { if (text.trim()) localStorage.setItem(key, text); else localStorage.removeItem(key) } catch { /* no storage */ } }
+const clearDraft = (key: string) => { try { localStorage.removeItem(key) } catch { /* no storage */ } }
+
 function Composer({
   onSend,
   onCommand,
@@ -1171,7 +1182,9 @@ function Composer({
   const { openSettings } = useSettings()
   const [askParams, setAskParams] = useSearchParams()
   const asked = prefill ? askParams.get("ask") : null
-  const [text, setText] = useState(asked ?? "")
+  // Each chat keeps its unsent text in this browser (cleared when it is sent).
+  const draftKey = `openrecord:draft:${session?.businessId ?? context?.name ?? "general"}:${session?.conversationId ?? "new"}`
+  const [text, setText] = useState(() => asked ?? readDraft(draftKey))
   useEffect(() => {
     if (!asked) return
     setAskParams(p => { const next = new URLSearchParams(p); next.delete("ask"); return next }, { replace: true })
@@ -1182,11 +1195,23 @@ function Composer({
   useEffect(() => {
     if (seedNonce === null || !seed) return
     setText(seed.text)
-    requestAnimationFrame(() => { const el = textRef.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } })
+    requestAnimationFrame(() => textRef.current?.focus(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedNonce])
   const [listening, setListening] = useState(false)
-  const textRef = useRef<HTMLTextAreaElement>(null)
+  const textRef = useRef<ComposerEditorHandle>(null)
+  // A different chat brings its own draft back; this one's text is saved as it changes.
+  const draftKeyRef = useRef(draftKey)
+  useEffect(() => {
+    if (draftKeyRef.current === draftKey) return
+    draftKeyRef.current = draftKey
+    if (!asked && seedNonce === null) setText(readDraft(draftKey))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey])
+  useEffect(() => { writeDraft(draftKeyRef.current, text) }, [text])
+  // ↑ in an empty composer brings back the last message sent; ↑ and ↓ then step through earlier ones.
+  const historyRef = useRef<number | null>(null)
+  const sent = (session?.messages ?? []).filter(m => m.role === "user" && m.text.trim()).map(m => m.text)
   const recognitionRef = useRef<Recognition | null>(null)
   const baseTextRef = useRef("")
 
@@ -1248,7 +1273,77 @@ function Composer({
     else onSend(message, files)
     setText("")
     setFiles([])
+    historyRef.current = null
+    clearDraft(draftKeyRef.current)
     textRef.current?.focus()
+  }
+
+  // Paste: files attach, and text longer than a message comfortably holds
+  // becomes an attachment instead of flooding the box. Formatted text pastes as
+  // clean text on its own (the editor keeps no formatting).
+  const paste = (e: ClipboardEvent) => {
+    const data = e.clipboardData
+    if (!data) return false
+    if (data.files.length) { e.preventDefault(); void attach(data.files); return true }
+    const pasted = data.getData("text/plain")
+    if (pasted.length > PASTE_AS_FILE_CHARS || pasted.split("\n").length > PASTE_AS_FILE_LINES) {
+      e.preventDefault()
+      const count = files.filter(f => f.name.startsWith("Pasted text")).length
+      const file: AgentAttachment = { name: count ? `Pasted text ${count + 1}` : "Pasted text", type: "text/plain", text: pasted.slice(0, MAX_FILE_CHARS) }
+      const { attachments: next, dropped } = addAttachments(files, [file])
+      setFiles(next)
+      if (dropped.length) toast.error(`Not attached: ${dropped.join(", ")}`, { description: `Up to ${MAX_FILES} files and ${MAX_TOTAL_CHARS.toLocaleString()} characters per message.` })
+      else if (pasted.length > MAX_FILE_CHARS) toast(`Only the first ${MAX_FILE_CHARS.toLocaleString()} characters of the paste were attached.`)
+      return true
+    }
+    return false
+  }
+
+  const keyDown = (e: KeyboardEvent): boolean => {
+    if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault()
+      setMenuIndex(i => (i + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length)
+      return true
+    }
+    if (menuOpen && e.key === "Tab") {
+      e.preventDefault()
+      { const m = matches[Math.min(menuIndex, matches.length - 1)]!; setText(`/${m.kind === "command" ? m.key : m.playbook.name}`) }
+      return true
+    }
+    if (menuOpen && e.key === "Escape") {
+      e.preventDefault()
+      setText("")
+      return true
+    }
+    if (menuOpen && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault()
+      submit()
+      return true
+    }
+    // History: only from an empty composer, or while still on a recalled message.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && sent.length) {
+      const at = historyRef.current
+      const browsing = at !== null && sent[sent.length - 1 - at] === text
+      if (text === "" || browsing) {
+        e.preventDefault()
+        const next = e.key === "ArrowUp" ? (browsing ? Math.min(at! + 1, sent.length - 1) : 0) : (browsing && at! > 0 ? at! - 1 : null)
+        historyRef.current = next
+        setText(next === null ? "" : sent[sent.length - 1 - next]!)
+        requestAnimationFrame(() => textRef.current?.focus(true))
+        return true
+      }
+    }
+    const sendCombo = preferences.enterToSend ? !e.shiftKey && !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey
+    if (e.key === "Enter" && (sendCombo || command !== null) && !e.isComposing) {
+      e.preventDefault()
+      submit()
+      return true
+    }
+    if (e.key === "Escape" && listening) {
+      recognitionRef.current?.stop()
+      return true
+    }
+    return false
   }
 
   const toggleMic = () => {
@@ -1349,49 +1444,18 @@ function Composer({
         <label htmlFor="agent-input" className="sr-only">
           Message the agent
         </label>
-        <textarea
+        <ComposerEditor
           id="agent-input"
           ref={textRef}
           autoFocus={autoFocus}
-          rows={1}
           value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
+          onChange={setText}
           disabled={disabled && !onCommand && !queueing}
-          aria-expanded={onCommand ? menuOpen : undefined}
-          aria-autocomplete={onCommand ? "list" : undefined}
-          maxLength={4000}
-          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); void attach(e.clipboardData.files) } }}
-          onKeyDown={(e) => {
-            if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-              e.preventDefault()
-              setMenuIndex(i => (i + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length)
-              return
-            }
-            if (menuOpen && e.key === "Tab") {
-              e.preventDefault()
-              { const m = matches[Math.min(menuIndex, matches.length - 1)]!; setText(`/${m.kind === "command" ? m.key : m.playbook.name}`) }
-              return
-            }
-            if (menuOpen && e.key === "Escape") {
-              e.preventDefault()
-              setText("")
-              return
-            }
-            if (menuOpen && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              submit()
-              return
-            }
-            const sendCombo = preferences.enterToSend ? !e.shiftKey && !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey
-            if (e.key === "Enter" && (sendCombo || command !== null) && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              submit()
-            } else if (e.key === "Escape" && listening) {
-              recognitionRef.current?.stop()
-            }
-          }}
+          ariaExpanded={onCommand ? menuOpen : undefined}
+          {...(onCommand ? { ariaAutocomplete: "list" as const } : {})}
+          onPaste={paste}
+          onKeyDown={keyDown}
           placeholder={listening ? "Listening" : placeholder}
-          className="field-sizing-content block max-h-48 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-1 text-base leading-6 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden placeholder:text-muted-foreground"
         />
 
         <div className="flex shrink-0 self-end items-center gap-1">

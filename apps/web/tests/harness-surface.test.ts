@@ -133,7 +133,10 @@ describe("agent workspace presentation", () => {
     expect(chat.includes("size-8 shrink-0 self-end")).toBe(true)
     expect(chat.includes("flex shrink-0 self-end items-center")).toBe(true)
     expect(chat.includes("overflow-y-auto")).toBe(true)
-    expect(chat.includes("[scrollbar-width:none] [&::-webkit-scrollbar]:hidden")).toBe(true)
+    // The field itself is the Tiptap editor, in its own file.
+    const editor = read("../app/components/composer-editor.tsx")
+    expect(editor.includes("[scrollbar-width:none] [&::-webkit-scrollbar]:hidden")).toBe(true)
+    expect(editor.includes("max-h-48 min-h-6")).toBe(true)
     expect(chat.includes("disabled:bg-primary disabled:text-primary-foreground disabled:opacity-50")).toBe(true)
     expect(chat.includes("disabled={!canSend}")).toBe(true)
   })

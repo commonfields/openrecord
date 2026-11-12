@@ -65,8 +65,27 @@ pub struct Item {
     pub tone: Option<Tone>,
 }
 
+/// How a series' values read: money in a currency, a plain count, or a percent.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unit {
+    Money(String),
+    Count,
+    Percent,
+}
+
+/// One line under a series: what moved the number, and by how much.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Movement {
+    pub label: String,
+    pub amount: f64,
+    pub muted: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
+    /// A value over time: the latest (or the day under the pointer) as a large
+    /// figure, a stepped line of every day, and what moved it.
+    Series { label: Option<String>, unit: Unit, points: Vec<(String, f64)>, items: Vec<Movement> },
     Column { gap: Gap, children: Vec<String> },
     Row { gap: Gap, children: Vec<String> },
     Card { title: Option<String>, children: Vec<String> },
@@ -255,6 +274,47 @@ fn node(v: &Value, path: &str) -> Result<Node, Rejection> {
             }
             Node::Chart(raw)
         }
+        "series" => {
+            let unit = match v.get("unit").and_then(Value::as_str).unwrap_or("count") {
+                "money" => Unit::Money(opt_text(v, "currency", path, 3)?.unwrap_or_else(|| "USD".into()).to_uppercase()),
+                "percent" => Unit::Percent,
+                "count" => Unit::Count,
+                _ => return reject(format!("{path}.unit"), "unit is money, count or percent"),
+            };
+            let Some(points) = v.get("points").and_then(Value::as_array) else { return reject(format!("{path}.points"), "a series needs points") };
+            if points.len() < 2 || points.len() > 120 {
+                return reject(format!("{path}.points"), "a series has 2 to 120 points");
+            }
+            let points = points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let pp = format!("{path}.points[{i}]");
+                    let date = text(p, "date", &pp, 10)?;
+                    if crate::format::parse_iso(&format!("{date}T00:00:00")).is_none() {
+                        return reject(format!("{pp}.date"), "dates are YYYY-MM-DD");
+                    }
+                    match p.get("value").and_then(Value::as_f64).filter(|x| x.is_finite()) {
+                        Some(x) => Ok((date, x)),
+                        None => reject(format!("{pp}.value"), "a value is a number"),
+                    }
+                })
+                .collect::<Result<Vec<_>, Rejection>>()?;
+            let items = v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+            if items.len() > 12 {
+                return reject(format!("{path}.items"), "a series has at most 12 items");
+            }
+            let items = items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| {
+                    let pp = format!("{path}.items[{i}]");
+                    let Some(amount) = it.get("amount").and_then(Value::as_f64).filter(|x| x.is_finite()) else { return reject(format!("{pp}.amount"), "an amount is a number") };
+                    Ok(Movement { label: text(it, "label", &pp, MAX_SHORT)?, amount, muted: it.get("muted").and_then(Value::as_bool).unwrap_or(false) })
+                })
+                .collect::<Result<Vec<_>, Rejection>>()?;
+            Node::Series { label: opt_text(v, "label", path, MAX_SHORT)?, unit, points, items }
+        }
         "divider" => Node::Divider,
         "button" => Node::Button { label: text(v, "label", path, 60)?, action: action(v.get("action"), &format!("{path}.action"))? },
         _ => return reject(format!("{path}.type"), "unknown element type"),
@@ -319,6 +379,18 @@ pub fn parse(raw: &str) -> Result<Surface, Rejection> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reads_a_series() {
+        let raw = r#"{"root":"s","elements":[{"id":"s","type":"series","label":"Cash","unit":"money","currency":"usd","points":[{"date":"2026-10-20","value":400000},{"date":"2026-10-22","value":411283.41}],"items":[{"label":"Larkspur Hotels","amount":41200},{"label":"9 card purchases","amount":-2011.05,"muted":true}]}]}"#;
+        let s = parse(raw).unwrap();
+        match s.nodes.get("s") {
+            Some(Node::Series { unit: Unit::Money(c), points, items, .. }) => assert_eq!((c.as_str(), points.len(), items[1].muted), ("USD", 2, true)),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(parse(r#"{"root":"s","elements":[{"id":"s","type":"series","points":[{"date":"Oct 1","value":1},{"date":"2026-10-02","value":2}]}]}"#).unwrap_err().rule, "dates are YYYY-MM-DD");
+    }
+
     use super::*;
 
     const PLAN: &str = r#"{"title":"Next two weeks","root":"r","elements":[

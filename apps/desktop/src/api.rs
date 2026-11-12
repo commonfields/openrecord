@@ -358,6 +358,8 @@ pub struct Campaign {
     pub learning: String,
     pub next_move: String,
     pub channel: String,
+    pub rationale: String,
+    pub destination: String,
     /// OWNED, EARNED, PAID, PRODUCT_LED, HYBRID or UNSPECIFIED.
     pub motion: String,
     /// AWARENESS through REFERRAL, or UNSPECIFIED.
@@ -374,6 +376,7 @@ pub struct Campaign {
 /// One deliverable of a campaign.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CampaignTask {
+    pub id: String,
     pub title: String,
     pub owner: String,
     pub due: String,
@@ -381,6 +384,8 @@ pub struct CampaignTask {
     pub channel: String,
     /// TODO, IN_PROGRESS, BLOCKED or DONE.
     pub status: String,
+    /// A blocker, handoff or link.
+    pub note: String,
 }
 
 impl Campaign {
@@ -414,6 +419,7 @@ impl Campaign {
     }
 
     /// A live campaign whose review date has come.
+    #[allow(dead_code)]
     pub fn review_due(&self, today: &str) -> bool {
         matches!(self.status.as_str(), "ACTIVE" | "REVIEW") && (self.review_date.is_empty() || self.review_date.as_str() <= today)
     }
@@ -785,6 +791,8 @@ fn campaign(v: &Value) -> Campaign {
         .map(|a| {
             a.iter()
                 .map(|x| CampaignTask {
+                    id: first(x, &[&["id"]]),
+                    note: first(x, &[&["note"]]),
                     title: first(x, &[&["title"]]),
                     owner: first(x, &[&["owner"]]),
                     due: first(x, &[&["due"]]),
@@ -816,6 +824,8 @@ fn campaign(v: &Value) -> Campaign {
         learning: t("learning"),
         next_move: t("nextMove"),
         channel: d("primaryChannel"),
+        rationale: d("rationale"),
+        destination: d("destination"),
         motion: d("motion"),
         funnel_stage: d("funnelStage"),
         budget: d("budget"),
@@ -824,6 +834,33 @@ fn campaign(v: &Value) -> Campaign {
         tracking_plan: d("trackingPlan"),
         updated_at: s(v, &["updated_at"]).or_else(|| s(v, &["updatedAt"])).or_else(|| s(v, &["createdAt"])),
         created_by: first(v, &[&["created_by_actor"]]),
+    }
+}
+
+impl Campaign {
+    /// The brief as `CampaignBrief` takes it, for a save.
+    pub fn brief_json(&self) -> Value {
+        let or = |s: &str, d: &str| if s.is_empty() { d.to_string() } else { s.to_string() };
+        serde_json::json!({
+            "title": self.title, "goal": self.goal, "audience": self.audience, "offer": self.offer, "message": self.message,
+            "hypothesis": self.hypothesis, "metric": self.metric, "baseline": self.baseline, "target": self.target, "owner": self.owner,
+            "launchDate": self.launch_date, "reviewDate": self.review_date, "status": or(&self.status, "DRAFT"),
+            "tasks": self.tasks.iter().map(|t| serde_json::json!({ "id": t.id, "title": t.title, "owner": t.owner, "due": t.due,
+                "channel": or(&t.channel, "WEBSITE"), "status": or(&t.status, "TODO"), "note": t.note })).collect::<Vec<_>>(),
+            "result": self.result, "decision": or(&self.decision, "UNDECIDED"), "learning": self.learning, "nextMove": self.next_move,
+            "distribution": { "primaryChannel": self.channel, "rationale": self.rationale, "motion": or(&self.motion, "UNSPECIFIED"),
+                "funnelStage": or(&self.funnel_stage, "UNSPECIFIED"), "destination": self.destination, "cadence": self.cadence,
+                "budget": self.budget, "trackingPlan": self.tracking_plan, "conversionEvent": self.conversion_event },
+        })
+    }
+}
+
+impl Client {
+    /// Saves a campaign's brief at the revision it was read at; a newer one on
+    /// the server is refused (409), as is a brief not ready for its stage (422).
+    pub fn save_campaign(&self, business: &str, c: &Campaign) -> ApiResult<Campaign> {
+        let v: Value = self.post(&format!("/api/businesses/{}/campaigns", enc(business)), serde_json::json!({ "id": c.id, "revision": c.revision, "brief": c.brief_json() }))?;
+        Ok(campaign(v.get("campaign").unwrap_or(&Value::Null)))
     }
 }
 

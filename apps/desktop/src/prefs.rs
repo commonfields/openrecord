@@ -83,7 +83,13 @@ pub struct Prefs {
     pub sidebar_width: f32,
     /// A helper session's share of the conversation split, in percent (30 to 70).
     pub helper_width: f32,
+    /// How large the whole interface draws (⌘+ and ⌘−), 1.0 being the web's sizes.
+    pub zoom: f32,
 }
+
+/// The zoom steps ⌘+ and ⌘− move through, and where ⌘0 returns.
+pub const ZOOMS: [f32; 8] = [0.75, 0.8, 0.85, 0.9, 1.0, 1.1, 1.2, 1.25];
+pub const ZOOM_DEFAULT: f32 = 0.9;
 
 pub const SIDEBAR_DEFAULT: f32 = 256.0;
 pub const SIDEBAR_MIN: f32 = 224.0;
@@ -104,6 +110,7 @@ impl Default for Prefs {
             default_provider: "mock".into(),
             sidebar_width: SIDEBAR_DEFAULT,
             helper_width: HELPER_DEFAULT,
+            zoom: ZOOM_DEFAULT,
         }
     }
 }
@@ -129,6 +136,17 @@ impl Prefs {
     /// The sidebar's width, kept within the web's bounds.
     pub fn sidebar(&self) -> f32 {
         self.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
+    }
+
+    /// The interface's zoom, kept within the steps.
+    pub fn zoom(&self) -> f32 {
+        if self.zoom.is_finite() { self.zoom.clamp(ZOOMS[0], ZOOMS[ZOOMS.len() - 1]) } else { ZOOM_DEFAULT }
+    }
+
+    /// The next zoom step up (`dir` > 0) or down from the current one.
+    pub fn step_zoom(&mut self, dir: i32) {
+        let z = self.zoom();
+        self.zoom = if dir > 0 { ZOOMS.iter().copied().find(|s| *s > z + 0.001) } else { ZOOMS.iter().rev().copied().find(|s| *s < z - 0.001) }.unwrap_or(z);
     }
 
     /// The helper's share of the split, kept within 30 to 70 percent.
@@ -165,6 +183,12 @@ mod tests {
         assert!(p.dark(false));
         assert!(!Prefs::default().dark(false));
         assert_eq!((p.sidebar(), p.helper()), (SIDEBAR_DEFAULT, HELPER_DEFAULT));
+        let mut zoomed = Prefs::default();
+        zoomed.step_zoom(1);
+        assert_eq!(zoomed.zoom(), 1.0);
+        zoomed.step_zoom(-1);
+        zoomed.step_zoom(-1);
+        assert_eq!(zoomed.zoom(), 0.85);
         let wide: Prefs = serde_json::from_str(r#"{ "sidebar_width": 900, "helper_width": 10 }"#).unwrap();
         assert_eq!((wide.sidebar(), wide.helper()), (SIDEBAR_MAX, 30.0));
     }

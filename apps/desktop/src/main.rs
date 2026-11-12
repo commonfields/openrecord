@@ -11,9 +11,11 @@ mod api;
 mod brand_marks;
 mod brands;
 mod channel_marks;
+mod channel_status;
 mod chat;
 mod decisions;
 mod dictation;
+mod drafts;
 mod fixtures;
 mod followups;
 mod format;
@@ -22,6 +24,7 @@ mod insights;
 mod net;
 mod prefs;
 mod settings;
+mod setup;
 mod state;
 mod surface;
 mod theme;
@@ -93,8 +96,21 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.send_message(tx);
         return true;
     }
+    // ⌘+ (or ⌘=), ⌘− and ⌘0 zoom the interface, as a browser does.
+    if ev.is_command('=') || ev.is_command('+') {
+        s.zoom_by(1);
+        return true;
+    }
+    if ev.is_command('-') {
+        s.zoom_by(-1);
+        return true;
+    }
+    if ev.is_command('0') {
+        s.zoom_by(0);
+        return true;
+    }
     if ev.is_command('b') {
-        s.sidebar_open = !s.sidebar_open;
+        s.toggle_sidebar();
         return true;
     }
     if ev.is_command('n') {
@@ -136,6 +152,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-failed", fixtures::agent_failed),
     ("new-chat", fixtures::new_chat),
     ("agent-ui", fixtures::agent_ui),
+    ("agent-series", fixtures::agent_series),
     ("agent-helper", fixtures::agent_helper),
     ("agent-work", fixtures::agent_work),
     ("agent-diagram", fixtures::agent_diagram),
@@ -167,6 +184,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("ai-answer-review", fixtures::ai_answer_review),
     ("channels", fixtures::channels),
     ("collapsed", fixtures::collapsed),
+    ("collapsed-peek", fixtures::collapsed_peek),
     ("business-menu", fixtures::business_menu),
     ("agent-find", fixtures::agent_find),
     ("account-update", fixtures::account_update),
@@ -174,6 +192,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("usage", fixtures::usage),
     ("businesses", fixtures::businesses),
     ("clients", fixtures::clients),
+    ("add-business", fixtures::add_business),
 ];
 
 fn main() {
@@ -187,7 +206,8 @@ fn main() {
         ..AppSpec::new("OpenRecord", (1280.0, 800.0), App::new, ui::view)
     };
     rune::App::new(spec)
-        .chrome(Chrome { full_size_content: true, traffic_lights: Some((16.0, 13.0)), drag_regions: true })
+        .chrome(Chrome { full_size_content: true, traffic_lights: Some((16.0, 22.0)), drag_regions: true })
+        .titlebar(rune::Titlebar::new(50.0).traffic_lights(16.0, 22.0))
         .standard_menus()
         .run();
 }
