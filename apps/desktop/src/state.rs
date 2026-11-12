@@ -441,6 +441,8 @@ pub struct App {
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
+    /// The Campaigns page: the status shown ("" for all).
+    pub campaign_filter: String,
     /// The Campaigns page's campaign open, by id.
     pub campaign_open: Option<String>,
     /// The account pages: usage and its period, the businesses and clients
@@ -638,6 +640,7 @@ impl App {
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
+            campaign_filter: String::new(),
             campaign_open: None,
             usage: Load::Idle,
             usage_days: 30,

@@ -86,13 +86,8 @@ fn accounts(s: &App, t: &Theme, business: &str) -> El {
             continue;
         }
         let mut list = col().w_full();
-        let n = rows.len();
-        for (k, r) in rows.iter().enumerate() {
-            let mut line = channel_row(s, t, business, r);
-            if k + 1 < n {
-                line = line.border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6));
-            }
-            list = list.child(line);
+        for r in rows {
+            list = list.child(channel_row(s, t, business, r));
         }
         c = c.child(
             shadows(col().key(format!("channel-group-{title}")).w_full().radius(12.0).fill(t.card).clip_rounded(12.0), &t.card_shadow)
@@ -102,7 +97,6 @@ fn accounts(s: &App, t: &Theme, business: &str) -> El {
                         .px(16.0)
                         .py(12.0)
                         .gap(2.0)
-                        .border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6))
                         .child(label(title, type_::SM_MEDIUM, t.foreground).role("heading"))
                         .child(label(sub, type_::XS, t.muted_foreground)),
                 )
@@ -216,7 +210,7 @@ fn channel_row(s: &App, t: &Theme, business: &str, r: &Row) -> El {
                 .child(label(what, type_::XS, t.muted_foreground).wrap().grow(1.0).min_w(0.0))
                 .child(button(t, &format!("channel-web-{key}"), if state == State::Connected { "Manage on the web" } else { "Finish on the web" }, Variant::Outline).on_press_tx(open_web(web_row)))
         };
-        c = c.child(col().w_full().pl(60.0).pr(16.0).py(12.0).fill(t.accent.alpha(0.3)).border_sides([1.0, 0.0, 0.0, 0.0], t.border.alpha(0.6)).child(body));
+        c = c.child(col().w_full().pl(60.0).pr(16.0).py(12.0).fill(t.accent.alpha(0.3)).child(body));
     }
     c
 }
