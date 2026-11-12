@@ -799,6 +799,8 @@ pub fn campaigns(s: &mut App) {
     page(s, Page::Campaigns);
     let today = |d: i64| crate::format::iso_date(crate::format::now() + d * 86_400);
     let task = |title: &str, owner: &str, due: i64, channel: &str, status: &str| crate::api::CampaignTask {
+        id: format!("task-{title}"),
+        note: String::new(),
         title: title.into(),
         owner: owner.into(),
         due: today(due),
@@ -910,7 +912,8 @@ pub fn campaigns(s: &mut App) {
 
 pub fn campaign_open(s: &mut App) {
     campaigns(s);
-    s.campaign_open = Some("cp1".into());
+    let first = s.campaigns.ready().and_then(|l| l.first().cloned());
+    s.open_campaign(first);
 }
 
 pub fn ai_answers(s: &mut App) {
@@ -985,6 +988,15 @@ pub fn ai_answer_review(s: &mut App) {
 }
 
 pub fn channels(s: &mut App) {
+    s.channel_status = Load::Ready(crate::channel_status::Status {
+        measure: vec![
+            crate::channel_status::read_search_console(&serde_json::json!({ "configured": true, "binding": { "siteUrl": "sc-domain:northstar.test" }, "connections": [] })),
+            crate::channel_status::Row { key: "revenue", mark: "stripe", title: "Stripe", purpose: "Revenue and new customers, so results are counted in money.", identity: None, state: Some(crate::channel_status::State::Available) },
+        ],
+        ads: crate::channel_status::read_ads(&serde_json::json!({ "providers": { "google_business": { "configured": false }, "google_ads": { "configured": true }, "meta": { "configured": true } },
+            "connections": [{ "provider": "meta", "status": "ACTIVE" }], "bindings": [{ "provider": "google_ads", "name": "Northstar Ads" }] })),
+        website: vec![crate::channel_status::Row { key: "wordpress", mark: "wordpress", title: "WordPress", purpose: "Improve pages and publish posts, with your approval for each change.", identity: None, state: Some(crate::channel_status::State::Reconnect) }],
+    });
     page(s, Page::Channels);
     let ch = |key: &str, label: &str, identity: Option<&str>, state: &str, note: &str| Channel {
         key: key.into(),
@@ -1104,4 +1116,33 @@ pub fn clients(s: &mut App) {
         c("b2", "Harbor Coffee", "https://harbor.coffee", false, Some("More online orders"), 2, 0, 0),
         c("b3", "Atlas Legal", "https://atlas.legal", false, None, 0, 0, 0),
     ]);
+}
+
+pub fn collapsed_peek(s: &mut App) {
+    collapsed(s);
+    s.sidebar_peek = true;
+}
+
+pub fn add_business(s: &mut App) {
+    businesses(s);
+    s.open_add_business(None);
+}
+
+/// A reply with a generated series view (cash over time and what moved it).
+pub fn agent_series(s: &mut App) {
+    agent(s);
+    let day = |i: i64| crate::format::iso_date(crate::format::now() - (30 - i) * 86_400);
+    let values = [372000.0, 372000.0, 418000.0, 418000.0, 418000.0, 418000.0, 418000.0, 351200.0, 351200.0, 349800.0, 349800.0, 349800.0, 351000.0, 351000.0, 374900.0, 374900.0, 369083.06, 369083.06, 369083.06, 369083.06, 411283.41, 411283.41, 413600.0, 413600.0, 336400.0, 336400.0, 389700.0, 389700.0, 389700.0, 395100.0, 395100.0];
+    let points: Vec<String> = values.iter().enumerate().map(|(i, v)| format!(r#"{{"date":"{}","value":{v}}}"#, day(i as i64))).collect();
+    let view = format!(
+        r#"{{"root":"s","elements":[{{"id":"s","type":"series","unit":"money","currency":"USD","points":[{}],"items":[{{"label":"Larkspur Hotels","amount":41200}},{{"label":"Shop payout","amount":2340.35}},{{"label":"9 card purchases","amount":-2011.05,"muted":true}}]}}]}}"#,
+        points.join(",")
+    );
+    let text = format!("Here's where your cash stands.\n\n```ui\n{view}\n```\n");
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.clear();
+        c.messages.push(msg(json!({ "role": "user", "text": "Where's our cash right now?" })));
+        c.messages.push(msg(json!({ "role": "agent", "text": text, "activity": [{ "kind": "tool", "tool": "get_cash_position", "text": "Read the cash position" }], "durationMs": 4200 })));
+    }
+    s.chart_hover = Some(("surface-1-1-s".into(), 20));
 }

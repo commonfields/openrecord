@@ -174,7 +174,7 @@ pub fn ads(t: &Theme, key: &str, d: &AdDetail) -> El {
             let paused = status.as_deref().is_some_and(|s| s != "ENABLED" && s != "ACTIVE");
             let costly = x.cpa.zip(avg_cpa).is_some_and(|(a, b)| a > b * 1.5);
             vec![
-                row().w_full().gap(8.0).center_y().child(kit::text(t, name.clone()).min_w(0.0)).children(paused.then(|| status_chip("Paused", t.muted_foreground, t.accent))),
+                row().w_full().gap(8.0).center_y().child(kit::text(t, name.clone()).min_w(0.0)).children(paused.then(|| status_chip(t, "Paused", t.muted_foreground, t.accent))),
                 kit::num(t, m(x.spend)),
                 kit::faint(t, if total_spend > 0.0 { format!("{:.0}%", x.spend / total_spend * 100.0) } else { "—".into() }),
                 kit::faint(t, int(x.clicks)),
@@ -285,7 +285,7 @@ pub fn local(t: &Theme, key: &str, d: &LocalDetail) -> El {
                             .child(label(stars, type_::XS, t.partial))
                             .child(label(crate::format::date(at), type_::XS, t.muted_foreground))
                             .child(el().grow(1.0))
-                            .child(if *replied { status_chip("Replied", t.supported, t.supported_soft) } else { status_chip("No reply", t.partial, t.partial_soft) }),
+                            .child(if *replied { status_chip(t, "Replied", t.supported, t.supported_soft) } else { status_chip(t, "No reply", t.partial, t.partial_soft) }),
                     )
                     .child(label(text.clone(), type_::SM_13, t.foreground).wrap().max_lines(3)),
             );

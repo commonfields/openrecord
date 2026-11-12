@@ -64,7 +64,7 @@ pub fn tone(t: &Theme, state: &str) -> (rune::Color, rune::Color, &'static str) 
         "PARTIAL" => (t.partial, t.partial_soft, "Partly right"),
         "UNKNOWN" => (t.unknown, t.unknown_soft, "Can't tell"),
         "RESOLVED" => (t.supported, t.supported_soft, "Correct"),
-        _ => (t.review, t.review_soft, "Needs review"),
+        _ => (t.review, t.review_soft, "Not rated yet"),
     }
 }
 
@@ -97,7 +97,7 @@ fn detail(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
     let head = col()
         .w_full()
         .gap(10.0)
-        .child(row().gap(8.0).center_y().flex_wrap().child(status_chip(state, ink, soft)).child(label(format!("{model}, {when}"), type_::XS, t.muted_foreground)))
+        .child(row().gap(8.0).center_y().flex_wrap().child(status_chip(t, state, ink, soft)).child(label(format!("{model}, {when}"), type_::XS, t.muted_foreground)))
         .child(label(format!("“{}”", i.claim_text), type_::TITLE, t.foreground).wrap().selectable(true).role("heading"));
 
     // What the assistant was asked and said.
@@ -145,7 +145,7 @@ fn compared(t: &Theme, d: &AnswerDetail) -> El {
     body = body.child(match &i.verdict {
         Some(v) => {
             let (ink, soft) = verdict_tone(t, v);
-            row().gap(8.0).center_y().child(label("Your rating", type_::XS_MEDIUM, t.muted_foreground)).child(status_chip(verdict_label(v), ink, soft))
+            row().gap(8.0).center_y().child(label("Your rating", type_::XS_MEDIUM, t.muted_foreground)).child(status_chip(t, verdict_label(v), ink, soft))
         }
         None => label("Not rated yet. Rate it to link the facts it touches.", type_::SM_13, t.muted_foreground).wrap(),
     });
@@ -217,7 +217,7 @@ fn review(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
                 .py(14.0)
                 .center_y()
                 .child(label("Recorded as", type_::SM_13, t.muted_foreground))
-                .child(status_chip(verdict_label(v), ink, soft))
+                .child(status_chip(t, verdict_label(v), ink, soft))
                 .child(el().grow(1.0))
                 .child(button(t, "change-verdict", "Change rating", Variant::Outline).on_press(|s: &mut App| s.start_review())),
         );
@@ -335,7 +335,7 @@ fn actions(t: &Theme, a: &AnswerView, list: &[Intervention]) -> El {
     let superseded: std::collections::BTreeSet<&str> = list.iter().filter_map(|x| x.supersedes_id.as_deref()).collect();
     for x in list {
         let kind = ACTION_KINDS.iter().find(|k| k.0 == x.kind).map_or(x.kind.as_str(), |k| k.1);
-        let mut line = row().gap(8.0).center_y().flex_wrap().child(status_chip(kind, t.muted_foreground, t.accent)).child(label(x.target.clone(), type_::SM_13, t.foreground).wrap().min_w(0.0));
+        let mut line = row().gap(8.0).center_y().flex_wrap().child(status_chip(t, kind, t.muted_foreground, t.accent)).child(label(x.target.clone(), type_::SM_13, t.foreground).wrap().min_w(0.0));
         if superseded.contains(x.id.as_str()) {
             line = line.child(label("superseded, history only", type_::XS, t.muted_foreground));
         }

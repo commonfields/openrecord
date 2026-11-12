@@ -103,7 +103,7 @@ fn node(s: &App, t: &Theme, surface: &Surface, id: &str, prefix: &str) -> El {
         }
         Node::Badge { text, tone: tn } => {
             let (ink, soft) = tone(t, *tn);
-            row().key(key).child(status_chip(text, ink, soft))
+            row().key(key).child(status_chip(t, text, ink, soft))
         }
         Node::Progress { label: l, value, hint } => {
             let pct = (value * 100.0).round();
@@ -163,6 +163,7 @@ fn node(s: &App, t: &Theme, surface: &Surface, id: &str, prefix: &str) -> El {
         }
         Node::Chart(raw) => crate::ui::visual::view(s, t, key, raw),
         Node::Divider => el().key(key).w_full().h(1.0).fill(t.border),
+        Node::Series { label: l, unit, points, items } => crate::ui::series::view(s, t, &key, l.as_deref(), unit, points, items),
         Node::Button { label: l, action } => {
             let b = match action {
                 // A follow-up the person reads in the composer, then sends.

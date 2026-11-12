@@ -401,7 +401,7 @@ fn initiatives(t: &Theme, i: &Insights) -> El {
             .gap(12.0)
             .center_y()
             .child(label(x.title.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0))
-            .child(crate::ui::widgets::status_chip(state, ink, soft));
+            .child(crate::ui::widgets::status_chip(t, state, ink, soft));
         if k + 1 < n {
             r = r.border_sides([0.0, 0.0, 1.0, 0.0], t.border);
         }

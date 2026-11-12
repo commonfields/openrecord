@@ -4,7 +4,7 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Cursor, El, TextStyle, LiveRegion, LoopSpec, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune::{Align, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
 use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement};
 
 use crate::api::Message;
@@ -93,7 +93,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .key("agent-split")
             .w_full()
             .h_full()
-            .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
+            .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2] / s.zoom())
             .child(main.w(0.0).grow(1.0).min_w(0.0))
             .child(helper_pane(s, t, k, id, load)),
         None => main,
@@ -243,12 +243,12 @@ pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
                 &t.panel_shadow,
             ),
         )
-        .child(pane_edge(t, s.resizing == Some(crate::ui::Resize::AgentPane)))
+        .child(pane_edge())
 }
 
 /// The pane's right edge: drag to resize within 30 to 70 percent of the space
 /// beside the sidebar, double-click for half, arrow keys to nudge.
-fn pane_edge(t: &Theme, held: bool) -> El {
+fn pane_edge() -> El {
     use crate::state::PANE_DEFAULT;
     el().key("pane-edge")
         .pin(Some(0.0), None, Some(0.0), Some(0.0))
@@ -258,8 +258,6 @@ fn pane_edge(t: &Theme, held: bool) -> El {
         .help("Drag to resize; double-click for half and half")
         .focusable(true)
         .cursor(Cursor::ResizeColumn)
-        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
-        .hover(t.primary_ink.alpha(0.08))
         .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {
@@ -268,7 +266,7 @@ fn pane_edge(t: &Theme, held: bool) -> El {
                     s.resizing = Some(crate::ui::Resize::AgentPane);
                 }
                 // Dragging right widens the pane.
-                rune::Phase::Move if s.pane_row_w > 0.0 => s.pane_split = (d.data + d.dx / s.pane_row_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move if s.pane_row_w > 0.0 => s.pane_split = (d.data + d.dx / s.zoom() / s.pane_row_w * 100.0).clamp(30.0, 70.0),
                 rune::Phase::Move => {}
                 rune::Phase::Up => {
                     if d.cancelled() {
@@ -345,7 +343,7 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
         .padding(6.0)
         .transition(Transition::offset(64.0, 0.0).combined(Transition::opacity()))
         .label("Helper session")
-        .child(helper_edge(t, s.resizing == Some(crate::ui::Resize::Helper)))
+        .child(helper_edge())
         .child(
             shadows(
                 col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
@@ -356,7 +354,7 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
 
 /// The helper's left edge: drag to resize within 30 to 70 percent of the
 /// split, double-click for half, arrow keys to nudge, as the web's pane does.
-fn helper_edge(t: &Theme, held: bool) -> El {
+fn helper_edge() -> El {
     use crate::prefs::HELPER_DEFAULT;
     el().key("helper-edge")
         .pin(Some(0.0), Some(0.0), None, Some(0.0))
@@ -366,8 +364,6 @@ fn helper_edge(t: &Theme, held: bool) -> El {
         .help("Drag to resize; double-click for half and half")
         .focusable(true)
         .cursor(Cursor::ResizeColumn)
-        .child(el().pin(Some(3.0), Some(16.0), None, Some(16.0)).w(2.0).radius(1.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
-        .hover(t.primary_ink.alpha(0.08))
         .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {
@@ -376,7 +372,7 @@ fn helper_edge(t: &Theme, held: bool) -> El {
                     s.resizing = Some(crate::ui::Resize::Helper);
                 }
                 // Dragging left widens the helper.
-                rune::Phase::Move if s.split_w > 0.0 => s.prefs.helper_width = (d.data - d.dx / s.split_w * 100.0).clamp(30.0, 70.0),
+                rune::Phase::Move if s.split_w > 0.0 => s.prefs.helper_width = (d.data - d.dx / s.zoom() / s.split_w * 100.0).clamp(30.0, 70.0),
                 rune::Phase::Move => {}
                 rune::Phase::Up => {
                     if d.cancelled() {
@@ -408,11 +404,6 @@ fn helper_edge(t: &Theme, held: bool) -> El {
 /// Chips follow one another in, 50 milliseconds apart.
 fn chip_in(el_: El, n: usize) -> El {
     el_.transition(Transition::offset(0.0, 3.0).combined(Transition::opacity()).combined(Transition::scale(0.97))).enter_delay(0.05 * n.min(4) as f32)
-}
-
-/// A spinner: one turn a second.
-fn spinning(el_: El) -> El {
-    el_.looping(LoopSpec::rotation(1.0))
 }
 
 // ---- Messages ---------------------------------------------------------------
@@ -493,7 +484,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         return c.child(copy_button(s, t, i, &m.text));
     }
     let mut body = col().w_full().gap(6.0);
-    body = body.child(run_trace(s, t, k, i, &m.work_log()));
+    body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
     let muted = m.run.as_ref().is_some_and(|r| r.status != "COMPLETED" && !r.status.is_empty());
     // Markdown, with any ```chart blocks drawn as charts in their place. A reply
     // that just arrived grows word by word, each word fading in (Rune's streaming
@@ -533,7 +524,40 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     if !m.decisions.is_empty() {
         body = body.children(decisions(s, t, i, &m.decisions));
     }
-    c.child(body).child(copy_button(s, t, i, &m.text))
+    c.child(body).child(reply_actions(s, t, i, &m.text))
+}
+
+/// Under a reply: copy, helpful, not helpful, and (on the latest) ask again.
+/// They show under the pointer, as copy did.
+fn reply_actions(s: &App, t: &Theme, i: usize, text_: &str) -> El {
+    let rated = s.rated.get(&(s.chat_id.clone().unwrap_or_default(), i)).copied();
+    let latest = s.transcript().iter().rposition(|m| m.role != "user") == Some(i) && !matches!(s.turn, Turn::Working { .. });
+    let act = |key: String, icon: &'static rune::Icon, name: &str, on: bool| {
+        row()
+            .key(key)
+            .size(24.0, 24.0)
+            .radius(6.0)
+            .center()
+            .role("button")
+            .label(name.to_string())
+            .help(name.to_string())
+            .checked(on)
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .hover(t.hover_tint)
+            .child(ico(icon, 14.0, if on { t.foreground } else { t.muted_foreground }))
+    };
+    let mut r = row()
+        .gap(2.0)
+        .center_y()
+        .group_opacity(if rated.is_some() { 1.0 } else { 0.0 }, 1.0)
+        .child(copy_button(s, t, i, text_))
+        .child(act(format!("good-{i}"), &icons::THUMBS_UP, "Helpful", rated == Some(true)).on_press(move |s: &mut App| s.rate_reply(i, true)))
+        .child(act(format!("bad-{i}"), &icons::THUMBS_DOWN, "Not helpful", rated == Some(false)).on_press(move |s: &mut App| s.rate_reply(i, false)));
+    if latest {
+        r = r.child(act(format!("retry-{i}"), &icons::REFRESH_CW, "Ask again", false).on_press_tx(|s: &mut App, tx| s.retry_reply(tx)));
+    }
+    r
 }
 
 fn copy_button(s: &App, t: &Theme, i: usize, text_: &str) -> El {
@@ -565,163 +589,49 @@ fn secondary(t: &Theme) -> rune::Color {
     if t.dark { hex("#8aa8fa") } else { hex("#7096f9") }
 }
 
-/// A run of the same kind of step: thinking, or tool calls.
-enum Group<'a> {
-    Thought { texts: Vec<&'a str>, ms: i64 },
-    Tools(Vec<&'a Activity>),
-}
-
-/// Consecutive steps of one kind fold into one line, in the order they ran.
-fn groups(activity: &[Activity]) -> Vec<Group<'_>> {
-    let mut out: Vec<Group<'_>> = Vec::new();
-    for a in activity {
-        match (a, out.last_mut()) {
-            (Activity::Thought { text: x, ms }, Some(Group::Thought { texts, ms: total })) => {
-                texts.push(x);
-                *total += ms;
-            }
-            (Activity::Thought { text: x, ms }, _) => out.push(Group::Thought { texts: vec![x], ms: *ms }),
-            (Activity::Tool { .. }, Some(Group::Tools(list))) => list.push(a),
-            (Activity::Tool { .. }, _) => out.push(Group::Tools(vec![a])),
-        }
+/// A finished reply's process: one "Thought for 12s" line (Rune's collapsible)
+/// at the top of the reply; open, it shows every thought and tool call in the
+/// order they ran. The reply itself follows under it.
+fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity], duration: Option<i64>) -> El {
+    let thought: i64 = activity.iter().map(|a| if let Activity::Thought { ms, .. } = a { *ms } else { 0 }).sum();
+    let ms = duration.filter(|d| *d > 0).unwrap_or(thought);
+    if activity.is_empty() && ms <= 0 {
+        return el();
     }
-    out
-}
-
-/// A folded line in Rune's agent timeline: "Thought for 4s ›" or "Used 3 tools ›".
-/// Open, a tool group's header sticks to the top while its steps scroll under it.
-fn fold(t: &Theme, k: &Kit, key: String, open: bool, at: (usize, usize), parts: Vec<El>, sticky: bool) -> El {
-    let toggle_key = key.clone();
-    let mut head = row()
-        .key(key)
-        .h(28.0)
-        .gap(6.0)
-        .center_y()
-        .role("button")
-        .expanded(open)
-        .focusable(true)
-        .cursor(Cursor::Pointer)
-        .hover_group()
-        .on_press_tx(move |s: &mut App, tx| {
+    let at = (i, 0);
+    let open = s.open_logs.contains(&at);
+    let title = if ms > 0 { format!("Thought for {}", chat::elapsed(ms)) } else { "Thought".to_string() };
+    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
+    let mut rail = col().key(format!("trace-{i}-rail")).w_full().pt(2.0).pb(6.0).child(line);
+    for (j, a) in activity.iter().enumerate() {
+        rail = rail.child(step(t, a).key(format!("trace-{i}-step-{j}")));
+    }
+    if activity.is_empty() {
+        rail = rail.child(label("No steps were recorded for this reply.", type_::XS, t.muted_foreground));
+    }
+    let fold = rune_kit::Collapsible::new(title.clone(), open)
+        .ghost()
+        .on_toggle(move |s: &mut App| {
             if !s.open_logs.remove(&at) {
                 s.open_logs.insert(at);
             }
-            tx.keep_on_screen(toggle_key.clone());
         })
-        .children(parts)
-        // The chevron turns a quarter as the line opens, and brightens on hover.
-        .child(
-            row()
-                .size(14.0, 14.0)
-                .center()
-                .rotate(if open { std::f32::consts::FRAC_PI_2 } else { 0.0 })
-                .motion(CONTROL)
-                .group_opacity(0.6, 1.0)
-                .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground)),
-        );
-    if open && sticky {
-        head = head.w_full().fill(t.background).sticky_top(0.0);
-    }
-    let _ = k;
-    head
-}
-
-fn thought_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, texts: &[&str], ms: i64) -> El {
-    let name = if ms > 0 { format!("Thought for {}", chat::elapsed(ms)) } else { "Thought".to_string() };
-    let head = fold(t, k, key.clone(), open, at, vec![thought_mark(t), label(name.clone(), type_::SM.features("'tnum' 1"), t.muted_foreground).group_color(t.foreground)], false).label(name);
-    let mut body = col().w_full().pl(22.0).pb(6.0).gap(6.0);
-    for x in texts.iter().filter(|x| !x.trim().is_empty()) {
-        body = body.child(label(x.to_string(), type_::SM_13.italic(), t.muted_foreground.alpha(0.85)).wrap().selectable(open));
-    }
-    col().key(format!("{key}-group")).w_full().clip_soft(0.0).child(head).child(folding(format!("{key}-body"), open, body))
-}
-
-fn tools_line(t: &Theme, k: &Kit, key: String, at: (usize, usize), open: bool, list: &[&Activity], live: Option<El>) -> El {
-    let n = list.len();
-    let name = format!("Used {n} tool{}", if n == 1 { "" } else { "s" });
-    // "Used 3 tools", the count in the foreground and rolling as it grows.
-    let parts = vec![row()
-        .gap(4.0)
-        .center_y()
-        .child(label("Used", type_::SM, t.muted_foreground).group_color(t.foreground))
-        .child(rune_kit::RollingText::new(format!("{key}-count"), n.to_string()).value(n as f64).font(type_::SM_MEDIUM.features("'tnum' 1")).color(t.foreground).build(k))
-        .child(label(if n == 1 { "tool" } else { "tools" }, type_::SM, t.muted_foreground).group_color(t.foreground))];
-    let head = fold(t, k, key.clone(), open, at, parts, true).label(name);
-    // Rune's fold, opening onto the web's rail: each tool in its round node on a
-    // thin line, as the web's work log draws it, ending on a soft rule.
-    let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
-    let mut rail = col().key(format!("{key}-rail")).w_full().child(line);
-    for (j, a) in list.iter().enumerate() {
-        rail = rail.child(step(t, a).key(format!("{key}-step-{j}")));
-    }
-    let body = col().key(format!("{key}-steps")).w_full().mt(2.0).pb(8.0).mb(4.0).border_sides([0.0, 0.0, 1.0, 0.0], t.border.alpha(0.6)).child(rail);
-    let mut c = col().key(format!("{key}-group")).w_full().clip_soft(0.0).child(head).child(folding(format!("{key}-box"), open, body));
-    if let Some(l) = live {
-        c = c.child(l);
-    }
-    c
-}
-
-/// A fold's body: always laid out, held at no height while shut so the group's
-/// clip folds it up, as Rune's sticky tool group does, and out of the
-/// accessibility tree while hidden.
-fn folding(key: String, open: bool, body: El) -> El {
-    let held = col().key(key).w_full();
-    if open { held.child(body) } else { held.h(0.0).a11y_hidden().child(body) }
-}
-
-/// A finished reply's steps: one folded line per run of thinking or tool calls.
-fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity]) -> El {
-    let mut c = col().key(format!("trace-{i}")).w_full();
-    for (g, group) in groups(activity).iter().enumerate() {
-        let at = (i, g);
-        let open = s.open_logs.contains(&at);
-        let key = format!("trace-{i}-{g}");
-        c = c.child(match group {
-            Group::Thought { texts, ms } => thought_line(t, k, key, at, open, texts, *ms),
-            Group::Tools(list) => tools_line(t, k, key, at, open, list, None),
-        });
-    }
-    c
+        .child(rail)
+        .build(k);
+    col().key(format!("trace-{i}")).w_full().label(title).child(fold)
 }
 
 // ---- The turn still running (the web's `LiveTrace`) -----------------------------
 
-/// Thinking, as Claude Code draws it: one glyph that grows and settles, a step
-/// every 220 milliseconds, in the text's own ink.
-const GLYPHS: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
-
-fn thinking_glyph(t: &Theme, ms: Option<i64>, reduce: bool) -> El {
-    let g = match ms {
-        Some(ms) if !reduce => GLYPHS[((ms / 220) as usize) % GLYPHS.len()],
-        _ => "✻",
-    };
-    row().size(16.0, 16.0).center().a11y_hidden().child(rune::text(g).font(type_::BASE.mono()).color(t.foreground.alpha(0.85)))
+/// Thinking and working: a glossy black Rubik's cube spinning in 3D. Still
+/// when motion is reduced.
+fn thinking_glyph(t: &Theme, reduce: bool) -> El {
+    row().size(24.0, 24.0).center().a11y_hidden().child(crate::ui::cube3d::view(t, "thinking-cube", 24.0, !reduce))
 }
 
 /// A finished thought's mark, as Claude Code sets one: a quiet "∴".
 fn thought_mark(t: &Theme) -> El {
     row().size(16.0, 16.0).center().a11y_hidden().child(rune::text("∴").font(type_::SM).color(t.muted_foreground))
-}
-
-/// The web's `.thinking` text: muted, with a soft band of foreground light that
-/// crosses it left to right on a 4.5-second loop. Built as Rune's shimmer: a
-/// feathered window slides across the label carrying a bright copy that slides
-/// back by the same amount, so the copy stays on the words.
-fn shimmer(t: &Theme, key: &str, text_: &str, style: TextStyle, reduce: bool) -> El {
-    let dim = label(text_.to_string(), style, t.muted_foreground);
-    if reduce {
-        return dim;
-    }
-    // The label's width, near enough: the band starts one label left of it and
-    // ends three to the right, as the web's 200% background travels 400%.
-    let w = (text_.chars().count() as f32 * style.size * 0.53).max(24.0);
-    let band = (w * 0.32).max(18.0);
-    let (x0, x1) = (-band, 3.0 * w);
-    let spec = |a: f32, b: f32| LoopSpec::slide(4.5, [a, 0.0], [b, 0.0]).easing(rune::Easing::LINEAR);
-    let lit = el().key(format!("{key}-lit")).absolute(0.0, 0.0).w(band).h_full().looping(spec(-x0 / band, -x1 / band)).child(label(text_.to_string(), style, t.foreground).absolute(0.0, 0.0));
-    let sheen = el().key(format!("{key}-sheen")).absolute(0.0, 0.0).w(band).h_full().clip_fade(band / 2.0, 0.0, band / 2.0, 0.0).looping(spec(x0 / band, x1 / band)).child(lit);
-    row().key(key.to_string()).child(dim).child(sheen)
 }
 
 /// One line on the rail: a node and its text. Tool steps sit in a small round
@@ -745,44 +655,61 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
-/// The work log of a turn still running, as Claude Code shows one: the finished
-/// steps on the rail, then one turning glyph with "Thinking…" (or "Working…"
-/// once a tool runs) and the time so far, and under it, after a "⎿", the step
-/// under way.
-fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
+/// A turn still running: the cube spinning beside "Thinking" (or "Working"
+/// once a tool runs) and a rolling timer; under it the step under way, which
+/// slides in each time it changes; and the steps already done, folded into one
+/// of Rune's collapsibles.
+fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
     let reduce = s.prefs.reduce_motion;
     let working = p.phase != chat::Phase::Thinking || p.trace.iter().any(|a| matches!(a, Activity::Tool { .. }));
-    let head = if stopping { "Stopping…" } else if working { "Working…" } else { "Thinking…" };
+    let head = if stopping { "Stopping" } else if working { "Working" } else { "Thinking" };
     let tool = match (p.phase, &p.current_tool) {
         (chat::Phase::Working, Some(tool)) => Some(tool.clone()),
         _ => None,
     };
-    let mut c = col().key("working").w_full().role("status").live_region(LiveRegion::Polite).label(format!("{head} {}. {}", chat::elapsed(ms), p.live()));
+    let mut c = col().key("working").w_full().gap(4.0).role("status").live_region(LiveRegion::Polite).label(format!("{head}, {}. {}", chat::elapsed(ms), p.live()));
     if !p.trace.is_empty() {
+        let at = (usize::MAX, 0);
+        let n = p.trace.len();
         let line = el().pin(Some(11.5), Some(12.0), None, Some(12.0)).w(1.0).fill(t.border);
-        let mut rail = col().key("live-steps").w_full().mb(4.0).label("Steps so far").child(line);
+        let mut rail = col().key("live-steps").w_full().pt(2.0).pb(4.0).child(line);
         for (i, a) in p.trace.iter().enumerate() {
             rail = rail.child(step(t, a).key(format!("live-step-{i}")));
         }
-        c = c.child(rail);
+        c = c.child(
+            rune_kit::Collapsible::new(format!("{n} {} so far", if n == 1 { "step" } else { "steps" }), s.open_logs.contains(&at))
+                .ghost()
+                .on_toggle(move |s: &mut App| {
+                    if !s.open_logs.remove(&at) {
+                        s.open_logs.insert(at);
+                    }
+                })
+                .child(rail)
+                .build(k),
+        );
     }
     let headline = row()
         .key("live-head")
-        .h(24.0)
+        .h(28.0)
         .gap(8.0)
         .center_y()
-        .child(row().size(24.0, 24.0).center().child(thinking_glyph(t, Some(ms), reduce)))
-        .child(shimmer(t, "live-head-text", head, type_::SM, reduce))
-        .child(label(chat::elapsed(ms), type_::SM.features("'tnum' 1"), t.muted_foreground.alpha(0.7)));
-    // What it is doing now, hung under the headline.
+        .child(thinking_glyph(t, reduce))
+        .child(label(head, type_::SM_MEDIUM, t.foreground))
+        .child(rune_kit::RollingText::new("live-elapsed", chat::elapsed(ms)).font(type_::SM.features("'tnum' 1")).color(t.muted_foreground).build(k));
+    // The step under way: each new one slides up into place as the last leaves.
     let now_text = p.live();
-    let mut now = row().key(format!("live-now:{}", tool.clone().unwrap_or_else(|| format!("{:?}", p.phase)))).w_full().min_h(22.0).pl(12.0).gap(8.0).center_y()
-        .child(label("⎿", type_::SM, t.muted_foreground.alpha(0.6)));
+    let mut now = row()
+        .key(format!("live-now:{}", now_text))
+        .w_full()
+        .min_h(22.0)
+        .pl(32.0)
+        .gap(8.0)
+        .center_y()
+        .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()));
     if let Some(tool) = &tool {
         now = now.child(ico(chat::tool_icon(tool), 13.0, t.muted_foreground));
     }
-    let now_label = if tool.is_some() { label(now_text, type_::SM_13, t.muted_foreground) } else { label(now_text, type_::SM_13.italic(), t.muted_foreground.alpha(0.85)) };
-    now = now.child(now_label.truncate().grow(1.0).min_w(0.0));
+    now = now.child(label(now_text, if tool.is_some() { type_::SM_13 } else { type_::SM_13.italic() }, t.muted_foreground).truncate().grow(1.0).min_w(0.0));
     c.child(headline).child(now)
 }
 
@@ -871,7 +798,7 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
             "COMPLETED" => (&icons::CHECK, t.muted_foreground),
             _ => (&icons::X, t.wrong),
         };
-        let mark = if status == "RUNNING" { spinning(ico(icon, 14.0, ink)) } else { ico(icon, 14.0, ink) };
+        let mark = if status == "RUNNING" { crate::ui::cube3d::view(t, &format!("task-cube-{i}-{}", task.id), 16.0, true) } else { ico(icon, 14.0, ink) };
         let mut chip = row()
             .key(format!("task-{i}-{}", task.id))
             .h(32.0)
@@ -1016,6 +943,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .on_edit(|s: &mut App| &mut s.composer)
         // While the "/" menu is open, arrows, Tab, Return and Escape drive it.
         .on_input_key(|s: &mut App, ev, tx| s.composer_key(ev, tx))
+        .on_input_paste(|s: &mut App, content, _tx| s.composer_paste(content))
         // Return sends, or with "Send with Enter" off adds a line (⌘Return sends then).
         .on_submit(|s: &mut App, tx| {
             if s.prefs.enter_to_send {
@@ -1350,70 +1278,15 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
     r.child(label(name, type_::XS, ink).group_color(if s.model_unavailable() { t.wrong } else { t.foreground }).truncate()).child(ico(&icons::CHEVRON_DOWN, 14.0, t.muted_foreground).group_color(t.foreground))
 }
 
-/// How much thinking an effort asks for, as cube rows lit: none for off, all
-/// three for high, and the whole face bright past that. None is the model's default.
-fn effort_level(effort: Option<&str>) -> Option<usize> {
-    Some(match effort? {
-        "none" => 0,
-        "minimal" | "low" => 1,
-        "medium" => 2,
-        "high" => 3,
-        _ => 4,
-    })
-}
-
-/// One twist every third of the cycle: hold, turn a cell, hold, as a hand
-/// turns a cube's row.
-const TWIST: [[f32; 2]; 8] = [[0.0, 0.0], [0.18, 0.0], [0.3, 1.0 / 3.0], [0.51, 1.0 / 3.0], [0.63, 2.0 / 3.0], [0.84, 2.0 / 3.0], [0.96, 1.0], [1.0, 1.0]];
-
-/// The thinking knob: a 3 by 3 cube face. Its lit rows say how hard the model
-/// thinks; while it thinks, the rows turn one cell at a time like a Rubik's
-/// cube, the middle row against the others, each a beat apart.
-pub fn cube(t: &Theme, key: &str, level: Option<usize>, turning: bool, cell: f32) -> El {
-    let gap = (cell / 4.0).max(1.0);
-    let step = cell + gap;
-    let palette = [t.chart.tone(0), t.chart.tone(1), t.chart.tone(2), t.chart.tone(3)];
-    let mut face = col().key(key.to_string()).size(step * 3.0, step * 3.0).a11y_hidden();
-    for r in 0..3 {
-        // Rows light from the bottom up.
-        let lit = level.is_some_and(|l| l >= 3 - r || l >= 4);
-        let bright = level == Some(4);
-        let color = |k: usize| {
-            if lit {
-                palette[(r + k) % palette.len()].alpha(if bright { 1.0 } else { 0.85 })
-            } else if level.is_none() {
-                t.muted_foreground.alpha(0.45)
-            } else {
-                t.muted_foreground.alpha(0.2)
-            }
-        };
-        // Six cells, the face twice, so a full turn of three lands where it began.
-        let mut strip = row().w(step * 6.0).h(step);
-        for k in 0..6 {
-            strip = strip.child(row().size(step, step).padding(gap / 2.0).child(el().size(cell, cell).radius(cell * 0.28).fill(color(k % 3))));
-        }
-        if turning {
-            let (from, to) = if r == 1 { ([-0.5, 0.0], [0.0, 0.0]) } else { ([0.0, 0.0], [-0.5, 0.0]) };
-            let mut spec = rune::LoopSpec::slide(3.6, from, to).easing(rune::Easing::Piecewise(&TWIST));
-            spec.delay = r as f64 * 0.4;
-            strip = strip.looping(spec);
-        }
-        face = face.child(row().w(step * 3.0).h(step).clip_rounded(cell * 0.3).child(strip));
-    }
-    face
-}
-
 /// The reasoning effort for the next reply, beside the model, when the model reports any.
 fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
     // Always shown, as on the web; disabled while the model reports no reasoning controls.
     let none = s.chosen_model().filter(|_| !s.model_unavailable()).is_none_or(|m| m.efforts.is_empty());
-    let working = matches!(s.turn, Turn::Working { .. });
     let locked = locked || none;
     let name = s.reasoning_effort().map(chat::effort_label).unwrap_or_else(|| "Reasoning".into());
-    let level = if none { Some(0) } else { effort_level(s.reasoning_effort()) };
     row()
         .key("reasoning-picker")
-        .gap(6.0)
+        .gap(4.0)
         .center_y()
         .role("button")
         .label("Reasoning effort")
@@ -1427,8 +1300,6 @@ fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
                 s.menu = Some(crate::state::Menu::Reasoning);
             }
         })
-        // Turns while the agent thinks, unless motion is reduced.
-        .child(cube(t, "reasoning-cube", level, working && !none && !s.prefs.reduce_motion, 4.0))
         .child(label(name, type_::XS, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
         .child(ico(&icons::CHEVRON_DOWN, 16.0, t.muted_foreground).group_color(if locked { t.muted_foreground } else { t.foreground }))
 }
@@ -1437,7 +1308,7 @@ fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
 pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     let efforts = s.chosen_model().map(|m| m.efforts.clone()).unwrap_or_default();
     let current = s.reasoning_effort().map(str::to_string);
-    let mut m = shadows(col().key("reasoning-menu").w(196.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
+    let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
     let row_ = |key: String, name: String, on: bool, effort: Option<String>| {
         let hk = format!("effort:{key}");
         let r = row()
@@ -1453,8 +1324,6 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
             .focusable(true)
             .cursor(Cursor::Pointer)
             .on_hover_change(hover_key(hk.clone()))
-            .gap(10.0)
-            .child(cube(t, &format!("{hk}-cube"), effort_level(effort.as_deref()), false, 3.5))
             .on_press(move |s: &mut App| s.choose_reasoning(effort.clone()))
             .child(label(name, type_::SM, t.foreground).grow(1.0))
             .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))));
@@ -1759,24 +1628,18 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
             .child(label("Try again", type_::SM, t.foreground).role("button").cursor(Cursor::Pointer).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx))),
         _ => label("Loading workspaces…", type_::SM, t.muted_foreground).px(8.0).py(16.0),
     };
-    let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
-    let web = crate::ui::web_url(&api);
-    let (w1, w2) = (web.clone(), web);
     let link = |key: &str, name: &str| label(name, type_::XS, t.muted_foreground).key(key).role("link").cursor(Cursor::Pointer).hover_group().group_color(t.foreground);
     let footer = row()
         .w_full()
         .px(24.0)
         .py(12.0)
         .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
-        .child(link("manage-businesses", "Manage businesses").on_press_tx(move |s: &mut App, tx| {
+        .child(link("manage-businesses", "Manage businesses").on_press(|s: &mut App| {
             s.new_chat = None;
-            let _ = tx.open_url(&format!("{w1}/businesses"));
+            s.show_page(crate::state::Page::Businesses);
         }))
         .child(el().grow(1.0))
-        .child(link("add-business", "Add a business").on_press_tx(move |s: &mut App, tx| {
-            s.new_chat = None;
-            let _ = tx.open_url(&format!("{w2}/start"));
-        }));
+        .child(link("add-business", "Add a business").on_press(|s: &mut App| s.open_add_business(None)));
     let content = col()
         .w_full()
         .child(col().w_full().px(24.0).pb(12.0).child(field))

@@ -104,7 +104,12 @@ fn usage_body(t: &Theme, u: &Usage) -> El {
         .iter()
         .map(|m| {
             vec![
-                col().gap(0.0).child(label(m.model.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(m.provider.clone(), type_::XS11, t.muted_foreground)),
+                row()
+                    .w_full()
+                    .gap(10.0)
+                    .center_y()
+                    .child(crate::brands::logo(t, &crate::brands::model_brand(&m.model, &m.provider), 22.0))
+                    .child(col().min_w(0.0).gap(0.0).child(label(m.model.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(crate::brands::brand(&m.provider).0, type_::XS11, t.muted_foreground))),
                 kit::faint(t, int(m.turns)),
                 kit::faint(t, tokens(m.tokens_in)),
                 kit::faint(t, tokens(m.tokens_out)),
@@ -120,15 +125,35 @@ fn usage_body(t: &Theme, u: &Usage) -> El {
     const RES: [Column; 4] = [column("Provider", 0.0, false), column("Calls", 56.0, true), column("Failed", 56.0, true), column("Charged", 72.0, true)];
     let rows = u.research.iter().map(|r| vec![kit::text(t, r.0.clone()), kit::faint(t, int(r.1)), kit::faint(t, int(r.2)), kit::num(t, if r.3 > 0.0 { usd(Some(r.4)) } else { "—".into() })]).collect();
     let research = kit::panel(t, "u-research-card", "Research providers", Some("Calls on your own connections and public sources are never charged".into()), None, 0.0, table("u-res-table", &RES, rows));
-    let checks_rows: Vec<(String, f64, String)> = u.checks.iter().map(|c| (c.0.clone(), c.1, format!("{} answers", int(c.1)))).collect();
+    // Each assistant with its logo and a bar for its share of the busiest.
+    let most = u.checks.iter().map(|c| c.1).fold(0.0, f64::max).max(1.0);
+    let mut list = col().w_full().gap(12.0);
+    for (k, (provider, n)) in u.checks.iter().enumerate() {
+        list = list.child(
+            row()
+                .key(format!("u-check-{k}"))
+                .w_full()
+                .gap(10.0)
+                .center_y()
+                .child(crate::brands::logo(t, &provider.to_lowercase(), 22.0))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(5.0)
+                        .child(row().w_full().gap(8.0).child(label(crate::brands::brand(&provider.to_lowercase()).0, type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0)).child(label(format!("{} answers", int(*n)), type_::XS.features("'tnum' 1"), t.muted_foreground)))
+                        .child(row().w_full().h(6.0).radius(3.0).fill(t.foreground.alpha(0.05)).child(el().w_frac((n / most) as f32).h_full().radius(3.0).fill(t.chart.primary.alpha(0.9)))),
+                ),
+        );
+    }
     let checks = kit::panel(
         t,
         "u-checks",
         "AI answers collected",
-        Some("Answers saved from AI answer checks, by provider".into()),
+        Some("Answers saved from AI answer checks, by assistant".into()),
         None,
         0.0,
-        if checks_rows.is_empty() { kit::note(t, "Nothing in this period.") } else { kit::bars(t, "u-check-bars", &checks_rows, Some(t.chart.primary)) },
+        if u.checks.is_empty() { kit::note(t, "Nothing in this period.") } else { list },
     );
     col()
         .w_full()
@@ -151,10 +176,7 @@ fn attention(p: &Portfolio) -> i64 {
 }
 
 pub fn businesses(s: &App, t: &Theme) -> El {
-    let new_business = button(t, "new-business", "New business", Variant::Primary).on_press(|s: &mut App| {
-        s.new_chat();
-        s.composer.replace_text("Set up a new business. Its website is ");
-    });
+    let new_business = button(t, "new-business", "+ New business", Variant::Primary).on_press(|s: &mut App| s.open_add_business(None));
     let top = head(t, "Businesses", "See your businesses and what needs attention, then open one to see the agent's work and results.", Some(new_business));
     if s.businesses.is_empty() {
         return col().w_full().gap(24.0).child(top).child(empty_state(
@@ -227,7 +249,7 @@ pub fn businesses(s: &App, t: &Theme) -> El {
             ]
         })
         .collect();
-    let body = if rows.is_empty() { kit::note(t, format!("No business matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "b-table", &COLS, rows) };
+    let body = if rows.is_empty() { kit::note(t, format!("No business matches \"{}\".", s.list_query.text.trim())) } else { kit::table_plain(t, "b-table", &COLS, rows) };
     let panel = kit::panel(t, "b-list", "Portfolio", Some("Open a business for its Overview".into()), Some(sorts), 0.0, col().w_full().gap(12.0).child(search(s, t, "b-search", "Search businesses")).child(body));
     col().w_full().gap(16.0).child(top).child(strip).child(panel)
 }
@@ -235,10 +257,11 @@ pub fn businesses(s: &App, t: &Theme) -> El {
 // ---- Clients ---------------------------------------------------------------------------
 
 pub fn clients(s: &App, t: &Theme) -> El {
-    let add = button(t, "add-client", "Add business", Variant::Primary).on_press(|s: &mut App| {
-        s.new_chat();
-        s.composer.replace_text("Set up a new client business. Its website is ");
-    });
+    // The web's "Add business" menu: a client's business, or our own.
+    let add = row()
+        .gap(8.0)
+        .child(button(t, "add-client", "+ Client business", Variant::Primary).on_press(|s: &mut App| s.open_add_business(Some("CLIENT"))))
+        .child(button(t, "add-own", "Our business or product", Variant::Outline).on_press(|s: &mut App| s.open_add_business(Some("DOGFOOD"))));
     let top = head(t, "Clients", "Open a client or product to work with its agent and see its progress.", Some(add));
     let list = match &s.client_rows {
         Load::Ready(l) => l,
@@ -284,11 +307,64 @@ pub fn clients(s: &App, t: &Theme) -> El {
                     .child(col().min_w(0.0).child(label(c.name.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(c.website.trim_start_matches("https://").trim_start_matches("http://").to_string(), type_::XS11, t.muted_foreground).truncate())),
                 col().w_full().gap(0.0).child(label(c.progress(), type_::SM_13, if c.known { t.foreground } else { t.muted_foreground }).truncate()).children(c.metric.clone().map(|m| label(format!("Measured by {m}"), type_::XS11, t.muted_foreground).truncate())),
                 row().w_full().gap(8.0).center_y().child(row().grow(1.0).h(6.0).radius(3.0).fill(t.foreground.alpha(0.06)).child(el().w_frac(share).h_full().radius(3.0).fill(t.supported))).child(label(format!("{}/{}", c.approved, c.ideas), type_::XS.features("'tnum' 1"), t.muted_foreground)),
-                if c.shared { status_chip("Shared", t.supported, t.supported_soft) } else { kit::faint(t, "Private") },
+                if c.shared { status_chip(t, "Shared", t.supported, t.supported_soft) } else { kit::faint(t, "Private") },
             ]
         })
         .collect();
-    let body = if rows.is_empty() { kit::note(t, format!("No client matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "c-table", &COLS, rows) };
+    let body = if rows.is_empty() { kit::note(t, format!("No client matches \"{}\".", s.list_query.text.trim())) } else { kit::table_plain(t, "c-table", &COLS, rows) };
     let panel = kit::panel(t, "c-list", "Clients and products", None, None, 0.0, col().w_full().gap(12.0).child(search(s, t, "c-search", "Search clients")).child(body));
     col().w_full().gap(16.0).child(top).child(strip).child(panel)
+}
+
+/// "Add a business" (the web's `CreateBusinessDialog` with its `SetupStartForm`):
+/// the website and the goal in one line, sent with Return or the round button.
+pub fn add_business_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &crate::state::AddBusiness, layer: &mut Vec<El>) {
+    let input = text_input(&a.text, type_::SM)
+        .key("add-business-input")
+        .placeholder("acme.com, we want more booked appointments", t.muted_foreground)
+        .label("Your website and what you want to achieve")
+        .w_full()
+        .max_h(192.0)
+        .color(t.foreground)
+        .on_edit(|s: &mut App| &mut s.add_business.as_mut().expect("dialog open").text)
+        .on_submit(|s: &mut App, _tx| s.submit_add_business())
+        .autofocus();
+    let has_text = !a.text.text.trim().is_empty();
+    let send = shadows(
+        row()
+            .key("add-business-send")
+            .size(32.0, 32.0)
+            .radius(16.0)
+            .center()
+            .fill(t.primary)
+            .role("button")
+            .label("Start setup")
+            .cursor(Cursor::Pointer)
+            .opacity(if a.busy { 0.5 } else { 1.0 })
+            .on_press(|s: &mut App| s.submit_add_business())
+            .child(if a.busy { ico(&icons::LOADER, 16.0, t.primary_foreground).looping(rune::LoopSpec::rotation(1.0)) } else { ico(&icons::ARROW_UP, 16.0, t.primary_foreground) }),
+        &t.primary_shadow,
+    );
+    let field = shadows(
+        row().w_full().min_h(48.0).px(12.0).py(8.0).gap(12.0).radius(10.0).items_end().fill(t.card).child(col().grow(1.0).min_w(0.0).py(4.0).child(input)).children((has_text || a.busy).then_some(send)),
+        &t.control_shadow,
+    );
+    let mut content = col().w_full().px(24.0).pb(20.0).gap(8.0).child(field);
+    if let Some(e) = &a.error {
+        content = content.child(label(e.clone(), type_::XS, t.wrong).wrap());
+    }
+    let (title, description) = match a.engagement {
+        Some("CLIENT") => ("Add a client business", "Enter the client's website and, if you like, what they want to achieve."),
+        Some(_) => ("Add your business or product", "Enter your website and, if you like, what you want to achieve."),
+        None => ("Add a business", "Enter a website and optionally a goal to start setup."),
+    };
+    let _ = s;
+    rune_kit::Dialog::new("add-business", title)
+        .description(description)
+        .width(560.0)
+        .fit()
+        .open(true)
+        .child(content)
+        .on_close(|s: &mut App| s.add_business = None)
+        .build(k, layer);
 }

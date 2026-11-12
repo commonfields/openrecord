@@ -76,6 +76,12 @@ pub enum Reply {
     UpdateChecked(Result<Option<crate::update::Release>, String>),
     /// An update was installed (the app restarts), or why it was not.
     UpdateInstalled(Result<(), String>),
+    /// A business setup started (its id), or why not.
+    SetupStarted(ApiResult<String>),
+    /// A campaign was saved (the server's copy), or why not.
+    CampaignSaved(String, ApiResult<crate::api::Campaign>),
+    /// The Channels page's account statuses for a business.
+    ChannelStatus(String, ApiResult<crate::channel_status::Status>),
     /// The account's usage over a number of days.
     Usage(u32, ApiResult<crate::account::Usage>),
     /// Every business with its overview and 30 days of answers.
@@ -260,6 +266,24 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.conversation(&business, Some(&id));
             send(Reply::Helper(id, r));
+        });
+    }
+
+    pub fn start_setup(&self, website: String, goal: String, engagement: Option<&'static str>) {
+        self.spawn(move |c, send| send(Reply::SetupStarted(c.start_setup(&website, &goal, engagement))));
+    }
+
+    pub fn save_campaign(&self, business: String, c: crate::api::Campaign) {
+        self.spawn(move |cl, send| {
+            let r = cl.save_campaign(&business, &c);
+            send(Reply::CampaignSaved(business, r));
+        });
+    }
+
+    pub fn channel_status(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.channel_status(&business);
+            send(Reply::ChannelStatus(business, r));
         });
     }
 

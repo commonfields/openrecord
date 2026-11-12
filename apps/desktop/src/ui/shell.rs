@@ -14,12 +14,66 @@ use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico
 
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights.
-pub const TITLEBAR: f32 = 36.0;
+/// The sidebar's top band: down to the header's centre line (32 points) and as far below it.
+pub const TITLEBAR: f32 = 56.0;
 const PANE: Spring = Spring::new(0.5, 0.0);
 const CHATS_SHOWN: usize = 6;
 
+/// The button that docks or collapses the sidebar (⌘B): at the right of the
+/// sidebar's top band, level with the traffic lights, or beside them once the
+/// sidebar is collapsed.
+pub fn sidebar_toggle(t: &Theme, open: bool) -> El {
+    icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false).on_press(|s: &mut App| s.toggle_sidebar())
+}
+
+/// Where the collapsed sidebar's button sits: just past the traffic lights,
+/// on the header's line, 32 points down, as the traffic lights are.
+pub fn collapsed_toggle(t: &Theme, titlebar_inset: f32) -> El {
+    row().key("sidebar-toggle-slot").pin(Some(titlebar_inset.max(16.0) + 6.0), Some(18.0), None, None).child(sidebar_toggle(t, false))
+}
+
+/// The sidebar while collapsed: nothing in the layout, only a thin strip at the
+/// window's left edge. Reaching it shows the whole sidebar as a card over the
+/// page, so the page never moves; leaving the card hides it again, unless one of
+/// its menus is open.
+pub fn sidebar_overlay(s: &App, t: &Theme) -> Vec<El> {
+    if s.sidebar_open {
+        return Vec::new();
+    }
+    let strip = el()
+        .key("sidebar-reveal")
+        .pin(Some(0.0), Some(0.0), None, Some(0.0))
+        .w(10.0)
+        .on_hover_change(|s: &mut App, inside, _| {
+            if inside {
+                s.sidebar_peek = true;
+            }
+        });
+    if !s.sidebar_peek {
+        return vec![strip];
+    }
+    let card = shadows(
+        col()
+            .key("sidebar-peek")
+            .pin(Some(8.0), Some(8.0), None, Some(8.0))
+            .w(s.prefs.sidebar())
+            .radius(12.0)
+            .fill(t.sidebar)
+            .clip_rounded(12.0)
+            .transition(rune::Transition::offset(-16.0, 0.0).combined(rune::Transition::opacity()))
+            .on_hover_change(|s: &mut App, inside, _| {
+                if !inside && s.menu.is_none() {
+                    s.sidebar_peek = false;
+                }
+            })
+            .child(sidebar(s, t).w_full().grow(1.0).min_h(0.0)),
+        &t.float_shadow,
+    );
+    vec![strip, card]
+}
+
 pub fn sidebar(s: &App, t: &Theme) -> El {
-    let open = s.sidebar_open;
+    let open = s.sidebar_full();
     let business = s.active_business();
 
     let switcher = {
@@ -137,11 +191,11 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         .fill(t.sidebar)
         .motion(PANE)
         .clip_rounded(0.0);
-    if open {
-        side = side.child(resize_edge(t, s.resizing == Some(Resize::Sidebar)));
+    if s.sidebar_open {
+        side = side.child(resize_edge());
     }
     side
-        .child(el().key("titlebar-band").w_full().h(TITLEBAR).window_drag())
+        .child(row().key("titlebar-band").w_full().h(TITLEBAR).pt(8.0).pr(8.0).center_y().window_drag().child(el().grow(1.0)).child(sidebar_toggle(t, s.sidebar_open)))
         .child(
             col()
                 .w_full()
@@ -166,7 +220,7 @@ pub enum Resize {
 /// The sidebar's right edge: drag to resize between the web's 224 and 448
 /// points, double-click for the default, arrow keys to nudge. The width is
 /// kept between launches.
-fn resize_edge(t: &Theme, held: bool) -> El {
+fn resize_edge() -> El {
     use crate::prefs::{SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN};
     el().key("sidebar-edge")
         .pin(None, Some(0.0), Some(0.0), Some(0.0))
@@ -176,9 +230,6 @@ fn resize_edge(t: &Theme, held: bool) -> El {
         .help("Drag to resize; double-click for the default width")
         .focusable(true)
         .cursor(Cursor::ResizeColumn)
-        // A hairline that shows while the edge is held or hovered.
-        .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(2.0).fill(if held { t.primary_ink.alpha(0.5) } else { t.primary_ink.alpha(0.0) }))
-        .hover(t.primary_ink.alpha(0.08))
         .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {
@@ -186,7 +237,7 @@ fn resize_edge(t: &Theme, held: bool) -> El {
                     d.data = s.prefs.sidebar();
                     s.resizing = Some(Resize::Sidebar);
                 }
-                rune::Phase::Move => s.prefs.sidebar_width = (d.data + d.dx).clamp(SIDEBAR_MIN, SIDEBAR_MAX).round(),
+                rune::Phase::Move => s.prefs.sidebar_width = (d.data + d.dx / s.zoom()).clamp(SIDEBAR_MIN, SIDEBAR_MAX).round(),
                 rune::Phase::Up => {
                     if d.cancelled() {
                         s.prefs.sidebar_width = d.data;
@@ -217,7 +268,7 @@ fn group_label(t: &Theme, text_: &str) -> El {
 }
 
 fn workspace_links(s: &App, t: &Theme) -> El {
-    let open = s.sidebar_open;
+    let open = s.sidebar_full();
     let mut links = col().w_full().gap(1.0);
     for page in Page::ALL {
         let active = s.view == View::Workspace && s.page == page;
@@ -240,8 +291,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
             .checked(active)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(t.hover_tint)
-            .motion(CONTROL)
+            .on_hover_change(crate::ui::widgets::track_hover(format!("nav:{}", page.key())))
             .on_press(move |s: &mut App| {
                 if page == Page::Overview {
                     s.section = Section::Summary;
@@ -265,10 +315,10 @@ fn workspace_links(s: &App, t: &Theme) -> El {
                 link = link.child(el().absolute(26.0, 6.0).size(6.0, 6.0).radius(3.0).fill(t.wrong));
             }
         }
-        // The web's active row: the accent fill with the control shadow.
-        if active {
-            link = shadows(link.fill(t.sidebar_accent), &t.control_shadow);
-        }
+        // The web's link: under the pointer the accent at 70% with the control
+        // shadow, current the full accent with it.
+        let hovered = s.row_hover.as_deref() == Some(format!("nav:{}", page.key()).as_str());
+        link = crate::ui::widgets::nav_highlight(t, link, hovered, active);
         links = links.child(link);
         // The Overview's sections, under it while it is open, as on the web.
         if open && active && page == Page::Overview {
@@ -309,7 +359,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
 }
 
 fn chat_history(s: &App, t: &Theme) -> El {
-    let open = s.sidebar_open;
+    let open = s.sidebar_full();
     if !open {
         return col().w_full().items_center().child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press(|s: &mut App| s.sidebar_open = true));
     }
@@ -482,9 +532,7 @@ fn chat_filter_menu(s: &App, t: &Theme) -> El {
 
 /// The header across the top of the content panel.
 pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> El {
-    let toggle = icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if s.sidebar_open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false)
-        .on_press(|s: &mut App| s.sidebar_open = !s.sidebar_open);
-    let mut h = row().key("header").w_full().h(48.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag().child(toggle);
+    let mut h = row().key("header").w_full().h(48.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag();
 
     if s.view == View::Workspace && s.page.account() {
         // An account page belongs to no business.
@@ -621,11 +669,14 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
     let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
     let web = web_url(&api);
     let item = |key: &str, icon: &'static rune::Icon, text_: &str| {
-        row().key(key.to_string()).w_full().h(34.0).px(10.0).gap(10.0).radius(6.0).center_y()
+        let hk = format!("acct:{key}");
+        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+        let r = row().key(key.to_string()).w_full().h(40.0).px(12.0).gap(10.0).radius(8.0).center_y()
             .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer)
-            .hover(t.hover_tint).hover_group().motion(CONTROL)
-            .child(ico(icon, 16.0, t.muted_foreground).group_color(t.foreground))
-            .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0))
+            .on_hover_change(crate::ui::widgets::track_hover(hk))
+            .child(ico(icon, 16.0, if hovered { t.foreground } else { t.muted_foreground }))
+            .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0));
+        crate::ui::widgets::highlight(t, r, hovered, false)
     };
     let rule = || el().w_full().h(1.0).my(6.0).fill(t.border);
     let settings = |page: crate::state::SettingsPage| move |s: &mut App| {
@@ -640,7 +691,7 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
             s.show_page(p);
         }
     };
-    let width = if s.sidebar_open { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
+    let width = if s.sidebar_full() { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
     let mut m = menu(t, "account-menu-list", width)
         .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
             .child(avatar_sphere(t, 36.0))
@@ -657,7 +708,7 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         .child(update_row(s, t))
         .child(rule());
     m = m.child(item("sign-out", &icons::LOG_OUT, "Sign out").on_press(|s: &mut App| s.sign_out()));
-    let side = if s.sidebar_open { Side::Top } else { Side::Right };
+    let side = if s.sidebar_full() { Side::Top } else { Side::Right };
     layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
 
@@ -711,8 +762,8 @@ fn update_row(s: &App, t: &Theme) -> El {
 
 /// The menu open over the sidebar, if any, anchored to its trigger.
 pub fn menus(s: &App, t: &Theme) -> Option<El> {
-    let width = if s.sidebar_open { s.prefs.sidebar() - 16.0 } else { 256.0 };
-    let side = if s.sidebar_open { Side::Bottom } else { Side::Right };
+    let width = if s.sidebar_full() { s.prefs.sidebar() - 16.0 } else { 256.0 };
+    let side = if s.sidebar_full() { Side::Bottom } else { Side::Right };
     match s.menu? {
         Menu::Businesses => {
             let mut m = menu(t, "business-menu", width).child(label("Businesses", type_::XS, t.muted_foreground).px(8.0).py(6.0));
@@ -736,6 +787,8 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
         Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
         Menu::Reasoning => Some(crate::ui::agent::reasoning_menu(s, t)),
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),
+        Menu::IssueModel | Menu::IssueFact | Menu::IssueSort => crate::ui::issues::menu(s, t, s.menu?),
+        Menu::Choice => crate::ui::campaigns::choice_menu(s, t),
     }
 }
 

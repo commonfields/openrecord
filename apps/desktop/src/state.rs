@@ -88,6 +88,125 @@ impl Page {
     }
 }
 
+/// The campaign open in the editor: the brief as saved, each text field as it
+/// is being typed, and whether there are changes to save.
+#[derive(Debug, Clone)]
+pub struct CampaignEdit {
+    pub campaign: crate::api::Campaign,
+    /// Brief and distribution fields by their brief key; deliverable fields as "task.{i}.{field}".
+    pub fields: std::collections::BTreeMap<String, TextEdit>,
+    pub dirty: bool,
+    pub saving: bool,
+    pub error: Option<String>,
+    /// A campaign to open once unsaved changes are kept or discarded (`None` inside: a new brief).
+    pub pending: Option<Option<crate::api::Campaign>>,
+}
+
+pub const CAMPAIGN_TEXT: [&str; 22] = [
+    "title", "owner", "goal", "audience", "offer", "message", "hypothesis", "launchDate", "metric", "baseline", "target", "reviewDate",
+    "result", "learning", "nextMove", "primaryChannel", "rationale", "destination", "cadence", "budget", "conversionEvent", "trackingPlan",
+];
+
+impl CampaignEdit {
+    pub fn new(c: crate::api::Campaign) -> CampaignEdit {
+        let get = |k: &str| -> String {
+            match k {
+                "title" => c.title.clone(), "owner" => c.owner.clone(), "goal" => c.goal.clone(), "audience" => c.audience.clone(),
+                "offer" => c.offer.clone(), "message" => c.message.clone(), "hypothesis" => c.hypothesis.clone(), "launchDate" => c.launch_date.clone(),
+                "metric" => c.metric.clone(), "baseline" => c.baseline.clone(), "target" => c.target.clone(), "reviewDate" => c.review_date.clone(),
+                "result" => c.result.clone(), "learning" => c.learning.clone(), "nextMove" => c.next_move.clone(), "primaryChannel" => c.channel.clone(),
+                "rationale" => c.rationale.clone(), "destination" => c.destination.clone(), "cadence" => c.cadence.clone(), "budget" => c.budget.clone(),
+                "conversionEvent" => c.conversion_event.clone(), "trackingPlan" => c.tracking_plan.clone(), _ => String::new(),
+            }
+        };
+        let mut fields = std::collections::BTreeMap::new();
+        for k in CAMPAIGN_TEXT {
+            fields.insert(k.to_string(), TextEdit::new(&get(k)));
+        }
+        for (i, t) in c.tasks.iter().enumerate() {
+            for (f, v) in [("title", &t.title), ("owner", &t.owner), ("due", &t.due), ("note", &t.note)] {
+                fields.insert(format!("task.{i}.{f}"), TextEdit::new(v));
+            }
+        }
+        CampaignEdit { campaign: c, fields, dirty: false, saving: false, error: None, pending: None }
+    }
+
+    pub fn text(&self, k: &str) -> String {
+        self.fields.get(k).map(|e| e.text.clone()).unwrap_or_default()
+    }
+
+    /// The brief with every field as typed.
+    pub fn current(&self) -> crate::api::Campaign {
+        let mut c = self.campaign.clone();
+        let t = |k: &str| self.text(k);
+        c.title = t("title"); c.owner = t("owner"); c.goal = t("goal"); c.audience = t("audience"); c.offer = t("offer");
+        c.message = t("message"); c.hypothesis = t("hypothesis"); c.launch_date = t("launchDate"); c.metric = t("metric");
+        c.baseline = t("baseline"); c.target = t("target"); c.review_date = t("reviewDate"); c.result = t("result");
+        c.learning = t("learning"); c.next_move = t("nextMove"); c.channel = t("primaryChannel"); c.rationale = t("rationale");
+        c.destination = t("destination"); c.cadence = t("cadence"); c.budget = t("budget"); c.conversion_event = t("conversionEvent");
+        c.tracking_plan = t("trackingPlan");
+        for (i, task) in c.tasks.iter_mut().enumerate() {
+            task.title = self.text(&format!("task.{i}.title"));
+            task.owner = self.text(&format!("task.{i}.owner"));
+            task.due = self.text(&format!("task.{i}.due"));
+            task.note = self.text(&format!("task.{i}.note"));
+        }
+        c
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AddBusiness {
+    pub text: TextEdit,
+    /// "CLIENT" for a client's business, "DOGFOOD" for our own; None as the web's plain dialog.
+    pub engagement: Option<&'static str>,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+/// What a form's select changes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChoiceTarget {
+    /// A campaign choice: status, decision, motion or funnelStage.
+    Campaign(&'static str),
+    /// A deliverable's channel or status.
+    Task(usize, &'static str),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice {
+    pub anchor: String,
+    pub options: Vec<&'static str>,
+    pub current: String,
+    pub target: ChoiceTarget,
+}
+
+/// The AI answers page's filters and view, as the web keeps them in its URL.
+#[derive(Debug, Clone)]
+pub struct IssueQuery {
+    /// "ALL" or one state: NEEDS_REVIEW, WRONG, PARTIAL, UNKNOWN.
+    pub state: String,
+    /// "Every answer" rather than "By claim".
+    pub answers: bool,
+    pub q: TextEdit,
+    /// A provider key, or "all".
+    pub provider: String,
+    /// A fact's predicate, "none" or "all".
+    pub fact: String,
+    /// "frequent", "recent" or "oldest"; empty for the view's own default.
+    pub sort: String,
+    pub page: usize,
+    /// Claim groups opened, and those showing every answer.
+    pub open: std::collections::BTreeSet<String>,
+    pub all: std::collections::BTreeSet<String>,
+}
+
+impl Default for IssueQuery {
+    fn default() -> Self {
+        IssueQuery { state: "ALL".into(), answers: false, q: TextEdit::new(""), provider: "all".into(), fact: "all".into(), sort: String::new(), page: 1, open: Default::default(), all: Default::default() }
+    }
+}
+
 /// The Businesses list's order, as the web's sort select offers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortfolioSort {
@@ -104,6 +223,12 @@ pub enum Menu {
     Model,
     Reasoning,
     ChatFilter,
+    /// A form's select, open over its button.
+    Choice,
+    /// The AI answers toolbar's model, fact and sort pickers.
+    IssueModel,
+    IssueFact,
+    IssueSort,
 }
 
 /// The turn the composer sent, while it runs.
@@ -308,14 +433,15 @@ pub struct App {
     pub view: View,
     pub page: Page,
     pub sidebar_open: bool,
+    /// With the sidebar collapsed, whether it is showing over the page because the pointer reached the left edge.
+    pub sidebar_peek: bool,
     pub menu: Option<Menu>,
 
     pub overview: Load<Overview>,
     pub issues: Load<Vec<Issue>>,
     pub channels: Load<Vec<Channel>>,
     pub campaigns: Load<Vec<Campaign>>,
-    /// The Campaigns page: the status shown ("" for all) and the campaign open, by id.
-    pub campaign_filter: String,
+    /// The Campaigns page's campaign open, by id.
     pub campaign_open: Option<String>,
     /// The account pages: usage and its period, the businesses and clients
     /// lists, and the search and order those lists are in.
@@ -324,9 +450,21 @@ pub struct App {
     pub portfolio: Load<Vec<crate::account::Portfolio>>,
     pub client_rows: Load<Vec<crate::account::ClientRow>>,
     pub list_query: TextEdit,
+    /// The Channels page: its account statuses, the tab shown, and the row open.
+    pub channel_status: Load<crate::channel_status::Status>,
+    pub channel_tools: bool,
+    pub channel_open: Option<String>,
+    pub campaign_edit: Option<CampaignEdit>,
+    /// The select open in a form: its button's key, its options and what picking one changes.
+    pub choice: Option<Choice>,
+    /// "Add a business": the line typed, whether it is a client or our own, and how it went.
+    pub add_business: Option<AddBusiness>,
+    pub issue_query: IssueQuery,
     pub portfolio_sort: PortfolioSort,
     /// The conversation split's width, measured, for the helper's share of it.
     pub split_w: f32,
+    /// The window's size in window points, measured, for the zoom.
+    pub window: (f32, f32),
     /// The drag edge held right now, if any.
     pub resizing: Option<crate::ui::Resize>,
     /// The Realtime map: how far in, and the point at its centre (longitude, latitude).
@@ -435,6 +573,13 @@ pub struct App {
     pub chat_id: Option<String>,
     pub conversation: Load<Conversation>,
     pub composer: TextEdit,
+    /// Unsent text per chat, kept on disk between launches, and the chat the composer holds now.
+    pub drafts: crate::drafts::Drafts,
+    pub draft_key: String,
+    /// Which sent message ↑ brought back, counting back from the newest.
+    pub history_at: Option<usize>,
+    /// Replies rated in this chat, by message index: true for helpful (kept in the app only).
+    pub rated: std::collections::HashMap<(String, usize), bool>,
     pub turn: Turn,
 
     /// The decision open in the inbox (its `key`); the first one when unset.
@@ -487,20 +632,28 @@ impl App {
             view: View::Agent,
             page: Page::Inbox,
             sidebar_open: true,
+            sidebar_peek: false,
             menu: None,
             overview: Load::Idle,
             issues: Load::Idle,
             channels: Load::Idle,
             campaigns: Load::Idle,
-            campaign_filter: String::new(),
             campaign_open: None,
             usage: Load::Idle,
             usage_days: 30,
             portfolio: Load::Idle,
             client_rows: Load::Idle,
             list_query: TextEdit::new(""),
+            channel_status: Load::Idle,
+            channel_tools: false,
+            channel_open: None,
+            campaign_edit: None,
+            choice: None,
+            add_business: None,
+            issue_query: IssueQuery::default(),
             portfolio_sort: PortfolioSort::Attention,
             split_w: 0.0,
+            window: (0.0, 0.0),
             resizing: None,
             map_zoom: 1.0,
             map_center: crate::ui::world::HOME,
@@ -572,6 +725,10 @@ impl App {
             chat_id: None,
             conversation: Load::Idle,
             composer: TextEdit::new(""),
+            drafts: crate::drafts::Drafts::load(),
+            draft_key: String::new(),
+            history_at: None,
+            rated: Default::default(),
             turn: Turn::Idle,
             decision: None,
             declining: false,
@@ -824,6 +981,204 @@ impl App {
         }
     }
 
+    /// Opens a campaign in the editor, or a new brief (`None`); with unsaved
+    /// changes it asks first, as the web's discard dialog does.
+    pub fn open_campaign(&mut self, c: Option<crate::api::Campaign>) {
+        if let Some(e) = self.campaign_edit.as_mut().filter(|e| e.dirty) {
+            e.pending = Some(c);
+            return;
+        }
+        let c = c.unwrap_or_else(|| crate::api::Campaign { id: crate::api::uuid(), status: "DRAFT".into(), decision: "UNDECIDED".into(), ..Default::default() });
+        self.campaign_edit = Some(CampaignEdit::new(c));
+    }
+
+    /// Discards unsaved edits and opens what was waiting.
+    pub fn discard_campaign_changes(&mut self) {
+        let next = self.campaign_edit.as_mut().and_then(|e| e.pending.take());
+        if let Some(e) = self.campaign_edit.as_mut() {
+            e.dirty = false;
+        }
+        if let Some(c) = next {
+            self.open_campaign(c);
+        }
+    }
+
+    /// Changes one of the brief's choices (stage, decision, motion, funnel stage).
+    pub fn set_campaign_choice(&mut self, which: &str, value: &str) {
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        let c = &mut e.campaign;
+        match which {
+            "status" => c.status = value.into(),
+            "decision" => c.decision = value.into(),
+            "motion" => c.motion = value.into(),
+            "funnelStage" => c.funnel_stage = value.into(),
+            _ => return,
+        }
+        e.dirty = true;
+    }
+
+    /// Changes a deliverable's channel or status.
+    pub fn set_task_choice(&mut self, i: usize, which: &str, value: &str) {
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        if let Some(t) = e.campaign.tasks.get_mut(i) {
+            if which == "channel" { t.channel = value.into() } else { t.status = value.into() }
+            e.dirty = true;
+        }
+    }
+
+    pub fn add_task(&mut self) {
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        if e.campaign.tasks.len() >= 100 {
+            return;
+        }
+        let mut c = e.current();
+        c.tasks.push(crate::api::CampaignTask { id: crate::api::uuid(), title: "New deliverable".into(), channel: "WEBSITE".into(), status: "TODO".into(), ..Default::default() });
+        let dirty = true;
+        let mut next = CampaignEdit::new(c);
+        next.dirty = dirty;
+        next.campaign.revision = e.campaign.revision;
+        *e = next;
+    }
+
+    pub fn remove_task(&mut self, i: usize) {
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        let mut c = e.current();
+        if i < c.tasks.len() {
+            c.tasks.remove(i);
+        }
+        let mut next = CampaignEdit::new(c);
+        next.dirty = true;
+        *e = next;
+    }
+
+    /// Starts the next experiment from a closed one (the web's "Start the next experiment").
+    pub fn next_experiment(&mut self) {
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        if e.dirty {
+            e.error = Some("Save your learning before starting the next experiment.".into());
+            return;
+        }
+        let was = e.current();
+        let mut c = crate::api::Campaign { id: crate::api::uuid(), status: "DRAFT".into(), decision: "UNDECIDED".into(), ..Default::default() };
+        c.title = format!("Next: {}", was.title).chars().take(200).collect();
+        c.goal = was.goal;
+        c.audience = was.audience;
+        c.hypothesis = was.next_move;
+        c.baseline = was.result.chars().take(500).collect();
+        self.campaign_edit = Some(CampaignEdit::new(c));
+    }
+
+    pub fn save_campaign(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        let Some(e) = self.campaign_edit.as_mut() else { return };
+        if e.saving {
+            return;
+        }
+        e.saving = true;
+        e.error = None;
+        self.net.save_campaign(b, e.current());
+    }
+
+    /// Opens "Add a business" (the web's `CreateBusinessDialog`).
+    pub fn open_add_business(&mut self, engagement: Option<&'static str>) {
+        self.menu = None;
+        self.new_chat = None;
+        self.add_business = Some(AddBusiness { text: TextEdit::new(""), engagement, busy: false, error: None });
+    }
+
+    pub fn submit_add_business(&mut self) {
+        let Some(a) = self.add_business.as_mut() else { return };
+        if a.busy {
+            return;
+        }
+        let (website, goal) = crate::setup::parse_start(&a.text.text);
+        let Some(website) = website else {
+            a.error = Some("Add your website address, like acme.com".into());
+            return;
+        };
+        a.busy = true;
+        a.error = None;
+        let engagement = a.engagement;
+        self.net.start_setup(website, goal, engagement);
+    }
+
+    /// Opens (or closes) a form's select.
+    pub fn open_choice(&mut self, c: Choice) {
+        if self.choice.as_ref().is_some_and(|x| x.anchor == c.anchor) && self.menu == Some(Menu::Choice) {
+            self.menu = None;
+            self.choice = None;
+        } else {
+            self.choice = Some(c);
+            self.menu = Some(Menu::Choice);
+        }
+    }
+
+    pub fn pick_choice(&mut self, value: &str) {
+        self.menu = None;
+        if let Some(c) = self.choice.take() {
+            match c.target {
+                ChoiceTarget::Campaign(which) => self.set_campaign_choice(which, value),
+                ChoiceTarget::Task(i, which) => self.set_task_choice(i, which, value),
+            }
+        }
+    }
+
+    pub fn set_issue_state(&mut self, state: &str) {
+        self.issue_query.state = state.to_string();
+        self.issue_query.page = 1;
+    }
+
+    pub fn set_issue_view(&mut self, answers: bool) {
+        self.issue_query.answers = answers;
+        self.issue_query.sort.clear();
+        self.issue_query.page = 1;
+    }
+
+    pub fn set_issue_provider(&mut self, provider: &str) {
+        self.issue_query.provider = provider.to_string();
+        self.issue_query.page = 1;
+    }
+
+    pub fn set_issue_filter_fact(&mut self, fact: &str) {
+        self.issue_query.fact = fact.to_string();
+        self.issue_query.page = 1;
+    }
+
+    pub fn set_issue_sort(&mut self, sort: &str) {
+        self.issue_query.sort = sort.to_string();
+        self.issue_query.page = 1;
+    }
+
+    pub fn clear_issue_filters(&mut self) {
+        let q = &mut self.issue_query;
+        q.q.clear();
+        q.provider = "all".into();
+        q.fact = "all".into();
+        q.state = "ALL".into();
+        q.page = 1;
+    }
+
+    pub fn toggle_issue_group(&mut self, key: &str) {
+        if !self.issue_query.open.remove(key) {
+            self.issue_query.open.insert(key.to_string());
+        }
+    }
+
+    /// Writes the filtered answers as CSV to Downloads, as the web's "Export CSV" downloads them.
+    pub fn export_issues(&mut self) {
+        let list = crate::ui::issues::visible(self);
+        if list.is_empty() {
+            return;
+        }
+        let name = self.active_business().map(|b| b.name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>()).unwrap_or_else(|| "business".into());
+        let dir = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads")).unwrap_or_else(std::env::temp_dir);
+        let path = dir.join(format!("openrecord-issues-{name}.csv"));
+        self.notice = Some(match std::fs::write(&path, crate::ui::issues::csv(&list)) {
+            Ok(()) => format!("Saved {} answers to {}.", list.len(), path.display()),
+            Err(e) => format!("The CSV could not be saved: {e}"),
+        });
+    }
+
     pub fn set_usage_days(&mut self, days: u32) {
         if self.usage_days != days {
             self.usage_days = days;
@@ -891,10 +1246,17 @@ impl App {
             }
             Page::AiAnswers => {
                 self.issues = keep_or_load(&self.issues);
-                self.net.issues(id);
+                self.net.issues(id.clone());
+                // The page opens with the AI discovery summary the Overview reads.
+                if !matches!(self.insights, Load::Ready(_) | Load::Loading) {
+                    self.insights = Load::Loading;
+                    self.net.insights(id, self.days);
+                }
             }
             Page::Channels => {
                 self.channels = keep_or_load(&self.channels);
+                self.channel_status = keep_or_load(&self.channel_status);
+                self.net.channel_status(id.clone());
                 self.net.channels(id);
             }
         }
@@ -1127,6 +1489,33 @@ impl App {
     /// Whether a conversation is on screen, full or in the pane.
     pub fn chat_shown(&self) -> bool {
         (self.view == View::Agent && (self.active.is_some() || self.general)) || self.pane_shown()
+    }
+
+    /// How large the interface draws: everything inside the window is laid out in
+    /// points divided by this, so sizes measured in window points divide by it too.
+    pub fn zoom(&self) -> f32 {
+        self.prefs.zoom()
+    }
+
+    /// ⌘+, ⌘− and ⌘0.
+    pub fn zoom_by(&mut self, dir: i32) {
+        if dir == 0 {
+            self.prefs.zoom = crate::prefs::ZOOM_DEFAULT;
+        } else {
+            self.prefs.step_zoom(dir);
+        }
+        self.prefs.save();
+    }
+
+    /// Whether the sidebar shows in full: docked open, or over the page on hover.
+    pub fn sidebar_full(&self) -> bool {
+        self.sidebar_open || self.sidebar_peek
+    }
+
+    /// Docks or collapses the sidebar (⌘B and the header's button).
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+        self.sidebar_peek = false;
     }
 
     /// Opens the agent beside the page, with a request typed in when there is
@@ -1460,6 +1849,26 @@ impl App {
     /// The composer's keys while the "/" menu is open: arrows move, Tab completes,
     /// Return chooses and Escape shuts it.
     pub fn composer_key(&mut self, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
+        // ↑ in an empty composer brings back the last message you sent; ↑ and ↓
+        // then step through the earlier ones, as a terminal does.
+        if !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt && matches!(ev.key, rune::Key::Up | rune::Key::Down) && !self.composer.text.starts_with('/') {
+            let sent: Vec<String> = self.transcript().into_iter().filter(|m| m.role == "user" && !m.text.trim().is_empty()).map(|m| m.text).collect();
+            let browsing = self.history_at.is_some_and(|i| sent.iter().rev().nth(i).is_some_and(|t| *t == self.composer.text));
+            if !sent.is_empty() && (self.composer.text.is_empty() || browsing) {
+                let next = match (ev.key.clone(), self.history_at.filter(|_| browsing)) {
+                    (rune::Key::Up, None) => Some(0),
+                    (rune::Key::Up, Some(i)) => Some((i + 1).min(sent.len() - 1)),
+                    (_, Some(0)) | (_, None) => None,
+                    (_, Some(i)) => Some(i - 1),
+                };
+                self.history_at = next;
+                match next.and_then(|i| sent.iter().rev().nth(i)) {
+                    Some(text) => self.composer.replace_text(text),
+                    None => self.composer.clear(),
+                }
+                return true;
+            }
+        }
         let entries = self.menu_entries();
         if entries.is_empty() || ev.mods.cmd || ev.mods.ctrl || ev.mods.alt {
             return false;
@@ -1605,6 +2014,77 @@ impl App {
 
     /// Picks a text file to send with the next message.
     /// Attaches a file dropped on the composer, with the picker's limits.
+    /// A paste into the composer: files attach as a drop does, long text becomes
+    /// an attachment instead of flooding the box, and an image says it can't be
+    /// sent yet. Anything else pastes as usual (false).
+    pub fn composer_paste(&mut self, content: &rune::ClipboardContent) -> bool {
+        if !content.files().is_empty() {
+            for p in content.files().to_vec() {
+                self.attach_path(&p);
+            }
+            return true;
+        }
+        if content.image().is_some() && content.text().trim().is_empty() {
+            self.attach_error = Some("Images can't be attached yet. Paste text, or attach a text, Markdown, CSV or JSON file.".into());
+            return true;
+        }
+        let text = content.text();
+        let lines = text.lines().count();
+        if text.chars().count() > crate::chat::PASTE_AS_FILE_CHARS || lines > crate::chat::PASTE_AS_FILE_LINES {
+            if self.attachments.len() >= crate::chat::MAX_FILES {
+                self.attach_error = Some("You can attach up to three files.".into());
+                return true;
+            }
+            let used: usize = self.attachments.iter().map(|a| a.text.chars().count()).sum();
+            if used + text.chars().count() > crate::chat::MAX_ATTACHMENT_CHARS {
+                self.attach_error = Some("That paste is too long. Attachments can be 80,000 characters together.".into());
+                return true;
+            }
+            let n = self.attachments.iter().filter(|a| a.name.starts_with("Pasted text")).count();
+            let name = if n == 0 { "Pasted text".to_string() } else { format!("Pasted text {}", n + 1) };
+            self.attachments.push(crate::chat::Attachment { name, kind: "text/plain".into(), text: text.to_string() });
+            self.attach_error = None;
+            return true;
+        }
+        false
+    }
+
+    /// Keeps the composer's text as the draft of the chat it belongs to: on a
+    /// switch of chat the old text is saved and the new chat's draft comes back.
+    pub fn sync_draft(&mut self) {
+        let key = format!("{}:{}", self.chat_scope().unwrap_or_else(|| "general".into()), self.chat_id.clone().unwrap_or_else(|| "new".into()));
+        if key != self.draft_key {
+            let restored = self.drafts.get(&key).to_string();
+            self.draft_key = key;
+            self.history_at = None;
+            if self.composer.text != restored {
+                self.composer.replace_text(&restored);
+            }
+        } else if self.drafts.get(&self.draft_key) != self.composer.text {
+            let k = self.draft_key.clone();
+            self.drafts.set(&k, &self.composer.text);
+        }
+    }
+
+    /// Marks a reply helpful or not (pressing the same again clears it).
+    pub fn rate_reply(&mut self, i: usize, good: bool) {
+        let key = (self.chat_id.clone().unwrap_or_default(), i);
+        if self.rated.get(&key) == Some(&good) {
+            self.rated.remove(&key);
+        } else {
+            self.rated.insert(key, good);
+        }
+    }
+
+    /// Asks the question behind the latest reply again.
+    pub fn retry_reply(&mut self, tx: &mut Tx) {
+        if matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let Some(q) = self.transcript().into_iter().rev().find(|m| m.role == "user" && !m.text.trim().is_empty()).map(|m| m.text) else { return };
+        self.dispatch(q, tx);
+    }
+
     pub fn attach_path(&mut self, path: &std::path::Path) {
         if self.attachments.len() >= crate::chat::MAX_FILES {
             self.attach_error = Some("You can attach up to three files.".into());
@@ -1664,6 +2144,7 @@ impl App {
 
     /// Applies the replies that have landed; true when anything changed.
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
+        self.sync_draft();
         let replies = self.net.take();
         let mut changed = !replies.is_empty();
         for r in replies {
@@ -1823,6 +2304,53 @@ impl App {
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
             Reply::Usage(days, r) if days == self.usage_days => self.usage = to_load(self.failed(r)),
             Reply::Usage(..) => {}
+            Reply::SetupStarted(r) => match r {
+                Ok(id) => {
+                    // As the web does: the list reloads and the new business's agent opens.
+                    self.add_business = None;
+                    self.net.workspace();
+                    self.select_business(&id);
+                    self.show_view(View::Agent);
+                }
+                Err(ApiError::Unauthorized) => {
+                    let _ = self.failed::<()>(Err(ApiError::Unauthorized));
+                }
+                Err(e) => {
+                    if let Some(a) = self.add_business.as_mut() {
+                        a.busy = false;
+                        a.error = Some(crate::setup::setup_error(&e));
+                    }
+                }
+            },
+            Reply::CampaignSaved(b, r) if here(self, &b) => {
+                let r = match r {
+                    Ok(saved) => Ok(saved),
+                    Err(ApiError::Unauthorized) => Err(self.failed::<()>(Err(ApiError::Unauthorized)).err().unwrap_or_default()),
+                    Err(ApiError::Status(409, _)) => Err("Someone changed this campaign. Keep your draft, then reopen the latest version before saving.".to_string()),
+                    Err(ApiError::Status(422, body)) => Err(serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| v.get("reason").and_then(|x| x.as_str()).map(str::to_string))
+                        .unwrap_or_else(|| "Could not save the campaign. Your draft is still here.".into())),
+                    Err(_) => Err("Could not save the campaign. Your draft is still here.".to_string()),
+                };
+                match r {
+                    Ok(saved) => {
+                        self.campaign_edit = Some(CampaignEdit::new(saved));
+                        if let Some(id) = self.active.clone() {
+                            self.net.campaigns(id);
+                        }
+                    }
+                    Err(msg) => {
+                        if let Some(e) = self.campaign_edit.as_mut() {
+                            e.saving = false;
+                            e.error = Some(msg);
+                        }
+                    }
+                }
+            }
+            Reply::CampaignSaved(..) => {}
+            Reply::ChannelStatus(b, r) if here(self, &b) => self.channel_status = to_load(self.failed(r)),
+            Reply::ChannelStatus(..) => {}
             Reply::Portfolio(r) => self.portfolio = to_load(self.failed(r)),
             Reply::ClientRows(r) => self.client_rows = to_load(self.failed(r)),
             Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => {
