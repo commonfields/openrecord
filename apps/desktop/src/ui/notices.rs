@@ -11,7 +11,7 @@ use rune::{Cursor, El, ScrollSpec, Spring, col, row};
 use crate::format;
 use crate::icons;
 use crate::state::{App, Page, Screen, View};
-use crate::theme::{Theme, hex, shadows, type_};
+use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, ico, label};
 
 const WIDTH: f32 = 340.0;
@@ -22,8 +22,6 @@ const PEEK: f32 = 12.0;
 const SHOWN: usize = 6;
 /// The spread list shows this many cards and scrolls for the rest.
 const VISIBLE: f32 = 4.0;
-/// The notification colour: the sparkle mark's purple.
-const PURPLE: &str = "#8E75B2";
 const SPREAD: Spring = Spring::new(0.36, 0.08);
 
 /// The stack, when there is anything waiting and nowhere else on screen already lists it.
@@ -41,7 +39,6 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
     // Oldest at the top of the list, the newest at the bottom, in front.
     let order: Vec<_> = shown.iter().rev().collect();
     let last = order.len() - 1;
-    let purple = hex(PURPLE);
     // The shadow room above and below is part of what scrolls, so the newest card's shadow stays whole at the bottom.
     let mut stack = col().key("notices-cards").w(WIDTH).gap(GAP).pt(SHADOW_ROOM).pb(SHADOW_ROOM);
     for (j, d) in order.iter().enumerate() {
@@ -80,7 +77,7 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
                     s.show_page(Page::Inbox);
                     s.select_decision(&key);
                 })
-                .child(row().size(30.0, 30.0).radius(8.0).center().fill(purple.alpha(if t.dark { 0.2 } else { 0.14 })).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, purple)))
+                .child(row().size(30.0, 30.0).radius(8.0).center().fill(t.primary_ink.alpha(if t.dark { 0.16 } else { 0.08 })).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, t.primary_ink)))
                 .child(
                     col()
                         .opacity(content)

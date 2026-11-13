@@ -13,7 +13,7 @@ use crate::format;
 use crate::icons;
 use crate::state::{App, IssueQuery, Load, Menu};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, Variant, button, empty_state, failure, ico, label, page_header, skeleton};
+use crate::ui::widgets::{AutofocusIf, CONTROL, Variant, button, empty_state, failure, ico, label, page_header, skeleton};
 
 const PAGE_SIZE: usize = 25;
 const XS11_MEDIUM: rune::TextStyle = rune::TextStyle::new(11.0, 500.0).lh(16.0);
@@ -507,6 +507,8 @@ pub fn menu(s: &App, t: &Theme, which: Menu) -> Option<El> {
             .label(name.clone())
             .checked(on)
             .focusable(true)
+            .autofocus_if(on)
+            .focus_highlight(t.accent)
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .on_press(move |s: &mut App| {
@@ -524,7 +526,7 @@ pub fn menu(s: &App, t: &Theme, which: Menu) -> Option<El> {
         Menu::IssueSort => ("issue-sort", 160.0),
         _ => return None,
     };
-    let mut m = shadows(col().key(format!("{anchor}-menu")).w(width).padding(4.0).gap(1.0).radius(10.0).fill(t.popover), &t.float_shadow).role("listbox");
+    let mut m = shadows(col().key(format!("{anchor}-menu")).w(width).padding(4.0).gap(1.0).radius(10.0).fill(t.popover), &t.float_shadow).focus_group().role("listbox");
     match which {
         Menu::IssueModel => {
             let mut counts: Vec<(String, usize)> = Vec::new();

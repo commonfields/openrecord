@@ -13,7 +13,7 @@ use crate::chat::{self, Activity, Progress};
 use crate::icons;
 use crate::state::{App, Load, Page, Turn, View};
 use crate::theme::{Theme, hex, shadows, type_};
-use crate::ui::widgets::{CONTROL, failure, ico, icon_button, label};
+use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, icon_button, label};
 
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
@@ -122,6 +122,8 @@ const STARTERS: [(&rune::Icon, &str, &str, &str); 4] = [
 /// How long one starter holds the focus before the next rolls in.
 pub const ROLL_EVERY: std::time::Duration = std::time::Duration::from_millis(4600);
 const ROLL_H: f32 = 300.0;
+/// The drum's width: a card reads as one line of intent, not a banner.
+const ROLL_W: f32 = 440.0;
 const ROLL_CARD_H: f32 = 92.0;
 /// From the focused card to the one above or below it.
 const ROLL_STEP: f32 = 98.0;
@@ -138,7 +140,7 @@ pub fn roll_slot(k: usize, focus: usize, n: usize) -> i32 {
 /// sends it, a press on another brings it into focus.
 fn starters(s: &App, t: &Theme) -> El {
     let n = STARTERS.len();
-    let mut drum = el().key("starters").w_full().h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
+    let mut drum = el().key("starters").w_full().max_w(ROLL_W).h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
         s.starter_hover = inside;
         if !inside {
             s.starter_at = std::time::Instant::now();
@@ -204,12 +206,7 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
             ),
         );
     }
-    let waiting = s.inbox();
-    // What waits on the person floats in the corner; here, only when nothing does.
-    if waiting.is_empty() {
-        c = c.child(label("Nothing is waiting on you. Tell the agent what you want, or pick a place to start.", type_::SM, t.muted_foreground).wrap());
-    }
-    c = c.child(starters(s, t));
+    c = c.child(row().w_full().justify_center().child(starters(s, t)));
     // Sits a little above the middle of a tall window, and scrolls in a short one.
     let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
     let blocks = ROLL_H;
@@ -1437,7 +1434,7 @@ fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
 pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     let efforts = s.chosen_model().map(|m| m.efforts.clone()).unwrap_or_default();
     let current = s.reasoning_effort().map(str::to_string);
-    let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).role("listbox").label("Reasoning effort");
+    let mut m = shadows(col().key("reasoning-menu").w(176.0).padding(4.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).focus_group().role("listbox").label("Reasoning effort");
     let row_ = |key: String, name: String, on: bool, effort: Option<String>| {
         let hk = format!("effort:{key}");
         let r = row()
@@ -1453,9 +1450,11 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
             .focusable(true)
             .cursor(Cursor::Pointer)
             .on_hover_change(hover_key(hk.clone()))
+            .focus_highlight(t.accent)
             .on_press(move |s: &mut App| s.choose_reasoning(effort.clone()))
             .child(label(name, type_::SM, t.foreground).grow(1.0))
             .children(on.then(|| ico(&icons::CHECK, 14.0, secondary(t))));
+        let r = if on { r.autofocus() } else { r };
         let hovered = s.row_hover.as_deref() == Some(hk.as_str());
         crate::ui::widgets::highlight(t, r, hovered, false)
     };
@@ -1560,7 +1559,7 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         .filter(|o| searching || filter.as_deref().is_none_or(|f| f == o.provider))
         .filter(|o| query.is_empty() || o.name.to_lowercase().contains(&query) || o.instance.as_deref().is_some_and(|i| i.to_lowercase().contains(&query)))
         .collect();
-    let mut list = col().w_full().gap(1.0).role("listbox").label("Models");
+    let mut list = col().w_full().gap(1.0).focus_group().role("listbox").label("Models");
     for o in &visible {
         let on = chosen.as_deref() == Some(o.value.as_str());
         let value = o.value.clone();
@@ -1576,6 +1575,8 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
             .label(o.name.clone())
             .checked(on)
             .focusable(true)
+            .autofocus_if(on)
+            .focus_highlight(t.accent)
             .cursor(Cursor::Pointer)
             .on_hover_change(hover_key(format!("model:{}", o.value)))
             .on_press(move |s: &mut App| s.choose_agent_model(value.clone()))

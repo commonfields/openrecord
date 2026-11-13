@@ -12,7 +12,7 @@ use crate::icons;
 use crate::insights::Section;
 use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, avatar_sphere, business_mark, count_badge, ico, icon_button, label};
+use crate::ui::widgets::{CONTROL, avatar_sphere, count_badge, ico, icon_button, label};
 
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights.
@@ -91,13 +91,12 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Businesses) { None } else { Some(Menu::Businesses) })
-            .child(business_mark(t, business.map(|b| b.name.as_str()), 28.0, 6.0));
+            .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Businesses) { None } else { Some(Menu::Businesses) });
         if open {
             b = b
                 .w_full()
                 .h(44.0)
-                .px(6.0)
+                .px(10.0)
                 .child(
                     col()
                         .grow(1.0)
@@ -107,7 +106,8 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
                 )
                 .child(ico(&icons::CHEVRONS_UP_DOWN, 16.0, t.muted_foreground));
         } else {
-            b = b.size(36.0, 36.0).justify_center();
+            // On the rail, a plain mark in place of the name.
+            b = b.size(36.0, 36.0).justify_center().child(ico(&icons::BUILDING, 16.0, t.muted_foreground));
         }
         if s.menu == Some(Menu::Businesses) {
             b = shadows(b.fill(t.accent), &t.control_shadow);
@@ -464,7 +464,6 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         })
         .motion(rune::Spring::new(0.2, 0.0))
         .on_press(move |s: &mut App| s.open_chat(&chat))
-        .child(business_mark(t, Some(&c.business_name), 28.0, 8.0))
         .child(col().grow(1.0).min_w(0.0).child(label(title, if active { type_::SM_13.lh(20.0) } else { type_::SM_13 }, t.foreground).truncate()).child(sub))
         .child(logos)
         .child(archive);
@@ -483,13 +482,13 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
 /// The business filter for the chat history.
 fn chat_filter_menu(s: &App, t: &Theme) -> El {
     let mut m = menu(t, "chat-filter-menu", 240.0).child(label("Filter chats", type_::XS, t.muted_foreground).px(8.0).py(6.0));
-    m = m.child(menu_row(t, "filter-all".into(), ico(&icons::MESSAGES_SQUARE, 16.0, t.muted_foreground), "All businesses", s.chat_filter.is_none()).on_press(|s: &mut App| {
+    m = m.child(menu_row(t, "filter-all".into(), Some(ico(&icons::MESSAGES_SQUARE, 16.0, t.muted_foreground)), "All businesses", s.chat_filter.is_none()).on_press(|s: &mut App| {
         s.chat_filter = None;
         s.menu = None;
     }));
     for b in &s.businesses {
         let id = b.id.clone();
-        m = m.child(menu_row(t, format!("filter-{}", b.id), business_mark(t, Some(&b.name), 24.0, 6.0), &b.name, s.chat_filter.as_deref() == Some(b.id.as_str())).on_press(move |s: &mut App| {
+        m = m.child(menu_row(t, format!("filter-{}", b.id), None, &b.name, s.chat_filter.as_deref() == Some(b.id.as_str())).on_press(move |s: &mut App| {
             s.chat_filter = Some(id.clone());
             s.menu = None;
         }));
@@ -562,10 +561,13 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
 
 /// A floating menu: the web's wide rounded float with 40-point rows.
 fn menu(t: &Theme, key: &str, width: f32) -> El {
-    shadows(col().key(key).w(width).padding(6.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow)
+    // Up and Down move through its items, wrapping at the ends.
+    shadows(col().key(key).w(width).padding(6.0).gap(1.0).radius(12.0).fill(t.popover), &t.float_shadow).focus_group()
 }
 
-fn menu_row(t: &Theme, key: String, lead: El, text_: &str, checked: bool) -> El {
+/// One row of a menu. The checked one takes the focus when the menu opens, so
+/// Up and Down move from it straight away.
+fn menu_row(t: &Theme, key: String, lead: Option<El>, text_: &str, checked: bool) -> El {
     let mut r = row()
         .key(key)
         .w_full()
@@ -578,11 +580,12 @@ fn menu_row(t: &Theme, key: String, lead: El, text_: &str, checked: bool) -> El 
         .label(text_)
         .focusable(true)
         .cursor(Cursor::Pointer)
-        .hover(t.hover_tint)
-        .child(lead)
+        // One highlight for the pointer and the arrow keys, as a native menu has.
+        .focus_highlight(t.accent)
+        .children(lead)
         .child(label(text_, type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0));
     if checked {
-        r = r.child(ico(&icons::CHECK, 16.0, t.foreground));
+        r = r.child(ico(&icons::CHECK, 16.0, t.foreground)).autofocus();
     }
     r
 }
@@ -602,7 +605,7 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         let hk = format!("acct:{key}");
         let hovered = s.row_hover.as_deref() == Some(hk.as_str());
         let r = row().key(key.to_string()).w_full().h(40.0).px(12.0).gap(10.0).radius(8.0).center_y()
-            .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer)
+            .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer).focus_highlight(t.accent)
             .on_hover_change(crate::ui::widgets::track_hover(hk))
             .child(ico(icon, 16.0, if hovered { t.foreground } else { t.muted_foreground }))
             .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0));
@@ -627,7 +630,7 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
             .child(avatar_sphere(t, 36.0))
             .child(col().min_w(0.0).gap(1.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate())))
         .child(rule())
-        .child(item("acct-settings", &icons::SETTINGS, "Settings").on_press(settings(crate::state::SettingsPage::General)))
+        .child(item("acct-settings", &icons::SETTINGS, "Settings").autofocus().on_press(settings(crate::state::SettingsPage::General)))
         .child(item("acct-account", &icons::USER_ROUND, "Account").on_press(settings(crate::state::SettingsPage::Account)))
         .child(item("acct-shortcuts", &icons::KEYBOARD, "Keyboard shortcuts").on_press(settings(crate::state::SettingsPage::Shortcuts)))
         .child(item("acct-usage", &icons::GAUGE, "Usage").on_press(page(Page::Usage)))
@@ -700,7 +703,7 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             for b in &s.businesses {
                 let id = b.id.clone();
                 m = m.child(
-                    menu_row(t, format!("business-{}", b.id), business_mark(t, Some(&b.name), 24.0, 6.0), &b.name, s.active.as_deref() == Some(b.id.as_str()))
+                    menu_row(t, format!("business-{}", b.id), None, &b.name, s.active.as_deref() == Some(b.id.as_str()))
                         .on_press(move |s: &mut App| {
                             s.select_business(&id);
                         }),

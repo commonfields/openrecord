@@ -30,8 +30,22 @@ pub fn ico(i: &'static Icon, size: f32, color: Color) -> El {
     icon(i, size).color(color)
 }
 
+/// `autofocus` on a condition, for the item a menu opens on.
+pub trait AutofocusIf {
+    fn autofocus_if(self, on: bool) -> Self;
+}
+impl AutofocusIf for El {
+    fn autofocus_if(self, on: bool) -> Self {
+        if on { self.autofocus() } else { self }
+    }
+}
+
+/// Text in the interface. All of it can be selected and copied, as on the web:
+/// drag across it, double-click a word. It keeps the arrow rather than the
+/// I-beam, so a button's name still reads as a button; a press on text inside a
+/// row still presses the row, and only a drag selects.
 pub fn label(s: impl Into<String>, style: TextStyle, color: Color) -> El {
-    text(s.into()).font(style).color(color)
+    text(s.into()).font(style).color(color).selectable(true).cursor(rune::Cursor::Default)
 }
 
 /// A square ghost button holding an icon (`size="icon-sm"`, 28 points).
