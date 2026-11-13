@@ -241,12 +241,12 @@ pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
         // A soft wash under the line only when there is enough of it to read as a trend.
         // It fades from the line down to the axis: bands that overlap most just under the line.
         if points >= 5 {
-            const BANDS: usize = 7;
+            const BANDS: usize = 18;
             for k in 1..=BANDS {
                 let f = k as f32 / BANDS as f32;
                 let mut area: Vec<[f32; 2]> = main.clone();
-                area.extend(main.iter().rev().map(|p| [p[0], p[1] + (VIEW_H - p[1]) * f * f]));
-                shape = shape.fill(area, tr.color.alpha(0.032));
+                area.extend(main.iter().rev().map(|p| [p[0], p[1] + (VIEW_H - p[1]) * f]));
+                shape = shape.fill(area, tr.color.alpha(0.011));
             }
         }
         // The comparison sits behind the line.

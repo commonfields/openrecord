@@ -85,9 +85,12 @@ const Completion = Schema.Struct({
   usage: Schema.optional(Schema.NullOr(Schema.Struct({
     prompt_tokens: Schema.optional(Schema.Number), completion_tokens: Schema.optional(Schema.Number), total_tokens: Schema.optional(Schema.Number),
     completion_tokens_details: Schema.optional(Schema.NullOr(Schema.Struct({ reasoning_tokens: Schema.optional(Schema.Number) }))),
+    prompt_tokens_details: Schema.optional(Schema.NullOr(Schema.Struct({ cached_tokens: Schema.optional(Schema.Number) }))),
   }))),
 })
-export interface ChatUsage { readonly model: string | null; readonly promptTokens: number | null; readonly outputTokens: number | null; readonly thoughtTokens: number | null; readonly totalTokens: number | null }
+export interface ChatUsage { readonly model: string | null; readonly promptTokens: number | null; readonly outputTokens: number | null; readonly thoughtTokens: number | null; readonly totalTokens: number | null
+  /** Prompt tokens the provider read from its cache, when it says. */
+  readonly cachedTokens: number | null }
 /** `thought` is the model's reasoning (`reasoning_content`) when the endpoint returns it. */
 export type ChatAnswer =
   | { readonly kind: "text"; readonly text: string; readonly usage: ChatUsage; readonly thought?: string }
@@ -102,7 +105,8 @@ export const chatCompletionAnswer = (raw: unknown, maxCalls = 6): ChatAnswer => 
   const choice = parsed.right.choices[0]!
   const u = parsed.right.usage
   const usage: ChatUsage = { model: parsed.right.model ?? null, promptTokens: u?.prompt_tokens ?? null, outputTokens: u?.completion_tokens ?? null,
-    thoughtTokens: u?.completion_tokens_details?.reasoning_tokens ?? null, totalTokens: u?.total_tokens ?? null }
+    thoughtTokens: u?.completion_tokens_details?.reasoning_tokens ?? null, totalTokens: u?.total_tokens ?? null,
+    cachedTokens: u?.prompt_tokens_details?.cached_tokens ?? null }
   const reasoning = (choice.message.reasoning_content ?? "").trim()
   const thought = reasoning ? { thought: reasoning.length > MAX_THOUGHT ? reasoning.slice(-MAX_THOUGHT) : reasoning } : {}
   const calls = choice.message.tool_calls ?? []

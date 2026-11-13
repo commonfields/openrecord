@@ -157,7 +157,7 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
     const sent: string[] = []
     let round = 0
     const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-      expect(String(_url)).toBe("https://generativelanguage.googleapis.com/v1beta/models/fixture-conversation-model:generateContent")
+      expect(String(_url)).toBe("https://generativelanguage.googleapis.com/v1beta/models/fixture-conversation-model:streamGenerateContent?alt=sse")
       sent.push(String(init?.body))
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: script[round++] }, finishReason: "STOP" }], modelVersion: "fixture-conversation-model", usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }))
     })

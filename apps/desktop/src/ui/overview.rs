@@ -64,35 +64,6 @@ fn section_tabs(s: &App, t: &Theme) -> El {
     shadows(track, &t.track_inner)
 }
 
-/// How many cards fit side by side in the page: its width is the window's less
-/// the sidebar and the page's own margins, and half that beside the agent pane.
-fn columns(s: &App, min: f32, most: usize) -> usize {
-    let z = s.zoom().max(0.1);
-    let window = if s.window.0 > 0.0 { s.window.0 / z } else { 1280.0 };
-    let mut avail = window - if s.sidebar_open { s.prefs.sidebar() } else { 0.0 } - 96.0;
-    if s.pane_shown() {
-        avail /= 2.0;
-    }
-    (((avail + 16.0) / (min + 16.0)).floor() as usize).clamp(1, most)
-}
-
-/// Cards in rows of `per` at equal widths; a short last row keeps the grid with blanks.
-fn rows_of(cards: Vec<El>, per: usize, min: f32) -> El {
-    let mut c = col().w_full().gap(16.0);
-    let mut it = cards.into_iter().peekable();
-    while it.peek().is_some() {
-        let mut r = row().w_full().gap(16.0).items_stretch();
-        for _ in 0..per {
-            r = r.child(match it.next() {
-                Some(card) => card,
-                None => el().w(0.0).grow(1.0).min_w(min),
-            });
-        }
-        c = c.child(r);
-    }
-    c
-}
-
 fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
     move |s: &mut App| {
         s.ask_agent(request);

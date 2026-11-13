@@ -31,6 +31,9 @@ const THOUGHT_EVENT_CHARS = 1500
 const THOUGHT_EVENTS_PER_STEP = 40
 const ACTIVITY_THOUGHT_CHARS = 1200
 const MAX_ACTIVITY = 24
+// Long enough to hold a whole internal identifier (a UUID is 36 characters) until it can be recognised.
+const ANSWER_HOLDBACK_CHARS = 48
+const ANSWER_PIECES_PER_STEP = 400
 export interface AgentReply {
   readonly title?: string
   readonly reply: string
@@ -83,7 +86,7 @@ const PACE_STEP = 8
 const PACE_NOTICE = "OpenRecord runtime notice: this request has used eight steps. Make only the reads the answer still needs, several in one step, then answer and say plainly what was not checked."
 const verificationNotice = (missing: ReadonlyArray<string>) =>
   `OpenRecord runtime check: this workflow requires ${missing.join(", ")} before a final answer. Call ${missing.length > 1 ? "them" : "it"} now, or say plainly why it could not be run.`
-type Usage = { observedModel: string | null; promptTokens: number | null; outputTokens: number | null; thoughtTokens: number | null; totalTokens: number | null }
+type Usage = { observedModel: string | null; promptTokens: number | null; outputTokens: number | null; thoughtTokens: number | null; totalTokens: number | null; cachedTokens: number | null }
 
 // How the agent talks. Friendly is the default voice; the person can ask for
 // shorter or deeper answers in Settings → Agent.
@@ -202,6 +205,22 @@ export const runConversation = (input: {
       lastThought = text; shownAt = Date.now(); shown++
       return journal.record("MODEL_THINKING", { step, text })
     })
+    // The answer as it is written, in pieces at most three times a second. Each
+    // piece is what was added to the text with internal identifiers removed and
+    // its last characters held back, so nothing shown is later taken away. If
+    // the cleaned text ever stops extending what was sent, the step stops
+    // sending pieces and the finished reply stands alone.
+    let sentText = "", textAt = 0, textPieces = 0, textOpen = true
+    const onText = (raw: string) => Effect.suspend(() => {
+      if (!textOpen || textPieces >= ANSWER_PIECES_PER_STEP || Date.now() - textAt < 300) return Effect.void
+      const clean = sanitiseAgentReply(raw.slice(0, MAX_REPLY_CHARS), internals)
+      const settled = clean.slice(0, Math.max(0, clean.length - ANSWER_HOLDBACK_CHARS))
+      if (!settled.startsWith(sentText)) { textOpen = false; return Effect.void }
+      const delta = settled.slice(sentText.length)
+      if (!delta) return Effect.void
+      sentText = settled; textAt = Date.now(); textPieces++
+      return journal.record("MODEL_ANSWERING", { step, delta })
+    })
     const stepStarted = Date.now()
     let requestStep = step, answerOnly = finalStep
     let requestTools: ReadonlyArray<ToolDeclaration> = finalStep ? [] : declare()
@@ -224,7 +243,7 @@ export const runConversation = (input: {
     yield* journal.record("MODEL_REQUESTED", { step, requestBytes, toolCount: requestTools.length, contextFits, limitBytes: limits.requestBytes, ...(narrowed ? { toolsNarrowed: narrowed } : {}) })
     if (requestBytes < beforeBytes) yield* journal.record("VERIFICATION", { action: "CONTEXT_COMPACTED", step, beforeBytes, requestBytes,
       note: "Partial evidence projections retain available identifiers and numbers; omitted details require scoped reads, not write replay." })
-    const response: ModelResponse = yield* (contextFits ? checkedModel({ contents, tools: requestTools, system, onThought }) : Effect.fail(new AgentModelError({ reason: "CONTEXT_LIMIT", detail: "LOCAL_CONTEXT_LIMIT" }))).pipe(Effect.catchAll(error => Effect.gen(function*() {
+    const response: ModelResponse = yield* (contextFits ? checkedModel({ contents, tools: requestTools, system, onThought, onText }) : Effect.fail(new AgentModelError({ reason: "CONTEXT_LIMIT", detail: "LOCAL_CONTEXT_LIMIT" }))).pipe(Effect.catchAll(error => Effect.gen(function*() {
       yield* journal.record("VERIFICATION", { passed: false, action: "MODEL_FAILED", reason: error.reason, detail: error.detail ?? null, httpStatus: error.httpStatus ?? null, step })
       if (!completedSummaries.length || !["UNAVAILABLE", "TIMEOUT", "MALFORMED", "RATE_LIMITED", "CONTEXT_LIMIT"].includes(error.reason)) return yield* Effect.fail(error)
       // Recover inference only: never replay a completed tool or external effect.
@@ -263,7 +282,7 @@ export const runConversation = (input: {
     const content = { ...candidate.content, parts: candidate.content.parts.filter(p => !p.thought) }
     const stepUsage: Usage = { observedModel: response.modelVersion ?? null, promptTokens: response.usageMetadata?.promptTokenCount ?? null,
       outputTokens: response.usageMetadata?.candidatesTokenCount ?? null, thoughtTokens: response.usageMetadata?.thoughtsTokenCount ?? null,
-      totalTokens: response.usageMetadata?.totalTokenCount ?? null }
+      totalTokens: response.usageMetadata?.totalTokenCount ?? null, cachedTokens: response.usageMetadata?.cachedContentTokenCount ?? null }
     usage.push(stepUsage)
     const functions = candidate.content.parts.flatMap(p => p.functionCall ? [p.functionCall] : [])
     yield* journal.record("MODEL_STEP", { step: requestStep, toolCalls: functions.map(f => f.name), usage: stepUsage, elapsedMs: Date.now() - stepStarted,

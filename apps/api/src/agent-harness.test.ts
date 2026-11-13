@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { Effect } from "effect"
 import { MCP_PROHIBITED } from "@openrecord/contracts"
 import { agentDeclarations, runConversation } from "./agent.js"
@@ -107,6 +107,29 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     expect(answer).toMatchObject({ reply: "No ad account is connected. Want me to research your competitors now?", outcome: "ANSWERED" })
     expect(seen).toHaveLength(2)
     expect(seen.join("")).not.toContain("OpenRecord runtime check")
+  })
+
+  it("journals the answer in pieces as it is written: identifiers already removed, the tail held back, a tool step's preamble included", async () => {
+    const { events, journal } = memoryJournal()
+    const id = "0b8f7a52-3c1d-4e9a-9f10-2d6c5b4a3e21"
+    const full = `The pricing page is the next step, and the saved idea ${id} is waiting for your decision in the inbox today.`
+    let clock = 1_000_000
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => (clock += 400))
+    const model: AgentModel = input => Effect.gen(function*() {
+      // The provider hands over the text so far, three times.
+      for (const upTo of [40, 80, full.length]) yield* Effect.ignore(input.onText?.(full.slice(0, upTo)) ?? Effect.void)
+      return text(full)
+    })
+    const answer = await Effect.runPromise(runConversation({ message: "What next?", history: [], tools: [], system: "General chat", model, journal, dispatch: () => Effect.die("No tools") }))
+    spy.mockRestore()
+    const pieces = events.filter(e => e.type === "MODEL_ANSWERING").map(e => String(e.payload["delta"]))
+    expect(pieces.length).toBeGreaterThan(1)
+    const shown = pieces.join("")
+    // What was shown is a prefix of the reply that is stored, with nothing to take back.
+    expect(answer.reply.startsWith(shown)).toBe(true)
+    expect(shown).not.toContain(id.slice(0, 13))
+    expect(answer.reply).not.toContain(id)
+    expect(shown.length).toBeLessThanOrEqual(answer.reply.length)
   })
 
   it("compacts older tool results within a run instead of failing on context size", async () => {
