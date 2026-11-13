@@ -149,7 +149,7 @@ pub fn run(s: &mut App, go: Go, tx: &mut rune::Tx) {
             s.open_answer(&id);
         }
         Go::Web(path) => {
-            let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+            let api = crate::state::api_base();
             let _ = tx.open_url(&format!("{}{path}", crate::ui::web_url(&api)));
         }
     }

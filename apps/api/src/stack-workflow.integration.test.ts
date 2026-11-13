@@ -157,7 +157,9 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
     const sent: string[] = []
     let round = 0
     const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-      expect(String(_url)).toBe("https://generativelanguage.googleapis.com/v1beta/models/fixture-conversation-model:generateContent")
+      expect(String(_url)).toBe("https://generativelanguage.googleapis.com/v1beta/models/fixture-conversation-model:streamGenerateContent?alt=sse")
+      // A new chat's title is its own request, beside the turn: it takes nothing from the script.
+      if (String(init?.body).includes("Reply with the title only")) return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ text: "Fixture workflow" }] }, finishReason: "STOP" }] }))
       sent.push(String(init?.body))
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: script[round++] }, finishReason: "STOP" }], modelVersion: "fixture-conversation-model", usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }))
     })
@@ -242,7 +244,9 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
       const action = (await proposals()).find(p => p.kind === "DRAFT_SOURCE_ACTION")!
       expect(action.status).toBe("PROPOSED")
       expect(action.payload!.text).toContain("Clarify support options")
-      expect(transport).toHaveBeenCalledTimes(18)
+      // Eighteen scripted model steps, and one title request for the new chat.
+      expect(sent).toHaveLength(18)
+      expect(transport).toHaveBeenCalledTimes(19)
     } finally { transport.mockRestore() }
 
     const acquisitionReport = await call("GET", `${acqPath}/report`, a.session)

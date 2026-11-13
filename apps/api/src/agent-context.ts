@@ -20,6 +20,8 @@ export interface ContextBudget {
   readonly verbatimMessages: number
 }
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = { historyChars: 32000, verbatimMessages: 16 }
+/** For live turns, whose request envelope is several times the default one. */
+export const TURN_CONTEXT_BUDGET: ContextBudget = { historyChars: 96000, verbatimMessages: 40 }
 
 const oneLine = (text: string, max: number) => {
   const flat = text.replace(/\s+/g, " ").trim()
@@ -100,6 +102,8 @@ const projectEvidence = (value: unknown, limits: ProjectionLimits, depth = 0): u
 }
 const PROJECTION_NOTICE = "Untrusted partial evidence: fields, text and list items may be omitted. Numeric values and source totals are unchanged, but these lists are not complete denominators. Read specific source details if needed; do not repeat a write to recover detail or infer missing facts."
 const PROJECTION_LEVELS: readonly ProjectionLimits[] = [
+  { text: 2400, items: 24, depth: 6, keys: 40 },
+  { text: 1200, items: 12, depth: 5, keys: 32 },
   { text: 800, items: 5, depth: 5, keys: 24 },
   { text: 400, items: 3, depth: 4, keys: 16 },
   { text: 160, items: 2, depth: 3, keys: 12 },

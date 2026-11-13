@@ -59,7 +59,7 @@ impl Page {
     pub fn label(self) -> &'static str {
         match self {
             Page::Inbox => "Inbox",
-            Page::Overview => "Overview",
+            Page::Overview => "Analytics",
             Page::Campaigns => "Campaigns",
             Page::AiAnswers => "AI answers",
             Page::Channels => "Channels",
@@ -422,6 +422,11 @@ pub struct App {
     pub password: TextEdit,
     pub signin_error: Option<String>,
     pub signing_in: bool,
+    /// The key number each source's wide chart shows on Analytics, by the source's key.
+    pub metric_pick: std::collections::HashMap<String, usize>,
+    /// The sign-in card's server field, and whether it is shown.
+    pub server: TextEdit,
+    pub server_open: bool,
     pub account_email: Option<String>,
 
     pub businesses: Vec<Business>,
@@ -541,6 +546,8 @@ pub struct App {
     /// and whether the next loaded conversation brings one.
     pub reveal: Option<(String, std::time::Instant)>,
     pub reveal_next: bool,
+    /// The answer a finished turn streamed, kept on screen until the stored reply loads in its place.
+    pub pending_answer: Option<String>,
     /// The model picker's search, while it is open.
     pub model_query: Option<TextEdit>,
     /// Finished replies whose work log is open, and copied messages.
@@ -604,9 +611,21 @@ pub struct App {
 pub const API_ENV: &str = "OPENRECORD_API_URL";
 pub const DEFAULT_API: &str = "http://localhost:3001";
 
+/// The server chosen at sign-in, kept in the preferences.
+static SERVER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The API this app talks to: `OPENRECORD_API_URL` when set (development),
+/// else the server chosen at sign-in, else the one on this Mac.
+pub fn api_base() -> String {
+    std::env::var(API_ENV).ok().or_else(|| SERVER.lock().ok().and_then(|s| s.clone())).unwrap_or_else(|| DEFAULT_API.to_string())
+}
+
 impl App {
     pub fn new() -> App {
-        let base = std::env::var(API_ENV).unwrap_or_else(|_| DEFAULT_API.to_string());
+        if let Ok(mut server) = SERVER.lock() {
+            *server = crate::prefs::Prefs::load().server;
+        }
+        let base = api_base();
         // Headless runs (snapshots, scripted scenes) draw fixture data and never touch the network.
         let live = rune::tooling::headless_run().is_none();
         App::with_net(Net::new(live.then_some(base)))
@@ -625,6 +644,9 @@ impl App {
             password: TextEdit::new("").secure(),
             signin_error: None,
             signing_in: false,
+            metric_pick: std::collections::HashMap::new(),
+            server: TextEdit::new(""),
+            server_open: false,
             account_email: remembered_email(),
             businesses: Vec::new(),
             active: None,
@@ -677,6 +699,7 @@ impl App {
             model_query: None,
             reveal: None,
             reveal_next: false,
+            pending_answer: None,
             reasoning: None,
             general: false,
             proposals: Load::Idle,
@@ -874,11 +897,36 @@ impl App {
             self.signin_error = Some("Enter your email and password.".into());
             return;
         }
+        // A server typed on the sign-in card replaces the one in use before the sign-in is sent.
+        if self.server_open {
+            match crate::api::server_url(&self.server.text) {
+                Ok(base) if base != api_base() => {
+                    self.prefs.server = Some(base.clone());
+                    self.prefs.save();
+                    if let Ok(mut server) = SERVER.lock() {
+                        *server = Some(base.clone());
+                    }
+                    self.net.rebase(api_base());
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    self.signin_error = Some(e);
+                    return;
+                }
+            }
+            self.server_open = false;
+        }
         self.signin_error = None;
         self.signing_in = true;
         remember_email(&email);
         self.account_email = Some(email.clone());
         self.net.signin(email, password);
+    }
+
+    /// Shows the server field on the sign-in card, filled with the server in use.
+    pub fn edit_server(&mut self) {
+        self.server.replace_text(&api_base());
+        self.server_open = true;
     }
 
     pub fn fill_demo(&mut self) {
@@ -1573,6 +1621,13 @@ impl App {
         self.open_session(id);
     }
 
+    /// Home: the agent with a fresh chat for the business on screen, and what waits on the person.
+    pub fn go_home(&mut self) {
+        self.menu = None;
+        self.new_chat();
+        self.net.decisions();
+    }
+
     pub fn new_chat(&mut self) {
         self.enter_agent();
         self.general = false;
@@ -1782,13 +1837,6 @@ impl App {
         let text = self.composer.text.trim().to_string();
         if text.is_empty() || self.model_unavailable() {
             return;
-        }
-        // "What's next?" and the like run their command, as on the web.
-        if !self.general && self.attachments.is_empty() {
-            if let Some(c) = crate::chat::phrase_command(&text) {
-                self.run_command(c, tx);
-                return;
-            }
         }
         self.composer.clear();
         self.command_index = 0;
@@ -2378,6 +2426,7 @@ impl App {
                         if std::mem::take(&mut self.settle_next) {
                             tx.settle();
                         }
+                        self.pending_answer = None;
                         if std::mem::take(&mut self.reveal_next) {
                             if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
                                 self.reveal = Some((m.text.clone(), std::time::Instant::now()));
@@ -2473,12 +2522,18 @@ impl App {
                 }
                 match self.failed(result) {
                     Ok(()) => {
+                        // An answer that was shown as it was written stays until the stored
+                        // reply replaces it, and is not replayed word by word.
+                        self.pending_answer = match &self.turn {
+                            Turn::Working { progress, .. } if !progress.answer.is_empty() => Some(progress.answer.clone()),
+                            _ => None,
+                        };
                         self.turn = Turn::Idle;
                         if !business.is_empty() {
                             self.net.proposals(business.clone());
                         }
-                        // The reply is revealed word by word once it loads.
-                        self.reveal_next = rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
+                        // A reply that arrives all at once is revealed word by word once it loads.
+                        self.reveal_next = self.pending_answer.is_none() && rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
                         self.chat_id = Some(conversation.clone());
                         self.net.conversation(business, conversation);
                     }
@@ -2677,7 +2732,7 @@ impl App {
             Reply::Shares { conversation, created, list } => {
                 let list = self.failed(list);
                 let created = created.map(|r| self.failed(r));
-                let api = std::env::var(API_ENV).unwrap_or_else(|_| DEFAULT_API.into());
+                let api = api_base();
                 if let Some(sh) = self.share.as_mut().filter(|sh| sh.conversation == conversation) {
                     sh.busy = false;
                     match created {

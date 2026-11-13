@@ -20,7 +20,8 @@ rune = { git = "https://github.com/anomalyco/rune", rev = "1ea05bc7aed6711212e83
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "1ea05bc7aed6711212e838cbc63b6aca9d97f6c3", features = ["markdown", "mermaid"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { version = "2", default-features = false, features = ["json"] }
+# TLS (rustls, with the bundled web roots) so the app can sign in to a hosted server, not only one on this Mac.
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 
 [profile.dev.package."*"]
 opt-level = 2

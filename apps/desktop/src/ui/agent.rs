@@ -54,6 +54,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     match &s.turn {
         Turn::Working { progress, started, stopping, .. } => {
             list = list.child(live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping));
+            if !progress.answer.is_empty() {
+                list = list.child(live_reply(t, k, &progress.answer));
+            }
         }
         Turn::Failed { error, message } => {
             // The web's failed note: right-aligned, small, with Retry when there is a message to resend.
@@ -70,7 +73,11 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             }
             list = list.child(note);
         }
-        Turn::Idle => {}
+        Turn::Idle => {
+            if let Some(text) = &s.pending_answer {
+                list = list.child(live_reply(t, k, text));
+            }
+        }
     }
     if let Some(w) = work_pane(s, t, &messages) {
         list = list.child(w.pt(12.0));
@@ -85,7 +92,10 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(16.0);
 
-    let main = col().key("agent").w_full().h_full().min_h(0.0).child(transcript).child(composer(s, t, &business));
+    // A chat with nothing in it yet opens on Home: what waits on the person and a few ways to begin.
+    let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
+    let body = if fresh { start(s, t, &business) } else { transcript };
+    let main = col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business));
     match &s.helper {
         // A helper opened beside the conversation takes the right half.
         // Its share is the web's 30 to 70 percent, dragged from its left edge.
@@ -98,6 +108,134 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .child(helper_pane(s, t, k, id, load)),
         None => main,
     }
+}
+
+/// Ways to begin, each a request the agent can act on at once: its name, what
+/// the agent does with it, and the message it sends.
+const STARTERS: [(&rune::Icon, &str, &str, &str); 4] = [
+    (&icons::TARGET, "What should we focus on this week?", "Reads your goal, open work and latest numbers, then proposes the next step.", "What should we focus on this week? Read our goal, open work and latest numbers, and propose the most useful next step for me to approve."),
+    (&icons::GLOBE, "Audit my website", "Reads your pages and prepares the first fix for you to approve.", "Audit our website and prepare the most valuable fix for me to approve."),
+    (&icons::MESSAGE_CIRCLE_QUESTION, "What do AI assistants say about us?", "Checks their answers against your facts and names what is wrong.", "What do AI assistants say about us? Check their answers against our approved facts and tell me what is wrong and what to fix first."),
+    (&icons::CHART_LINE, "How are we doing?", "Progress against your goal, what changed and what is still unknown.", "How are we doing against our goal? Show what changed, what worked and what is still unknown."),
+];
+
+/// Home: the first thing a business's agent shows. What waits on the person
+/// comes first, since a decision is the one thing only they can do; then ways
+/// to start that send in one press. A general chat has no business to brief on.
+fn start(s: &App, t: &Theme, _business: &str) -> El {
+    let column = s.prefs.chat_width.max().min(760.0);
+    let mut c = col().key("start").w_full().max_w(column).px(24.0).gap(28.0);
+    if s.general {
+        return col().key("start-scroll").w_full().grow(1.0).min_h(0.0).center().child(
+            c.items_center().gap(6.0).child(label("General chat", type_::TITLE, t.foreground).role("heading")).child(
+                label("Ask anything. This chat reads no business's records; start one from a business to work on it.", type_::SM, t.muted_foreground).wrap(),
+            ),
+        );
+    }
+    let waiting = s.inbox();
+    let now = crate::format::now();
+    let status = match waiting.len() {
+        0 => "Nothing is waiting on you. Tell the agent what you want, or pick a place to start.".to_string(),
+        _ => String::new(),
+    };
+    if waiting.is_empty() {
+        c = c.child(label(status, type_::SM, t.muted_foreground).wrap());
+    }
+    if !waiting.is_empty() {
+        let mut list = col().w_full().padding(6.0).gap(2.0);
+        for d in waiting.iter().take(3) {
+            let key = d.key.clone();
+            list = list.child(
+                row()
+                    .key(format!("start-decision-{}", d.key))
+                    .w_full()
+                    .px(12.0)
+                    .py(10.0)
+                    .gap(12.0)
+                    .radius(8.0)
+                    .center_y()
+                    .role("button")
+                    .label(d.title.clone())
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .motion(CONTROL)
+                    .on_press(move |s: &mut App| {
+                        s.show_page(Page::Inbox);
+                        s.select_decision(&key);
+                    })
+                    .child(el().size(7.0, 7.0).radius(4.0).fill(t.partial))
+                    .child(
+                        col()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .gap(1.0)
+                            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).truncate())
+                            .child(label(format!("{}, {}", d.label, crate::format::relative(d.created_at.as_deref(), now)), type_::XS, t.muted_foreground).truncate()),
+                    )
+                    .child(label("Review", type_::XS_MEDIUM, t.muted_foreground))
+                    .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground)),
+            );
+        }
+        let mut block = col().key("start-waiting").w_full().gap(8.0).child(
+            row()
+                .w_full()
+                .center_y()
+                .child(label("Needs your decision", type_::XS_MEDIUM, t.muted_foreground).grow(1.0))
+                .children((waiting.len() > 3).then(|| {
+                    label(format!("See all {}", waiting.len()), type_::XS_MEDIUM, t.foreground)
+                        .key("start-inbox")
+                        .role("link")
+                        .focusable(true)
+                        .cursor(Cursor::Pointer)
+                        .on_press(|s: &mut App| s.show_page(Page::Inbox))
+                })),
+        );
+        block = block.child(crate::ui::widgets::card(t).w_full().child(list));
+        c = c.child(block);
+    }
+    let mut grid = col().w_full().gap(10.0);
+    for pair in STARTERS.chunks(2) {
+        let mut r = row().w_full().gap(10.0).items_stretch();
+        for (icon, name, what, prompt) in pair {
+            let prompt = *prompt;
+            r = r.child(
+                crate::ui::widgets::card(t)
+                    .key(format!("starter-{}", chat::slug(name)))
+                    .w(0.0)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .px(14.0)
+                    .py(12.0)
+                    .gap(4.0)
+                    .role("button")
+                    .label(name.to_string())
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .motion(CONTROL)
+                    .on_press_tx(move |s: &mut App, tx| {
+                        s.composer.replace_text(prompt);
+                        s.send_message(tx);
+                    })
+                    .child(row().w_full().gap(8.0).center_y().child(ico(icon, 15.0, t.primary_ink)).child(label(name.to_string(), type_::SM_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0)))
+                    .child(label(what.to_string(), type_::XS, t.muted_foreground).wrap()),
+            );
+        }
+        grid = grid.child(r);
+    }
+    c = c.child(col().key("start-ways").w_full().gap(8.0).child(label("Start with", type_::XS_MEDIUM, t.muted_foreground)).child(grid));
+    // Sits a little above the middle of a tall window, and scrolls in a short one.
+    let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
+    let blocks = if waiting.is_empty() { 300.0 } else { 300.0 + 70.0 + 62.0 * waiting.len().min(3) as f32 };
+    let top = ((height - 48.0 - 150.0 - blocks) * 0.42).max(32.0);
+    col()
+        .key("start-scroll")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .child(col().w_full().items_center().pt(top).pb(32.0).child(c))
+        .scroll(ScrollSpec { stick_bottom: false })
 }
 
 /// What the agent produced in this chat (`WorkPane`): the proposals its replies
@@ -711,6 +849,11 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
     }
     now = now.child(label(now_text, if tool.is_some() { type_::SM_13 } else { type_::SM_13.italic() }, t.muted_foreground).truncate().grow(1.0).min_w(0.0));
     c.child(headline).child(now)
+}
+
+/// The answer while it is being written, drawn as it will be once it is stored.
+fn live_reply(t: &Theme, k: &Kit, text: &str) -> El {
+    col().key("live-reply").w_full().pt(4.0).child(Markdown::new(chat::live_answer(text).to_string()).style(prose(t, k)).streaming(true).build(k).w_full())
 }
 
 /// At the top of a helper session: what it is for and where it came from.

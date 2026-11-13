@@ -11,7 +11,7 @@ export class AgentConversationRefused extends Data.TaggedError("AgentConversatio
   readonly reason: "NOT_FOUND" | "BUSY" | "STALE"
 }> {}
 const Citation = Schema.Struct({ kind: Schema.String, id: Schema.String, text: Schema.String })
-const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promptTokens: Schema.NullOr(Schema.Number), outputTokens: Schema.NullOr(Schema.Number), thoughtTokens: Schema.NullOr(Schema.Number), totalTokens: Schema.NullOr(Schema.Number) })
+const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promptTokens: Schema.NullOr(Schema.Number), outputTokens: Schema.NullOr(Schema.Number), thoughtTokens: Schema.NullOr(Schema.Number), cachedTokens: Schema.optional(Schema.NullOr(Schema.Number)), totalTokens: Schema.NullOr(Schema.Number) })
 // The run that produced an agent message: its outcome, or how it stopped.
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })

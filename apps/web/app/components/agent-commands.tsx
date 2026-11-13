@@ -25,21 +25,12 @@ export const COMMANDS: ReadonlyArray<{ readonly key: AgentCommand; readonly desc
   { key: "campaign-review", description: "Review available results and the next experiment", icon: <FileBarChartIcon /> },
 ]
 
-// Exact phrasings only: anything looser goes to the conversational agent, so a
-// command never fires on a sentence that merely contains the word.
-const PHRASES: ReadonlyArray<readonly [AgentCommand, RegExp]> = [
-  ["setup", /^(let'?s )?(set ?up|onboard)( (my|this|the) (business|company|workspace))?[.!]?$/i],
-  ["status", /^(status|what'?s the status|where are we|show (me )?(the )?status)\??$/i],
-  ["plan", /^(plan|what should (i|we) do next|what'?s next|next steps?)\??$/i],
-  ["report", /^(report|show (me )?(the )?(report|results)|how are we doing)\??$/i],
-]
-
-/** A typed application command, or null when the text is a message for the agent. */
+/** A typed slash command, or null when the text is a message for the agent.
+ * Only the slash is a command: a sentence, however it is worded, goes to the
+ * agent, which decides what it means. */
 export const parseCommand = (text: string): AgentCommand | null => {
-  const t = text.trim()
-  const slash = /^\/([\w-]+)\s*$/.exec(t)
-  if (slash) return COMMANDS.find(c => c.key === slash[1]!.toLowerCase())?.key ?? null
-  return PHRASES.find(([, re]) => re.test(t))?.[0] ?? null
+  const slash = /^\/([\w-]+)\s*$/.exec(text.trim())
+  return slash ? COMMANDS.find(c => c.key === slash[1]!.toLowerCase())?.key ?? null : null
 }
 
 /** Commands matching what has been typed after "/", for the composer menu. */

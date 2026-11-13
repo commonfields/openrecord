@@ -274,6 +274,7 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
     ]
     let round = 0
     const transport = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (String(init?.body).includes("Reply with the title only")) return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ text: "Review buyer question evidence" }] }, finishReason: "STOP" }] }))
       const body = JSON.parse(String(init?.body)) as { contents: Array<{ parts: Array<{ text?: string }> }> }
       if (round === 2) expect(JSON.stringify(body.contents)).toContain("One stored buyer question")
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: responses[round++] }, finishReason: "STOP" }], modelVersion: "fixture-model", usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }))
@@ -297,7 +298,8 @@ suite("agent proposal-gated writes (TEST fixtures)", () => {
         }
       }
       expect(revision).toBe(3)
-      expect(transport).toHaveBeenCalledTimes(6)
+      expect(round).toBe(6)
+      expect(transport).toHaveBeenCalledTimes(7)
       expect(await checksOf(f.business)).toBe(0)
       const saved = await (await call("GET", `/api/businesses/${f.business}/agent/conversation`, f.session)).json() as { conversation: { messages: Array<{ role: string; text: string; citations?: Array<{ id: string }> }> } }
       expect(saved.conversation.messages).toHaveLength(6)

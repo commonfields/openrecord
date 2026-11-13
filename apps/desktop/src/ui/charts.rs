@@ -118,6 +118,27 @@ fn nice_max(max: f64) -> f64 {
     step * 2.0
 }
 
+/// The value axis for a line: from zero when the values sit near it, otherwise
+/// a round range around them, so a metric that moves between 90 and 140 shows
+/// its shape instead of a flat line near the top. Two equal steps, three ticks.
+fn nice_range(min: f64, max: f64) -> (f64, f64) {
+    if min <= 0.0 || max <= 0.0 || min < max * 0.55 {
+        return (0.0, nice_max(max));
+    }
+    let raw = ((max - min) * 1.15 / 2.0).max(max.abs() * 0.01).max(1e-9);
+    let mut mag = 10f64.powf(raw.log10().floor());
+    loop {
+        for m in [1.0, 2.0, 2.5, 5.0, 10.0] {
+            let step = m * mag;
+            let lo = (min / step).floor() * step;
+            if step >= raw && lo + 2.0 * step >= max {
+                return (lo.max(0.0), lo.max(0.0) + 2.0 * step);
+            }
+        }
+        mag *= 10.0;
+    }
+}
+
 /// Monotone cubic interpolation (d3's `curveMonotoneX`), sampled to a polyline.
 fn monotone(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
     let n = pts.len();
@@ -186,15 +207,15 @@ fn hovered(s: &App, key: &str) -> Option<usize> {
 pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
     let n = tr.values.len();
     let hover = hovered(s, tr.key);
-    let all = tr.values.iter().chain(tr.compare.iter().flat_map(|c| c.0.iter())).flatten().copied();
-    let max = if tr.percent { 100.0 } else { nice_max(all.fold(0.0, f64::max)) };
+    let all: Vec<f64> = tr.values.iter().chain(tr.compare.iter().flat_map(|c| c.0.iter())).flatten().copied().collect();
+    let (lo, max) = if tr.percent { (0.0, 100.0) } else { nice_range(all.iter().copied().fold(f64::INFINITY, f64::min), all.iter().copied().fold(0.0, f64::max)) };
     let x = |i: usize| if n <= 1 { 0.5 } else { i as f32 / (n - 1) as f32 };
-    let y = |v: f64| VIEW_H - (v / max) as f32 * (VIEW_H - TOP);
+    let y = |v: f64| VIEW_H - (((v - lo) / (max - lo).max(1e-9)) as f32).clamp(0.0, 1.0) * (VIEW_H - TOP);
     let line_of = |vals: &[Option<f64>]| -> Vec<[f32; 2]> { vals.iter().enumerate().filter_map(|(i, v)| v.map(|v| [x(i), y(v)])).collect() };
 
     let mut shape = Shape::new();
     for k in 0..3 {
-        let gy = y(max * k as f64 / 2.0);
+        let gy = y(lo + (max - lo) * k as f64 / 2.0);
         shape = shape.line([0.0, gy], [1.0, gy], 1.0, LineCap::Butt, t.chart.grid);
     }
     if let Some(i) = hover {
@@ -213,26 +234,36 @@ pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
             shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 3.5, LineCap::Round, tr.color.alpha(0.28));
         }
     }
-    let main = if smooth { monotone(&line_of(tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]))) } else { line_of(tr.values) };
+    // The line is always a smooth curve through its days.
+    let main = monotone(&line_of(if smooth { tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]) } else { tr.values }));
     let points = if smooth { tr.compare.as_ref().map(|c| c.0.iter().flatten().count()).unwrap_or(0) } else { tr.values.iter().flatten().count() };
     if main.len() >= 2 {
         // A soft wash under the line only when there is enough of it to read as a trend.
+        // It fades from the line down to the axis: bands that overlap most just under the line.
         if points >= 5 {
-            let mut area = vec![[main[0][0], VIEW_H]];
-            area.extend(main.iter().copied());
-            area.push([main[main.len() - 1][0], VIEW_H]);
-            shape = shape.fill(area, tr.color.alpha(0.045));
+            const BANDS: usize = 18;
+            for k in 1..=BANDS {
+                let f = k as f32 / BANDS as f32;
+                let mut area: Vec<[f32; 2]> = main.clone();
+                area.extend(main.iter().rev().map(|p| [p[0], p[1] + (VIEW_H - p[1]) * f]));
+                shape = shape.fill(area, tr.color.alpha(0.011));
+            }
         }
-        shape = shape.stroke(main.clone(), 1.6, tr.color);
+        // The comparison sits behind the line.
+        if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !smooth) {
+            let pts = dots(&monotone(&line_of(vals)), tr.width_hint, tr.height, 4.0);
+            for pair in pts.chunks(2).filter(|c| c.len() == 2) {
+                shape = shape.stroke_with(vec![pair[0], pair[1]], false, 1.25, LineCap::Round, t.chart.compare);
+            }
+        }
+        shape = shape.stroke_with(main.clone(), false, 2.0, LineCap::Round, tr.color);
+        // The latest day, marked: where the line stands now.
+        if let Some(p) = main.last().filter(|_| hover.is_none()) {
+            let q = [p[0] - 0.0001, p[1]];
+            shape = shape.stroke_with(vec![q, *p], false, 10.0, LineCap::Round, tr.color.alpha(0.22)).stroke_with(vec![q, *p], false, 5.0, LineCap::Round, tr.color);
+        }
     } else if let Some(p) = main.first() {
         shape = shape.stroke_with(vec![*p, [p[0] + 0.0001, p[1]]], false, 5.0, LineCap::Round, tr.color);
-    }
-    // The comparison (the period before, or an average) as a dashed grey line.
-    if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !smooth) {
-        let pts = dots(&line_of(vals), tr.width_hint, tr.height, 3.0);
-        for pair in pts.chunks(2).filter(|c| c.len() == 2) {
-            shape = shape.stroke_with(vec![pair[0], pair[1]], false, 1.5, LineCap::Butt, t.chart.compare);
-        }
     }
     if let Some(v) = hover.and_then(|i| tr.values.get(i).copied().flatten().map(|v| (i, v))) {
         let p = [x(v.0), y(v.1)];
@@ -262,7 +293,7 @@ pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
     let plot = col().grow(1.0).min_w(0.0).h(tr.height).child(canvas(shape).w_full().h_full()).child(hits);
     let mut scale = col().w(AXIS_W).h(tr.height);
     for k in 0..3 {
-        let v = max * k as f64 / 2.0;
+        let v = lo + (max - lo) * k as f64 / 2.0;
         let top = y(v) / VIEW_H * tr.height - 7.0;
         scale = scale.child(label(tr.format(v), type_::AXIS, t.chart.axis).absolute(8.0, top.max(0.0)));
     }
@@ -347,6 +378,17 @@ mod tests {
     fn trailing_average_skips_missing_days() {
         let v = [Some(2.0), None, Some(4.0), Some(6.0)];
         assert_eq!(trailing(&v, 3), vec![Some(2.0), Some(2.0), Some(3.0), Some(5.0)]);
+    }
+
+    #[test]
+    fn a_line_far_from_zero_gets_a_round_range_around_it() {
+        assert_eq!(nice_range(92.0, 138.0), (50.0, 150.0));
+        assert_eq!(nice_range(10.2, 12.6), (10.0, 14.0));
+        // Near zero, or spanning most of the way to it, the axis starts at zero.
+        assert_eq!(nice_range(3.0, 41.0), (0.0, 50.0));
+        assert_eq!(nice_range(0.0, 7.0), (0.0, 10.0));
+        let (lo, hi) = nice_range(1180.0, 1320.0);
+        assert!(lo <= 1180.0 && hi >= 1320.0 && lo > 0.0);
     }
 
     #[test]

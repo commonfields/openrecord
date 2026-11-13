@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import { HttpApp } from "@effect/platform"
-import { Effect, Layer, Redacted } from "effect"
+import { Effect, Layer, Redacted, Stream } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import { SqlClient } from "@effect/sql"
 import { AuthRepositoryLive } from "@openrecord/db"
@@ -10,6 +10,7 @@ import pg from "pg"
 import { agentRequestApi } from "./agent-request-routes.js"
 import { cancelAgentRequest, claimAgentRequest, enqueueAgentRequest, executeAgentRequest, reconcileRequestJobs } from "./agent-request-queue.js"
 import { requireSession } from "./router.js"
+import { streamRunProgress } from "./agent-run.js"
 import type { Responder } from "./agent-conversations.js"
 import { withAgentWorkerRuntime } from "./agent-worker-runtime.js"
 
@@ -58,6 +59,26 @@ suite("durable request submission and worker (no live model)",() => {
     expect((await call(`/api/agent/requests/${input.requestId}/cancel`,other.cookie,{})).status).toBe(404)
     expect((await call(`/api/agent/requests/${input.requestId}/cancel`,f.cookie,{})).status).toBe(200)
     expect(await run(claimAgentRequest)).toBeNull()
+  })
+  it("streams a request's run as events and ends with how the request finished, only for the person who sent it",async () => {
+    const f=await fixture(),other=await fixture(),input=body(f.conversationId)
+    await run(enqueueAgentRequest(f,input))
+    const collect=(scope:{accountId:string;userId:string},after=-1) => run(Stream.runCollect(streamRunProgress(scope,input.requestId,after).pipe(Stream.decodeText())).pipe(Effect.map(chunks => [...chunks].join(""))))
+    // Someone else's request reads as not found, at once.
+    expect(await collect(other)).toBe('event: done\ndata: {"status":"NOT_FOUND","failureReason":null}\n\n')
+    const stream=collect(f)
+    // The worker answers while the stream is held open.
+    const job=await run(claimAgentRequest)
+    await run(executeAgentRequest(job!,reply))
+    const text=await stream
+    const frames=text.split("\n\n").filter(Boolean).map(block => ({event:/^event: (\w+)/.exec(block)![1],data:JSON.parse(/\ndata: (.*)$/s.exec(block)![1]!) as Record<string,unknown>}))
+    expect(frames.at(-1)).toEqual({event:"done",data:{status:"COMPLETED",failureReason:null}})
+    const events=frames.filter(x => x.event === "run")
+    expect(events.map(x => x.data["type"])).toEqual(expect.arrayContaining(["RUN_STARTED","RUN_FINISHED"]))
+    const seqs=events.map(x => Number(x.data["seq"]))
+    expect(seqs).toEqual([...seqs].sort((a,b) => a-b))
+    // A client that reconnects after the last event it saw gets only the ending.
+    expect(await collect(f,seqs.at(-1)!)).toBe('event: done\ndata: {"status":"COMPLETED","failureReason":null}\n\n')
   })
   it("executes once independently of the submit connection and persists the reply",async () => {
     const f=await fixture(),input=body(f.conversationId)

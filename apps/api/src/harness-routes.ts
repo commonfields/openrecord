@@ -1,5 +1,6 @@
-import { HttpIncomingMessage, HttpRouter, HttpServerRequest } from "@effect/platform"
-import { Effect, Option, Schema } from "effect"
+import { HttpIncomingMessage, HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
+import { SqlClient } from "@effect/sql"
+import { Effect, Option, Schema, Stream } from "effect"
 import { BusinessRepository } from "@openrecord/db"
 import {
   HarnessActivation,
@@ -16,7 +17,7 @@ import { configuredAgentModel } from "./agent-model.js"
 import { ensureLocalBridge, localBridgeEnabled } from "./local-bridge.js"
 import { AgentConversationRefused, createConversation, deleteConversation, loadConversation, sendConversation } from "./agent-conversations.js"
 import { AgentModelError } from "./agent-model.js"
-import { readRunProgress } from "./agent-run.js"
+import { readRunProgress, streamRunProgress } from "./agent-run.js"
 import { decode, json, operatorSessionFor, readJson as readRequestJson, type WithSession } from "./record-routes.js"
 import {
   HarnessRefused,
@@ -105,6 +106,17 @@ export const harnessApi = (withSession: WithSession) => {
       const requestId = params.get("requestId") ?? "", after = Number(params.get("after") ?? "-1")
       if (decodeRouteId(requestId)._tag !== "Right" || !Number.isInteger(after) || after < -1) return yield* invalid()
       return yield* json(200, yield* readRunProgress(session, requestId, after), { "cache-control": "no-store" })
+    })).pipe(Effect.catchAll(failure))),
+    // The same progress as one held connection of server-sent events, ending with how the request finished.
+    HttpRouter.get("/api/agent/runs/stream", operator(session => Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const params = new URL(req.url, "http://localhost").searchParams
+      const requestId = params.get("requestId") ?? "", after = Number(params.get("after") ?? "-1")
+      if (decodeRouteId(requestId)._tag !== "Right" || !Number.isInteger(after) || after < -1) return yield* invalid()
+      const context = yield* Effect.context<SqlClient.SqlClient>()
+      // A failure mid-stream ends the stream; the client reconnects from the last sequence it saw.
+      const body = streamRunProgress(session, requestId, after).pipe(Stream.provideContext(context), Stream.catchAll(() => Stream.empty))
+      return HttpServerResponse.stream(body, { contentType: "text/event-stream; charset=utf-8", headers: { "cache-control": "no-store, no-transform", "x-accel-buffering": "no" } })
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.post("/api/agent/cancel", operator(session => Effect.gen(function*() {
       const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)

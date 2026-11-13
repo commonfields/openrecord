@@ -12,18 +12,16 @@ use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleto
 
 pub fn view(s: &App, t: &Theme) -> El {
     let sec = s.section;
-    let title = if sec == Section::Summary { s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "Overview".into()) } else { sec.label().to_string() };
-    let mut head = row().w_full().gap(16.0).items_start().child(
-        col()
-            .grow(1.0)
-            .min_w(0.0)
-            .gap(4.0)
-            .child(label(title, type_::TITLE, t.foreground).role("heading"))
-            .child(label(sec.description(), type_::SM, t.muted_foreground).wrap()),
-    );
-    // The Summary keeps its range beside its chart, as Kobbe's overview does.
-    if sec.has_period() && sec != Section::Summary {
-        head = head.child(periods(s, t));
+    // One page, its sections as tabs across the top with the date range beside
+    // them, so moving between them never changes where the controls are.
+    let head = col()
+        .w_full()
+        .gap(4.0)
+        .child(label("Analytics", type_::TITLE, t.foreground).role("heading"))
+        .child(label(sec.description(), type_::SM, t.muted_foreground).wrap());
+    let mut bar = row().key("analytics-bar").w_full().gap(12.0).center_y().flex_wrap().child(section_tabs(s, t)).child(el().grow(1.0));
+    if sec.has_period() {
+        bar = bar.child(periods(s, t));
     }
     let body = match &s.insights {
         Load::Ready(i) => match sec {
@@ -38,7 +36,32 @@ pub fn view(s: &App, t: &Theme) -> El {
         Load::Failed(e) => failure(t, "insights-failed", e, |s: &mut App| s.refresh()),
         _ => col().w_full().gap(16.0).child(skeleton(t, 1)).child(skeleton(t, 2)),
     };
-    col().key(format!("overview-{}", sec.key())).w_full().gap(24.0).child(head).child(body)
+    col().key(format!("overview-{}", sec.key())).w_full().gap(20.0).child(head).child(bar).child(body)
+}
+
+/// The sections as a segmented control: the chosen one raised on the track.
+fn section_tabs(s: &App, t: &Theme) -> El {
+    let mut track = row().key("section-tabs").h(32.0).padding(2.0).gap(2.0).radius(8.0).fill(t.sidebar).role("tablist").label("Analytics section");
+    for sec in Section::ALL {
+        let on = s.section == sec;
+        let mut tab = row()
+            .key(format!("section-{}", sec.key()))
+            .h_full()
+            .px(12.0)
+            .radius(6.0)
+            .center()
+            .role("tab")
+            .label(sec.label())
+            .checked(on)
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .motion(CONTROL)
+            .on_press(move |s: &mut App| s.show_section(sec))
+            .child(label(sec.label(), type_::XS_MEDIUM.lh(16.0), if on { t.foreground } else { t.muted_foreground }));
+        tab = if on { shadows(tab.fill(t.control), &t.control_shadow) } else { tab.hover(t.hover_tint) };
+        track = track.child(tab);
+    }
+    shadows(track, &t.track_inner)
 }
 
 fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
@@ -250,13 +273,12 @@ fn bar_list(t: &Theme, key: &str, rows: &[(String, f64, String)]) -> El {
 // ---- Summary ----------------------------------------------------------------
 
 fn summary(s: &App, t: &Theme, i: &Insights) -> El {
-    // Kobbe's overview: the key numbers in one frameless strip, the goal's tile
-    // raised because it drives the chart under it, then the chart on the page
-    // itself, then the panels.
+    // The key numbers in one strip, the goal's chart across the page, then
+    // what waits on the person beside the work and the questions.
     let mut c = col().w_full().gap(16.0);
     c = c.child(health(s, t, i));
-    c = c.child(card(t).key("goal-card").h(420.0).px(24.0).py(20.0).clip_rounded(12.0).child(goal_card(s, t, i)));
-    let mut boards = Vec::new();
+    c = c.child(card(t).key("goal-card").w_full().h(420.0).px(24.0).py(20.0).clip_rounded(12.0).child(goal_card(s, t, i)));
+    let mut boards = vec![needs_you(s, t, 340.0)];
     if !i.initiatives.is_empty() {
         boards.push(initiatives(t, i));
     }
@@ -273,6 +295,50 @@ fn summary(s: &App, t: &Theme, i: &Insights) -> El {
     c
 }
 
+/// The decisions waiting on the person, each opening in the inbox.
+fn needs_you(s: &App, t: &Theme, height: f32) -> El {
+    let items = s.inbox();
+    let now = format::now();
+    if items.is_empty() {
+        let body = col().w_full().gap(12.0).child(note(t, "Nothing is waiting on you. Work the agent prepares for your approval shows up here.")).child(
+            row().child(button(t, "ask-next", "Ask what to do next", Variant::Outline).on_press(ask(
+                "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.",
+            ))),
+        );
+        return board(t, "needs-you", "Needs you", Some("Decisions waiting on you".into()), height, body);
+    }
+    let mut list = col().w_full().gap(2.0);
+    for d in items.iter().take(8) {
+        let key = d.key.clone();
+        list = list.child(
+            col()
+                .key(format!("needs-{}", d.key))
+                .w_full()
+                .px(10.0)
+                .py(9.0)
+                .mx(-10.0)
+                .gap(2.0)
+                .radius(8.0)
+                .role("button")
+                .label(d.title.clone())
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .motion(CONTROL)
+                .on_press(move |s: &mut App| {
+                    s.show_page(Page::Inbox);
+                    s.select_decision(&key);
+                })
+                .child(row().w_full().gap(8.0).center_y()
+                    .child(label(d.label.clone(), type_::XS11, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+                    .child(label(format::relative(d.created_at.as_deref(), now), type_::XS11, t.muted_foreground)))
+                .child(label(d.title.clone(), type_::SM_13, t.foreground).wrap().max_lines(2)),
+        );
+    }
+    let n = items.len();
+    board(t, "needs-you", "Needs you", Some(if n == 1 { "1 decision waiting on you".to_string() } else { format!("{n} decisions waiting on you") }), height, list)
+}
+
 /// The goal's chart, on the page without a frame: its name and range on the
 /// left, the 7, 30 and 90 day switch on the right, the line, then its legend
 /// with where the numbers came from.
@@ -283,8 +349,6 @@ fn goal_card(s: &App, t: &Theme, i: &Insights) -> El {
             .gap(16.0)
             .items_start()
             .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(title, type_::SM_MEDIUM, t.foreground).role("heading")).child(label(sub, type_::XS, t.muted_foreground).wrap()))
-            // Other sections keep the range in the page header.
-            .children((s.section == Section::Summary).then(|| periods(s, t)))
     };
     match &i.goal {
         Ok(Some(g)) => {
@@ -557,24 +621,38 @@ fn facts(t: &Theme, a: &Analytics) -> El {
 
 // ---- Performance and revenue ------------------------------------------------
 
-/// One metric as an analytics card: its value and change, and every day of the
-/// period as a line over the same day of the period before (dashed).
-fn metric_chart(s: &App, t: &Theme, key: &str, m: &crate::insights::Metric, tone: Color) -> El {
-    let mut head = row().w_full().gap(8.0).center_y().child(label(m.label.clone(), type_::SM_MEDIUM, t.muted_foreground).grow(1.0).min_w(0.0).truncate());
-    if let Some(d) = m.delta {
-        let good = (d >= 0.0) != m.lower_better;
-        let (ink, soft) = if d.abs() < 0.005 { (t.muted_foreground, t.accent) } else if good { (t.supported, t.supported_soft) } else { (t.wrong, t.wrong_soft) };
-        head = head.child(row().h(22.0).px(8.0).radius(6.0).center().fill(soft).child(label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), ink)));
+/// A source's key numbers as one strip of tabs over one wide line chart: the
+/// chosen number's days, with the period before as a dashed line behind it.
+fn metric_board(s: &App, t: &Theme, key: &str, metrics: &[crate::insights::Metric]) -> El {
+    let picked = s.metric_pick.get(key).copied().unwrap_or(0).min(metrics.len().saturating_sub(1));
+    let mut strip = row().key(format!("{key}-kpis")).w_full().gap(0.0).items_stretch().flex_wrap().role("tablist").label("Key numbers");
+    for (k, m) in metrics.iter().enumerate() {
+        let d = m.delta.map(|d| delta(t, change_text(d), if d.abs() < 0.005 { None } else { Some((d >= 0.0) != m.lower_better) }));
+        let board = key.to_string();
+        strip = strip.child(
+            kpi(t, &format!("{key}-kpi-{k}"), &m.label, m.value.clone(), None, d, Some(t.chart.tone(k)), k == picked, None)
+                .role("tab")
+                .label(m.label.clone())
+                .checked(k == picked)
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .motion(CONTROL)
+                .on_press(move |s: &mut App| {
+                    s.metric_pick.insert(board.clone(), k);
+                    s.chart_hover = None;
+                }),
+        );
     }
-    let mut c = card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(360.0).h(318.0).px(22.0).py(18.0).gap(4.0)
-        .child(head)
-        .child(label(m.value.clone(), rune::TextStyle::new(26.0, 600.0).lh(34.0).features("'tnum' 1"), t.foreground));
-    if let Some(d) = &m.days {
-        let mut tr = charts::Trend::new(key, &m.label, &d.dates, &d.now, tone).compare(&d.before, "Period before".into()).height(176.0).width_hint(520.0);
+    let mut c = card(t).key(format!("{key}-board")).w_full().px(24.0).pt(12.0).pb(20.0).gap(18.0).child(strip);
+    if let Some((m, d)) = metrics.get(picked).and_then(|m| m.days.as_ref().map(|d| (m, d))) {
+        let chart_key = format!("{key}-chart-{picked}");
+        let mut tr = charts::Trend::new(&chart_key, &m.label, &d.dates, &d.now, t.chart.tone(picked)).compare(&d.before, "Period before".into()).height(280.0).width_hint(1000.0);
         if m.percent {
             tr = tr.percent();
         }
-        c = c.child(el().h(8.0)).child(charts::area_trend(s, t, tr));
+        c = c.child(charts::area_trend(s, t, tr));
+    } else {
+        c = c.child(note(t, "No daily values for this number in this period."));
     }
     c
 }
@@ -594,16 +672,7 @@ fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
                 .child(row().gap(6.0).center_y().child(el().w(14.0).h(2.0).radius(1.0).fill(t.muted_foreground)).child(label("This period", type_::XS11, t.muted_foreground)))
                 .child(charts::dotted_label(t, "Period before")))));
     if charted {
-        let cards: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| metric_chart(s, t, &format!("{key}-chart-{k}"), m, t.chart.tone(k))).collect();
-        let mut it = cards.into_iter();
-        while let Some(a) = it.next() {
-            let mut pair = vec![a];
-            if let Some(b) = it.next() {
-                pair.push(b);
-            }
-            // Wraps to one per row when the window is too narrow for two charts.
-            c = c.child(grid(pair));
-        }
+        c = c.child(metric_board(s, t, key, &r.metrics[..r.metrics.len().min(4)]));
     } else if !matches!(r.detail, Detail::Local(_)) {
         let tiles: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !m.lower_better)).collect();
         c = c.child(kit::cols(tiles));

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ConfigProvider, Effect } from "effect"
-import { agentSettings, configuredAgentModel } from "./agent-model.js"
+import { agentSettings, configuredAgentModel, geminiStreamFold } from "./agent-model.js"
 const config = ConfigProvider.fromMap(new Map([
   ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"], ["AGENT_TIMEOUT_MS", "50"],
 ]))
@@ -45,7 +45,7 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
   })
   it("uses a dedicated model, preserves tool signatures and records observed usage", async () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-      expect(_url).toContain("/fixture-model:generateContent")
+      expect(_url).toContain("/fixture-model:streamGenerateContent?alt=sse")
       expect(JSON.parse(String(init.body))).toMatchObject({ generationConfig: { maxOutputTokens: 8192 } })
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ thoughtSignature: "fixture-signature", functionCall: { name: "read_business_truth", args: {} } }] }, finishReason: "STOP" }], modelVersion: "observed-fixture", usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 3 } }))
     })
@@ -65,6 +65,36 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
   it.each(["not JSON", JSON.stringify({ candidates: [] }), JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, finishReason: "MAX_TOKENS" }] }), "x".repeat(256001)])("rejects malformed, blocked and oversized responses", async body => {
     vi.stubGlobal("fetch", async () => new Response(body))
     expect((await invoke())._tag).toBe("Left")
+  })
+  it("reads a streamed answer piece by piece, showing the reasoning and the text as they grow, and returns it whole", async () => {
+    const chunks = [
+      { candidates: [{ content: { role: "model", parts: [{ text: "Weighing the goal", thought: true }] } }] },
+      { candidates: [{ content: { role: "model", parts: [{ text: "Publish " }] } }], modelVersion: "fixture-model-001" },
+      { candidates: [{ content: { role: "model", parts: [{ text: "the pricing page.", thoughtSignature: "sig" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 900, cachedContentTokenCount: 700, candidatesTokenCount: 5, totalTokenCount: 905 } },
+    ]
+    // Split mid-event, as a network does.
+    const wire = chunks.map(c => `data: ${JSON.stringify(c)}\r\n\r\n`).join("")
+    const body = new ReadableStream<Uint8Array>({ start(controller) { for (const piece of [wire.slice(0, 70), wire.slice(70, 200), wire.slice(200)]) controller.enqueue(new TextEncoder().encode(piece)); controller.close() } })
+    vi.stubGlobal("fetch", async () => new Response(body, { headers: { "content-type": "text/event-stream" } }))
+    const thoughts: string[] = [], texts: string[] = []
+    const out = await Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents: [{ role: "user", parts: [{ text: "Next step?" }] }], tools: [], system: "x",
+      onThought: t => Effect.sync(() => { thoughts.push(t) }), onText: t => Effect.sync(() => { texts.push(t) }) })).pipe(Effect.withConfigProvider(config))))
+    expect(thoughts).toEqual(["Weighing the goal"])
+    expect(texts).toEqual(["Publish ", "Publish the pricing page."])
+    expect(out).toMatchObject({ _tag: "Right", right: { modelVersion: "fixture-model-001", usageMetadata: { cachedContentTokenCount: 700 },
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Weighing the goal", thought: true }, { text: "Publish the pricing page.", thoughtSignature: "sig" }] } }] } })
+  })
+  it("keeps a streamed tool call whole and apart from the text around it, and a display callback that fails never fails the step", async () => {
+    const fold = geminiStreamFold()
+    fold.push({ candidates: [{ content: { parts: [{ text: "Let me check. " }] } }] })
+    fold.push({ candidates: [{ content: { parts: [{ functionCall: { name: "read_revenue", args: { days: 30 } }, thoughtSignature: "s1" }] }, finishReason: "STOP" }] })
+    expect(fold.text()).toBe("Let me check. ")
+    expect(fold.response()).toEqual({ candidates: [{ content: { role: "model", parts: [{ text: "Let me check. " }, { functionCall: { name: "read_revenue", args: { days: 30 } }, thoughtSignature: "s1" }] }, finishReason: "STOP" }] })
+    expect(geminiStreamFold().response()).toEqual({ candidates: [] })
+    vi.stubGlobal("fetch", async () => new Response(`data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ text: "Fine." }] }, finishReason: "STOP" }] })}\n\n`, { headers: { "content-type": "text/event-stream" } }))
+    const out = await Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents: [{ role: "user", parts: [{ text: "Hi" }] }], tools: [], system: "x",
+      onText: () => Effect.fail("display failed") })).pipe(Effect.withConfigProvider(config))))
+    expect(out).toMatchObject({ _tag: "Right", right: { candidates: [{ content: { parts: [{ text: "Fine." }] } }] } })
   })
   it("aborts a timed-out provider", async () => {
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted")))))

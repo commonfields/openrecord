@@ -114,6 +114,15 @@ impl Net {
         Net { client: base.map(Client::new), tx, rx, waker: None }
     }
 
+    /// Points the worker at another server. The saved session belonged to the
+    /// old one and is dropped first, so its cookie is never sent to the new one.
+    pub fn rebase(&mut self, base: String) {
+        if self.client.is_some() {
+            crate::api::forget_saved_session();
+            self.client = Some(Client::new(base));
+        }
+    }
+
     /// Whether this worker sends at all (headless scenes have no client).
     pub fn live(&self) -> bool {
         self.client.is_some()
@@ -503,12 +512,94 @@ impl Net {
     }
 }
 
+/// How one attempt at the event stream ended.
+enum Stream {
+    /// The request finished, well or badly.
+    Done(ApiResult<()>),
+    /// This server has no stream (an older one): ask again and again instead.
+    Unsupported,
+    /// The connection dropped; whether anything arrived on it first.
+    Broken(bool),
+}
+
+/// Follows a turn until it settles. One held connection carries every step and
+/// the answer as it is written; when the server has no stream, or it keeps
+/// dropping, the turn is followed by asking, as before.
 fn follow(c: &Client, request: &str, send: &dyn Fn(Reply)) -> ApiResult<()> {
     let started = Instant::now();
-    let mut offline_since: Option<Instant> = None;
-    let mut seq = 0;
+    let (mut seq, mut misses) = (0, 0);
     loop {
-        // The run's journal first, so the live trace moves while the turn runs;
+        match follow_stream(c, request, &mut seq, send) {
+            Stream::Done(result) => return result,
+            Stream::Unsupported => return follow_poll(c, request, seq, started, send),
+            Stream::Broken(arrived) => {
+                misses = if arrived { 0 } else { misses + 1 };
+                if misses >= 3 {
+                    return follow_poll(c, request, seq, started, send);
+                }
+                std::thread::sleep(Duration::from_millis(400));
+            }
+        }
+    }
+}
+
+fn follow_stream(c: &Client, request: &str, seq: &mut i64, send: &dyn Fn(Reply)) -> Stream {
+    use std::io::Read;
+    let mut reader = match c.progress_stream(request, *seq) {
+        Ok(r) => r,
+        Err(e @ ApiError::Unauthorized) => return Stream::Done(Err(e)),
+        Err(ApiError::Status(code, _)) if code < 500 => return Stream::Unsupported,
+        Err(_) => return Stream::Broken(false),
+    };
+    let (mut buffer, mut chunk, mut arrived) = (String::new(), [0u8; 8192], false);
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        let n = match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => return Stream::Broken(arrived),
+            Ok(n) => n,
+        };
+        // A read can end inside a character: keep the tail until the rest arrives.
+        pending.extend_from_slice(&chunk[..n]);
+        let valid = match std::str::from_utf8(&pending) {
+            Ok(_) => pending.len(),
+            Err(e) => e.valid_up_to(),
+        };
+        buffer.push_str(std::str::from_utf8(&pending[..valid]).unwrap_or(""));
+        pending.drain(..valid);
+        let mut events = Vec::new();
+        for (name, data) in crate::chat::sse_events(&mut buffer) {
+            arrived = true;
+            match name.as_str() {
+                "run" => {
+                    if let Ok(e) = serde_json::from_str::<crate::chat::RunEvent>(&data) {
+                        *seq = (*seq).max(e.seq);
+                        events.push(e);
+                    }
+                }
+                "done" => {
+                    if !events.is_empty() {
+                        send(Reply::Progress { request: request.to_string(), events: std::mem::take(&mut events) });
+                    }
+                    let v: serde_json::Value = serde_json::from_str(&data).unwrap_or_default();
+                    return match v["status"].as_str().unwrap_or("") {
+                        "COMPLETED" => Stream::Done(Ok(())),
+                        "NOT_FOUND" => Stream::Unsupported,
+                        "TIMEOUT" | "" => Stream::Broken(true),
+                        other => Stream::Done(Err(ApiError::Status(503, v["failureReason"].as_str().unwrap_or(other).to_string()))),
+                    };
+                }
+                _ => {}
+            }
+        }
+        if !events.is_empty() {
+            send(Reply::Progress { request: request.to_string(), events });
+        }
+    }
+}
+
+fn follow_poll(c: &Client, request: &str, mut seq: i64, started: Instant, send: &dyn Fn(Reply)) -> ApiResult<()> {
+    let mut offline_since: Option<Instant> = None;
+    loop {        // The run's journal first, so the live trace moves while the turn runs;
         // an empty batch still wakes the window for its clock.
         if let Ok(events) = c.progress(request, seq) {
             seq = events.iter().map(|e| e.seq).max().unwrap_or(seq);

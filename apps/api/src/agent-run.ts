@@ -5,11 +5,11 @@
 // that stops early (cancel, provider failure, crash) is settled into the
 // conversation as an explicit note naming what was saved and what was not.
 import { SqlClient } from "@effect/sql"
-import { Effect } from "effect"
+import { Effect, Option, Stream } from "effect"
 import { AgentModelError } from "./agent-model.js"
 import { decisionRefs, mergeDecisions, toolLabel, type ToolEffect } from "./agent-registry.js"
 
-export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_REQUESTED" | "MODEL_THINKING" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
+export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_REQUESTED" | "MODEL_THINKING" | "MODEL_ANSWERING" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
 export type RunStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
 export type RunOutcome = "ANSWERED" | "ANSWERED_WITH_GAPS"
 export interface RunEvent { readonly type: RunEventType; readonly payload: Record<string, unknown> }
@@ -182,3 +182,37 @@ export const readRunProgress = (scope: { readonly accountId: string; readonly us
 })
 
 export type ToolEventPayload = { readonly invocationId: string; readonly tool: string; readonly effect: ToolEffect }
+
+const FRAME_MS = 250, KEEPALIVE_MS = 10000, STREAM_LIMIT_MS = 20 * 60000
+const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+
+/**
+ * A request's run as server-sent events, so a client holds one connection
+ * instead of asking again and again: `run` for each journal event after
+ * `after`, in order, then one `done` with how the request ended. The request's
+ * status is read before the journal on every pass, so every event of a
+ * finished run is sent before its `done`. A request that is not the signed-in
+ * user's ends at once with NOT_FOUND. A comment line keeps a quiet connection
+ * open; a client that reconnects passes the last sequence it saw.
+ */
+export const streamRunProgress = (scope: { readonly accountId: string; readonly userId: string }, requestId: string, after: number, now: () => number = Date.now) => {
+  const started = now()
+  return Stream.unfoldEffect({ after, quietSince: started, first: true, done: false }, state => state.done ? Effect.succeed(Option.none()) : Effect.gen(function*() {
+    if (!state.first) yield* Effect.sleep(FRAME_MS)
+    const sql = yield* SqlClient.SqlClient
+    const jobs = yield* sql`SELECT status, failure_reason FROM agent_request_jobs WHERE request_id = ${requestId} AND account_id = ${scope.accountId} AND user_id = ${scope.userId}`
+    const job = jobs[0]
+    if (!job) return Option.some([frame("done", { status: "NOT_FOUND", failureReason: null }), { ...state, first: false, done: true }] as const)
+    const { events } = yield* readRunProgress(scope, requestId, state.after)
+    const status = String(job["status"])
+    const finished = status !== "QUEUED" && status !== "RUNNING"
+    let text = events.map(e => frame("run", e)).join("")
+    const last = events.length ? events[events.length - 1]!.seq : state.after
+    // A full page may have more behind it: the next pass sends the rest before ending.
+    const done = (finished && events.length < 200) || now() - started > STREAM_LIMIT_MS
+    if (done) text += frame("done", { status: finished ? status : "TIMEOUT", failureReason: (job["failure_reason"] as string | null) ?? null })
+    const quiet = !text && now() - state.quietSince >= KEEPALIVE_MS
+    if (quiet) text = ": keep\n\n"
+    return Option.some([text, { after: last, quietSince: text ? now() : state.quietSince, first: false, done }] as const)
+  })).pipe(Stream.filter(text => text.length > 0), Stream.encodeText)
+}

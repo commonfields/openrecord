@@ -96,17 +96,24 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     const instance = (await execute(harnessCatalog(f))).instances[0]!
     await execute(activateHarness(f, instance.id, true))
     const pending = run(sendConversation({ ...f, businessId: null }, { message: "General question", requestId: randomUUID(), revision: 0, selection: { instanceId: instance.id, model: "fixture/general" } }))
-    let job: import("@openrecord/contracts").HarnessJob | null = null
-    for (let i = 0; i < 50; i++) {
-      job = (await execute(pollHarnessJobs(bridge, [report]))).job
-      if (job) break
-      await new Promise(resolve => setTimeout(resolve, 20))
+    // A first turn sends two jobs: the answer, and beside it the request for the chat's title.
+    type Job = import("@openrecord/contracts").HarnessJob
+    const jobs: Job[] = []
+    for (let i = 0; i < 100 && jobs.length < 2; i++) {
+      const next = (await execute(pollHarnessJobs(bridge, [report]))).job
+      if (next) jobs.push(next)
+      else await new Promise(resolve => setTimeout(resolve, 20))
     }
-    if (!job) throw new Error("TEST general job not received")
+    const titling = jobs.find(j => j.input.system.includes("Reply with the title only"))
+    const job = jobs.find(j => j !== titling)
+    if (!job || !titling) throw new Error("TEST general and title jobs not received")
     expect(job.input.tools).toEqual([])
+    expect(titling.input.tools).toEqual([])
     expect(job.input.system).toContain("No business or client is selected")
+    expect(job.input.system).not.toContain('"reply"')
     expect((await pool.query("SELECT business_id FROM agent_harness_jobs WHERE id=$1", [job.id])).rows).toEqual([{ business_id: null }])
-    await execute(completeHarnessJob(bridge, job.id, { lease: job.lease, kind: "completed", answer: { kind: "text", text: JSON.stringify({ reply: "General answer", title: "Planning a general task" }) } }))
+    await execute(completeHarnessJob(bridge, titling.id, { lease: titling.lease, kind: "completed", answer: { kind: "text", text: "Planning a general task" } }))
+    await execute(completeHarnessJob(bridge, job.id, { lease: job.lease, kind: "completed", answer: { kind: "text", text: "General answer" } }))
     expect(await pending).toMatchObject({ _tag: "Right", right: { reply: "General answer", title: "Planning a general task", toolCalls: [] } })
     expect(await run(listConversations(f))).toMatchObject({ _tag: "Right", right: [{ title: "Planning a general task" }] })
   })
@@ -201,7 +208,13 @@ suite("private durable conversations (disposable TEST fixtures)", () => {
     const body={message:"TEST first model",requestId:randomUUID(),revision:0,selection:{instanceId:instance.id,model:"fixture/first"}}
     const response=run(sendConversation(f,body))
     let job:Awaited<ReturnType<typeof poll>>["job"]=null
-    async function poll(){return execute(pollHarnessJobs(bridge,[report]))}
+    // A chat without a title also sends a small title request beside the turn; this bridge answers it and moves on.
+    async function poll(){
+      const polled=await execute(pollHarnessJobs(bridge,[report]))
+      if(!polled.job?.input.system.includes("Reply with the title only"))return polled
+      await execute(completeHarnessJob(bridge,polled.job.id,{lease:polled.job.lease,kind:"completed",answer:{kind:"text",text:"TEST title"}}))
+      return {...polled,job:null}
+    }
     for(let i=0;i<50;i++){
       job=(await poll()).job
       if(job)break
