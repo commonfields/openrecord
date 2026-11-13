@@ -14,6 +14,10 @@ interface Meta {
  * whenNotToUse names the near-miss and the capability to use instead.
  */
 const META: Readonly<Record<string, Meta>> = {
+  create_artifact: { ns: "work", title: "Write and save a finished piece of work", not: "Not for changing an existing artifact (edit_artifact), a campaign plan (record_campaign_draft) or publishing (prepare_wordpress_change, prepare_page_change).", evidence: ["draft"] },
+  edit_artifact: { ns: "work", title: "Change a saved artifact as a new version", not: "Not for a new piece (create_artifact) or for publishing it.", evidence: ["draft"] },
+  read_artifact: { ns: "work", title: "Read a saved artifact's content", not: "Not for the list of artifacts (list_artifacts) or as evidence about the business.", evidence: ["none"] },
+  list_artifacts: { ns: "work", title: "List saved artifacts", not: "Not for proposals waiting for approval (read_proposals) or campaigns (read_marketing_campaigns).", evidence: ["none"] },
   record_campaign_draft: { ns: "work", title: "Save a new campaign draft", not: "Not for editing an existing campaign (record_campaign_revision) or for an alternative nobody asked for.", evidence: ["draft"] },
   record_campaign_revision: { ns: "work", title: "Edit an existing draft campaign", not: "Not for a new campaign (record_campaign_draft) or for marking work done or launched.", evidence: ["draft"] },
   record_campaign_run: { ns: "work", title: "Start or resume a campaign run", not: "Not for editing the brief, approving, publishing or spending.", evidence: ["receipt"] },

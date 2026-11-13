@@ -641,6 +641,9 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     if !m.tasks.is_empty() && m.origin.as_ref().is_none_or(|o| o.kind != "result") {
         body = body.child(tasks(t, i, m, statuses));
     }
+    if !m.artifacts.is_empty() {
+        body = body.children(artifacts(t, i, &m.artifacts));
+    }
     if !m.decisions.is_empty() {
         body = body.children(decisions(s, t, i, &m.decisions));
     }
@@ -960,6 +963,38 @@ fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
 }
 
 /// The proposals a reply saved that still wait for a decision, each opening in the inbox.
+/// What a reply wrote, as cards that open the piece in the browser.
+fn artifacts(t: &Theme, i: usize, refs: &[chat::ArtifactRef]) -> Vec<El> {
+    use crate::ui::widgets::{Variant, button};
+    refs.iter()
+        .map(|r| {
+            let id = r.id.clone();
+            row()
+                .key(format!("artifact-{i}-{}", r.id))
+                .w_full()
+                .px(16.0)
+                .py(12.0)
+                .gap(12.0)
+                .radius(12.0)
+                .center_y()
+                .fill(t.card)
+                .role("group")
+                .label("Made in this reply")
+                .transition(chip_in_t())
+                .child(ico(&icons::FILE_TEXT, 16.0, t.muted_foreground))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).max_lines(1))
+                        .child(label(r.caption(), type_::XS, t.muted_foreground).wrap().max_lines(2)),
+                )
+                .child(button(t, &format!("artifact-open-{i}-{}", r.id), "Open preview", Variant::Outline).on_press(move |s: &mut App| s.open_artifact(&id)))
+        })
+        .collect()
+}
+
 fn decisions(s: &App, t: &Theme, i: usize, refs: &[chat::DecisionRef]) -> Vec<El> {
     use crate::ui::widgets::{Variant, button};
     let mut out = Vec::new();

@@ -7,6 +7,7 @@ import {
   ArrowLeftIcon,
   ChartColumnIcon,
   BriefcaseIcon,
+  LibraryIcon,
   PlugIcon,
   Building2Icon,
   CheckIcon,
@@ -358,6 +359,7 @@ function SidebarBody() {
                 {OVERVIEW_SECTIONS.filter(section => section.key !== "summary").map(section => <OverviewLink key={section.key} to={`${base}/results/${section.key}`} label={section.label} />)}
               </div> : null}
               <SidebarLink to={`${base}/campaigns`} icon={<BriefcaseIcon />} label="Campaigns" />
+              <SidebarLink to={`${base}/library`} icon={<LibraryIcon />} label="Library" />
               <SidebarLink to={`${base}/issues`} icon={<CircleAlertIcon />} label="AI answers" count={attention} />
               <SidebarLink to={`${base}/channels`} icon={<PlugIcon />} label="Channels" />
             </> : null}

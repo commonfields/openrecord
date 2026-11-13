@@ -7,11 +7,11 @@ const config = ConfigProvider.fromMap(new Map([
 const invoke = () => Effect.runPromise(Effect.either(Effect.flatMap(configuredAgentModel, m => m.invoke({ contents: [{ role: "user", parts: [{ text: "Stored question" }] }], tools: [], system: "Untrusted evidence" })).pipe(Effect.withConfigProvider(config))))
 afterEach(() => vi.unstubAllGlobals())
 describe("Gemini assistant transport (local HTTP fixtures only)", () => {
-  it("allows a model response up to 60 seconds by default while respecting an explicit timeout", async () => {
+  it("allows a model response up to three minutes by default while respecting an explicit timeout", async () => {
     const base = [["AGENT_MODEL", "fixture-model"], ["AGENT_API_KEY", "TEST-only-key"]] as Array<[string, string]>
     const defaults = await Effect.runPromise(agentSettings.pipe(Effect.withConfigProvider(ConfigProvider.fromMap(new Map(base)))))
     const configured = await Effect.runPromise(agentSettings.pipe(Effect.withConfigProvider(config)))
-    expect(defaults.timeoutMs).toBe(60000)
+    expect(defaults.timeoutMs).toBe(180000)
     expect(configured.timeoutMs).toBe(50)
   })
   it("refuses external processing before fetch even when model credentials are configured", async () => {
@@ -46,7 +46,7 @@ describe("Gemini assistant transport (local HTTP fixtures only)", () => {
   it("uses a dedicated model, preserves tool signatures and records observed usage", async () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
       expect(_url).toContain("/fixture-model:streamGenerateContent?alt=sse")
-      expect(JSON.parse(String(init.body))).toMatchObject({ generationConfig: { maxOutputTokens: 8192 } })
+      expect(JSON.parse(String(init.body))).toMatchObject({ generationConfig: { maxOutputTokens: 32768 } })
       return new Response(JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ thoughtSignature: "fixture-signature", functionCall: { name: "read_business_truth", args: {} } }] }, finishReason: "STOP" }], modelVersion: "observed-fixture", usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 3 } }))
     })
     vi.stubGlobal("fetch", fetch)
@@ -119,7 +119,7 @@ describe("CLIProxyAPI assistant transport (local HTTP fixtures only)", () => {
     const fetch = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("http://127.0.0.1:8317/v1/chat/completions")
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer TEST-client-key")
-      expect(JSON.parse(String(init.body))).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 8192, tools: [{ type: "function", function: { name: "read_open_issues" } }] })
+      expect(JSON.parse(String(init.body))).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 32768, tools: [{ type: "function", function: { name: "read_open_issues" } }] })
       return new Response(JSON.stringify({ model: "claude-sonnet-5-5-observed", usage: { prompt_tokens: 9, completion_tokens: 2, total_tokens: 11 },
         choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "read_open_issues", arguments: "{}" } }] } }] }))
     })

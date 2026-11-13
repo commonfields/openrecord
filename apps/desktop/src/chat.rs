@@ -63,6 +63,38 @@ impl DecisionRef {
     }
 }
 
+/// A finished piece of work a reply wrote or changed (a landing page, an
+/// article, an email), shown as a card that opens its preview.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ArtifactRef {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub version: i64,
+}
+
+impl ArtifactRef {
+    /// "Landing page, version 2", in the words the web's card uses.
+    pub fn caption(&self) -> String {
+        let kind = match self.kind.as_str() {
+            "LANDING_PAGE" => "Landing page",
+            "ARTICLE" => "Article",
+            "EMAIL" => "Email",
+            "AD_COPY" => "Ad copy",
+            "SOCIAL_POST" => "Social post",
+            "BRIEF" => "Brief",
+            "REPORT" => "Report",
+            _ => "Document",
+        };
+        format!("{kind}, version {}. Saved to your library; nothing is published yet.", self.version.max(1))
+    }
+}
+
 /// A helper session a reply started or reports on.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct TaskRef {

@@ -250,6 +250,8 @@ export type AgentMessage = {
   decisions?: AgentDecisionRef[]
   // Helper sessions this reply started or reports on.
   tasks?: AgentTaskRef[]
+  // Finished pieces this reply wrote or changed; each renders as a card that opens the viewer.
+  artifacts?: import("./artifacts").ArtifactRef[]
   // What the run did: the model's own reasoning per step and the tools it ran.
   activity?: AgentActivity[]
   durationMs?: number
@@ -281,7 +283,7 @@ export type AgentChatSummary = { id: string; businessId: string | null; business
   // Set while the person has the chat archived.
   archivedAt?: string | null }
 const agentBase = (businessId: string | null) => businessId === null ? "/api/agent" : `/api/businesses/${businessId}/agent`
-export type AgentTurnReply = { reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; activity?: AgentActivity[]; durationMs?: number; context?: AgentContextUse }
+export type AgentTurnReply = { reply: string; title?: string | null; toolCalls: AgentToolCall[]; citations: AgentCitation[]; conversationId: string; revision: number; provider: string; requestedModel: string | null; runId?: string; outcome?: AgentRunRef["outcome"]; gaps?: string[]; decisions?: AgentDecisionRef[]; tasks?: AgentTaskRef[]; artifacts?: import("./artifacts").ArtifactRef[]; activity?: AgentActivity[]; durationMs?: number; context?: AgentContextUse }
 const requestDelay = (signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   if (signal?.aborted) { reject(new DOMException("Detached", "AbortError")); return }
   const abort = () => { clearTimeout(timer); reject(new DOMException("Detached", "AbortError")) }

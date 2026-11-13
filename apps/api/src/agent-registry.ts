@@ -29,6 +29,7 @@ import { campaignRunDeclarations, dispatchCampaignRun } from "./campaign-engine.
 import { campaignOutcomeDeclarations, dispatchCampaignOutcome } from "./campaign-outcome.js"
 import { campaignRevisionDeclarations, reviseCampaign } from "./campaign-revisions.js"
 import { accountActionDeclarations, dispatchAccountAction } from "./account-actions.js"
+import { artifactDeclarations, dispatchArtifact } from "./artifacts.js"
 
 /** "record" saves unverified internal memory; "delegate" starts a helper turn. */
 export type ToolEffect = "read" | "propose" | "delegate" | "record"
@@ -59,6 +60,12 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
+  // Finished pieces of work the person sees rendered beside the chat. A save is a new row or a new version, never a publication.
+  ...artifactDeclarations.map((declaration): AgentToolSpec => {
+    const reads = declaration.name === "read_artifact" || declaration.name === "list_artifacts"
+    return { declaration, effect: reads ? "read" : "record", replay: reads ? "safe" : "deduplicated", scope: "general",
+      run: (ctx, args) => dispatchArtifact(ctx, declaration.name, args) }
+  }),
   ...campaignRevisionDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
     run: (ctx, args) => reviseCampaign(ctx, args) })),
   ...campaignRunDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: declaration.name.startsWith("read_") ? "read" : "record",
@@ -200,6 +207,18 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
     return { ...toolFailure("REFUSED"), guidance: guidance[reason]
       ?? (/^Ad[A-Z_]+$/.test(reason) ? `The ad breaks Google's limits (${reason.slice(2).toLowerCase().replace(/_/g, " ")}). Fix it and prepare it again.`
       : "The account refused or could not answer. Say so plainly; do not retry blindly.") }
+  }
+  if (tag === "ArtifactRefused") {
+    const reason = (e as { readonly reason?: string }).reason ?? "", edit = (e as { readonly edit?: number }).edit
+    const guidance: Readonly<Record<string, string>> = {
+      EditNotFound: `Edit ${edit ?? ""} was refused: its find text is not in the artifact's current content. Read the artifact and copy the text exactly, including spaces and line breaks. No edit was saved.`,
+      EditAmbiguous: `Edit ${edit ?? ""} was refused: its find text occurs more than once. Include more of the surrounding text so it matches one place. No edit was saved.`,
+      NothingToChange: "Nothing would change: give edits or content (not both) that differ from the current version.",
+      TooLarge: "The artifact would be longer than one artifact can hold. Shorten it or split it into two artifacts.",
+      Stale: "The artifact changed since it was read. Read it again before editing.",
+      PageNeedsHtml: "A landing page must be format HTML with the page itself as content: a complete, styled HTML document. Nothing was saved. Write the page as HTML and save it again.",
+    }
+    return { ...toolFailure("REFUSED"), retryable: reason === "EditNotFound" || reason === "EditAmbiguous" || reason === "PageNeedsHtml", guidance: guidance[reason] ?? toolFailure("REFUSED").guidance }
   }
   if (tag === "MemoryFull") return { ...toolFailure("REFUSED"), guidance: "Business memory is full. Forget an outdated or less useful note with forget_memory first, then save this one." }
   if (tag === "AgentProposalRefused" || tag === "GrowthRefused" || tag === "AcquisitionRefused") return toolFailure("REFUSED")

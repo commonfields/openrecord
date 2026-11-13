@@ -68,6 +68,8 @@ pub enum Reply {
     PlaybookChanged { saved: Option<String>, result: ApiResult<()> },
     /// A chat's read-only links, and a link just made (shown once).
     Shares { conversation: String, created: Option<ApiResult<String>>, list: ApiResult<Vec<crate::api::Share>> },
+    /// An artifact's preview could not be opened; what to tell the person.
+    ArtifactFailed(String),
     /// A business's follow-up policy (read, or as a change left it).
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
@@ -340,6 +342,16 @@ impl Net {
             }
             let list = c.shares(&business, &conversation);
             send(Reply::Shares { conversation, created, list });
+        });
+    }
+
+/// Opens an artifact's preview in the browser, through a link that needs no session.
+    pub fn open_artifact(&self, business: String, artifact: String) {
+        self.spawn(move |c, send| {
+            let opened = c.artifact_link(&business, &artifact).ok().and_then(|url| std::process::Command::new("open").arg(url).status().ok()).is_some_and(|s| s.success());
+            if !opened {
+                send(Reply::ArtifactFailed("Couldn't open the preview. Try again.".into()));
+            }
         });
     }
 

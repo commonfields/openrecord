@@ -82,6 +82,8 @@ pub struct Message {
     #[serde(default)]
     pub tasks: Vec<crate::chat::TaskRef>,
     #[serde(default)]
+    pub artifacts: Vec<crate::chat::ArtifactRef>,
+    #[serde(default)]
     pub run: Option<crate::chat::RunRef>,
     #[serde(default, rename = "durationMs")]
     pub duration_ms: Option<i64>,
@@ -105,6 +107,7 @@ impl Message {
             citations: Vec::new(),
             decisions: Vec::new(),
             tasks: Vec::new(),
+            artifacts: Vec::new(),
             run: None,
             duration_ms: None,
             inference: None,
@@ -725,6 +728,17 @@ impl Client {
             path: String,
         }
         Ok(self.post::<R>(&Self::shares_path(business, conversation), json!({ "days": 14 }))?.path)
+    }
+
+/// A preview link for one artifact that works for seven days without a
+    /// session, as a full address. The server sandboxes the page it serves.
+    pub fn artifact_link(&self, business: &str, artifact: &str) -> ApiResult<String> {
+        #[derive(Deserialize)]
+        struct R {
+            path: String,
+        }
+        let path = self.post::<R>(&format!("/api/businesses/{}/artifacts/{}/links", enc(business), enc(artifact)), json!({}))?.path;
+        Ok(format!("{}{path}", self.base.trim_end_matches('/')))
     }
 
     pub fn revoke_share(&self, business: &str, conversation: &str, id: &str) -> ApiResult<()> {

@@ -918,8 +918,7 @@ pub fn campaigns(s: &mut App) {
 
 pub fn campaign_open(s: &mut App) {
     campaigns(s);
-    let first = s.campaigns.ready().and_then(|l| l.first().cloned());
-    s.open_campaign(first);
+    s.campaign_open = s.campaigns.ready().and_then(|l| l.first().map(|c| c.id.clone()));
 }
 
 pub fn ai_answers(s: &mut App) {

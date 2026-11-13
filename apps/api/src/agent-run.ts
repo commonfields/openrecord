@@ -8,6 +8,7 @@ import { SqlClient } from "@effect/sql"
 import { Effect, Option, Stream } from "effect"
 import { AgentModelError } from "./agent-model.js"
 import { decisionRefs, mergeDecisions, toolLabel, type ToolEffect } from "./agent-registry.js"
+import { mergeArtifacts, type ArtifactRef } from "./artifacts.js"
 
 export type RunEventType = "RUN_STARTED" | "CONTEXT_BUILT" | "MODEL_REQUESTED" | "MODEL_THINKING" | "MODEL_ANSWERING" | "MODEL_STEP" | "TOOL_STARTED" | "TOOL_COMPLETED" | "TOOL_FAILED" | "VERIFICATION" | "RUN_FINISHED"
 export type RunStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED"
@@ -116,6 +117,8 @@ export const interruptionNote = (status: RunStatus, reason: string | null, event
     citations: [...citations.values()],
     toolCalls: events.filter(e => e.type === "TOOL_COMPLETED" || e.type === "TOOL_FAILED").map(e => ({ tool: str(e.payload["tool"]), summary: str(e.payload["summary"]) })),
     worked: events.some(e => e.type === "TOOL_STARTED"),
+    // What the run wrote before it stopped is still there to open.
+    artifacts: mergeArtifacts(completed.flatMap(e => (e.payload["artifacts"] as ReadonlyArray<ArtifactRef> | undefined) ?? [])),
     decisions: mergeDecisions(completed.flatMap(e => {
       const receipt = e.payload["receipt"]
       if (e.payload["effect"] === "delegate") return (e.payload["decisions"] as ReadonlyArray<{ type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"; id: string }> | undefined) ?? []
@@ -144,7 +147,7 @@ export const settleRuns = (conversationId: string) => Effect.gen(function*() {
       const events = (yield* sql`SELECT type, payload FROM agent_run_events WHERE run_id = ${id} ORDER BY seq`) as unknown as ReadonlyArray<JournalRow>
       const note = interruptionNote(status, run["failure_reason"] === null ? null : String(run["failure_reason"]), events)
       if (note.worked) appended.push({ role: "user", text: String(run["objective"]) },
-        { role: "agent", text: note.text, citations: note.citations, toolCalls: note.toolCalls, ...(note.decisions.length ? { decisions: note.decisions } : {}), run: { id, status } })
+        { role: "agent", text: note.text, citations: note.citations, toolCalls: note.toolCalls, ...(note.decisions.length ? { decisions: note.decisions } : {}), ...(note.artifacts.length ? { artifacts: note.artifacts } : {}), run: { id, status } })
     }
     yield* sql`UPDATE agent_runs SET settled_at = now() WHERE id = ${id}`
   }

@@ -29,9 +29,11 @@ export const agentSettings = Config.all({
   model: Config.string("AGENT_MODEL").pipe(Config.validate({ message: "invalid agent model", validation: m => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(m) })),
   apiKey: Config.redacted("AGENT_API_KEY"),
   baseUrl: Config.string("AGENT_BASE_URL").pipe(Config.withDefault("http://127.0.0.1:8317")),
-  // The default suits every supported model; one with a larger output window can be given more.
-  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 8192, 65536),
-  timeoutMs: bounded("AGENT_TIMEOUT_MS", 60000, 120000),
+  // Room for a whole piece of work in one step (a landing page with its styles is 6,000 to 12,000 tokens),
+  // beside the reasoning a thinking model counts against the same limit.
+  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 32768, 65536),
+  // Long enough to write that much; the run loop's own per-call limit is the same.
+  timeoutMs: bounded("AGENT_TIMEOUT_MS", 180000, 300000),
 })
 
 export const Part = Schema.Struct({
@@ -44,7 +46,7 @@ export const Part = Schema.Struct({
 })
 const Response = Schema.Struct({
   candidates: Schema.Array(Schema.Struct({
-    content: Schema.Struct({ role: Schema.Literal("model"), parts: Schema.Array(Part).pipe(Schema.maxItems(12)) }),
+    content: Schema.Struct({ role: Schema.Literal("model"), parts: Schema.Array(Part).pipe(Schema.maxItems(64)) }),
     finishReason: Schema.optional(Schema.String),
   })).pipe(Schema.minItems(1), Schema.maxItems(1)),
   modelVersion: Schema.optional(Schema.String),
