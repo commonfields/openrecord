@@ -6,12 +6,12 @@
 //! pointer leaves. A card opens its decision in the Inbox; "Hide" puts the
 //! current ones away until a new one arrives.
 
-use rune::{Cursor, El, Spring, col, row};
+use rune::{Cursor, El, ScrollSpec, Spring, col, row};
 
 use crate::format;
 use crate::icons;
 use crate::state::{App, Page, Screen, View};
-use crate::theme::{Theme, shadows, type_};
+use crate::theme::{Theme, hex, shadows, type_};
 use crate::ui::widgets::{CONTROL, ico, label};
 
 const WIDTH: f32 = 340.0;
@@ -19,7 +19,11 @@ const CARD_H: f32 = 64.0;
 const GAP: f32 = 8.0;
 /// How much of each card behind the front one shows above it at rest.
 const PEEK: f32 = 12.0;
-const SHOWN: usize = 5;
+const SHOWN: usize = 6;
+/// The spread list shows this many cards and scrolls for the rest.
+const VISIBLE: f32 = 4.0;
+/// The notification colour: the sparkle mark's purple.
+const PURPLE: &str = "#8E75B2";
 const SPREAD: Spring = Spring::new(0.36, 0.08);
 
 /// The stack, when there is anything waiting and nowhere else on screen already lists it.
@@ -37,7 +41,9 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
     // Oldest at the top of the list, the newest at the bottom, in front.
     let order: Vec<_> = shown.iter().rev().collect();
     let last = order.len() - 1;
-    let mut stack = col().key("notices-cards").w(WIDTH).gap(GAP);
+    let purple = hex(PURPLE);
+    // The shadow room above and below is part of what scrolls, so the newest card's shadow stays whole at the bottom.
+    let mut stack = col().key("notices-cards").w(WIDTH).gap(GAP).pt(SHADOW_ROOM).pb(SHADOW_ROOM);
     for (j, d) in order.iter().enumerate() {
         let behind = last - j;
         // At rest every card slides down onto the front one, less its peek.
@@ -74,7 +80,7 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
                     s.show_page(Page::Inbox);
                     s.select_decision(&key);
                 })
-                .child(row().size(30.0, 30.0).radius(8.0).center().fill(t.partial_soft).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, t.partial)))
+                .child(row().size(30.0, 30.0).radius(8.0).center().fill(purple.alpha(if t.dark { 0.2 } else { 0.14 })).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, purple)))
                 .child(
                     col()
                         .opacity(content)
@@ -121,13 +127,27 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
             s.notices_hidden.extend(keys);
             s.notices_open = false;
         }));
-    // Clear of the composer when a chat fills the panel.
-    let bottom = if s.chat_shown() && !s.pane_shown() { 112.0 } else { 24.0 };
+    // Level with the bottom of the chat box; the composer makes room beside it (`reserve`).
+    let bottom = BOTTOM;
+    // The spread list scrolls inside its own height, on no background of its own;
+    // at rest it holds only the stack.
+    // Wider and taller than the cards by their shadow, so the clip that scrolling
+    // needs never cuts a shadow into a visible box.
+    let list_h = (order.len() as f32).min(VISIBLE) * (CARD_H + GAP) + 2.0 * SHADOW_ROOM;
+    let stack = col()
+        .key("notices-scroll")
+        .w(WIDTH + 2.0 * SHADOW_ROOM)
+        .px(SHADOW_ROOM)
+        .h(if open { list_h } else { CARD_H + 2.0 * PEEK + 2.0 * SHADOW_ROOM })
+        .motion(SPREAD)
+        .child(stack)
+        .scroll(ScrollSpec { stick_bottom: true });
     Some(
         col()
             .key("notices")
-            .pin(None, None, Some(24.0), Some(bottom))
-            .w(WIDTH)
+            .pin(None, None, Some(24.0 - SHADOW_ROOM), Some(bottom - SHADOW_ROOM))
+            .w(WIDTH + 2.0 * SHADOW_ROOM)
+            .items_center()
             .gap(6.0)
             .role("region")
             .label("Decisions waiting on you")
@@ -139,6 +159,25 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
             .child(head)
             .child(stack),
     )
+}
+
+/// From the window's bottom edge to the bottom of the chat box: the panel's inset,
+/// the composer's own padding and its options row.
+const BOTTOM: f32 = 41.0;
+/// Room around the cards inside the scrolling list for their shadows.
+const SHADOW_ROOM: f32 = 22.0;
+
+/// The room the chat box leaves on its right for the stack, when the two would
+/// otherwise overlap: the composer centres in what is left of the panel.
+pub fn reserve(s: &App) -> f32 {
+    if s.view != View::Agent || s.pane_shown() || s.inbox().iter().all(|d| s.notices_hidden.contains(&d.key)) {
+        return 0.0;
+    }
+    let window = if s.window.0 > 0.0 { s.window.0 / s.zoom().max(0.1) } else { 1280.0 };
+    let panel = window - if s.sidebar_open { s.prefs.sidebar() } else { 8.0 } - 8.0;
+    let composer = (panel - 48.0).min(s.prefs.chat_width.max());
+    let free = (panel - composer) / 2.0;
+    if free >= WIDTH + 24.0 + 16.0 { 0.0 } else { WIDTH + 24.0 }
 }
 
 fn link(t: &Theme, key: &str, text_: &str, live: bool) -> El {
