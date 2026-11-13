@@ -86,3 +86,15 @@ pub static MOON: Icon = lucide("moon", r#"<g fill="none" stroke="currentColor" s
 pub static MONITOR: Icon = lucide("monitor", r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></g>"#);
 pub static LAPTOP: Icon = lucide("laptop", r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"/><path d="M20.054 15.987H3.946"/></g>"#);
 pub static BRAIN: Icon = lucide("brain", r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></g>"#);
+
+// The sidebar's own set: one idea per glyph, a lighter 1.6 stroke and no inner
+// detail, so the list reads as words with a quiet mark beside each.
+const fn nav(name: &'static str, body: &'static str) -> Icon {
+    Icon { name, view: 24.0, body }
+}
+pub static NAV_HOME: Icon = nav("nav-home", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5 12 4.5l7.5 6V19a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z"/></g>"#);
+pub static NAV_INBOX: Icon = nav("nav-inbox", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="15" rx="3"/><path d="M4 13h4.5l1.5 2h4l1.5-2H20"/></g>"#);
+pub static NAV_ANALYTICS: Icon = nav("nav-analytics", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19v-5M12 19V6M18 19v-9"/></g>"#);
+pub static NAV_CAMPAIGNS: Icon = nav("nav-campaigns", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5"/></g>"#);
+pub static NAV_ANSWERS: Icon = nav("nav-answers", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6.5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-5 3.5z"/></g>"#);
+pub static NAV_CHANNELS: Icon = nav("nav-channels", r#"<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="12" r="3"/><circle cx="17" cy="12" r="3"/><path d="M10 12h4"/></g>"#);

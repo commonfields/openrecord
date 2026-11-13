@@ -51,13 +51,23 @@ until pg_isready -h localhost -p 5432 -U openrecord >/dev/null 2>&1; do sleep 1;
 # Migrations replay idempotently, so this is safe on every run.
 DATABASE_URL="$DATABASE_URL" pnpm db:migrate >/dev/null
 
+# Starts a long-running process in its own session, so it outlives the shell
+# that ran this script. nohup alone is not enough: a terminal tab, an editor
+# task or an agent session that ends takes its whole process group with it,
+# which is how the API kept stopping between turns. macOS has no setsid
+# command, so perl (which it ships) starts the new session.
+detach() {
+  local log="$1"; shift
+  perl -MPOSIX=setsid -e 'setsid() or die "setsid: $!"; exec @ARGV or die "exec: $!"' "$@" < /dev/null > "$log" 2>&1 &
+}
+
 # Website setup has its own local worker so it can make progress without
 # consuming queued provider calls or dispatching unrelated work.
 setup_pid_file="/tmp/openrecord-setup-worker.pid"
 setup_pid="$(cat "$setup_pid_file" 2>/dev/null || true)"
 if [ -z "$setup_pid" ] || ! ps -p "$setup_pid" -o command= 2>/dev/null | grep -q '[s]rc/setup-only.ts'; then
   echo "starting setup worker (logs: /tmp/opencode-setup-worker.log)"
-  DATABASE_URL="$DATABASE_URL" nohup pnpm --filter @openrecord/worker exec tsx src/setup-only.ts > /tmp/opencode-setup-worker.log 2>&1 &
+  DATABASE_URL="$DATABASE_URL" detach /tmp/opencode-setup-worker.log pnpm --filter @openrecord/worker exec tsx src/setup-only.ts
   echo "$!" > "$setup_pid_file"
 fi
 
@@ -66,7 +76,7 @@ fi
 agent_worker_count="$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM agent_worker_instances WHERE mode='standalone' AND stopped_at IS NULL AND heartbeat_at>now()-interval '30 seconds'")"
 if [ "$agent_worker_count" -eq 0 ]; then
   echo "starting agent request worker (logs: /tmp/opencode-agent-worker.log)"
-  DATABASE_URL="$DATABASE_URL" nohup pnpm --filter @openrecord/api agent:worker > /tmp/opencode-agent-worker.log 2>&1 &
+  DATABASE_URL="$DATABASE_URL" detach /tmp/opencode-agent-worker.log pnpm --filter @openrecord/api agent:worker
 fi
 
 # 2. API on :3001 (no watcher). Restart it when it serves an older commit,
@@ -91,14 +101,14 @@ if ! lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting API on :3001 (logs: /tmp/opencode-api.log)"
   DATABASE_URL="$DATABASE_URL" \
   PORT=3001 APP_BASE_URL="http://localhost:3000" OPENRECORD_LOCAL_BRIDGE=1 AGENT_REQUEST_WORKER_ENABLED=false \
-    nohup pnpm --filter @openrecord/api dev > /tmp/opencode-api.log 2>&1 &
+    detach /tmp/opencode-api.log pnpm --filter @openrecord/api dev
 fi
 
 # 3. Web on :3000 (Vite hot-reloads code changes; restart it by hand after a
 #    dependency change).
 if ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting web on :3000 (logs: /tmp/opencode-web.log)"
-  nohup pnpm --filter @openrecord/web dev > /tmp/opencode-web.log 2>&1 &
+  detach /tmp/opencode-web.log pnpm --filter @openrecord/web dev
 fi
 
 for _ in $(seq 1 60); do

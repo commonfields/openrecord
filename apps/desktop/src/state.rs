@@ -422,6 +422,9 @@ pub struct App {
     pub password: TextEdit,
     pub signin_error: Option<String>,
     pub signing_in: bool,
+    /// The decisions stack in the corner: whether it is spread out, and the ones put away with "Hide".
+    pub notices_open: bool,
+    pub notices_hidden: std::collections::BTreeSet<String>,
     /// The key number each source's wide chart shows on Analytics, by the source's key.
     pub metric_pick: std::collections::HashMap<String, usize>,
     /// The sign-in card's server field, and whether it is shown.
@@ -644,6 +647,8 @@ impl App {
             password: TextEdit::new("").secure(),
             signin_error: None,
             signing_in: false,
+            notices_open: false,
+            notices_hidden: std::collections::BTreeSet::new(),
             metric_pick: std::collections::HashMap::new(),
             server: TextEdit::new(""),
             server_open: false,
