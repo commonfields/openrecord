@@ -3,6 +3,18 @@ import type { ToolDeclaration } from "./agent-registry.js"
 import { tokens } from "./research/catalog.js"
 
 export const EXECUTION_LIMITS = { requestBytes: 128000, runMs: 480000, answerReserveMs: 75000, modelCallMs: 60000, synthesisBytes: 24000 } as const
+/**
+ * How much one model request may carry, by transport. Bytes stand in for
+ * tokens (about four bytes each for this JSON), so no tokenizer is needed.
+ * The loop's own default stays the small envelope the unit fixtures use.
+ */
+export interface RequestLimits { readonly requestBytes: number; readonly contextBytes: number; readonly resultChars: number }
+export const requestLimits = (requestBytes: number): RequestLimits =>
+  ({ requestBytes, contextBytes: Math.floor(requestBytes * 0.75), resultChars: Math.min(60000, Math.floor(requestBytes * 9 / 64)) })
+/** The hosted model takes long prompts; about 120,000 tokens of request. */
+export const HOSTED_REQUEST_BYTES = 480000
+/** A subscription reached through the bridge: under the job limit (HARNESS_INPUT_LIMIT, 300,000 bytes). */
+export const HARNESS_REQUEST_BYTES = 280000
 export const modelRequestBytes = (input: Pick<ModelInput, "contents" | "system" | "tools">) =>
   Buffer.byteLength(JSON.stringify({ contents: input.contents, system: input.system, tools: input.tools }), "utf8")
 

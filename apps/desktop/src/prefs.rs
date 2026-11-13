@@ -85,6 +85,8 @@ pub struct Prefs {
     pub helper_width: f32,
     /// How large the whole interface draws (⌘+ and ⌘−), 1.0 being the web's sizes.
     pub zoom: f32,
+    /// The OpenRecord server this app signs in to, when it is not the one on this Mac.
+    pub server: Option<String>,
 }
 
 /// The zoom steps ⌘+ and ⌘− move through, and where ⌘0 returns.
@@ -111,6 +113,7 @@ impl Default for Prefs {
             sidebar_width: SIDEBAR_DEFAULT,
             helper_width: HELPER_DEFAULT,
             zoom: ZOOM_DEFAULT,
+            server: None,
         }
     }
 }

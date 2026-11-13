@@ -20,6 +20,11 @@ The session cookie is kept in `~/Library/Application Support/OpenRecord/session`
 (mode 600), so a relaunch stays signed in. Sign out from the account menu to
 remove it.
 
+The sign-in card shows which server it signs in to, with "Change" to name
+another. A server must be HTTPS unless it is on this Mac; the address is kept
+in the preferences, and changing it forgets the saved session so its cookie
+never reaches another host. `OPENRECORD_API_URL` still wins, for development.
+
 ## Install as an app
 
 ```sh
@@ -33,7 +38,8 @@ downloaded onto another Mac needs a Developer ID signature and notarization to
 open without a warning: set `MACOS_SIGN_IDENTITY` (and `APPLE_ID`,
 `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` to notarize). The `Desktop` workflow
 builds an Intel + Apple Silicon `.dmg` on GitHub; a `desktop-v*` tag attaches it
-to a release. The app opened from Finder talks to `http://localhost:3001`.
+to a release. The app opened from Finder talks to the server chosen at sign-in
+(`http://localhost:3001` until one is).
 
 ## Updates
 
@@ -41,6 +47,12 @@ The account menu checks GitHub for a newer release at launch and offers
 "Update to x.y.z". One press downloads that release's `.dmg`, copies the app
 over the running `OpenRecord.app` (staged beside it, then swapped), and
 restarts into it. A dot on the account avatar shows an update is waiting.
+
+Before anything is replaced, the updater checks that the download is one of
+this repository's release assets over HTTPS, that the copied app's signature
+is intact (`codesign --verify --deep --strict`), and, when the running app is
+signed by a team, that the new one is signed by the same team. A build signed
+ad hoc has no team to compare, so only the first two checks hold for it.
 
 To ship one, bump `version` in `Cargo.toml` and push a `desktop-vX.Y.Z` tag
 with the same number; the Desktop workflow attaches the `.dmg` the updater
@@ -50,8 +62,19 @@ can check but not install, since it is not inside an `.app`.
 ## What it covers
 
 - Sign in, with the demo-account shortcut.
-- The shell: business switcher, the Agent and Workspace tabs, breadcrumbs, a
-  sidebar that collapses to a rail (⌘B), and the account menu.
+- The shell: one sidebar for the whole product (the business switcher, Home,
+  Inbox, Analytics, Campaigns, AI answers and Channels, then the chats), which
+  collapses (⌘B); breadcrumbs; "Ask the agent" on every business page, which
+  opens the agent beside it; and the account menu. There are no Agent and
+  Workspace tabs: this is where the app's layout departs from the web's, while
+  its surfaces, type and colours stay the web's tokens.
+- Home: a business's new chat opens on what is waiting for the person's
+  decision (each opens in the Inbox) and four ways to start that send in one
+  press. With no business yet, it asks for a website.
+- Analytics: the Overview's seven sections as tabs across the top with the
+  date range beside them. Summary puts the goal's chart next to "Needs you";
+  a source's key numbers sit on one line of compact charts when the window
+  has room, so the tables under them are on the first screen.
 - Agent: chat history across businesses, transcripts with Markdown replies in
   Rune's agent timeline ("Thought for 4s", "Used 3 tools", each folding open,
   a "Working" line while a turn runs, helper tasks as chips), charts the agent
@@ -73,11 +96,11 @@ can check but not install, since it is not inside an `.app`.
   through Rune's renderer.
 - Also as on the web: the work pane under a chat (proposals waiting for a
   decision, accepted drafts with their text), helper sessions opened beside
-  the conversation, commands from plain phrases ("what's next?"), files
+  the conversation, files
   dropped on the composer, and the microphone for macOS dictation. The agent's
   skills are chosen by the server for each turn, so the desktop gets them as
   the web does.
-- Workspace: Inbox (approve or decline every kind of decision), the Overview
+- Pages: Inbox (approve or decline every kind of decision), Analytics
   with all seven sections and their charts, Campaigns, AI answers (open a claim
   to see the answer, its sources and linked facts, record a verdict, and log
   actions) and Channels.
@@ -86,7 +109,7 @@ can check but not install, since it is not inside an `.app`.
 Connecting accounts, business setup and the evidence pages stay on the web for
 now. "Open in the browser" in the account menu goes there.
 
-Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 Agent, ⌘2 Workspace, ⌘B sidebar.
+Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 the agent, ⌘2 the page last open, ⌘B sidebar.
 
 ## Check it headlessly
 

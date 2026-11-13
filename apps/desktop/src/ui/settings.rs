@@ -719,7 +719,7 @@ fn copy_command(t: &Theme, key: &str, cmd: &str) -> El {
 /// Connecting another computer: a one-time code and a prompt for its coding agent.
 fn pairing(s: &App, t: &Theme) -> Option<El> {
     let local = s.providers.ready().is_some_and(|c| c.local);
-    let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+    let api = crate::state::api_base();
     let origin = crate::ui::shell::web_url(&api);
     let body = match &s.pairing {
         Load::Ready(p) => {

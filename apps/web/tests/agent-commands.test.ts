@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest"
 import { commandMatches, parseCommand } from "../app/components/agent-commands"
 
 describe("agent commands", () => {
-  it("dispatches slash commands and exact phrasings to typed workflows", () => {
+  it("dispatches slash commands to typed workflows", () => {
     expect(parseCommand("/setup")).toBe("setup")
     expect(parseCommand(" /STATUS ")).toBe("status")
     expect(parseCommand("/plan")).toBe("plan")
     expect(parseCommand("/report")).toBe("report")
-    expect(parseCommand("set up my business")).toBe("setup")
-    expect(parseCommand("Where are we?")).toBe("status")
-    expect(parseCommand("what should we do next?")).toBe("plan")
-    expect(parseCommand("show me the results")).toBe("report")
+  })
+
+  it("never turns a sentence into a command, however it is worded", () => {
+    for (const text of ["set up my business", "Where are we?", "what should we do next?", "show me the results", "how are we doing"]) expect(parseCommand(text)).toBeNull()
   })
 
   it("sends everything else to the conversational agent", () => {

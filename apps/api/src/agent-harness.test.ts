@@ -97,22 +97,16 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
     expect(events.filter(e => e.type === "VERIFICATION").map(e => e.payload["passed"])).toEqual([false, false])
   })
 
-  it("sends an answer that only offers read-only research back once to do the research", async () => {
+  it("returns the model's answer as written: no phrase in it sends the run back for another pass", async () => {
     const tools = [{ name: "read_ad_performance", description: "Ads", parametersJsonSchema: { type: "object", properties: {} } },
       { name: "research_company", description: "Research", parametersJsonSchema: { type: "object", properties: {} } }]
     const seen: string[] = []
     const answer = await Effect.runPromise(runConversation({ message: "Should we spend on ads?", history: [], tools,
-      model: scripted([calls("read_ad_performance"), text("No ad account is connected. Want me to research your competitors now?"), calls("research_company"), text("Here is the plan with a capped first test.")], seen),
+      model: scripted([calls("read_ad_performance"), text("No ad account is connected. Want me to research your competitors now?"), text("never asked for")], seen),
       dispatch: () => Effect.succeed(read) }))
-    expect(seen[2]).toContain("OpenRecord runtime check: your answer offers read-only research")
-    expect(answer).toMatchObject({ reply: "Here is the plan with a capped first test.", outcome: "ANSWERED" })
-    // Only once, and never after research ran or when no research tool is declared.
-    const twice = await Effect.runPromise(runConversation({ message: "Should we spend?", history: [], tools,
-      model: scripted([text("Want me to research it?"), text("Want me to research it?")]), dispatch: () => Effect.succeed(read) }))
-    expect(twice.reply).toBe("Want me to research it?")
-    const plain = await Effect.runPromise(runConversation({ message: "Hi", history: [], tools: tools.slice(0, 1),
-      model: scripted([text("Want me to check it?")]), dispatch: () => Effect.succeed(read) }))
-    expect(plain.reply).toBe("Want me to check it?")
+    expect(answer).toMatchObject({ reply: "No ad account is connected. Want me to research your competitors now?", outcome: "ANSWERED" })
+    expect(seen).toHaveLength(2)
+    expect(seen.join("")).not.toContain("OpenRecord runtime check")
   })
 
   it("compacts older tool results within a run instead of failing on context size", async () => {
@@ -123,7 +117,8 @@ describe("agent harness run loop (deterministic fixtures, no live model)", () =>
       dispatch: () => Effect.succeed(big) }))
     expect(answer.reply).toBe("Summary of five reads.")
     expect(seen.at(-1)).toContain('"compactedEvidence"')
-    expect(seen.every(s => s.length <= 64000)).toBe(true)
+    // Within the room a default request leaves beside the instructions and a card for every tool.
+    expect(seen.every(s => s.length <= 72000)).toBe(true)
   })
 })
 

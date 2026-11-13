@@ -75,17 +75,16 @@ export const commandOf = (message: string): string | null => {
   return name && name in COMMAND_GUIDES ? name : null
 }
 
-const MARKETING_WORK = /\b(?:marketing|campaigns?)\b/i
-
 /**
- * Instructions for a general business turn. Campaign work is long-lived, so
- * its operating loop also loads when the request or the recent conversation is
- * about marketing work or a campaign, not only on the slash command.
+ * Instructions for a general business turn. The marketing operating loop rides
+ * on every one: whether a request is marketing work is the model's call, not a
+ * keyword's, and a constant prefix is what providers cache. A slash command
+ * is explicit, so it carries its own guide instead.
  */
-export const systemFor = (message: string, recent: ReadonlyArray<string> = []): string => {
+export const systemFor = (message: string): string => {
   const command = commandOf(message)
-  if (command) return `${CORE_SYSTEM}\n\n${COMMAND_PREFACE}\n${COMMAND_GUIDES[command]}`
-  return [message, ...recent.slice(-6)].some(text => MARKETING_WORK.test(text)) ? `${CORE_SYSTEM}\n\n${MARKETING_OPERATING_POLICY}` : CORE_SYSTEM
+  if (!command) return `${CORE_SYSTEM}\n\n${MARKETING_OPERATING_POLICY}`
+  return `${CORE_SYSTEM}\n\n${COMMAND_PREFACE}\n${COMMAND_GUIDES[command]}`
 }
 
 /**

@@ -29,7 +29,8 @@ export const agentSettings = Config.all({
   model: Config.string("AGENT_MODEL").pipe(Config.validate({ message: "invalid agent model", validation: m => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(m) })),
   apiKey: Config.redacted("AGENT_API_KEY"),
   baseUrl: Config.string("AGENT_BASE_URL").pipe(Config.withDefault("http://127.0.0.1:8317")),
-  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 8192, 8192),
+  // The default suits every supported model; one with a larger output window can be given more.
+  maxOutputTokens: bounded("AGENT_MAX_OUTPUT_TOKENS", 8192, 65536),
   timeoutMs: bounded("AGENT_TIMEOUT_MS", 60000, 120000),
 })
 
@@ -127,8 +128,15 @@ export const configuredAgentModel = Effect.gen(function*() {
     if (!response.ok) return refuseStatus(response)
     const raw = await readJson(response)
     const finish = typeof raw === "object" && raw !== null && "candidates" in raw && Array.isArray(raw.candidates) && typeof raw.candidates[0] === "object" && raw.candidates[0] !== null && "finishReason" in raw.candidates[0] ? raw.candidates[0].finishReason : null
-    if (finish === "MAX_TOKENS") throw new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" })
     const parsed = Schema.decodeUnknownEither(Response)(raw)
+    // An answer that ran into the output limit is still an answer: the loop
+    // keeps the text and says it stopped early. Only a cut-off with nothing
+    // usable (no text, or a half-written tool call) fails the step.
+    if (finish === "MAX_TOKENS") {
+      const parts = parsed._tag === "Right" ? parsed.right.candidates[0]?.content.parts ?? [] : []
+      if (!parts.some(p => !p.thought && p.text?.trim()) || parts.some(p => p.functionCall)) throw new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" })
+      return parsed._tag === "Right" ? parsed.right : (() => { throw new AgentModelError({ reason: "MALFORMED", detail: "OUTPUT_LIMIT" }) })()
+    }
     if (parsed._tag === "Left") throw new AgentModelError({ reason: "MALFORMED", detail: "INVALID_RESPONSE" })
     if (parsed.right.candidates[0]?.finishReason !== "STOP") throw new AgentModelError({ reason: "MALFORMED", detail: "PROVIDER_STOPPED" })
     return parsed.right

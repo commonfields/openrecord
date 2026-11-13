@@ -893,6 +893,41 @@ fn session_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join("Library/Application Support/OpenRecord/session"))
 }
 
+/// A server address as typed, made into the base URL the client calls: HTTPS,
+/// or plain HTTP only for a server on this Mac. A bare host gets the scheme
+/// that fits it. Credentials, paths, queries and fragments are refused, so the
+/// session cookie only ever goes to the host the person named.
+pub fn server_url(typed: &str) -> Result<String, String> {
+    let t = typed.trim().trim_end_matches('/');
+    if t.is_empty() {
+        return Err("Enter the server's address, such as app.example.com.".into());
+    }
+    let local = |host: &str| matches!(host, "localhost" | "127.0.0.1" | "[::1]");
+    let (scheme, rest) = match t.split_once("://") {
+        Some((s, r)) => (s.to_lowercase(), r),
+        None => (if local(t.split(':').next().unwrap_or(t)) { "http".into() } else { "https".to_string() }, t),
+    };
+    if rest.is_empty() || rest.contains(['/', '?', '#', '@', ' ', '\\']) {
+        return Err("Use only the server's address, such as app.example.com.".into());
+    }
+    let host = match rest.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        Some(_) if !rest.starts_with('[') => return Err("That port is not a number.".into()),
+        _ => rest,
+    };
+    match scheme.as_str() {
+        "https" => Ok(format!("https://{rest}")),
+        "http" if local(host) => Ok(format!("http://{rest}")),
+        "http" => Err("A server that is not on this Mac must use https.".into()),
+        _ => Err("The address must start with https://.".into()),
+    }
+}
+
+/// Forgets the saved session, as when the app is pointed at another server.
+pub fn forget_saved_session() {
+    save_session(None);
+}
+
 fn load_session() -> Option<String> {
     if std::env::var_os("OPENRECORD_NO_SESSION").is_some() {
         return None;
@@ -1080,5 +1115,24 @@ mod live {
         let r = c.cancel_request(&uuid());
         assert!(matches!(r, Err(ApiError::Status(404, _))), "cancel of an unknown request: {r:?}");
         c.signout().expect("signout");
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::server_url;
+
+    #[test]
+    fn a_server_address_is_https_unless_it_is_this_mac() {
+        assert_eq!(server_url("app.example.com"), Ok("https://app.example.com".into()));
+        assert_eq!(server_url(" https://app.example.com/ "), Ok("https://app.example.com".into()));
+        assert_eq!(server_url("localhost:3001"), Ok("http://localhost:3001".into()));
+        assert_eq!(server_url("http://127.0.0.1:3001"), Ok("http://127.0.0.1:3001".into()));
+        assert!(server_url("http://app.example.com").is_err());
+        assert!(server_url("ftp://app.example.com").is_err());
+        assert!(server_url("https://user:pass@app.example.com").is_err());
+        assert!(server_url("https://app.example.com/path").is_err());
+        assert!(server_url("app.example.com:port").is_err());
+        assert!(server_url("").is_err());
     }
 }

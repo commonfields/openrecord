@@ -114,6 +114,15 @@ impl Net {
         Net { client: base.map(Client::new), tx, rx, waker: None }
     }
 
+    /// Points the worker at another server. The saved session belonged to the
+    /// old one and is dropped first, so its cookie is never sent to the new one.
+    pub fn rebase(&mut self, base: String) {
+        if self.client.is_some() {
+            crate::api::forget_saved_session();
+            self.client = Some(Client::new(base));
+        }
+    }
+
     /// Whether this worker sends at all (headless scenes have no client).
     pub fn live(&self) -> bool {
         self.client.is_some()

@@ -18,7 +18,7 @@ use crate::ui::widgets::{Variant, badge, button, failure, ico, label, page_heade
 /// Opens a path of the web app (for the sign-ins only a browser can finish).
 fn open_web(path: String) -> impl Fn(&mut App, &mut rune::Tx) + 'static {
     move |_s: &mut App, tx: &mut rune::Tx| {
-        let api = std::env::var(crate::state::API_ENV).unwrap_or_else(|_| crate::state::DEFAULT_API.into());
+        let api = crate::state::api_base();
         let _ = tx.open_url(&format!("{}{path}", crate::ui::web_url(&api)));
     }
 }

@@ -163,14 +163,17 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
 }
 
 fn choose_business(t: &Theme) -> El {
+    // The whole setup is one line: the website. The agent reads it and asks for the goal in chat.
     col()
         .key("choose-business")
         .w_full()
         .h_full()
         .center()
-        .gap(6.0)
-        .child(label("No business yet", type_::BASE_MEDIUM, t.foreground))
-        .child(label("Set one up on the web with its website and goal, then come back here.", type_::SM_13, t.muted_foreground))
+        .gap(8.0)
+        .child(label("Start with your website", rune::TextStyle::new(24.0, 600.0).lh(32.0), t.foreground).role("heading"))
+        .child(label("Give OpenRecord a website and the agent reads it, learns the business and asks what you want more of.", type_::SM, t.muted_foreground).wrap().max_w(460.0))
+        .child(rune::el().h(6.0))
+        .child(widgets::button(t, "start-add-business", "Add a website", widgets::Variant::Primary).on_press(|s: &mut App| s.open_add_business(None)))
 }
 
 /// A bar under the header for something the shell has to say: the web's

@@ -39,14 +39,14 @@ describe("what a general business turn costs before any conversation", () => {
     expect(cards.find(t => t.name === "prepare_wordpress_change")!.description).toContain("call tool_details")
   })
 
-  it("adds a command's guide only on that command, and the marketing loop while the talk is about marketing work", () => {
+  it("carries the marketing loop on every ordinary turn, and a command's own guide on that command", () => {
+    // No keyword decides it: a request that never says "marketing" gets the same instructions.
     expect(systemFor("How did search do last month?")).toBe(AGENT_SYSTEM)
-    expect(AGENT_SYSTEM).not.toContain("Marketing operating loop:")
+    expect(systemFor("Work on our onboarding campaign")).toBe(AGENT_SYSTEM)
+    expect(AGENT_SYSTEM).toContain("Marketing operating loop:")
     expect(systemFor("/campaign-run Trial")).toContain("For /campaign-run call record_campaign_run")
     expect(systemFor("/status")).not.toContain("Marketing operating loop:")
     expect(systemFor("/status")).toContain("For /status,")
-    expect(systemFor("Work on our onboarding campaign")).toContain("Marketing operating loop:")
-    expect(systemFor("Yes, do that", ["Draft a campaign for agencies"])).toContain("Marketing operating loop:")
   })
 })
 

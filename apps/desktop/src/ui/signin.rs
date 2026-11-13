@@ -52,6 +52,38 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     if let Some(err) = &s.signin_error {
         form = form.child(label(err.clone(), type_::SM_13, t.wrong).key("signin-error").wrap().live_region(rune::LiveRegion::Polite));
     }
+    // Which server this signs in to: one quiet line, or the field once the person asks to change it.
+    let server = if s.server_open {
+        let input = TextInput::new(&s.server)
+            .label("Server")
+            .placeholder("app.example.com")
+            .height(32.0)
+            .width(Some(320.0))
+            .on_edit(|s: &mut App| &mut s.server)
+            .on_submit(|s: &mut App, _| s.submit_signin())
+            .build(k)
+            .key("server");
+        field("Server", input)
+    } else {
+        let api = crate::state::api_base();
+        let host = api.split_once("://").map_or(api.as_str(), |x| x.1).to_string();
+        row()
+            .key("server-line")
+            .w_full()
+            .gap(6.0)
+            .center_y()
+            .child(label(format!("Server: {host}"), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+            .child(
+                label("Change", type_::XS_MEDIUM, t.foreground)
+                    .key("server-change")
+                    .role("button")
+                    .label("Change server")
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .on_press(|s: &mut App| s.edit_server()),
+            )
+    };
+    form = form.child(server);
     form = form.child(col().w_full().gap(12.0).child(submit).child(demo));
 
     let card = shadows(

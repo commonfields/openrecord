@@ -3,9 +3,15 @@
 //! The Desktop workflow attaches `OpenRecord-<version>.dmg` to a release tagged
 //! `desktop-v<version>`. `check` finds the newest such release; `install`
 //! downloads its disk image, copies the app out of it next to the running
-//! bundle, swaps the two, and relaunches. The work shells out to the tools
-//! macOS ships (`curl`, `hdiutil`, `ditto`, `open`), so the app needs no TLS
-//! stack of its own.
+//! bundle, checks it, swaps the two, and relaunches. The work shells out to
+//! the tools macOS ships (`curl`, `hdiutil`, `ditto`, `codesign`, `open`).
+//!
+//! What is checked before anything is replaced: the download comes from this
+//! repository's releases over HTTPS and nowhere else; the copied bundle's
+//! signature is intact (`codesign --verify --deep --strict`); and when the
+//! running app is signed by a team, the new one is signed by the same team.
+//! A build signed ad hoc (made on this Mac) has no team to compare, so only
+//! the first two hold for it.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,6 +19,36 @@ use std::process::Command;
 /// Where the releases are published.
 pub const RELEASES: &str = "https://api.github.com/repos/commonfields/openrecord/releases?per_page=30";
 const TAG_PREFIX: &str = "desktop-v";
+/// The only place an update is downloaded from.
+const DOWNLOADS: &str = "https://github.com/commonfields/openrecord/releases/download/";
+
+/// Whether `url` is one of this repository's release assets, with nothing that could lead elsewhere.
+fn trusted_download(url: &str) -> bool {
+    url.strip_prefix(DOWNLOADS).is_some_and(|rest| !rest.is_empty() && !rest.contains("..") && !rest.contains(['?', '#', '@', '\\', ' ']))
+}
+
+/// The team that signed the bundle at `app` (`TeamIdentifier` in `codesign -dv`); `None` when unsigned or signed ad hoc.
+fn team_of(app: &Path) -> Option<String> {
+    let out = Command::new("codesign").args(["-dv", "--verbose=2"]).arg(app).output().ok()?;
+    // codesign prints the details on stderr.
+    team_in(&String::from_utf8_lossy(&out.stderr))
+}
+
+fn team_in(details: &str) -> Option<String> {
+    let team = details.lines().find_map(|l| l.strip_prefix("TeamIdentifier="))?.trim();
+    (!team.is_empty() && team != "not set").then(|| team.to_string())
+}
+
+/// Refuses a bundle whose signature is broken, or that another team signed.
+fn verify(staged: &Path, running: &Path) -> Result<(), String> {
+    run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(staged), "verify the downloaded app's signature")
+        .map_err(|_| "The downloaded app's signature is not valid, so it was not installed.".to_string())?;
+    match (team_of(running), team_of(staged)) {
+        (Some(ours), Some(theirs)) if ours == theirs => Ok(()),
+        (Some(_), _) => Err("The downloaded app is not signed by OpenRecord's developer, so it was not installed.".into()),
+        (None, _) => Ok(()),
+    }
+}
 
 /// This build's version, from Cargo.toml (the bundle's `CFBundleShortVersionString`).
 pub fn current() -> &'static str {
@@ -115,8 +151,17 @@ pub fn install(r: &Release) -> Result<(), String> {
 }
 
 fn install_from(r: &Release, app: &Path, parent: &Path, work: &Path) -> Result<(), String> {
+    if !cfg!(test) && !trusted_download(&r.dmg_url) {
+        return Err("The update does not come from OpenRecord's releases, so it was not downloaded.".into());
+    }
     let dmg = work.join("OpenRecord.dmg");
-    run(Command::new("curl").args(["-fsSL", "--max-time", "600", "-A", "OpenRecord-desktop", "-o"]).arg(&dmg).arg(&r.dmg_url), "download the update")?;
+    // HTTPS only, through every redirect GitHub makes to its download host.
+    let mut curl = Command::new("curl");
+    curl.args(["-fsSL", "--max-time", "600", "-A", "OpenRecord-desktop"]);
+    if !cfg!(test) {
+        curl.args(["--proto", "=https", "--proto-redir", "=https"]);
+    }
+    run(curl.arg("-o").arg(&dmg).arg(&r.dmg_url), "download the update")?;
     let mount = work.join("mount");
     run(Command::new("hdiutil").args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"]).arg(&mount).arg(&dmg), "open the downloaded disk image")?;
     let staged = parent.join(".OpenRecord.app.update");
@@ -132,6 +177,10 @@ fn install_from(r: &Release, app: &Path, parent: &Path, work: &Path) -> Result<(
     })();
     let _ = Command::new("hdiutil").args(["detach", "-quiet", "-force"]).arg(&mount).output();
     copied?;
+    if let Err(e) = verify(&staged, app) {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err(e);
+    }
     // Swap: the old bundle steps aside, the new one takes its name, the old one goes.
     let old = parent.join(".OpenRecord.app.old");
     let _ = std::fs::remove_dir_all(&old);
@@ -144,8 +193,6 @@ fn install_from(r: &Release, app: &Path, parent: &Path, work: &Path) -> Result<(
         return Err(format!("Could not put the new version in place: {e}"));
     }
     let _ = std::fs::remove_dir_all(&old);
-    // A download the system marked as quarantined would ask again on launch.
-    let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(app).output();
     Ok(())
 }
 
@@ -180,6 +227,23 @@ mod tests {
         ]);
         assert_eq!(pick(&json, "0.1.0"), Some(Release { version: "0.2.0".into(), dmg_url: "dmg2".into(), page_url: "page".into() }));
         assert_eq!(pick(&json, "0.2.0"), None);
+    }
+
+    #[test]
+    fn downloads_only_from_this_repositorys_releases() {
+        assert!(trusted_download("https://github.com/commonfields/openrecord/releases/download/desktop-v0.2.0/OpenRecord-0.2.0.dmg"));
+        assert!(!trusted_download("http://github.com/commonfields/openrecord/releases/download/desktop-v0.2.0/OpenRecord-0.2.0.dmg"));
+        assert!(!trusted_download("https://github.com/someone-else/openrecord/releases/download/desktop-v0.2.0/OpenRecord-0.2.0.dmg"));
+        assert!(!trusted_download("https://github.com/commonfields/openrecord/releases/download/../../../evil/x.dmg"));
+        assert!(!trusted_download("https://github.com/commonfields/openrecord/releases/download/x.dmg?redirect=https://evil.example"));
+        assert!(!trusted_download("https://github.com/commonfields/openrecord/releases/download/"));
+    }
+
+    #[test]
+    fn reads_the_signing_team_and_treats_ad_hoc_as_none() {
+        assert_eq!(team_in("Identifier=io.openrecord.desktop\nTeamIdentifier=AB12CD34EF\nSealed Resources version=2"), Some("AB12CD34EF".into()));
+        assert_eq!(team_in("Signature=adhoc\nTeamIdentifier=not set"), None);
+        assert_eq!(team_in("code object is not signed at all"), None);
     }
 
     /// Installs a real disk image over a stand-in bundle:
