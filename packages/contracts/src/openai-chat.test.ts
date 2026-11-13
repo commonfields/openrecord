@@ -38,10 +38,16 @@ describe("chat completion answers", () => {
     expect(chatCompletionAnswer({ model: "gpt-6.1-sol", usage, choices: [{ finish_reason: "tool_calls", message: { content: null,
       tool_calls: [{ id: "x", type: "function", function: { name: "read_issue", arguments: '{"claimId":"a"}' } }] } }] }))
       .toEqual({ kind: "tools", calls: [{ name: "read_issue", args: { claimId: "a" } }],
-        usage: { model: "gpt-6.1-sol", promptTokens: 10, outputTokens: 4, thoughtTokens: null, totalTokens: 14 } })
+        usage: { model: "gpt-6.1-sol", promptTokens: 10, outputTokens: 4, thoughtTokens: null, totalTokens: 14, cachedTokens: null } })
   })
   it("returns trimmed text", () => {
     expect(chatCompletionAnswer({ choices: [{ finish_reason: "stop", message: { content: "  Done.  " } }] })).toMatchObject({ kind: "text", text: "Done." })
+  })
+  it("preserves provider cache usage and leaves unreported usage unknown", () => {
+    const answer = (usage: unknown) => chatCompletionAnswer({ usage, choices: [{ finish_reason: "stop", message: { content: "Done." } }] })
+    expect(answer({ prompt_tokens: 10, prompt_tokens_details: { cached_tokens: 6 } })).toMatchObject({ usage: { promptTokens: 10, cachedTokens: 6 } })
+    expect(answer({ prompt_tokens_details: { cached_tokens: 0 } })).toMatchObject({ usage: { cachedTokens: 0 } })
+    expect(answer(undefined)).toMatchObject({ usage: { promptTokens: null, cachedTokens: null } })
   })
   it.each([
     ["invalid argument JSON", { choices: [{ message: { tool_calls: [{ function: { name: "t", arguments: "{" } }] } }] }],
@@ -80,6 +86,6 @@ describe("reasoning and streaming", () => {
     expect(stream.thought()).toBe("Look at open issues.")
     expect(chatCompletionAnswer(stream.completion())).toEqual({ kind: "tools", thought: "Look at open issues.",
       calls: [{ name: "read_issue", args: { claimId: "x" } }, { name: "read_open_issues", args: {} }],
-      usage: { model: "claude-sonnet-5-5", promptTokens: 5, outputTokens: 2, thoughtTokens: null, totalTokens: 7 } })
+      usage: { model: "claude-sonnet-5-5", promptTokens: 5, outputTokens: 2, thoughtTokens: null, totalTokens: 7, cachedTokens: null } })
   })
 })
