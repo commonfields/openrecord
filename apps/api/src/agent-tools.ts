@@ -63,6 +63,8 @@ export interface AgentToolResult {
   /** Session tools only: approvals a helper saved, and the tasks it reports on. */
   readonly decisions?: ReadonlyArray<import("./agent-registry.js").DecisionRef> | undefined
   readonly tasks?: ReadonlyArray<import("./agent-registry.js").TaskRef> | undefined
+  /** Artifacts this call saved or changed; the chat draws each as a card that opens the viewer. */
+  readonly artifacts?: ReadonlyArray<import("./artifacts.js").ArtifactRef> | undefined
 }
 
 /** Every service any tool may need. The registry is closed: adding a tool

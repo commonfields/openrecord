@@ -6,6 +6,7 @@ import { finishRun, settleRuns, startRun, type RunJournal, type RunOutcome } fro
 import type { HarnessSelection } from "@openrecord/contracts"
 import { HarnessReasoningEffort, type AgentAttachment, type AgentResponseStyle } from "@openrecord/contracts"
 import { AgentModelError } from "./agent-model.js"
+import { ArtifactRefSchema } from "./artifacts.js"
 
 export class AgentConversationRefused extends Data.TaggedError("AgentConversationRefused")<{
   readonly reason: "NOT_FOUND" | "BUSY" | "STALE"
@@ -30,7 +31,7 @@ const Activity = Schema.Union(
 const Attachment = Schema.Struct({ name: Schema.String, type: Schema.String, text: Schema.String })
 const ContextUse = Schema.Struct({ historyChars: Schema.Number, budgetChars: Schema.Number, verbatim: Schema.Number, compacted: Schema.Number, omitted: Schema.Number })
 const Message = Schema.Struct({ context: Schema.optional(ContextUse), attachments: Schema.optional(Schema.Array(Attachment).pipe(Schema.maxItems(3))), activity: Schema.optional(Schema.Array(Activity).pipe(Schema.maxItems(24))), durationMs: Schema.optional(Schema.Number), role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
-  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
+  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), artifacts: Schema.optional(Schema.Array(ArtifactRefSchema).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session),
   title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
@@ -219,6 +220,7 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
     readonly decisions?: ReadonlyArray<{ readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
+    readonly artifacts?: ReadonlyArray<import("./artifacts.js").ArtifactRef> | undefined
     readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
     readonly context?: typeof ContextUse.Type | undefined
   }, unknown, R>
@@ -302,7 +304,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
         // The operator's first turn in a top-level chat also asks for a topic title.
         generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined, style: body.style, surfaces: body.surfaces })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.artifacts?.length ? { artifacts: reply.artifacts } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       // Background grants may be revoked while the model is answering. The

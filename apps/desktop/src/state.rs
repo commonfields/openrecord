@@ -2057,6 +2057,12 @@ impl App {
         self.net.shares(b, c, false, None);
     }
 
+/// Opens a piece the agent wrote as a page in the browser.
+    pub fn open_artifact(&mut self, artifact: &str) {
+        let Some(b) = self.active.clone() else { return };
+        self.net.open_artifact(b, artifact.to_string());
+    }
+
     pub fn create_share(&mut self) {
         let Some(b) = self.active.clone() else { return };
         let Some(sh) = &mut self.share else { return };
@@ -2504,6 +2510,7 @@ impl App {
             }
             Reply::Pairing(r) => self.pairing = to_load(self.failed(r)),
             Reply::SettingFailed(e) => self.settings_error = Some(e),
+            Reply::ArtifactFailed(e) => self.notice = Some(e),
             Reply::Archived { archived, result, .. } => {
                 if let Err(e) = self.failed(result) {
                     if !e.is_empty() {

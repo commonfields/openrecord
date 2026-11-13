@@ -37,6 +37,8 @@ import { AccountActionById } from "@/components/account-action"
 import { AgentFollowups } from "@/components/agent-followups"
 import { followupChatEvent, followupModel } from "@/lib/agent-followups"
 import { conversationProposals } from "@/lib/chat-proposals"
+import { ArtifactCards } from "@/components/artifact-viewer"
+import { notifyArtifactsChanged, type ArtifactRef } from "@/lib/artifacts"
 
 /** An entry in the composer's "/" menu: an OpenRecord command or a playbook. */
 type MenuItem = ({ kind: "command" } & (typeof COMMANDS)[number]) | { kind: "playbook"; playbook: Playbook }
@@ -46,6 +48,8 @@ type Message = { id: string; role: "user" | "agent"; text: string; attachments?:
   steps?: string[]; run?: AgentRunRef; decisions?: AgentDecisionRef[]
   // Helper sessions this reply started, and which session sent this message.
   tasks?: AgentTaskRef[]; origin?: AgentMessageOrigin
+  // Finished pieces this reply wrote or changed.
+  artifacts?: ArtifactRef[]
   // A pending reply's live trace, and a finished reply's folded one.
   progress?: Progress; activity?: AgentActivity[]; durationMs?: number
   // Arrived in this session (not loaded from history): it gets an entrance.
@@ -230,10 +234,11 @@ export function useAgentSession(businessId: string | null, enabled = true, conve
       setConversationId(r.conversationId); setRevision(r.revision)
       setMessages(m => [...m.slice(0, -1), { id: uid(), role: "agent", fresh: true, text: r.reply, tools: r.toolCalls, citations: r.citations, provider: r.provider, ...(r.requestedModel ? { model: r.requestedModel } : {}),
         ...(r.runId ? { run: { id: r.runId, status: "COMPLETED" as const, ...(r.outcome ? { outcome: r.outcome } : {}), gaps: r.gaps ?? [] } } : {}),
-        ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}),
+        ...(r.decisions?.length ? { decisions: r.decisions } : {}), ...(r.tasks?.length ? { tasks: r.tasks } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}),
         ...(r.activity?.length ? { activity: r.activity } : {}), ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}), ...(r.context ? { context: r.context } : {}) }])
       refreshProposals()
       if (r.decisions?.length) notifyDecisionsChanged()
+      if (r.artifacts?.length) notifyArtifactsChanged()
     }).catch((e: unknown) => {
       activity.finish(businessId, requestId, false)
       if (!isCurrent()) return
@@ -670,6 +675,7 @@ function Thread({ session, businessName = "", compact, placeholder, onCommand, w
                       ) : null}
                       {m.citations?.length && !m.pending ? <div className={m.fresh ? "step-in [animation-delay:400ms]" : undefined}><AnswerResources businessId={session.businessId} citations={m.citations} /></div> : null}
                       {m.tasks?.length && m.origin?.kind !== "result" ? <MessageTasks session={session} tasks={m.tasks} statuses={statuses} /> : null}
+                      {m.artifacts?.length && session.businessId !== null && !m.pending ? <div className={m.fresh ? "step-in [animation-delay:450ms]" : undefined}><ArtifactCards businessId={session.businessId} refs={m.artifacts} autoOpen={m.fresh === true} /></div> : null}
                       {m.decisions?.length ? <div className={m.fresh ? "step-in [animation-delay:550ms]" : undefined}><MessageDecisions session={session} businessName={businessName} refs={m.decisions} /></div> : null}
                     </div>
                   )}

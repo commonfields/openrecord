@@ -19,6 +19,7 @@ import { pluginGuidance } from "./plugins.js"
 import { commandTools, EXECUTION_LIMITS, HARNESS_REQUEST_BYTES, HOSTED_REQUEST_BYTES, modelRequestBytes, narrowTools, requestLimits, type RequestLimits } from "./agent-execution-policy.js"
 import { READING_RULES, systemFor } from "./agent-prompt.js"
 import { declareTools, detailNames, hasLazySchema, TOOL_DETAILS, toolDetails } from "./agent-tool-cards.js"
+import { mergeArtifacts, type ArtifactRef } from "./artifacts.js"
 
 export interface AgentToolCall { readonly tool: string; readonly summary: string }
 export interface AgentCitation { readonly kind: string; readonly id: string; readonly text: string }
@@ -173,6 +174,7 @@ export const runConversation = (input: {
   const gaps: string[] = []
   const decisions: DecisionRef[] = []
   const tasks: TaskRef[] = []
+  const artifacts: ArtifactRef[] = []
   const activity: AgentActivity[] = []
   const startedAt = Date.now()
   const deadline = input.deadline ?? startedAt + EXECUTION_LIMITS.runMs
@@ -316,7 +318,7 @@ export const runConversation = (input: {
       if (!reply) return yield* Effect.fail(new AgentModelError({ reason: "MALFORMED" }))
       const outcome: RunOutcome = gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED"
       yield* journal.record("VERIFICATION", { passed: gaps.length === 0, missing, gaps, outcome })
-      return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks),
+      return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks), artifacts: mergeArtifacts(artifacts),
         activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt,
         context: { historyChars: built.historyChars, budgetChars: built.budgetChars, verbatim: built.verbatimMessages, compacted: built.compactedMessages, omitted: built.omittedMessages } }
     }
@@ -399,9 +401,11 @@ export const runConversation = (input: {
       // A helper's saved proposals become approval cards on this reply too.
       decisions.push(...(result.right.decisions ?? []))
       tasks.push(...(result.right.tasks ?? []))
+      artifacts.push(...(result.right.artifacts ?? []))
       yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary,
         citations: result.right.citations.slice(0, 20).map(c => ({ kind: c.kind, id: c.id, text: c.text.slice(0, 140) })),
         ...(effect === "propose" || effect === "record" ? { receipt: proposalReceipt(result.right) } : {}),
+        ...(result.right.artifacts?.length ? { artifacts: result.right.artifacts } : {}),
         ...(effect === "delegate" ? { receipt: proposalReceipt(result.right), ...(result.right.decisions?.length ? { decisions: result.right.decisions } : {}) } : {}) })
       const rule = ruled.has(call.name) ? undefined : READING_RULES[call.name]
       ruled.add(call.name)

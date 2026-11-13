@@ -2,7 +2,7 @@ import type { ModelInput } from "./agent-model.js"
 import type { ToolDeclaration } from "./agent-registry.js"
 import { tokens } from "./research/catalog.js"
 
-export const EXECUTION_LIMITS = { requestBytes: 128000, runMs: 480000, answerReserveMs: 75000, modelCallMs: 60000, synthesisBytes: 24000 } as const
+export const EXECUTION_LIMITS = { requestBytes: 128000, runMs: 480000, answerReserveMs: 75000, modelCallMs: 180000, synthesisBytes: 24000 } as const
 /**
  * How much one model request may carry, by transport. Bytes stand in for
  * tokens (about four bytes each for this JSON), so no tokenizer is needed.
