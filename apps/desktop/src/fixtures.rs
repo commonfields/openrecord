@@ -472,6 +472,12 @@ pub fn agent_empty(s: &mut App) {
     s.view = View::Agent;
 }
 
+/// Home with the decisions stack spread under the pointer.
+pub fn notices_open(s: &mut App) {
+    agent_empty(s);
+    s.notices_open = true;
+}
+
 fn page(s: &mut App, page: Page) {
     workspace(s);
     s.view = View::Workspace;

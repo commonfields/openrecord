@@ -13,6 +13,7 @@ pub mod issues;
 pub mod world;
 mod world_land;
 mod kit;
+mod notices;
 mod overview;
 pub use overview::number as overview_number;
 mod pages;
@@ -66,6 +67,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if s.chat_shown() && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }
+        layers.extend(notices::layer(s, &t));
         find::layers(s, &t, &mut layers);
         if let Some(a) = &s.add_business {
             account_pages::add_business_dialog(s, &t, &k, a, &mut layers);

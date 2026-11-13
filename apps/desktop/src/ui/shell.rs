@@ -273,7 +273,7 @@ fn nav_link(s: &App, t: &Theme, key: &str, icon: &'static rune::Icon, name: &str
         .focusable(true)
         .cursor(Cursor::Pointer)
         .on_hover_change(crate::ui::widgets::track_hover(format!("nav:{key}")))
-        .child(ico(icon, 15.0, if active { t.primary_ink } else { t.muted_foreground }));
+        .child(ico(icon, 16.0, if active { t.foreground } else { t.muted_foreground }));
     if open {
         link = link.w_full().px(10.0).child(
             label(name.to_string(), if active { type_::SM_MEDIUM } else { type_::SM }, if active { t.foreground } else { t.sidebar_foreground })
@@ -301,18 +301,18 @@ fn workspace_links(s: &App, t: &Theme) -> El {
         links = links.items_center();
     }
     let home = s.view == View::Agent && s.chat_id.is_none() && !s.general;
-    links = links.child(nav_link(s, t, "home", &icons::SPARKLES, "Home", home, 0).on_press(|s: &mut App| s.go_home()));
+    links = links.child(nav_link(s, t, "home", &icons::NAV_HOME, "Home", home, 0).on_press(|s: &mut App| s.go_home()));
     if s.active.is_none() {
         return links;
     }
     for page in Page::ALL {
         let active = s.view == View::Workspace && s.page == page;
         let (i, count): (&'static rune::Icon, i64) = match page {
-            Page::Inbox => (&icons::INBOX, s.waiting() as i64),
-            Page::Overview => (&icons::CHART_COLUMN, 0),
-            Page::Campaigns => (&icons::BRIEFCASE, 0),
-            Page::AiAnswers => (&icons::CIRCLE_ALERT, if s.prefs.show_issue_count { s.attention() } else { 0 }),
-            Page::Channels => (&icons::PLUG, 0),
+            Page::Inbox => (&icons::NAV_INBOX, s.waiting() as i64),
+            Page::Overview => (&icons::NAV_ANALYTICS, 0),
+            Page::Campaigns => (&icons::NAV_CAMPAIGNS, 0),
+            Page::AiAnswers => (&icons::NAV_ANSWERS, if s.prefs.show_issue_count { s.attention() } else { 0 }),
+            Page::Channels => (&icons::NAV_CHANNELS, 0),
             Page::Usage | Page::Businesses | Page::Clients => continue,
         };
         links = links.child(nav_link(s, t, page.key(), i, page.label(), active, count).on_press(move |s: &mut App| s.show_page(page)));

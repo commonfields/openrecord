@@ -236,8 +236,9 @@ pub fn view(s: &App, t: &Theme) -> El {
     let scoped: Vec<&Issue> = issues.iter().filter(|i| matches(i, q)).collect();
     let visible: Vec<&Issue> = scoped.iter().copied().filter(|i| q.state == "ALL" || i.state == q.state).collect();
 
-    // The totals by state; each one filters the list.
-    let mut strip = row().key("issue-stats").w_full().gap(12.0).items_stretch();
+    // The totals by state as the Analytics strip draws its key numbers: frameless,
+    // split by hairlines, the chosen one raised onto a card. Each one filters the list.
+    let mut strip = row().key("issue-stats").w_full().gap(0.0).items_stretch().role("tablist").label("Answers by rating");
     for f in FILTERS {
         let list: Vec<&&Issue> = scoped.iter().filter(|i| f == "ALL" || i.state == f).collect();
         let distinct = list.iter().map(|i| norm(&i.claim_text)).collect::<std::collections::BTreeSet<_>>().len();
@@ -252,8 +253,7 @@ pub fn view(s: &App, t: &Theme) -> El {
             .py(12.0)
             .gap(4.0)
             .radius(12.0)
-            .fill(t.card)
-            .role("button")
+            .role("tab")
             .label(format!("{name}: {}", list.len()))
             .checked(on)
             .focusable(true)
@@ -261,10 +261,10 @@ pub fn view(s: &App, t: &Theme) -> El {
             .hover(t.hover_tint)
             .motion(CONTROL)
             .on_press(move |s: &mut App| s.set_issue_state(f))
-            .child(row().gap(6.0).center_y().children((f != "ALL").then(|| el().size(6.0, 6.0).radius(3.0).fill(ink))).child(label(name, type_::XS_MEDIUM, t.muted_foreground).truncate()))
-            .child(label(crate::insights::int(list.len() as f64), rune::TextStyle::new(20.0, 600.0).lh(26.0).features("'tnum' 1"), t.foreground))
+            .child(row().gap(6.0).center_y().children((f != "ALL").then(|| el().size(6.0, 6.0).radius(3.0).fill(ink))).child(label(name, type_::SM_13, if on { t.foreground } else { t.muted_foreground }).truncate()))
+            .child(label(crate::insights::int(list.len() as f64), type_::TITLE.features("'tnum' 1"), if on { t.figure } else { t.figure.alpha(0.85) }))
             .child(label(format!("{distinct} distinct {}", if distinct == 1 { "claim" } else { "claims" }), type_::XS, t.muted_foreground).truncate());
-        strip = strip.child(if on { shadows(tile.border(1.0, t.primary_ink.alpha(0.5)), &t.card_shadow) } else { shadows(tile, &t.card_shadow) });
+        strip = strip.child(if on { shadows(tile.fill(t.card), &t.card_shadow) } else { tile.child(el().pin(Some(0.0), Some(14.0), None, Some(14.0)).w(1.0).fill(t.border)) });
     }
     page = page.child(strip);
 
@@ -273,7 +273,7 @@ pub fn view(s: &App, t: &Theme) -> El {
     queue.sort_by_key(|i| std::cmp::Reverse(time(i)));
     if let Some(first) = queue.first().filter(|_| q.state != "NEEDS_REVIEW") {
         let id = first.claim_id.clone();
-        page = page.child(shadows(
+        page = page.child(
             row()
                 .key("issue-queue")
                 .w_full()
@@ -283,7 +283,6 @@ pub fn view(s: &App, t: &Theme) -> El {
                 .radius(12.0)
                 .center_y()
                 .fill(t.review_soft.alpha(0.6))
-                .border(1.0, t.review.alpha(0.2))
                 .child(ico(&icons::PEN_LINE, 16.0, t.review))
                 .child(
                     row()
@@ -294,8 +293,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                         .child(label("Unreviewed claims are not counted as wrong until someone judges them.", type_::XS, t.muted_foreground).truncate().min_w(0.0)),
                 )
                 .child(button(t, "issue-start-review", "Start reviewing →", Variant::Outline).on_press(move |s: &mut App| s.open_answer(&id))),
-            &t.float_shadow,
-        ));
+        );
     }
 
     // The panel: toolbar, then the rows.

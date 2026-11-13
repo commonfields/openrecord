@@ -136,6 +136,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("signin", fixtures::signin),
     ("agent", fixtures::agent),
     ("agent-empty", fixtures::agent_empty),
+    ("notices-open", fixtures::notices_open),
     ("agent-log", fixtures::agent_open_log),
     ("agent-chart", fixtures::agent_chart),
     ("agent-chart-table", fixtures::agent_chart_table),

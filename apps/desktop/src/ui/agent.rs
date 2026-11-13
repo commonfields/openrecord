@@ -133,66 +133,9 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
         );
     }
     let waiting = s.inbox();
-    let now = crate::format::now();
-    let status = match waiting.len() {
-        0 => "Nothing is waiting on you. Tell the agent what you want, or pick a place to start.".to_string(),
-        _ => String::new(),
-    };
+    // What waits on the person floats in the corner; here, only when nothing does.
     if waiting.is_empty() {
-        c = c.child(label(status, type_::SM, t.muted_foreground).wrap());
-    }
-    if !waiting.is_empty() {
-        let mut list = col().w_full().padding(6.0).gap(2.0);
-        for d in waiting.iter().take(3) {
-            let key = d.key.clone();
-            list = list.child(
-                row()
-                    .key(format!("start-decision-{}", d.key))
-                    .w_full()
-                    .px(12.0)
-                    .py(10.0)
-                    .gap(12.0)
-                    .radius(8.0)
-                    .center_y()
-                    .role("button")
-                    .label(d.title.clone())
-                    .focusable(true)
-                    .cursor(Cursor::Pointer)
-                    .hover(t.hover_tint)
-                    .motion(CONTROL)
-                    .on_press(move |s: &mut App| {
-                        s.show_page(Page::Inbox);
-                        s.select_decision(&key);
-                    })
-                    .child(el().size(7.0, 7.0).radius(4.0).fill(t.partial))
-                    .child(
-                        col()
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .gap(1.0)
-                            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).truncate())
-                            .child(label(format!("{}, {}", d.label, crate::format::relative(d.created_at.as_deref(), now)), type_::XS, t.muted_foreground).truncate()),
-                    )
-                    .child(label("Review", type_::XS_MEDIUM, t.muted_foreground))
-                    .child(ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground)),
-            );
-        }
-        let mut block = col().key("start-waiting").w_full().gap(8.0).child(
-            row()
-                .w_full()
-                .center_y()
-                .child(label("Needs your decision", type_::XS_MEDIUM, t.muted_foreground).grow(1.0))
-                .children((waiting.len() > 3).then(|| {
-                    label(format!("See all {}", waiting.len()), type_::XS_MEDIUM, t.foreground)
-                        .key("start-inbox")
-                        .role("link")
-                        .focusable(true)
-                        .cursor(Cursor::Pointer)
-                        .on_press(|s: &mut App| s.show_page(Page::Inbox))
-                })),
-        );
-        block = block.child(crate::ui::widgets::card(t).w_full().child(list));
-        c = c.child(block);
+        c = c.child(label("Nothing is waiting on you. Tell the agent what you want, or pick a place to start.", type_::SM, t.muted_foreground).wrap());
     }
     let mut grid = col().w_full().gap(10.0);
     for pair in STARTERS.chunks(2) {
@@ -227,7 +170,7 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
     c = c.child(col().key("start-ways").w_full().gap(8.0).child(label("Start with", type_::XS_MEDIUM, t.muted_foreground)).child(grid));
     // Sits a little above the middle of a tall window, and scrolls in a short one.
     let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
-    let blocks = if waiting.is_empty() { 300.0 } else { 300.0 + 70.0 + 62.0 * waiting.len().min(3) as f32 };
+    let blocks = 300.0;
     let top = ((height - 48.0 - 150.0 - blocks) * 0.42).max(32.0);
     col()
         .key("start-scroll")

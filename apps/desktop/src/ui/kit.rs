@@ -93,7 +93,7 @@ pub fn tile(t: &Theme, key: &str, name: &str, value: String, change: Option<(f64
     }
     let mut c = shadows(col().key(key.to_string()).w(0.0).grow(1.0).min_w(150.0).h(112.0).px(18.0).py(16.0).gap(6.0).radius(12.0).fill(t.card), &t.card_shadow)
         .child(head)
-        .child(label(value, VALUE, t.foreground).truncate());
+        .child(label(value, VALUE, t.figure).truncate());
     if let Some(f) = foot {
         c = c.child(el().grow(1.0)).child(label(f, type_::XS, t.muted_foreground).truncate());
     }

@@ -131,7 +131,7 @@ fn kpi(t: &Theme, key: &str, name: &str, value: String, hint: Option<String>, de
         .gap(4.0)
         .radius(12.0)
         .child(head)
-        .child(label(value, type_::TITLE.features("'tnum' 1"), if selected { t.foreground } else { t.foreground.alpha(0.85) }));
+        .child(label(value, type_::TITLE.features("'tnum' 1"), if selected { t.figure } else { t.figure.alpha(0.85) }));
     if let Some(h) = hint {
         c = c.child(label(h, type_::XS, t.muted_foreground).truncate());
     }
@@ -237,7 +237,7 @@ fn stat_tile(t: &Theme, key: &str, name: &str, value: &str, change: Option<f64>,
         .py(16.0)
         .gap(6.0)
         .child(head)
-        .child(label(value.to_string(), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground).truncate());
+        .child(label(value.to_string(), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.figure).truncate());
     // This period against the one before, as two bars on one scale.
     if let (Some(d), Some(now)) = (change, number(value)) {
         let before = if (1.0 + d).abs() > f64::EPSILON { now / (1.0 + d) } else { now };
@@ -247,7 +247,7 @@ fn stat_tile(t: &Theme, key: &str, name: &str, value: &str, change: Option<f64>,
                 .child(row().grow(1.0).h(4.0).radius(2.0).fill(t.foreground.alpha(0.06)).child(el().w_frac((frac / max) as f32).h_full().radius(2.0).fill(ink)))
                 .child(label(name.to_string(), type_::XS2.lh(10.0), t.muted_foreground).w(44.0))
         };
-        c = c.child(el().grow(1.0)).child(col().w_full().gap(4.0).child(bar(now, t.primary_ink, "now")).child(bar(before, t.muted_foreground.alpha(0.5), "before")));
+        c = c.child(el().grow(1.0)).child(col().w_full().gap(4.0).child(bar(now, t.bar, "now")).child(bar(before, t.muted_foreground.alpha(0.5), "before")));
     }
     c
 }
@@ -527,9 +527,9 @@ fn share_tile(t: &Theme, key: &str, name: &str, part: Option<(f64, f64)>, of: &s
     };
     card(t).key(key.to_string()).w(0.0).grow(1.0).min_w(170.0).h(128.0).px(18.0).py(16.0).gap(6.0)
         .child(label(name.to_string(), type_::XS_MEDIUM, t.muted_foreground).truncate())
-        .child(label(value, rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))
+        .child(label(value, rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.figure))
         .child(el().grow(1.0))
-        .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.06)).child(el().w_frac(frac.clamp(0.0, 1.0)).h_full().radius(2.0).fill(t.primary_ink)))
+        .child(row().w_full().h(4.0).radius(2.0).fill(t.foreground.alpha(0.06)).child(el().w_frac(frac.clamp(0.0, 1.0)).h_full().radius(2.0).fill(t.bar)))
         .child(label(sub, type_::XS.features("'tnum' 1"), t.muted_foreground).truncate())
 }
 
@@ -556,7 +556,7 @@ fn discovery_panel(t: &Theme, d: &Result<Option<Discovery>, String>) -> El {
     }
     let signup_tile = card(t).key("ai-signups").w(0.0).grow(1.0).min_w(170.0).h(128.0).px(18.0).py(16.0).gap(6.0)
         .child(label("Sign-ups after those visits", type_::XS_MEDIUM, t.muted_foreground).truncate())
-        .child(label(signups.map(int).unwrap_or_else(|| "No data".into()), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.foreground))
+        .child(label(signups.map(int).unwrap_or_else(|| "No data".into()), rune::TextStyle::new(24.0, 600.0).lh(30.0).features("'tnum' 1"), t.figure))
         .child(el().grow(1.0))
         .child(label(d.referral.as_ref().map(|r| r.2.clone()).unwrap_or_else(|| "Not measured yet".into()), type_::XS, t.muted_foreground).truncate());
     col().key("discovery").w_full().gap(10.0)
@@ -787,7 +787,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
             .child(label("Net revenue", type_::SM_MEDIUM, t.muted_foreground))
             .child(el().grow(1.0))
             .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(4.0).fill(t.supported)).child(label(format!("Stripe, {}", r.account), type_::XS, t.muted_foreground))))
-        .child(label(money(r.net.0), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.foreground))
+        .child(label(money(r.net.0), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.figure))
         .child(pill)
         .child(el().h(10.0))
         .child(charts::area_trend(s, t, charts::Trend::new("revenue-daily", "Net revenue", &dates, &values, t.chart.tone(1)).compare(&before, "Period before".into()).height(220.0).width_hint(760.0)))
@@ -812,8 +812,8 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .gap(14.0)
         .child(col().gap(2.0).child(label("Where it went", type_::SM_MEDIUM, t.foreground).role("heading")).child(label("From what was charged to what you kept", type_::XS, t.muted_foreground)))
         .child(row().w_full().h(14.0).radius(7.0).clip_rounded(7.0).gap(2.0)
-            .child(el().h_full().grow(kept.max(0.001)).fill(t.chart.supported))
-            .child(el().h_full().grow((1.0 - kept).max(0.001)).fill(t.chart.wrong)))
+            .child(el().h_full().grow(kept.max(0.001)).fill(t.chart.supported.alpha(if t.dark { 0.7 } else { 1.0 })))
+            .child(el().h_full().grow((1.0 - kept).max(0.001)).fill(t.chart.wrong.alpha(if t.dark { 0.7 } else { 1.0 }))))
         .child(col().w_full()
             .child(line("Charged", money(r.gross.0), t.foreground.alpha(0.25)))
             .child(line("Refunded", format!("−{}", money(r.refunded.0)), t.chart.wrong))
@@ -821,7 +821,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .child(el().grow(1.0))
         .child(col().w_full().gap(4.0).pt(12.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border)
             .child(label("Refund rate", type_::XS, t.muted_foreground))
-            .child(label(if r.gross.0 > 0.0 { format!("{:.1}%", r.refunded.0 / r.gross.0 * 100.0) } else { "—".into() }, rune::TextStyle::new(22.0, 600.0).lh(28.0).features("'tnum' 1"), t.foreground)));
+            .child(label(if r.gross.0 > 0.0 { format!("{:.1}%", r.refunded.0 / r.gross.0 * 100.0) } else { "—".into() }, rune::TextStyle::new(22.0, 600.0).lh(28.0).features("'tnum' 1"), t.figure)));
 
     let opt = |x: Option<f64>| x.unwrap_or(0.0);
     let tiles = row().w_full().gap(16.0).flex_wrap()
@@ -885,7 +885,8 @@ fn funnel(s: &App, t: &Theme, i: &Insights) -> El {
         let (a, b) = (width(st.1), steps.get(k + 1).map(|x| width(x.1)).unwrap_or(width(st.1) * 0.9));
         let (l0, r0) = (w_px * (1.0 - a) / 2.0, w_px * (1.0 + a) / 2.0);
         let (l1, r1) = (w_px * (1.0 - b) / 2.0, w_px * (1.0 + b) / 2.0);
-        let shade = t.chart.tone(k).alpha(0.82);
+        // Large blocks of colour: quieter in dark, where the same colour reads brighter.
+        let shade = t.chart.tone(k).alpha(if t.dark { 0.5 } else { 0.82 });
         sh = sh.fill(vec![[l0, y0], [r0, y0], [r0 - (r0 - r1) * 0.25, y0 + band], [l0 + (l1 - l0) * 0.25, y0 + band]], shade);
         if k + 1 < n {
             // The narrowing to the next step, faint.
@@ -898,7 +899,7 @@ fn funnel(s: &App, t: &Theme, i: &Insights) -> El {
     for (k, (name, v, d, src)) in steps.iter().enumerate() {
         labels = labels.child(col().h(band).justify_center().gap(2.0).child(label(name.clone(), type_::SM_MEDIUM, t.foreground)).child(label(src.to_string(), type_::XS, t.muted_foreground)));
         let mut right = col().h(band).justify_center().gap(2.0).child(row().gap(8.0).center_y()
-            .child(label(crate::insights::int(*v), rune::TextStyle::new(20.0, 600.0).lh(26.0).features("'tnum' 1"), t.foreground))
+            .child(label(crate::insights::int(*v), rune::TextStyle::new(20.0, 600.0).lh(26.0).features("'tnum' 1"), t.figure))
             .children(d.map(|d| label(change_text(d), type_::XS_MEDIUM.features("'tnum' 1"), if d >= 0.0 { t.supported } else { t.wrong }))));
         if let Some(next) = steps.get(k + 1) {
             if *v > 0.0 {
