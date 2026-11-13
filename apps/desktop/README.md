@@ -68,13 +68,20 @@ can check but not install, since it is not inside an `.app`.
   opens the agent beside it; and the account menu. There are no Agent and
   Workspace tabs: this is where the app's layout departs from the web's, while
   its surfaces, type and colours stay the web's tokens.
+- The answer as it is written: a turn is followed over one held connection
+  (`/api/agent/runs/stream`), and the reply is drawn while the model writes
+  it, with a chart or view block appearing once it is whole. A server without
+  the stream is followed by asking, as before, and its reply is revealed word
+  by word when it arrives.
 - Home: a business's new chat opens on what is waiting for the person's
   decision (each opens in the Inbox) and four ways to start that send in one
-  press. With no business yet, it asks for a website.
+  press, with no headline over them. With no business yet, it asks for a website.
 - Analytics: the Overview's seven sections as tabs across the top with the
-  date range beside them. Summary puts the goal's chart next to "Needs you";
-  a source's key numbers sit on one line of compact charts when the window
-  has room, so the tables under them are on the first screen.
+  date range beside them. Summary draws the goal across the page. Each source
+  shows its key numbers as a strip of tabs over one wide line chart: the
+  chosen number's days as a smooth line that fades to the axis, the period
+  before as a dashed line behind it, and the latest day marked. A line far
+  from zero gets a round range around it instead of an axis from zero.
 - Agent: chat history across businesses, transcripts with Markdown replies in
   Rune's agent timeline ("Thought for 4s", "Used 3 tools", each folding open,
   a "Working" line while a turn runs, helper tasks as chips), charts the agent

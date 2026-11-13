@@ -500,6 +500,28 @@ impl Client {
         res.into_json::<T>().map_err(|e| ApiError::Decode(e.to_string()))
     }
 
+    /// Opens a response that is read as it arrives (server-sent events): no
+    /// limit on how long it runs, only on how long it may stay silent. The
+    /// server sends a keep-alive line every ten seconds.
+    pub(crate) fn open_stream(&self, path: &str) -> ApiResult<Box<dyn std::io::Read + Send + Sync + 'static>> {
+        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout_read(Duration::from_secs(30)).redirects(0).build();
+        let mut req = agent.get(&format!("{}{}", self.base, path)).set("Accept", "text/event-stream");
+        if let Some(s) = self.session() {
+            req = req.set("Cookie", &format!("{SESSION_COOKIE}={s}"));
+        }
+        match req.call() {
+            Ok(r) if r.content_type() == "text/event-stream" => Ok(r.into_reader()),
+            // Something answered that is not a stream, such as an older server's page.
+            Ok(_) => Err(ApiError::Status(404, "not a stream".into())),
+            Err(ureq::Error::Status(401, _)) => {
+                self.forget_session();
+                Err(ApiError::Unauthorized)
+            }
+            Err(ureq::Error::Status(code, r)) => Err(ApiError::Status(code, r.into_string().unwrap_or_default())),
+            Err(e) => Err(ApiError::Offline(e.to_string())),
+        }
+    }
+
     pub(crate) fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
         self.call("GET", path, None)
     }

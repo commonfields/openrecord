@@ -546,6 +546,8 @@ pub struct App {
     /// and whether the next loaded conversation brings one.
     pub reveal: Option<(String, std::time::Instant)>,
     pub reveal_next: bool,
+    /// The answer a finished turn streamed, kept on screen until the stored reply loads in its place.
+    pub pending_answer: Option<String>,
     /// The model picker's search, while it is open.
     pub model_query: Option<TextEdit>,
     /// Finished replies whose work log is open, and copied messages.
@@ -697,6 +699,7 @@ impl App {
             model_query: None,
             reveal: None,
             reveal_next: false,
+            pending_answer: None,
             reasoning: None,
             general: false,
             proposals: Load::Idle,
@@ -2423,6 +2426,7 @@ impl App {
                         if std::mem::take(&mut self.settle_next) {
                             tx.settle();
                         }
+                        self.pending_answer = None;
                         if std::mem::take(&mut self.reveal_next) {
                             if let Some(m) = c.messages.last().filter(|m| m.role != "user") {
                                 self.reveal = Some((m.text.clone(), std::time::Instant::now()));
@@ -2518,12 +2522,18 @@ impl App {
                 }
                 match self.failed(result) {
                     Ok(()) => {
+                        // An answer that was shown as it was written stays until the stored
+                        // reply replaces it, and is not replayed word by word.
+                        self.pending_answer = match &self.turn {
+                            Turn::Working { progress, .. } if !progress.answer.is_empty() => Some(progress.answer.clone()),
+                            _ => None,
+                        };
                         self.turn = Turn::Idle;
                         if !business.is_empty() {
                             self.net.proposals(business.clone());
                         }
-                        // The reply is revealed word by word once it loads.
-                        self.reveal_next = rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
+                        // A reply that arrives all at once is revealed word by word once it loads.
+                        self.reveal_next = self.pending_answer.is_none() && rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
                         self.chat_id = Some(conversation.clone());
                         self.net.conversation(business, conversation);
                     }

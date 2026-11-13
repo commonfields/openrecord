@@ -51,16 +51,33 @@ describe("what a general business turn costs before any conversation", () => {
 })
 
 describe("tool cards in the run loop (deterministic fixtures, no live model)", () => {
-  it("declares a deferred tool in full once the run asks for its details", async () => {
+  it("hands a deferred tool's guidance and schema over in the conversation, and leaves what is declared untouched", async () => {
     const { model, requests } = recorded([calls(["tool_details", { names: ["prepare_wordpress_change", "not_a_tool"] }]), text("Ready")])
     const { journal, events } = memoryJournal()
     await Effect.runPromise(runConversation({ message: "Fix the title on the pricing page", history: [], model, journal, dispatch: () => Effect.die("tool_details reads nothing") }))
     const full = agentDeclarations.find(t => t.name === "prepare_wordpress_change")!
     expect(declared(requests[0]!, "prepare_wordpress_change")!.parametersJsonSchema).toEqual({ type: "object" })
-    expect(declared(requests[1]!, "prepare_wordpress_change")).toEqual(full)
-    expect(JSON.stringify(requests[1]!.contents)).toContain(JSON.stringify(full.description))
+    const handed = JSON.stringify(requests[1]!.contents)
+    expect(handed).toContain(JSON.stringify(full.description))
+    expect(handed).toContain(JSON.stringify(full.parametersJsonSchema))
+    expect(requests[1]!.tools).toEqual(requests[0]!.tools)
     expect(events.find(e => e.payload["action"] === "TOOLS_EXPANDED")?.payload["tools"]).toEqual(["prepare_wordpress_change"])
     expect(events.some(e => e.type === "TOOL_STARTED")).toBe(false)
+  })
+
+  it("sends the same instructions and tool cards on every step and every turn, so a provider's cache can read them back", async () => {
+    const prefix = (r: ModelInput) => JSON.stringify({ system: r.system, tools: r.tools })
+    const first = recorded([calls(["read_revenue", { days: 30 }]), calls(["tool_details", { names: ["prepare_page_change"] }]), calls(["read_proposals"]), text("Done")])
+    await Effect.runPromise(runConversation({ message: "How is revenue, and fix the pricing page title", history: [], model: first.model, dispatch: () => Effect.succeed(read) }))
+    const second = recorded([text("Hello")])
+    await Effect.runPromise(runConversation({ message: "Draft a campaign for agencies", history: [{ role: "user", text: "Earlier question" }, { role: "agent", text: "Earlier answer" }], model: second.model, dispatch: () => Effect.succeed(read) }))
+    expect(first.requests).toHaveLength(4)
+    expect(new Set([...first.requests, ...second.requests].map(prefix)).size).toBe(1)
+    // Each step only adds to the conversation: what was sent before is sent again unchanged.
+    for (let i = 1; i < first.requests.length; i++) {
+      const before = JSON.stringify(first.requests[i - 1]!.contents).slice(0, -1)
+      expect(JSON.stringify(first.requests[i]!.contents).startsWith(before)).toBe(true)
+    }
   })
 
   it("answers a refused call on a deferred tool with its schema, so one retry is enough", async () => {
@@ -69,7 +86,8 @@ describe("tool cards in the run loop (deterministic fixtures, no live model)", (
     const refusal = JSON.stringify(requests[1]!.contents.at(-1))
     expect(refusal).toContain("INVALID_INPUT")
     expect(refusal).toContain("Its input schema:")
-    expect(declared(requests[1]!, "prepare_wordpress_change")).toEqual(agentDeclarations.find(t => t.name === "prepare_wordpress_change"))
+    // The schema arrives with the refusal; what is declared stays as it was.
+    expect(requests[1]!.tools).toEqual(requests[0]!.tools)
   })
 
   it("sends a tool's reading rule with its first result only", async () => {

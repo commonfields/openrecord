@@ -438,13 +438,55 @@ pub struct Progress {
     pub thought: String,
     /// Finished steps, oldest first.
     pub trace: Vec<Activity>,
+    /// The answer as it is being written in the step under way, when the server streams it.
+    pub answer: String,
     /// The last journal sequence read.
     pub seq: i64,
 }
 
+/// How much of an answer still being written is drawn: everything before a
+/// code fence that has not closed yet, so a chart or view block appears whole
+/// rather than as its half-written source.
+pub fn live_answer(text: &str) -> &str {
+    let mut fences = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            fences.push(at);
+        }
+        at += line.len();
+    }
+    if fences.len() % 2 == 1 { text[..fences[fences.len() - 1]].trim_end() } else { text }
+}
+
+/// Complete server-sent events taken off the front of `buffer`, each as its
+/// event name and data; what is left in `buffer` is an event still arriving.
+pub fn sse_events(buffer: &mut String) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    loop {
+        let normal = buffer.replace("\r\n", "\n");
+        let Some(end) = normal.find("\n\n") else {
+            *buffer = normal;
+            return out;
+        };
+        let (mut name, mut data) = (String::from("message"), Vec::new());
+        for line in normal[..end].lines() {
+            if let Some(v) = line.strip_prefix("event:") {
+                name = v.trim().to_string();
+            } else if let Some(v) = line.strip_prefix("data:") {
+                data.push(v.strip_prefix(' ').unwrap_or(v).to_string());
+            }
+        }
+        if !data.is_empty() {
+            out.push((name, data.join("\n")));
+        }
+        *buffer = normal[end + 2..].to_string();
+    }
+}
+
 impl Default for Progress {
     fn default() -> Self {
-        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), seq: 0 }
+        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), answer: String::new(), seq: 0 }
     }
 }
 
@@ -469,13 +511,17 @@ impl Progress {
                     self.current = None;
                     self.current_tool = None;
                     self.thought.clear();
+                    self.answer.clear();
                 }
                 "MODEL_THINKING" => self.thought = s(p, "text"),
+                "MODEL_ANSWERING" => self.answer.push_str(&s(p, "delta")),
                 "MODEL_STEP" => {
                     let thought = Some(s(p, "thought")).filter(|t| !t.is_empty()).unwrap_or_else(|| std::mem::take(&mut self.thought));
                     self.thought.clear();
                     if p.get("toolCalls").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
                         self.phase = Phase::Working;
+                        // What the model said before calling tools was not the answer.
+                        self.answer.clear();
                     }
                     if !thought.is_empty() {
                         self.trace.push(Activity::Thought { text: thought, ms: p.get("elapsedMs").and_then(Value::as_i64).unwrap_or(0) });
@@ -645,6 +691,11 @@ impl Client {
         Ok(self.get::<R>(&format!("/api/agent/runs/progress?requestId={}&after={after}", enc(request)))?.events)
     }
 
+    /// The same journal as one held connection of server-sent events.
+    pub fn progress_stream(&self, request: &str, after: i64) -> ApiResult<Box<dyn std::io::Read + Send + Sync + 'static>> {
+        self.open_stream(&format!("/api/agent/runs/stream?requestId={}&after={after}", enc(request)))
+    }
+
     /// The turn still in flight in a conversation, or one that failed since
     /// the conversation last changed, so a reopened chat attaches to it rather
     /// than sending again (`pendingRequest` on the web).
@@ -785,5 +836,35 @@ mod tests {
         assert_eq!(m.run.as_ref().unwrap().gaps, ["pricing"]);
         assert_eq!(elapsed(m.duration_ms.unwrap()), "12s");
         assert_eq!(elapsed(65_000), "1m 05s");
+    }
+
+    #[test]
+    fn a_streamed_answer_grows_and_gives_way_to_tool_work() {
+        let ev = |seq: i64, kind: &str, payload: Value| RunEvent { seq, kind: kind.into(), payload };
+        let mut p = Progress::default();
+        p.apply(&[ev(1, "MODEL_REQUESTED", json!({})), ev(2, "MODEL_ANSWERING", json!({ "delta": "Let me " })), ev(3, "MODEL_ANSWERING", json!({ "delta": "check." }))]);
+        assert_eq!(p.answer, "Let me check.");
+        p.apply(&[ev(4, "MODEL_STEP", json!({ "toolCalls": ["read_revenue"] }))]);
+        assert_eq!(p.answer, "");
+        p.apply(&[ev(5, "MODEL_REQUESTED", json!({})), ev(6, "MODEL_ANSWERING", json!({ "delta": "Revenue is up." })), ev(7, "MODEL_STEP", json!({ "toolCalls": [] }))]);
+        assert_eq!(p.answer, "Revenue is up.");
+    }
+
+    #[test]
+    fn an_unfinished_code_block_is_not_drawn_yet() {
+        assert_eq!(live_answer("Here it is.\n\n```chart\n{\"type\":\"bar\""), "Here it is.");
+        let whole = "Here.\n```chart\n{}\n```\nDone";
+        assert_eq!(live_answer(whole), whole);
+        assert_eq!(live_answer("Plain text"), "Plain text");
+    }
+
+    #[test]
+    fn server_sent_events_split_across_reads_come_out_whole() {
+        let mut buf = String::from("event: run\r\ndata: {\"seq\":1}\r\n\r\n: keep\n\nevent: do");
+        assert_eq!(sse_events(&mut buf), vec![("run".to_string(), "{\"seq\":1}".to_string())]);
+        assert_eq!(buf, "event: do");
+        buf.push_str("ne\ndata: {\"status\":\"COMPLETED\"}\n\n");
+        assert_eq!(sse_events(&mut buf), vec![("done".to_string(), "{\"status\":\"COMPLETED\"}".to_string())]);
+        assert!(buf.is_empty());
     }
 }

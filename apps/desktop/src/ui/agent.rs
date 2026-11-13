@@ -54,6 +54,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     match &s.turn {
         Turn::Working { progress, started, stopping, .. } => {
             list = list.child(live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping));
+            if !progress.answer.is_empty() {
+                list = list.child(live_reply(t, k, &progress.answer));
+            }
         }
         Turn::Failed { error, message } => {
             // The web's failed note: right-aligned, small, with Retry when there is a message to resend.
@@ -70,7 +73,11 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             }
             list = list.child(note);
         }
-        Turn::Idle => {}
+        Turn::Idle => {
+            if let Some(text) = &s.pending_answer {
+                list = list.child(live_reply(t, k, text));
+            }
+        }
     }
     if let Some(w) = work_pane(s, t, &messages) {
         list = list.child(w.pt(12.0));
@@ -842,6 +849,11 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
     }
     now = now.child(label(now_text, if tool.is_some() { type_::SM_13 } else { type_::SM_13.italic() }, t.muted_foreground).truncate().grow(1.0).min_w(0.0));
     c.child(headline).child(now)
+}
+
+/// The answer while it is being written, drawn as it will be once it is stored.
+fn live_reply(t: &Theme, k: &Kit, text: &str) -> El {
+    col().key("live-reply").w_full().pt(4.0).child(Markdown::new(chat::live_answer(text).to_string()).style(prose(t, k)).streaming(true).build(k).w_full())
 }
 
 /// At the top of a helper session: what it is for and where it came from.

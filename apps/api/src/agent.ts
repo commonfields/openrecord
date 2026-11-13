@@ -31,6 +31,7 @@ const THOUGHT_EVENT_CHARS = 1500
 const THOUGHT_EVENTS_PER_STEP = 40
 const ACTIVITY_THOUGHT_CHARS = 1200
 const MAX_ACTIVITY = 24
+const NO_TOOLS: ReadonlySet<string> = new Set()
 // Long enough to hold a whole internal identifier (a UUID is 36 characters) until it can be recognised.
 const ANSWER_HOLDBACK_CHARS = 48
 const ANSWER_PIECES_PER_STEP = 400
@@ -144,7 +145,12 @@ export const runConversation = (input: {
   // Tools whose full guidance and schema this run has asked for; the rest go as cards.
   const expanded = new Set<string>()
   const ruled = new Set<string>()
-  const declare = () => input.cards === false ? tools : declareTools(tools, expanded)
+  // What is declared never changes during a run, or from one turn to the next:
+  // the instructions and the tool cards are the request's constant prefix, which
+  // is what a provider's cache reads back. A tool's full guidance and schema,
+  // once asked for, arrive in the conversation instead of changing its card.
+  const declared = input.cards === false ? tools : declareTools(tools, NO_TOOLS)
+  const declare = () => declared
   const contextLimit = (requestTools: ReadonlyArray<ToolDeclaration>) => Math.max(0, Math.min(limits.contextBytes,
     limits.requestBytes - modelRequestBytes({ contents: [], tools: requestTools, system }) - 256))
   // History is a character preference, but providers receive UTF-8 bytes plus
@@ -345,7 +351,7 @@ export const runConversation = (input: {
         const names = detailNames(call.args, tools)
         for (const name of names) expanded.add(name)
         yield* journal.record("VERIFICATION", { action: "TOOLS_EXPANDED", step, tools: names })
-        results.push({ functionResponse: { name: call.name, response: { tools: toolDetails(names, tools), note: "These tools now carry their full input schema." } } })
+        results.push({ functionResponse: { name: call.name, response: { tools: toolDetails(names, tools), note: "Call these tools with these inputs; the server checks every call against them." } } })
         continue
       }
       if (calls >= budget.toolCalls) {
