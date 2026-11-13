@@ -64,8 +64,7 @@ can check but not install, since it is not inside an `.app`.
 - Sign in, with the demo-account shortcut.
 - The shell: one sidebar for the whole product (the business switcher, Home,
   Inbox, Analytics, Campaigns, AI answers and Channels, then the chats), which
-  collapses (⌘B); breadcrumbs; "Ask the agent" on every business page, which
-  opens the agent beside it; and the account menu. There are no Agent and
+  collapses (⌘B); breadcrumbs; and the account menu. There are no Agent and
   Workspace tabs: this is where the app's layout departs from the web's, while
   its surfaces, type and colours stay the web's tokens.
 - The answer as it is written: a turn is followed over one held connection
@@ -73,9 +72,16 @@ can check but not install, since it is not inside an `.app`.
   it, with a chart or view block appearing once it is whole. A server without
   the stream is followed by asking, as before, and its reply is revealed word
   by word when it arrives.
-- Home: a business's new chat opens on what is waiting for the person's
-  decision (each opens in the Inbox) and four ways to start that send in one
-  press, with no headline over them. With no business yet, it asks for a website.
+- Home: a business's new chat opens on four ways to start, as a drum that
+  turns every 4.6 seconds: one card in focus, the ones before and after it
+  smaller, fainter and out of focus. The pointer holds it still; a press on
+  the card in focus sends it, a press on another brings it into focus.
+- Decisions waiting on the person float as a stack of up to six in the
+  bottom right corner, level with the chat box, in the sparkle mark's purple.
+  Under the pointer the stack spreads into a list that scrolls in place;
+  a card opens its decision in the Inbox, and "Hide" puts the current ones
+  away until a new one arrives. When the window is too narrow for both, the
+  chat box centres in the room left beside it. With no business yet, it asks for a website.
 - Analytics: the Overview's seven sections as tabs across the top with the
   date range beside them. Summary draws the goal across the page. Each source
   shows its key numbers as a strip of tabs over one wide line chart: the

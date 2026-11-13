@@ -557,14 +557,6 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
     if let Some(tr) = trailing {
         h = h.child(tr);
     }
-    // On a business page the agent is one press away, and opens beside the page.
-    if s.pane_allowed() && !s.pane_shown() {
-        h = h.child(
-            crate::ui::widgets::button(t, "ask-agent", "Ask the agent", crate::ui::widgets::Variant::Outline)
-                .help("Open the agent beside this page")
-                .on_press(|s: &mut App| s.open_pane(None)),
-        );
-    }
     h
 }
 
