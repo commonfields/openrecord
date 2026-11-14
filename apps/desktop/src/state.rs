@@ -477,7 +477,7 @@ pub struct App {
     pub add_business: Option<AddBusiness>,
     pub issue_query: IssueQuery,
     pub portfolio_sort: PortfolioSort,
-    /// The conversation split's width, measured, for the helper's share of it.
+    /// The split's width, measured, for the share of the artifact or helper beside the panel.
     pub split_w: f32,
     /// The window's size in window points, measured, for the zoom.
     pub window: (f32, f32),
@@ -1658,6 +1658,9 @@ impl App {
 
     pub fn new_chat(&mut self) {
         self.enter_agent();
+        // Home and a new chat open with nothing beside them.
+        self.helper = None;
+        self.artifact = None;
         self.general = false;
         self.chat_id = None;
         self.conversation = Load::Idle;
@@ -1673,6 +1676,9 @@ impl App {
         // A chat without a business is a general chat.
         self.general = chat.business_id.is_none();
         self.enter_agent();
+        // What was open beside the last chat belongs to it.
+        self.helper = None;
+        self.artifact = None;
         self.chat_id = Some(chat.id.clone());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;

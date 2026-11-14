@@ -1,5 +1,5 @@
 //! The decisions waiting on the person, as a stack of notifications in the
-//! window's bottom right corner. At rest they sit one behind another, the
+//! window's bottom right corner (the top right when the chat box needs the bottom). At rest they sit one behind another, the
 //! newest in front and two more peeking above it, each a little narrower and
 //! fainter, as the notification centre stacks them. Under the pointer the stack
 //! spreads into a list, one card per decision, and gathers again when the
@@ -26,7 +26,7 @@ const SPREAD: Spring = Spring::new(0.36, 0.08);
 
 /// The stack, when there is anything waiting and nowhere else on screen already lists it.
 pub fn layer(s: &App, t: &Theme) -> Option<El> {
-    if s.screen != Screen::Workspace || s.artifact_visible() || s.channel_setup.is_some() || s.settings.is_some() || (s.view == View::Workspace && s.page == Page::Inbox) {
+    if s.screen != Screen::Workspace || s.side_visible() || s.channel_setup.is_some() || s.settings.is_some() || (s.view == View::Workspace && s.page == Page::Inbox) {
         return None;
     }
     let waiting: Vec<_> = s.inbox().into_iter().filter(|d| !s.notices_hidden.contains(&d.key)).collect();
@@ -124,8 +124,9 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
             s.notices_hidden.extend(keys);
             s.notices_open = false;
         }));
-    // Level with the bottom of the chat box; the composer makes room beside it (`reserve`).
-    let bottom = BOTTOM;
+    // Level with the bottom of the chat box when there is room beside it; in a
+    // narrower window, in the top right corner under the header, so the chat box keeps its width.
+    let top = at_top(s);
     // The spread list scrolls inside its own height, on no background of its own;
     // at rest it holds only the stack.
     // Wider and taller than the cards by their shadow, so the clip that scrolling
@@ -142,7 +143,7 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
     Some(
         col()
             .key("notices")
-            .pin(None, None, Some(24.0 - SHADOW_ROOM), Some(bottom - SHADOW_ROOM))
+            .pin(None, top.then_some(TOP - SHADOW_ROOM), Some(24.0 - SHADOW_ROOM), (!top).then_some(BOTTOM - SHADOW_ROOM))
             .w(WIDTH + 2.0 * SHADOW_ROOM)
             .items_center()
             .gap(6.0)
@@ -161,20 +162,22 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
 /// From the window's bottom edge to the bottom of the chat box: the panel's inset,
 /// the composer's own padding and its options row.
 const BOTTOM: f32 = 41.0;
+/// From the window's top edge to just under the header: the panel's inset and the header.
+const TOP: f32 = 8.0 + 48.0 + 8.0;
 /// Room around the cards inside the scrolling list for their shadows.
 const SHADOW_ROOM: f32 = 22.0;
 
-/// The room the chat box leaves on its right for the stack, when the two would
-/// otherwise overlap: the composer centres in what is left of the panel.
-pub fn reserve(s: &App) -> f32 {
-    if s.view != View::Agent || (s.pane_shown() || s.artifact_visible()) || s.inbox().iter().all(|d| s.notices_hidden.contains(&d.key)) {
-        return 0.0;
+/// Whether the stack waits in the top right corner: on the agent, when the chat
+/// box would otherwise run into it at the bottom. Elsewhere the bottom is free.
+pub fn at_top(s: &App) -> bool {
+    if s.view != View::Agent || s.pane_shown() {
+        return false;
     }
     let window = if s.window.0 > 0.0 { s.window.0 / s.zoom().max(0.1) } else { 1280.0 };
     let panel = window - if s.sidebar_open { s.prefs.sidebar() } else { 8.0 } - 8.0;
     let composer = (panel - 48.0).min(s.prefs.chat_width.max());
     let free = (panel - composer) / 2.0;
-    if free >= WIDTH + 24.0 + 16.0 { 0.0 } else { WIDTH + 24.0 }
+    free < WIDTH + 24.0 + 16.0
 }
 
 fn link(t: &Theme, key: &str, text_: &str, live: bool) -> El {

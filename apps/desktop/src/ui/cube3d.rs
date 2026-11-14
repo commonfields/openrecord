@@ -109,7 +109,8 @@ pub fn view(t: &Theme, key: &str, size: f32, spinning: bool) -> El {
     for k in 0..FRAMES {
         let yaw = 0.55 + std::f32::consts::FRAC_PI_2 * k as f32 / FRAMES as f32;
         let cycle = Cycle { period: QUARTER, phase: k as f32 / FRAMES as f32, stops: &SLOT, still: if k == 0 { 1.0 } else { 0.0 }, fps: 30.0 };
-        stack = stack.child(canvas(frame(yaw)).size(size, size).absolute(0.0, 0.0).key(format!("{key}-f{k}")).looping(LoopSpec::cycle(cycle)));
+        // A flipbook: each frame steps in and out on purpose, as a film does.
+        stack = stack.child(canvas(frame(yaw)).size(size, size).absolute(0.0, 0.0).key(format!("{key}-f{k}")).looping(LoopSpec::cycle(cycle)).motion_intent(rune::MotionIntent::STEP));
     }
     stack
 }

@@ -32,7 +32,7 @@ pub mod widgets;
 
 pub(crate) use shell::web_url;
 
-use rune::{Cursor, Cx, El, ScrollSpec, col, row};
+use rune::{Cursor, Cx, El, ScrollSpec, Transition, col, row};
 use rune_kit::{Kit, PaletteSeed};
 
 use crate::state::{App, Screen, View};
@@ -49,7 +49,7 @@ fn kit(t: &Theme) -> Kit {
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if !s.artifact_visible() { crate::native_preview::clear(); }
     if s.preview_visible() {
-        if let (Some(rect), Some(a)) = (s.preview_rect, s.artifact.as_ref().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect); }
+        if let (Some(rect), Some(a)) = (s.preview_rect, s.artifact.as_ref().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion); }
     } else { crate::native_preview::hide(); }
     let z = s.zoom();
     // The traffic lights follow the zoom so they stay on the header's line,
@@ -107,6 +107,9 @@ fn zoomed(s: &App, root: El, z: f32) -> El {
         .child(root.w(iw).h(ih).absolute((w - iw) / 2.0, (h - ih) / 2.0).scale(z))
 }
 
+/// The chat narrowing for a card beside it, and the card arriving: unhurried and with no bounce.
+const SPLIT: rune::Spring = rune::Spring::new(0.38, 0.0);
+
 fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // With the sidebar a narrow rail, the traffic lights sit over the header,
     // so it starts past them.
@@ -144,27 +147,59 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             .child(col().w_full().grow(1.0).min_h(0.0).child(content)),
         &t.panel_shadow,
     );
-    let panel = col().key("panel-column").grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0).pl(if s.sidebar_open { 0.0 } else { 8.0 }).child(panel);
-    let panel = if s.artifact_visible() {
-        row().key("artifact-split").grow(1.0).min_w(0.0).h_full()
-            .child(panel.w(0.0))
-            .child(col().w(0.0).grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0)
-                .child(artifacts::view(s, t).w_full()))
-    } else { panel };
+    // An artifact or a helper session opens as its own card beside the panel,
+    // its share dragged from its left edge as the sidebar's width is.
+    let side = if s.artifact_visible() {
+        Some(("artifact", artifacts::view(s, t).w_full()))
+    } else if s.helper_visible() {
+        s.helper.as_ref().map(|(id, load)| ("helper", agent::helper_pane(s, t, k, id, load)))
+    } else {
+        None
+    };
+    let panel = col().key("panel-column").grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(if side.is_some() { 0.0 } else { 8.0 }).pl(if s.sidebar_open { 0.0 } else { 8.0 }).child(panel);
+    // The rows around the panel are always there, so opening a card beside it
+    // or the agent pane only narrows it. Built only when needed, they would
+    // move the panel to a new parent, and it would crossfade with a copy of itself.
+    let mut split = row()
+        .key("side-split")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        // Layout units already: the zoom scales the whole drawn tree, not its layout.
+        .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
+        .child(panel.w(0.0).motion(SPLIT));
+    if let Some((what, card)) = side {
+        let w = if s.split_w > 0.0 { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 };
+        split = split.child(
+            // It slides in from the right edge and fades up while the chat
+            // narrows beside it; closing plays it backwards.
+            col()
+                .key(format!("side-{what}"))
+                .w(w)
+                .grow(if w > 0.0 { 0.0 } else { 1.0 })
+                // Held at its share: without it the panel's content outweighs it.
+                .min_w(w)
+                .transition(Transition::offset(96.0, 0.0).combined(Transition::opacity()))
+                .motion(SPLIT)
+                .h_full()
+                .pt(8.0)
+                .pb(8.0)
+                .pl(8.0)
+                .pr(8.0)
+                .child(card)
+                .child(agent::side_edge(what)),
+        );
+    }
     // The agent beside a workspace page: its own card left of the page, where
     // the sidebar was, as the web's `AgentPane` sits.
-    let main = if s.pane_shown() {
-        row()
-            .key("pane-split")
-            .grow(1.0)
-            .min_w(0.0)
-            .h_full()
-            .on_layout(|s: &mut App, r: [f32; 4]| s.pane_row_w = r[2] / s.zoom())
-            .child(agent::pane(s, t, k))
-            .child(panel)
-    } else {
-        panel
-    };
+    let main = row()
+        .key("pane-split")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .on_layout(|s: &mut App, r: [f32; 4]| s.pane_row_w = r[2])
+        .children(s.pane_shown().then(|| agent::pane(s, t, k)))
+        .child(split);
     let mut ws = row().key("workspace").w_full().h_full();
     if s.sidebar_open {
         ws = ws.child(shell::sidebar(s, t));

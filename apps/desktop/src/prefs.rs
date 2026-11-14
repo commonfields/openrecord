@@ -81,7 +81,7 @@ pub struct Prefs {
     pub default_provider: String,
     /// The sidebar's width when open, dragged from its edge (the web's 224 to 448).
     pub sidebar_width: f32,
-    /// A helper session's share of the conversation split, in percent (30 to 70).
+    /// The share of the card beside the panel (an artifact or a helper session), in percent (30 to 70).
     pub helper_width: f32,
     /// How large the whole interface draws (⌘+ and ⌘−), 1.0 being the web's sizes.
     pub zoom: f32,

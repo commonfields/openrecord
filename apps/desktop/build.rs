@@ -41,5 +41,6 @@ fn main() {
     println!("cargo:rustc-link-lib=static=openrecord_preview");
     println!("cargo:rustc-link-lib=framework=Cocoa");
     println!("cargo:rustc-link-lib=framework=WebKit");
+    println!("cargo:rustc-link-lib=framework=QuartzCore");
     println!("cargo:rustc-link-lib=framework=AuthenticationServices");
 }
