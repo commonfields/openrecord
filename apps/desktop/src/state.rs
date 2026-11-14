@@ -2405,8 +2405,14 @@ impl App {
                     if !still {
                         if let Some(first) = self.businesses.first().map(|b| b.id.clone()) {
                             self.active = None;
+                            self.general = false;
                             self.select_business(&first);
+                        } else {
+                            self.active = None;
+                            self.general = true;
                         }
+                        // Always open Home (agent starters), not a setup interstitial.
+                        self.go_home();
                     }
                 }
             }
