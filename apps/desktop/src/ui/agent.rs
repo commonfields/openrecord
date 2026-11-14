@@ -460,7 +460,6 @@ pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api
             .role("complementary")
             .label("Helper session")
             .child(head)
-            .child(el().w_full().h(1.0).fill(t.border))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
         &t.panel_shadow,
     )
