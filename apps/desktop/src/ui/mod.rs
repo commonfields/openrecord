@@ -118,7 +118,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     let leading = if s.sidebar_open { 0.0 } else { titlebar_inset.max(16.0) + 6.0 + 28.0 + 4.0 - 20.0 };
     let (content, trailing) = match s.view {
         View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
-        View::Agent => (choose_business(t), None),
+        View::Agent => (agent_boot(s, &t), None),
         // The inbox fills the panel; its list and reading pane scroll on their own.
         View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), None),
         View::Workspace => {
@@ -212,18 +212,19 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     ws.children(shell::sidebar_overlay(s, t))
 }
 
-fn choose_business(t: &Theme) -> El {
-    // The whole setup is one line: the website. The agent reads it and asks for the goal in chat.
+/// Brief placeholder while the first business is selected after sign-in — no setup CTA here (use sidebar).
+fn agent_boot(s: &App, t: &Theme) -> El {
+    let hint = if s.businesses.is_empty() {
+        "Loading your account…"
+    } else {
+        "Opening Home…"
+    };
     col()
-        .key("choose-business")
+        .key("agent-boot")
         .w_full()
         .h_full()
         .center()
-        .gap(8.0)
-        .child(label("Start with your website", rune::TextStyle::new(24.0, 600.0).lh(32.0), t.foreground).role("heading"))
-        .child(label("Give OpenRecord a website and the agent reads it, learns the business and asks what you want more of.", type_::SM, t.muted_foreground).wrap().max_w(460.0))
-        .child(rune::el().h(6.0))
-        .child(widgets::button(t, "start-add-business", "Add a website", widgets::Variant::Primary).on_press(|s: &mut App| s.open_add_business(None)))
+        .child(label(hint, type_::BASE_MEDIUM, t.muted_foreground))
 }
 
 /// A bar under the header for something the shell has to say: the web's

@@ -815,6 +815,12 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
         .child(rune_kit::RollingText::new("live-elapsed", chat::elapsed(ms)).font(type_::SM.features("'tnum' 1")).color(t.muted_foreground).build(k));
     // The step under way: each new one slides up into place as the last leaves.
     let now_text = p.live();
+    let show_now = !stopping
+        && match head {
+            "Thinking" => now_text != "Thinking",
+            "Working" => tool.is_some() || (now_text != "Working" && !now_text.is_empty()),
+            _ => !now_text.is_empty(),
+        };
     let mut now = row()
         .key(format!("live-now:{}", now_text))
         .w_full()
@@ -827,7 +833,11 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
         now = now.child(ico(chat::tool_icon(tool), 13.0, t.muted_foreground));
     }
     now = now.child(label(now_text, if tool.is_some() { type_::SM_13 } else { type_::SM_13.italic() }, t.muted_foreground).truncate().grow(1.0).min_w(0.0));
-    c.child(headline).child(now)
+    if show_now {
+        c.child(headline).child(now)
+    } else {
+        c.child(headline)
+    }
 }
 
 /// The answer while it is being written, drawn as it will be once it is stored.
