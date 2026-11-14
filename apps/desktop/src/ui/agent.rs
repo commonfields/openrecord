@@ -359,7 +359,7 @@ pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
         .transition(Transition::offset(-64.0, 0.0).combined(Transition::opacity()))
         .child(
             shadows(
-                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(el().w_full().h(1.0).fill(t.border)).child(col().w_full().grow(1.0).min_h(0.0).child(view(s, t, k))),
+                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(view(s, t, k))),
                 &t.panel_shadow,
             ),
         )
@@ -1079,6 +1079,19 @@ fn chip_in_t() -> Transition {
 
 // ---- The composer -----------------------------------------------------------
 
+const COMPOSER_PILL: f32 = 24.0;
+
+/// Equalizer bars for the composer's idle voice affordance.
+fn waveform_bars(ink: rune::Color) -> El {
+    row()
+        .gap(2.0)
+        .center_y()
+        .child(el().size(2.0, 8.0).radius(1.0).fill(ink))
+        .child(el().size(2.0, 14.0).radius(1.0).fill(ink))
+        .child(el().size(2.0, 10.0).radius(1.0).fill(ink))
+        .child(el().size(2.0, 16.0).radius(1.0).fill(ink))
+}
+
 fn composer(s: &App, t: &Theme, business: &str) -> El {
     let working = matches!(s.turn, Turn::Working { .. });
     let blocked = s.model_unavailable();
@@ -1086,7 +1099,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     let placeholder = if blocked {
         "The model you used is unavailable now. Pick another model below"
     } else if working {
-        "Write a follow-up. It sends when the agent finishes"
+        "Send follow-up"
     } else if !s.transcript().is_empty() {
         "Reply to the agent, or type / for commands"
     } else {
@@ -1151,12 +1164,13 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         );
     }
     // The microphone (when voice input is on): macOS dictation into the composer.
+    let mut trailing = row().gap(4.0).center_y().self_end();
     if s.prefs.voice_input && !working {
-        actions = row().gap(4.0).center_y().self_end().child(
+        trailing = trailing.child(
             row()
                 .key("mic")
                 .size(32.0, 32.0)
-                .radius(6.0)
+                .radius(16.0)
                 .center()
                 .role("button")
                 .label("Start voice input")
@@ -1170,15 +1184,36 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                     crate::dictation::start();
                 })
                 .child(ico(&icons::MIC, 20.0, t.muted_foreground).group_color(t.foreground)),
-        ).child(actions);
+        );
+    }
+    if !working && !has_text && s.prefs.voice_input {
+        trailing = trailing.child(
+            row()
+                .key("voice-affordance")
+                .size(32.0, 32.0)
+                .radius(16.0)
+                .center()
+                .role("button")
+                .label("Start voice input")
+                .cursor(Cursor::Pointer)
+                .fill(t.primary_foreground)
+                .on_press_tx(|_s: &mut App, tx| {
+                    tx.focus("composer-input", false);
+                    crate::dictation::start();
+                })
+                .child(waveform_bars(t.background)),
+        );
+    } else {
+        trailing = trailing.child(actions);
     }
     // "Chat actions" on the left of the box: save as playbook, share, attach and providers.
     let plus = row()
         .key("chat-actions-trigger")
         .size(32.0, 32.0)
-        .radius(6.0)
+        .radius(16.0)
         .center()
         .self_end()
+        .fill(t.foreground.alpha(0.08))
         .role("button")
         .label("Chat actions")
         .expanded(s.chat_actions)
@@ -1195,11 +1230,12 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             .key("composer")
             .w_full()
             .min_h(48.0)
-            .px(12.0)
-            .py(8.0)
-            .gap(12.0)
+            .px(14.0)
+            .py(6.0)
+            .gap(10.0)
             .items_end()
-            .radius(10.0)
+            .radius(COMPOSER_PILL)
+            .border(1.0, t.border)
             .fill(t.card)
             // Files dropped on the box are attached, as on the web.
             .on_drop_files(|s: &mut App, paths, _tx| {
@@ -1209,7 +1245,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             })
             .child(plus)
             .child(col().grow(1.0).min_w(0.0).self_center().child(input))
-            .child(actions),
+            .child(trailing),
         &t.control_shadow,
     );
     // The "/" menu sits over the transcript just above the box, inset 8 points
@@ -1259,7 +1295,8 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     if let Some(m) = context_meter(s, t) {
         right = right.child(m);
     }
-    right = right.child(model_trigger(s, t, working)).child(reasoning_trigger(s, t, working));
+    right = right.child(model_trigger(s, t, working));
+    right = right.child(reasoning_trigger(s, t, working));
     options = options.child(right);
 
     // The web's `space-y-0.5`: queued messages, attached files, the box, then its options.

@@ -45,8 +45,9 @@ if [[ $UNIVERSAL == 1 ]]; then
     "target/aarch64-apple-darwin/release/$BIN" "target/x86_64-apple-darwin/release/$BIN"
   BUILT="target/universal/$BIN"
 else
+  TARGET_DIR="${CARGO_TARGET_DIR:-target}"
   if [[ $PROFILE == debug ]]; then cargo build --locked; else cargo build --release --locked; fi
-  BUILT="target/$PROFILE/$BIN"
+  BUILT="$TARGET_DIR/$PROFILE/$BIN"
 fi
 
 rm -rf "$APP"

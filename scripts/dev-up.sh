@@ -121,3 +121,4 @@ curl -s -m 5 -o /dev/null -w "web:    %{http_code}\n" http://localhost:3000/
 running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 echo "commit: API $running, checkout $head_sha ($(git rev-parse --abbrev-ref HEAD)), origin/main $(git rev-parse --short=12 origin/main)"
 echo "ready → http://localhost:3000 (demo@northstar.test / password123)"
+echo "desktop → OPENRECORD_API_URL=http://localhost:3001 ./scripts/desktop-dev.sh  (native app; rebuild required for Rust UI)"
