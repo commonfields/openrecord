@@ -467,6 +467,8 @@ pub struct App {
     /// The Channels page: its account statuses, the tab shown, and the row open.
     pub channel_status: Load<crate::channel_status::Status>,
     pub channel_tools: bool,
+    pub channel_setup: Option<crate::channel_setup::Setup>,
+    pub channel_generation: u64,
     pub channel_open: Option<String>,
     pub campaign_edit: Option<CampaignEdit>,
     /// The select open in a form: its button's key, its options and what picking one changes.
@@ -540,6 +542,8 @@ pub struct App {
     pub drafts_open: bool,
     /// A helper session opened beside the conversation, to review (`?helper=` on the web).
     pub helper: Option<(String, Load<crate::api::Conversation>)>,
+    pub artifact: Option<crate::artifacts::Pane>,
+    pub preview_rect: Option<[f32; 4]>,
     /// The chat on screen has no business: a general chat (`/api/agent`).
     pub general: bool,
     /// "Start a new chat", while it is open.
@@ -683,6 +687,8 @@ impl App {
             list_query: TextEdit::new(""),
             channel_status: Load::Idle,
             channel_tools: false,
+            channel_setup: None,
+            channel_generation: 0,
             channel_open: None,
             campaign_edit: None,
             choice: None,
@@ -717,6 +723,8 @@ impl App {
             proposals: Load::Idle,
             drafts_open: false,
             helper: None,
+            artifact: None,
+            preview_rect: None,
             settle_next: false,
             syncing: false,
             pane: false,
@@ -962,6 +970,7 @@ impl App {
         self.overview = Load::Idle;
         self.issues = Load::Idle;
         self.channels = Load::Idle;
+        self.close_channel();
         self.campaigns = Load::Idle;
         self.answer = None;
         self.campaign_open = None;
@@ -976,6 +985,7 @@ impl App {
         self.net.playbooks(Some(id.to_string()));
         self.proposals = Load::Loading;
         self.helper = None;
+        self.artifact = None;
         self.net.proposals(id.to_string());
         self.followups = Load::Loading;
         self.net.followups(id.to_string());
@@ -990,6 +1000,7 @@ impl App {
     }
 
     pub fn show_view(&mut self, view: View) {
+        if view == View::Agent { self.close_channel(); }
         if view == View::Agent {
             self.close_pane();
         }
@@ -1257,6 +1268,7 @@ impl App {
     }
 
     pub fn show_page(&mut self, page: Page) {
+        if page != Page::Channels { self.close_channel(); }
         self.view = View::Workspace;
         self.page = page;
         self.answer = None;
@@ -1458,6 +1470,7 @@ impl App {
     /// Opens a helper session beside the conversation, read-only.
     pub fn open_helper(&mut self, id: &str) {
         let Some(scope) = self.chat_scope() else { return };
+        self.artifact = None;
         self.helper = Some((id.to_string(), Load::Loading));
         self.net.helper(scope, id.to_string());
     }
@@ -1518,6 +1531,7 @@ impl App {
     /// the person sends it. On a workspace page it opens in the pane beside the
     /// page; elsewhere in the Agent view.
     pub fn ask_agent(&mut self, request: &str) {
+        self.close_channel();
         if self.pane_allowed() {
             self.open_pane(Some(request));
             return;
@@ -1612,6 +1626,7 @@ impl App {
         }
         self.pane = false;
         self.helper = None;
+        self.artifact = None;
         if std::mem::take(&mut self.pane_folded_sidebar) {
             self.sidebar_open = true;
         }
@@ -1630,6 +1645,7 @@ impl App {
         }
         self.general = business.is_empty();
         self.helper = None;
+        self.artifact = None;
         self.open_session(id);
     }
 
@@ -2057,10 +2073,15 @@ impl App {
         self.net.shares(b, c, false, None);
     }
 
-/// Opens a piece the agent wrote as a page in the browser.
+    /// Reads a private artifact into the split beside this business's chat.
     pub fn open_artifact(&mut self, artifact: &str) {
-        let Some(b) = self.active.clone() else { return };
-        self.net.open_artifact(b, artifact.to_string());
+        self.notices_open = false;
+        self.preview_rect = None;
+        let Some(business) = self.active.clone() else { return };
+        self.helper = None;
+        self.artifact = Some(crate::artifacts::Pane { business: business.clone(), id: artifact.into(), requested: None,
+            loaded: Load::Loading, source: false });
+        self.net.artifact(business, artifact.into(), None);
     }
 
     pub fn create_share(&mut self) {
@@ -2213,6 +2234,20 @@ impl App {
 
     /// Applies the replies that have landed; true when anything changed.
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
+        if self.channel_setup.as_ref().is_some_and(|p| p.authorizing) {
+            match crate::native_preview::authorization_result() {
+                0 => tx.wake_after(std::time::Duration::from_millis(500)),
+                result => {
+                    if let Some(p) = &mut self.channel_setup {
+                        p.authorizing = false; p.busy = false;
+                        if result < 0 { p.error = Some("Sign-in did not finish in this window. Check the connection status before trying again.".into()); }
+                    }
+                    self.reload_channel();
+                    self.refresh();
+                    return true;
+                }
+            }
+        }
         self.sync_draft();
         let replies = self.net.take();
         let mut changed = !replies.is_empty();
@@ -2311,6 +2346,7 @@ impl App {
     }
 
     fn signed_out(&mut self, message: Option<String>) {
+        self.close_channel();
         let email = self.email.text.clone();
         let net = std::mem::replace(&mut self.net, Net::new(None));
         *self = App::with_net(net);
@@ -2510,7 +2546,35 @@ impl App {
             }
             Reply::Pairing(r) => self.pairing = to_load(self.failed(r)),
             Reply::SettingFailed(e) => self.settings_error = Some(e),
-            Reply::ArtifactFailed(e) => self.notice = Some(e),
+            Reply::ChannelDetail { generation, result } => {
+                let result = self.failed(result);
+                if let Some(p) = &mut self.channel_setup {
+                    if p.generation == generation { p.loaded = to_load(result); }
+                }
+            },
+            Reply::ChannelAction { generation, result } => {
+                let safe_error = result.as_ref().err().map(crate::channel_setup::error_message);
+                let result = self.failed(result);
+                if self.channel_setup.as_ref().is_some_and(|p| p.generation == generation) {
+                    let p = self.channel_setup.as_mut().unwrap();
+                    p.busy = false;
+                    p.secret.replace_text("");
+                    p.confirming_disconnect = false;
+                    match result {
+                        Ok(Some(url)) => { p.busy = true; p.authorizing = true; crate::native_preview::authorize(&url); tx.wake_after(std::time::Duration::from_millis(500)); },
+                        Ok(None) => { self.reload_channel(); self.refresh(); },
+                        Err(_) => p.error = safe_error,
+                    }
+                }
+            },
+            Reply::Artifact { business, id, version, result } => {
+                let result = self.failed(result);
+                if let Some(p) = &mut self.artifact {
+                    if p.business == business && p.id == id && p.requested == version {
+                        p.loaded = to_load(result);
+                    }
+                }
+            },
             Reply::Archived { archived, result, .. } => {
                 if let Err(e) = self.failed(result) {
                     if !e.is_empty() {

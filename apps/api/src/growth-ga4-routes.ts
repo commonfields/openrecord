@@ -1,3 +1,4 @@
+import { desktopAuthorization, desktopOAuthCallback } from "./desktop-oauth.js"
 // W8 GA4 measurement routes. Operator-only and session-scoped like every growth
 // route; every response is no-store. Connections belong to the account; a
 // binding belongs to one business; another account's connection, binding or
@@ -154,7 +155,7 @@ export const growthGa4Api = (withSession: WithSession) => {
     : failure(e)))
 
   return HttpRouter.empty.pipe(
-    HttpRouter.get("/api/growth/ga4/oauth/callback", callback),
+    HttpRouter.get("/api/growth/ga4/oauth/callback", desktopOAuthCallback(callback)),
     HttpRouter.get("/api/growth/ga4/connections", scoped([], session => Effect.gen(function*() {
       const config = yield* providerConfig
       const connections = yield* (yield* GrowthGa4Repository).connections(session.accountId)
@@ -170,7 +171,7 @@ export const growthGa4Api = (withSession: WithSession) => {
         verifierCiphertext: config.cipher.encrypt(verifier, `oauth-state:${sha256(state)}`), ttlSeconds: OAUTH_STATE_TTL_SECONDS,
         returnTo: input.returnTo,
       })
-      return yield* json(200, { authorizationUrl: authorizationUrl(config.oauth, { state, codeVerifier: verifier }) }, PRIVATE_HEADERS)
+      return yield* desktopAuthorization(authorizationUrl(config.oauth, { state, codeVerifier: verifier }), state, "/api/growth/ga4/oauth/callback", config.cipher)
     }))),
     HttpRouter.get("/api/growth/ga4/connections/:connectionId/properties", scoped(["connectionId"], (session, p) => Effect.gen(function*() {
       const config = yield* configured

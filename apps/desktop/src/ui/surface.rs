@@ -177,8 +177,8 @@ fn node(s: &App, t: &Theme, surface: &Surface, id: &str, prefix: &str) -> El {
                 // An https page, opened only on the person's press.
                 Action::Open(url) => {
                     let u = url.clone();
-                    button(t, &key, &format!("{l} ↗"), Variant::Outline).help(url.clone()).cursor(Cursor::Pointer).on_press_tx(move |_s: &mut App, tx| {
-                        let _ = tx.open_url(&u);
+                    button(t, &key, &format!("{l} ↗"), Variant::Outline).help(url.clone()).cursor(Cursor::Pointer).on_press_tx(move |s: &mut App, tx| {
+                        s.open_link(&u, tx);
                     })
                 }
             };

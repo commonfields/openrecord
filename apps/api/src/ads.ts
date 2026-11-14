@@ -1,3 +1,4 @@
+import { desktopAuthorization, desktopOAuthCallback } from "./desktop-oauth.js"
 // Ad platform connections, server side: sign-in (OAuth), encrypted tokens,
 // which ad account belongs to which business, and live performance reads.
 // Operator-only and account-scoped like the GA4 routes: another account's
@@ -289,7 +290,7 @@ export const adsApi = (withSession: WithSession) => {
   })
 
   return HttpRouter.empty.pipe(
-    HttpRouter.get("/api/ads/oauth/callback", callback),
+    HttpRouter.get("/api/ads/oauth/callback", desktopOAuthCallback(callback)),
     // What the Channels page shows: which platforms are on, the account's sign-ins and this business's ad accounts.
     HttpRouter.get("/api/ads/clients/:id", route((session, p) => Effect.gen(function*() {
       yield* scopedBusiness(session, p["id"]!)
@@ -316,7 +317,7 @@ export const adsApi = (withSession: WithSession) => {
       yield* sql`INSERT INTO ad_oauth_states(state_sha256, account_id, user_id, business_id, provider, verifier_ciphertext, expires_at)
         VALUES (${sha256(state)}, ${session.accountId}, ${session.userId}, ${input.businessId}, ${input.provider}, ${cipher.encrypt(verifier, `ads-state:${sha256(state)}`)},
           now() + make_interval(secs => ${STATE_TTL_SECONDS}))`
-      return yield* json(200, { authorizationUrl: url }, PRIVATE)
+      return yield* desktopAuthorization(url, state, "/api/ads/oauth/callback", cipher)
     }))),
     HttpRouter.get("/api/ads/connections/:connectionId/accounts", route((session, p) => Effect.gen(function*() {
       const config = yield* adsConfig

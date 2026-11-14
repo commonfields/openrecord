@@ -1,3 +1,4 @@
+import { desktopOAuthApi } from "./desktop-oauth.js"
 // Ad account connections over HTTP against a scripted Meta and Google Ads:
 // sign-in with single-use state, tokens stored only as ciphertext, binding
 // only an ad account the sign-in can read, tenancy, live performance and the
@@ -62,13 +63,13 @@ suite("ad and listing connections over HTTP and for the agent (scripted Meta and
       GA4_TOKEN_ENCRYPTION_KEYS: `k1:${Buffer.alloc(32, 7).toString("base64")}`, META_APP_ID: "1234", META_APP_SECRET: "APP-SECRET-DO-NOT-LEAK",
     }, meta as typeof fetch)
     const layer = Layer.provideMerge(Layer.succeed(AdsProvider, config), repos)
-    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(
+    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(desktopOAuthApi(), HttpRouter.concat(
       growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))),
-      adsApi(r => Effect.flatMap(requireSession, ({ session }) => r(session)))), layer)
+      adsApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))))), layer)
     handlers.push(web)
     const seen: string[] = []
-    const call = async (acct: Acct, method: string, path: string, body?: unknown) => {
-      const r = await web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", cookie: `or_session=${acct.cookie}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
+    const call = async (acct: Acct | null, method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}) => {
+      const r = await web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", ...(acct ? { cookie: `or_session=${acct.cookie}` } : {}), ...extraHeaders }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
       seen.push(await r.clone().text(), r.headers.get("location") ?? "")
       return r
     }
@@ -92,6 +93,16 @@ suite("ad and listing connections over HTTP and for the agent (scripted Meta and
     expect(back.headers.get("location")).toBe(`https://app.example.test/businesses/${ba}/channels?ads=connected#ads`)
     // Single use.
     expect((await call(a, "GET", `/api/ads/oauth/callback?state=${state}&code=abc`)).headers.get("location")).toContain("state_invalid")
+
+    // The native system sheet has no OpenRecord browser login.
+    const desktop = await ok<{ desktopPath: string }>(call(a, "POST", "/api/ads/connect", { provider: "meta", businessId: ba }, { "x-openrecord-desktop": "1" }))
+    const bootstrap = await call(null, "GET", desktop.desktopPath)
+    const desktopCookie = bootstrap.headers.get("set-cookie")!.split(";")[0]!
+    expect(desktopCookie).toMatch(/^or_desktop_oauth=/)
+    const desktopState = new URL(bootstrap.headers.get("location")!).searchParams.get("state")!
+    const desktopBack = await call(null, "GET", `/api/ads/oauth/callback?state=${desktopState}&code=abc`, undefined, { cookie: desktopCookie })
+    expect(desktopBack.headers.get("location")).toBe("openrecord://oauth-complete?status=connected")
+    expect(desktopBack.headers.get("set-cookie")).not.toContain("or_session=")
 
     const stored = (await pool.query("SELECT * FROM ad_connections WHERE account_id=$1", [a.accountId])).rows[0]
     expect(stored).toMatchObject({ provider: "meta", subject: "4242", display_name: "Agency Owner", status: "ACTIVE", granted_scopes: ["ads_read", "public_profile"] })

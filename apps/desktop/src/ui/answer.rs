@@ -188,8 +188,8 @@ fn sources(t: &Theme, d: &AnswerDetail) -> El {
                 .role("link")
                 .label(name.clone())
                 .cursor(Cursor::Pointer)
-                .on_press_tx(move |_s: &mut App, tx| {
-                    let _ = tx.open_url(&uri);
+                .on_press_tx(move |s: &mut App, tx| {
+                    s.open_link(&uri, tx);
                 })
                 .child(label(name, type_::SM_13, t.foreground).truncate())
                 .child(label(format!("{}{}", host(&c.uri), if c.attributed { ", quoted in the answer" } else { "" }), type_::XS, t.muted_foreground).truncate()),

@@ -7,11 +7,14 @@
 //! `cargo run -- --snap agent.png --scene agent [--theme dark]`.
 
 mod account;
+mod artifacts;
+mod native_preview;
 mod api;
 mod brand_marks;
 mod brands;
 mod channel_marks;
 mod channel_status;
+mod channel_setup;
 mod chat;
 mod decisions;
 mod dictation;
@@ -22,6 +25,7 @@ mod format;
 mod icons;
 mod insights;
 mod net;
+mod navigation;
 mod prefs;
 mod settings;
 mod setup;
@@ -72,6 +76,10 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     // F (when no text field has the key) or ⌘K opens it, as on the web.
     if s.settings.is_none() && (ev.is_command('k') || (matches!(&ev.key, rune::Key::Text(c) if c == "f" || c == "F") && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt)) {
         s.toggle_find(tx);
+        return true;
+    }
+    if s.artifact_visible() && ev.key == rune::Key::Escape {
+        s.artifact = None;
         return true;
     }
     // Escape closes a helper opened beside the conversation, as on the web.
@@ -135,6 +143,9 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
 const SCENES: &[(&str, fn(&mut App))] = &[
     ("signin", fixtures::signin),
     ("agent", fixtures::agent),
+    ("agent-artifact", fixtures::agent_artifact),
+    ("channels-wordpress", fixtures::channels_wordpress),
+    ("channels-google", fixtures::channels_google),
     ("agent-empty", fixtures::agent_empty),
     ("notices-open", fixtures::notices_open),
     ("agent-log", fixtures::agent_open_log),
@@ -197,6 +208,11 @@ const SCENES: &[(&str, fn(&mut App))] = &[
 ];
 
 fn main() {
+    // Deterministic renderer probe, before creating an application or reading a session.
+    if std::env::args().nth(1).as_deref() == Some("--preview-test-document") {
+        println!("{}", native_preview::document("<style>html,body{margin:0;height:100%;background:blue}</style><script>document.body.style.background='red'</script>"));
+        return;
+    }
     rune::prewarm_gpu();
     let spec = AppSpec {
         min_size: Some((820.0, 560.0)),

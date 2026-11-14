@@ -113,14 +113,28 @@ can check but not install, since it is not inside an `.app`.
   dropped on the composer, and the microphone for macOS dictation. The agent's
   skills are chosen by the server for each turn, so the desktop gets them as
   the web does.
+- Artifacts: open a saved document beside its conversation in a split view.
+  The document card aligns with the chat card, with an 8-point outer inset and gap.
+  Markdown and HTML use the API's canonical browser preview document inside an
+  isolated WebKit view, with no session cookies, persistent storage, scripts,
+  forms or external navigation. Reads pin the preview to the selected version.
+  Preview, source, copy and version selection stay in the app. Changes go
+  through the agent. Closing the pane returns the full width to the chat.
+- Channels: connection settings expand inside the page. WordPress application
+  passwords and Stripe restricted keys use secure fields. Search Console and
+  ad accounts can be selected or unbound here. Google and Meta sign-in use
+  a system authorization sheet that returns to OpenRecord, without loading
+  the web workspace. This requires API migration 0086. The one-use handoff is
+  bound to the original live session and OAuth state and expires in ten minutes.
 - Pages: Inbox (approve or decline every kind of decision), Analytics
   with all seven sections and their charts, Campaigns, AI answers (open a claim
   to see the answer, its sources and linked facts, record a verdict, and log
   actions) and Channels.
 - Settings, with all seven sections.
 
-Connecting accounts, business setup and the evidence pages stay on the web for
-now. "Open in the browser" in the account menu goes there.
+Business setup opens in the desktop. Find actions for specialist evidence
+reviews open the agent with a review request. Optional channel planning actions
+also open the agent; they do not activate schedules or connect research tools.
 
 Shortcuts: ⌘N new chat, ⌘R refresh, ⌘1 the agent, ⌘2 the page last open, ⌘B sidebar.
 
@@ -140,5 +154,12 @@ cargo build
 
 ```sh
 cargo test                                                    # unit tests
+scripts/test-native-preview.sh                                # actual isolated WebKit renderer
 OPENRECORD_NO_SESSION=1 cargo test -- --ignored live_api      # against a running dev API
 ```
+
+Additional fixture scenes: `agent-artifact`, `channels-wordpress`, and
+`channels-google`. A headless Rune snapshot cannot capture a native WebKit
+subview. `scripts/test-native-preview.sh` checks the actual HTML renderer in
+a test window, writes a PNG, and verifies that a hostile script did not change
+the rendered page. It makes no network or provider calls.

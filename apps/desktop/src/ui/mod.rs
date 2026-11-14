@@ -2,10 +2,12 @@
 
 mod account_pages;
 mod agent;
+mod artifacts;
 pub use agent::ROLL_EVERY;
 mod answer;
 mod campaigns;
 mod channels;
+mod channel_setup;
 mod charts;
 mod cube3d;
 mod discovery;
@@ -45,6 +47,10 @@ fn kit(t: &Theme) -> Kit {
 }
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
+    if !s.artifact_visible() { crate::native_preview::clear(); }
+    if s.preview_visible() {
+        if let (Some(rect), Some(a)) = (s.preview_rect, s.artifact.as_ref().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect); }
+    } else { crate::native_preview::hide(); }
     let z = s.zoom();
     // The traffic lights follow the zoom so they stay on the header's line,
     // 32 points down in the interface's own units.
@@ -114,7 +120,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), None),
         View::Workspace => {
             let page = col()
-                .key("page-scroll")
+                .key(format!("page-scroll-{}", s.channel_setup.as_ref().map(|p| p.generation).unwrap_or(0)))
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
@@ -139,6 +145,12 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         &t.panel_shadow,
     );
     let panel = col().key("panel-column").grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0).pl(if s.sidebar_open { 0.0 } else { 8.0 }).child(panel);
+    let panel = if s.artifact_visible() {
+        row().key("artifact-split").grow(1.0).min_w(0.0).h_full()
+            .child(panel.w(0.0))
+            .child(col().w(0.0).grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(8.0)
+                .child(artifacts::view(s, t).w_full()))
+    } else { panel };
     // The agent beside a workspace page: its own card left of the page, where
     // the sidebar was, as the web's `AgentPane` sits.
     let main = if s.pane_shown() {

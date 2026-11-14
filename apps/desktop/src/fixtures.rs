@@ -1151,3 +1151,29 @@ pub fn agent_series(s: &mut App) {
     }
     s.chart_hover = Some(("surface-1-1-s".into(), 20));
 }
+
+/// An artifact opens alongside the conversation, without covering it.
+pub fn agent_artifact(s: &mut App) {
+    agent(s);
+    let content = "# A clearer path to your next campaign\n\nOne team, one plan, and a record of what shipped.\n\n## This week\n\n- Review the landing page\n- Connect the measurement account\n- Agree the launch date\n\n**Draft for review.** Nothing is published.";
+    s.artifact = Some(crate::artifacts::Pane { business: s.active.clone().unwrap(), id: "fixture-artifact".into(), requested: None,
+        loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
+            versions: vec![crate::artifacts::Version { version: 2, title: "Campaign brief".into() }, crate::artifacts::Version { version: 1, title: "First brief".into() }] }),
+        source: false });
+}
+pub fn channels_wordpress(s: &mut App) {
+    channels(s);
+    s.channel_setup = Some(crate::channel_setup::Setup { generation: 1, business: s.active.clone().unwrap(), kind: crate::channel_setup::Kind::WordPress,
+        loaded: Load::Ready(crate::channel_setup::Detail { configured: true, connected: false, choices: vec![], warning: None }),
+        site: rune::TextEdit::new("https://northstar.test"), username: rune::TextEdit::new(""), secret: rune::TextEdit::new("").secure(),
+        busy: false, authorizing: false, error: None, confirming_disconnect: false });
+}
+pub fn channels_google(s: &mut App) {
+    channels(s);
+    s.channel_setup = Some(crate::channel_setup::Setup { generation: 1, business: s.active.clone().unwrap(), kind: crate::channel_setup::Kind::Google,
+        loaded: Load::Ready(crate::channel_setup::Detail { configured: true, connected: true, warning: None, choices: vec![
+            crate::channel_setup::Choice { connection: "fixture-google".into(), id: "sc-domain:northstar.test".into(), title: "northstar.test (whole domain)".into(), bound: true },
+            crate::channel_setup::Choice { connection: "fixture-google".into(), id: "sc-domain:northstar.test".into(), title: "northstar.test · Marketing team".into(), bound: false },
+        ] }), site: rune::TextEdit::new(""), username: rune::TextEdit::new(""), secret: rune::TextEdit::new("").secure(),
+        busy: false, authorizing: false, error: None, confirming_disconnect: false });
+}

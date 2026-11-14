@@ -26,7 +26,7 @@ const SPREAD: Spring = Spring::new(0.36, 0.08);
 
 /// The stack, when there is anything waiting and nowhere else on screen already lists it.
 pub fn layer(s: &App, t: &Theme) -> Option<El> {
-    if s.screen != Screen::Workspace || s.settings.is_some() || (s.view == View::Workspace && s.page == Page::Inbox) {
+    if s.screen != Screen::Workspace || s.artifact_visible() || s.channel_setup.is_some() || s.settings.is_some() || (s.view == View::Workspace && s.page == Page::Inbox) {
         return None;
     }
     let waiting: Vec<_> = s.inbox().into_iter().filter(|d| !s.notices_hidden.contains(&d.key)).collect();
@@ -167,7 +167,7 @@ const SHADOW_ROOM: f32 = 22.0;
 /// The room the chat box leaves on its right for the stack, when the two would
 /// otherwise overlap: the composer centres in what is left of the panel.
 pub fn reserve(s: &App) -> f32 {
-    if s.view != View::Agent || s.pane_shown() || s.inbox().iter().all(|d| s.notices_hidden.contains(&d.key)) {
+    if s.view != View::Agent || (s.pane_shown() || s.artifact_visible()) || s.inbox().iter().all(|d| s.notices_hidden.contains(&d.key)) {
         return 0.0;
     }
     let window = if s.window.0 > 0.0 { s.window.0 / s.zoom().max(0.1) } else { 1280.0 };
