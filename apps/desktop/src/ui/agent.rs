@@ -22,11 +22,14 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let messages = s.transcript();
 
     // Messages land where they belong: no rise and no glide, so opening a chat
-    // or starting a turn never slides the column up the window.
-    let mut list = col().key("messages").w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0);
+    // or starting a turn never slides the column up the window. Another chat
+    // crossfades in over the last one instead of blanking and popping.
+    let shown = s.conversation.ready().map(|c| c.id.as_str()).unwrap_or("none");
+    let mut list = col().key(format!("messages-{shown}")).w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0).transition(Transition::opacity());
     match &s.conversation {
+        // Only a slow load says so: a quick one goes straight to the chat.
         Load::Loading if messages.is_empty() => {
-            list = list.child(label("Opening the chat…", type_::SM_13, t.muted_foreground).key("chat-loading"));
+            list = list.child(label("Opening the chat…", type_::SM_13, t.muted_foreground).key("chat-loading").transition(Transition::opacity()).enter_delay(0.4));
         }
         Load::Failed(e) => {
             let e = e.clone();
@@ -95,19 +98,8 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     // A chat with nothing in it yet opens on Home: what waits on the person and a few ways to begin.
     let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
     let body = if fresh { start(s, t, &business) } else { transcript };
-    let main = col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business));
-    match &s.helper {
-        // A helper opened beside the conversation takes the right half.
-        // Its share is the web's 30 to 70 percent, dragged from its left edge.
-        Some((id, load)) => row()
-            .key("agent-split")
-            .w_full()
-            .h_full()
-            .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2] / s.zoom())
-            .child(main.w(0.0).grow(1.0).min_w(0.0))
-            .child(helper_pane(s, t, k, id, load)),
-        None => main,
-    }
+    // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
+    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business))
 }
 
 /// Ways to begin, each a request the agent can act on at once: its name, what
@@ -349,7 +341,7 @@ pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
         .key("agent-pane")
         .w(w)
         .grow(if w > 0.0 { 0.0 } else { 1.0 })
-        .min_w(0.0)
+        .min_w(w)
         .h_full()
         .pt(8.0)
         .pb(8.0)
@@ -409,9 +401,10 @@ fn pane_edge() -> El {
 }
 
 /// A helper session opened from the conversation, to review (`HelperPane`): its
-/// own card over the right half, sliding in from the right. Read-only; "Open as
-/// main chat" is where to reply. Escape or the close button slides it away.
-fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Conversation>) -> El {
+/// own card beside the panel, as an artifact opens, sliding in from the right.
+/// Read-only; "Open as main chat" is where to reply. Escape or the close button
+/// slides it away.
+pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Conversation>) -> El {
     let info = load.ready().and_then(|c| c.session.clone());
     let role = chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
     let title = info.as_ref().and_then(|i| i.title.clone());
@@ -455,32 +448,34 @@ fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Co
         Load::Failed(e) => col().w_full().padding(20.0).child(label(e.clone(), type_::SM_13, t.muted_foreground).wrap()),
         _ => col().w_full().padding(20.0).child(label("Opening the helper…", type_::SM_13, t.muted_foreground)),
     };
-    col()
-        .key(format!("helper-{id}"))
-        .w(if s.split_w > 0.0 { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 })
-        .grow(if s.split_w > 0.0 { 0.0 } else { 1.0 })
-        .h_full()
-        .padding(6.0)
-        .transition(Transition::offset(64.0, 0.0).combined(Transition::opacity()))
-        .label("Helper session")
-        .child(helper_edge())
-        .child(
-            shadows(
-                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
-                &t.panel_shadow,
-            ),
-        )
+    shadows(
+        col()
+            .key(format!("helper-{id}"))
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .radius(10.0)
+            .fill(t.background)
+            .clip_rounded(10.0)
+            .role("complementary")
+            .label("Helper session")
+            .child(head)
+            .child(el().w_full().h(1.0).fill(t.border))
+            .child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
+        &t.panel_shadow,
+    )
 }
 
-/// The helper's left edge: drag to resize within 30 to 70 percent of the
-/// split, double-click for half, arrow keys to nudge, as the web's pane does.
-fn helper_edge() -> El {
+/// The left edge of the card beside the panel (an artifact or a helper): drag
+/// to resize within 30 to 70 percent of the split, double-click for half, arrow
+/// keys to nudge, as the sidebar's edge does. The share is kept between launches.
+pub fn side_edge(what: &str) -> El {
     use crate::prefs::HELPER_DEFAULT;
-    el().key("helper-edge")
+    el().key(format!("{what}-edge"))
         .pin(Some(0.0), Some(0.0), None, Some(0.0))
         .w(8.0)
         .role("separator")
-        .label("Resize helper panel")
+        .label(if what == "artifact" { "Resize artifact panel" } else { "Resize helper panel" })
         .help("Drag to resize; double-click for half and half")
         .focusable(true)
         .cursor(Cursor::ResizeColumn)
@@ -491,7 +486,7 @@ fn helper_edge() -> El {
                     d.data = s.prefs.helper();
                     s.resizing = Some(crate::ui::Resize::Helper);
                 }
-                // Dragging left widens the helper.
+                // Dragging left widens the card.
                 rune::Phase::Move if s.split_w > 0.0 => s.prefs.helper_width = (d.data - d.dx / s.zoom() / s.split_w * 100.0).clamp(30.0, 70.0),
                 rune::Phase::Move => {}
                 rune::Phase::Up => {
@@ -1278,7 +1273,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         stack = stack.child(label(e.clone(), type_::XS, t.wrong).px(12.0).wrap().live_region(LiveRegion::Polite));
     }
     // Beside the decisions stack when it would overlap the box, the composer centres in the room left.
-    col().w_full().items_center().pl(24.0).pr(24.0 + crate::ui::notices::reserve(s)).pb(8.0).child(stack.child(field).child(options))
+    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.child(field).child(options))
 }
 
 /// A file attached to a message: its name and length, removable before sending.

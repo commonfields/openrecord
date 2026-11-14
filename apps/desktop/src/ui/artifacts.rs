@@ -147,7 +147,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                     s.preview_rect = Some(r);
                     if s.preview_visible() {
                         if let Some(a) = s.artifact.as_ref().and_then(|p| p.loaded.ready()) {
-                            crate::native_preview::show(&a.preview_html, r);
+                            crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
                         }
                     }
                 })

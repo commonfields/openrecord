@@ -55,6 +55,18 @@ impl App {
             && self.view == crate::state::View::Agent
             && self.artifact.is_some()
     }
+    /// A helper session beside the conversation, when no artifact holds that place.
+    pub fn helper_visible(&self) -> bool {
+        self.screen == crate::state::Screen::Workspace
+            && self.view == crate::state::View::Agent
+            && (self.active.is_some() || self.general)
+            && self.helper.is_some()
+            && !self.artifact_visible()
+    }
+    /// Whether a card (an artifact or a helper) is open beside the panel.
+    pub fn side_visible(&self) -> bool {
+        self.artifact_visible() || self.helper_visible()
+    }
     pub fn preview_visible(&self) -> bool {
         self.artifact_visible()
             && self

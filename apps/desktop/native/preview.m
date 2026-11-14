@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <QuartzCore/QuartzCore.h>
 
 // A document renderer, never an application browser. It has no app cookies,
 // persistent storage, script execution, popups, or external navigation.
@@ -14,11 +15,35 @@
 static WKWebView *preview;
 static ORPreviewPolicy *policy;
 static NSString *document;
+// The document has painted once: until then the view stays transparent, so
+// the card's own "Rendering document" shows instead of a blank white flash.
+static BOOL painted;
+static BOOL animate = YES;
 
-void or_preview_hide(void) { [preview setHidden:YES]; }
-void or_preview_clear(void) { [preview stopLoading]; [preview removeFromSuperview]; preview = nil; policy = nil; document = nil; }
+// Fades the view up once it is on screen and its document has painted.
+static void reveal(void) {
+    if (!preview || preview.hidden || !painted || preview.alphaValue >= 1.0) return;
+    if (!animate) { preview.alphaValue = 1.0; return; }
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.18;
+        context.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.4 :0.0 :0.2 :1.0];
+        preview.animator.alphaValue = 1.0;
+    } completionHandler:nil];
+}
 
-void or_preview_show(const char *html, double x, double y, double w, double h) {
+@implementation ORPreviewPolicy (Reveal)
+- (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
+    painted = YES;
+    reveal();
+}
+@end
+
+// Hidden at once: a menu or dialog drawn by the app must never sit under it.
+void or_preview_hide(void) { [preview setHidden:YES]; preview.alphaValue = 0.0; }
+void or_preview_clear(void) { [preview stopLoading]; [preview removeFromSuperview]; preview = nil; policy = nil; document = nil; painted = NO; }
+
+void or_preview_show(const char *html, double x, double y, double w, double h, int motion) {
+    animate = motion != 0;
     NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;
     // During initial layout or while the app is inactive, Cocoa can have no
     // main/key window. OpenRecord has one document window; use its visible host.
@@ -34,19 +59,24 @@ void or_preview_show(const char *html, double x, double y, double w, double h) {
         // Artifact scripts are refused by the sandbox and both CSP policies.
         config.preferences.javaScriptCanOpenWindowsAutomatically = NO;
         preview = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
+        preview.alphaValue = 0.0;
         policy = [ORPreviewPolicy new];
         preview.navigationDelegate = policy;
         preview.allowsBackForwardNavigationGestures = NO;
     }
     if (preview.superview != host) { [preview removeFromSuperview]; [host addSubview:preview]; }
     CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
-    [preview setFrame:NSMakeRect(x, top, w, h)];
-    [preview setHidden:NO];
+    NSRect frame = NSMakeRect(x, top, w, h);
+    if (!NSEqualRects(preview.frame, frame)) [preview setFrame:frame];
     NSString *next = [NSString stringWithUTF8String:html];
     if (![next isEqualToString:document]) {
+        // Another version keeps the one on screen until it has painted.
         document = next;
+        if (preview.hidden || preview.alphaValue < 1.0) painted = NO;
         [preview loadHTMLString:next baseURL:nil];
     }
+    if (preview.hidden) { preview.alphaValue = 0.0; [preview setHidden:NO]; }
+    reveal();
 }
 
 #import <AuthenticationServices/AuthenticationServices.h>

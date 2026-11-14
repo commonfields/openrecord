@@ -14,7 +14,7 @@ int main(int argc, const char **argv) {
         if (!html) return 3;
         // The test window can be key without being main until the app runs.
         [window makeMainWindow];
-        or_preview_show(html.UTF8String, 0, 0, 480, 320);
+        or_preview_show(html.UTF8String, 0, 0, 480, 320, 0);
         if (!preview) { fprintf(stderr, "native preview did not attach to window\n"); return 4; }
         if (preview.configuration.websiteDataStore.persistent) return 4;
         NSDate *until = [NSDate dateWithTimeIntervalSinceNow:4];
