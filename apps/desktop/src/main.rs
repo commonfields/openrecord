@@ -226,5 +226,7 @@ fn main() {
         .chrome(Chrome { full_size_content: true, traffic_lights: Some((16.0, 22.0)), drag_regions: true })
         .titlebar(rune::Titlebar::new(50.0).traffic_lights(16.0, 22.0))
         .standard_menus()
+        // Fills the screen at launch, so the chat and the notifications have room side by side.
+        .maximized(true)
         .run();
 }

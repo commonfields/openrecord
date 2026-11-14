@@ -1,7 +1,7 @@
 //! macOS WebKit document slot, positioned by Rune's measured layout.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn or_preview_show(html: *const std::ffi::c_char, x: f64, y: f64, w: f64, h: f64);
+    fn or_preview_show(html: *const std::ffi::c_char, x: f64, y: f64, w: f64, h: f64, motion: i32);
     fn or_preview_hide();
     fn or_preview_clear();
     fn or_oauth_start(url: *const std::ffi::c_char);
@@ -30,7 +30,8 @@ pub fn document(content: &str) -> String {
         escape(&format!("<!doctype html>{policy}{content}"))
     )
 }
-pub fn show(content: &str, rect: [f32; 4]) {
+/// Shows the document at `rect`; with `motion` it fades up once it has painted.
+pub fn show(content: &str, rect: [f32; 4], motion: bool) {
     #[cfg(target_os = "macos")]
     if let Ok(html) = std::ffi::CString::new(document(content)) {
         // SAFETY: called only by Rune's main-thread layout handler; C copies the string.
@@ -41,11 +42,12 @@ pub fn show(content: &str, rect: [f32; 4]) {
                 rect[1] as f64,
                 rect[2] as f64,
                 rect[3] as f64,
+                motion as i32,
             );
         }
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (content, rect);
+    let _ = (content, rect, motion);
 }
 #[cfg(test)]
 mod tests {
