@@ -302,8 +302,8 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
                 for (j, r) in pl.references.iter().enumerate() {
                     let mut l = label(if r.text.is_empty() { "Evidence".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
                     if let Some(u) = r.url().map(str::to_string) {
-                        l = l.role("link").cursor(Cursor::Pointer).help(u.clone()).on_press_tx(move |_s: &mut App, tx| {
-                            let _ = tx.open_url(&u);
+                        l = l.role("link").cursor(Cursor::Pointer).help(u.clone()).on_press_tx(move |s: &mut App, tx| {
+                            s.open_link(&u, tx);
                         });
                     }
                     refs = refs.child(l);
@@ -905,8 +905,8 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
                 .child(ico(if url.is_some() { &icons::GLOBE } else { &icons::FILE_TEXT }, 12.0, t.muted_foreground).group_color(t.foreground))
                 .child(label(name, type_::XS, t.muted_foreground).group_color(t.foreground).truncate());
             if let Some(u) = url {
-                chip = chip.role("link").help(u.clone()).cursor(Cursor::Pointer).on_press_tx(move |_s: &mut App, tx| {
-                    let _ = tx.open_url(&u);
+                chip = chip.role("link").help(u.clone()).cursor(Cursor::Pointer).on_press_tx(move |s: &mut App, tx| {
+                    s.open_link(&u, tx);
                 });
             }
             chips = chips.child(chip_in(chip, j));
@@ -963,7 +963,7 @@ fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
 }
 
 /// The proposals a reply saved that still wait for a decision, each opening in the inbox.
-/// What a reply wrote, as cards that open the piece in the browser.
+/// What a reply wrote, opened beside its conversation.
 fn artifacts(t: &Theme, i: usize, refs: &[chat::ArtifactRef]) -> Vec<El> {
     use crate::ui::widgets::{Variant, button};
     refs.iter()

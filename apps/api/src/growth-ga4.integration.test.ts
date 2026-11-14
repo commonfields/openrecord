@@ -1,3 +1,4 @@
+import { desktopOAuthApi } from "./desktop-oauth.js"
 // W8 GA4 connection over HTTP against the local Google stand-in: the OAuth
 // authorization-code flow (state, PKCE, exact redirect, single use, scopes,
 // identity), property authorization, tenancy, sync requests, disconnect, and
@@ -52,12 +53,12 @@ suite("GA4 connection over HTTP (OAuth, property authorization, tenancy; local G
       ],
     })
     const config = opts.configured === false ? { configured: false as const, reason: "MISSING_CLIENT" as const } : fixtureGa4Config(g, { ...CLIENT, appBaseUrl: APP })
-    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))), growthGa4Api(r => Effect.flatMap(requireSession, ({ session }) => r(session)))),
+    const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(desktopOAuthApi(), HttpRouter.concat(growthApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))), growthGa4Api(r => Effect.flatMap(requireSession, ({ session }) => r(session))))),
       Layer.provideMerge(fixtureGa4Layer(config), repos))
     handlers.push(web)
     const bodies: string[] = []
-    const call = async (acct: Acct | null, method: string, path: string, body?: unknown) => {
-      const response = await web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", ...(acct ? { cookie: `or_session=${acct.cookie}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
+    const call = async (acct: Acct | null, method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}) => {
+      const response = await web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", ...(acct ? { cookie: `or_session=${acct.cookie}` } : {}), ...extraHeaders }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
       const text = await response.clone().text()
       bodies.push(text, response.headers.get("location") ?? "")
       return response
@@ -78,6 +79,50 @@ suite("GA4 connection over HTTP (OAuth, property authorization, tenancy; local G
     const connections = async (acct: Acct) => (await ok<{ configured: boolean; connections: Ga4Connection[] }>(call(acct, "GET", "/api/growth/ga4/connections"))).connections
     return { g, call, ok, refusal, a, b, pa, pb, authorize, connections, bodies, business }
   }
+
+  it("finishes desktop authorization in the app without a browser application session; tickets are scoped and single use", async () => {
+    const s = await setup()
+    const begin = async () => {
+      const started = await s.call(s.a, "POST", "/api/growth/ga4/connect", { businessId: s.pa.businessId, returnTo: "CHANNELS" }, { "x-openrecord-desktop": "1" })
+      expect(started.status).toBe(200)
+      const { desktopPath, authorizationOrigin } = await started.json() as { desktopPath: string; authorizationOrigin: string }
+      expect(authorizationOrigin).toBe(APP)
+      expect(desktopPath).toMatch(/^\/api\/desktop\/oauth\/start\/[A-Za-z0-9_-]{43}$/)
+      const bootstrap = await s.call(null, "GET", desktopPath)
+      expect(bootstrap.status).toBe(303)
+      const cookie = bootstrap.headers.get("set-cookie")!.split(";")[0]!
+      expect(cookie).toMatch(/^or_desktop_oauth=/)
+      expect(cookie).not.toContain(s.a.cookie)
+      expect(bootstrap.headers.get("set-cookie")).toContain("HttpOnly")
+      expect(bootstrap.headers.get("set-cookie")).toContain("SameSite=Lax")
+      expect((await s.call(null, "GET", desktopPath)).status).toBe(404)
+      const authorizationUrl = bootstrap.headers.get("location")!
+      const encrypted = (await pool.query("SELECT authorization_ciphertext FROM desktop_oauth_handoffs WHERE consumed_at IS NULL ORDER BY expires_at DESC LIMIT 1")).rows[0].authorization_ciphertext
+      expect(encrypted).toMatch(/^v1\./)
+      expect(encrypted).not.toContain(new URL(authorizationUrl).searchParams.get("state"))
+      const back = new URL(s.g.consent(authorizationUrl, { sub: "1001" }))
+      return { cookie, path: back.pathname + back.search, desktopPath }
+    }
+    const flow = await begin()
+    expect((await s.call(null, "GET", flow.path)).headers.get("location")).toBe("openrecord://oauth-complete?status=failed")
+    // A callback ticket is not a session for the normal protected routes.
+    expect((await s.call(null, "GET", "/api/growth/ga4/connections", undefined, { cookie: flow.cookie })).status).toBe(401)
+    // A mismatched OAuth state refuses the callback without consuming its ticket.
+    const wrong = await s.call(null, "GET", flow.path.replace(/state=[^&]+/, "state=" + "a".repeat(43)), undefined, { cookie: flow.cookie })
+    expect(wrong.headers.get("location")).toBe("openrecord://oauth-complete?status=failed")
+    const landed = await s.call(null, "GET", flow.path, undefined, { cookie: flow.cookie })
+    expect(landed.headers.get("location")).toBe("openrecord://oauth-complete?status=connected")
+    expect(landed.headers.get("set-cookie")).not.toContain("or_session=")
+    expect((await s.connections(s.a))).toHaveLength(1)
+    expect((await s.connections(s.b))).toHaveLength(0)
+    expect((await s.call(null, "GET", flow.path, undefined, { cookie: flow.cookie })).headers.get("location")).toBe("openrecord://oauth-complete?status=failed")
+    const expired = await begin()
+    await pool.query("UPDATE desktop_oauth_handoffs SET expires_at=now()-interval '1 second' WHERE consumed_at IS NULL")
+    expect((await s.call(null, "GET", expired.path, undefined, { cookie: expired.cookie })).headers.get("location")).toBe("openrecord://oauth-complete?status=failed")
+    const signedOut = await begin()
+    await pool.query("DELETE FROM sessions WHERE id=$1", [s.a.cookie])
+    expect((await s.call(null, "GET", signedOut.path, undefined, { cookie: signedOut.cookie })).headers.get("location")).toBe("openrecord://oauth-complete?status=failed")
+  })
 
   it("connects through Google with state, PKCE and the exact redirect URI, recording the authorizing identity separately", async () => {
     const s = await setup()

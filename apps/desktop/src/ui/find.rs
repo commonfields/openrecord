@@ -2,7 +2,7 @@
 //! the workspace. F or ⌘K opens it; arrows move, Return goes, Escape closes.
 //! Two separate cards float near the top of the window: the query field, and
 //! the grouped results with their key hints. Claims and facts load only while
-//! it is open. Pages the desktop app doesn't have open on the web.
+//! it is open. Navigation stays within the desktop.
 
 use rune::{Cursor, El, ScrollSpec, col, el, row, text_input};
 
@@ -16,8 +16,8 @@ use crate::ui::widgets::{ico, label};
 pub enum Go {
     View(View),
     Page(Page),
-    /// A page of the web app, opened in the browser.
-    Web(String),
+    Ask(String),
+    AddBusiness,
     Settings,
     Business(String),
     Claim(String),
@@ -42,35 +42,34 @@ fn items(s: &App) -> Vec<Item> {
         group: group.into(), label: label.into(), hint: None, icon, keywords: keywords.into(), badge: None, go,
     };
     let bid = s.active.clone();
-    if let Some(b) = &bid {
+    if bid.is_some() {
         let name = s.active_business().map(|x| x.name.clone()).unwrap_or_else(|| "Workspace".into());
-        let base = format!("/businesses/{b}");
-        let web = |path: &str| Go::Web(format!("{base}/{path}"));
+        let review = |topic: &str| Go::Ask(format!("Review {topic} for this business using the available tools. Show the evidence and what needs my attention."));
         let pages: [(&str, Go, &'static rune::Icon, &str); 11] = [
             ("Agent", Go::View(View::Agent), &icons::LAYOUT_GRID, "chat setup status plan report"),
             ("Channels", Go::Page(Page::Channels), &icons::GLOBE, "channels connect integrations google ads meta stripe wordpress analytics"),
             ("Work", Go::Page(Page::Campaigns), &icons::INBOX, "initiatives approvals executions campaigns"),
             ("Overview", Go::Page(Page::Overview), &icons::LAYOUT_GRID, "results today dashboard analytics overview"),
             ("AI answers", Go::Page(Page::AiAnswers), &icons::INBOX, "wrong answers review rate"),
-            ("Facts on the web", web("representations"), &icons::GLOBE, "representations sources drift in sync"),
-            ("Approved facts", web("truth"), &icons::BOOK_CHECK, "truth facts approved"),
-            ("AI answer checks", web("checks"), &icons::RADAR, "checks questions run"),
-            ("Website checks", web("search"), &icons::SEARCH, "search website seo findings"),
-            ("Prospect research", web("assay"), &icons::FLASK, "assay prospect"),
-            ("Discover sources", web("representations/discovery"), &icons::TELESCOPE, "discovery scan"),
+            ("Facts on the web", review("facts on the web"), &icons::GLOBE, "representations sources drift in sync"),
+            ("Approved facts", review("approved facts"), &icons::BOOK_CHECK, "truth facts approved"),
+            ("AI answer checks", review("AI answer checks"), &icons::RADAR, "checks questions run"),
+            ("Website checks", review("website checks"), &icons::SEARCH, "search website seo findings"),
+            ("Prospect research", review("prospect research"), &icons::FLASK, "assay prospect"),
+            ("Discover sources", review("source discovery"), &icons::TELESCOPE, "discovery scan"),
         ];
         for (label, go, icon, keywords) in pages {
             out.push(item(&name, label, icon, keywords, go));
         }
-        out.push(item("Actions", "Run a check", &icons::RADAR, "ask ai question", web("checks")));
+        out.push(item("Actions", "Run a check", &icons::RADAR, "ask ai question", review("AI answer checks")));
         if let Some(next) = s.issues.ready().and_then(|l| l.iter().find(|i| i.state == "NEEDS_REVIEW")) {
             out.push(Item { hint: Some("Oldest answers wait longest".into()), ..item("Actions", "Rate the next answer", &icons::MESSAGE_QUOTE, "", Go::Claim(next.claim_id.clone())) });
         }
     }
-    out.push(item("Actions", "New business", &icons::PLUS, "set up add website", Go::Web("/start".into())));
+    out.push(item("Actions", "New business", &icons::PLUS, "set up add website", Go::AddBusiness));
     out.push(item("Actions", "Settings", &icons::SETTINGS, "", Go::Settings));
     out.push(item("Actions", "Inbox", &icons::FILE_CHECK, "waiting approve approvals decisions inbox proposals pending", Go::Page(Page::Inbox)));
-    out.push(item("Actions", "Businesses and clients", &icons::BUILDING, "clients agency all", Go::Web("/businesses".into())));
+    out.push(item("Actions", "Businesses and clients", &icons::BUILDING, "clients agency all", Go::Page(Page::Businesses)));
     for b in &s.businesses {
         if bid.as_deref() == Some(b.id.as_str()) {
             continue;
@@ -102,7 +101,7 @@ fn items(s: &App) -> Vec<Item> {
             out.push(Item {
                 hint: Some(format!("v{}", f.version)),
                 keywords: f.subject.clone(),
-                ..item("Approved facts", &format!("{}: {}", sentence(&f.predicate), f.value_text), &icons::BOOK_CHECK, "", Go::Web(format!("/businesses/{}/truth", bid.clone().unwrap_or_default())))
+                ..item("Approved facts", &format!("{}: {}", sentence(&f.predicate), f.value_text), &icons::BOOK_CHECK, "", Go::Ask(format!("Review this approved fact: {}: {} (version {}).", f.predicate, f.value_text, f.version)))
             });
         }
     }
@@ -134,7 +133,7 @@ pub fn results(s: &App) -> Vec<Item> {
 }
 
 /// Goes where a result points, closing "Find…".
-pub fn run(s: &mut App, go: Go, tx: &mut rune::Tx) {
+pub fn run(s: &mut App, go: Go, _tx: &mut rune::Tx) {
     s.find = None;
     match go {
         Go::View(v) => s.show_view(v),
@@ -148,10 +147,8 @@ pub fn run(s: &mut App, go: Go, tx: &mut rune::Tx) {
             s.show_page(Page::AiAnswers);
             s.open_answer(&id);
         }
-        Go::Web(path) => {
-            let api = crate::state::api_base();
-            let _ = tx.open_url(&format!("{}{path}", crate::ui::web_url(&api)));
-        }
+        Go::Ask(prompt) => s.ask_agent(&prompt),
+        Go::AddBusiness => s.open_add_business(None),
     }
 }
 

@@ -69,7 +69,9 @@ pub enum Reply {
     /// A chat's read-only links, and a link just made (shown once).
     Shares { conversation: String, created: Option<ApiResult<String>>, list: ApiResult<Vec<crate::api::Share>> },
     /// An artifact's preview could not be opened; what to tell the person.
-    ArtifactFailed(String),
+    ChannelDetail { generation: u64, result: ApiResult<crate::channel_setup::Detail> },
+    ChannelAction { generation: u64, result: ApiResult<Option<String>> },
+    Artifact { business: String, id: String, version: Option<u32>, result: ApiResult<crate::artifacts::Artifact> },
     /// A business's follow-up policy (read, or as a change left it).
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
@@ -345,13 +347,16 @@ impl Net {
         });
     }
 
-/// Opens an artifact's preview in the browser, through a link that needs no session.
-    pub fn open_artifact(&self, business: String, artifact: String) {
+    pub fn channel_detail(&self, generation: u64, business: String, kind: crate::channel_setup::Kind) {
+        self.spawn(move |c, send| send(Reply::ChannelDetail { generation, result: c.channel_detail(&business, kind) }));
+    }
+    pub fn channel_action(&self, generation: u64, business: String, kind: crate::channel_setup::Kind, action: crate::channel_setup::Action) {
+        self.spawn(move |c, send| send(Reply::ChannelAction { generation, result: c.channel_action(&business, kind, action) }));
+    }
+    pub fn artifact(&self, business: String, id: String, version: Option<u32>) {
         self.spawn(move |c, send| {
-            let opened = c.artifact_link(&business, &artifact).ok().and_then(|url| std::process::Command::new("open").arg(url).status().ok()).is_some_and(|s| s.success());
-            if !opened {
-                send(Reply::ArtifactFailed("Couldn't open the preview. Try again.".into()));
-            }
+            let result = c.artifact(&business, &id, version);
+            send(Reply::Artifact { business, id, version, result });
         });
     }
 

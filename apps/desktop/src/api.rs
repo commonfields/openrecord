@@ -471,7 +471,7 @@ impl Client {
     }
 
     pub(crate) fn call<T: DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> ApiResult<T> {
-        let mut req = self.agent.request(method, &format!("{}{}", self.base, path)).set("Accept", "application/json");
+        let mut req = self.agent.request(method, &format!("{}{}", self.base, path)).set("Accept", "application/json").set("X-OpenRecord-Desktop", "1");
         if let Some(s) = self.session() {
             req = req.set("Cookie", &format!("{SESSION_COOKIE}={s}"));
         }
@@ -525,6 +525,24 @@ impl Client {
         }
     }
 
+    /// Fetch the authenticated canonical preview without giving WebKit app credentials.
+    pub(crate) fn get_html(&self, path: &str) -> ApiResult<String> {
+        let mut req = self.agent.get(&format!("{}{}", self.base, path)).set("Accept", "text/html");
+        if let Some(session) = self.session() {
+            req = req.set("Cookie", &format!("{SESSION_COOKIE}={session}"));
+        }
+        match req.call() {
+            Ok(r) if r.content_type() == "text/html" => r.into_string().map_err(|e| ApiError::Decode(e.to_string())),
+            Ok(_) => Err(ApiError::Decode("expected an HTML preview".into())),
+            Err(ureq::Error::Status(401, _)) => {
+                self.forget_session();
+                Err(ApiError::Unauthorized)
+            }
+            Err(ureq::Error::Status(code, _)) => Err(ApiError::Status(code, "preview unavailable".into())),
+            Err(e) => Err(ApiError::Offline(e.to_string())),
+        }
+    }
+
     pub(crate) fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
         self.call("GET", path, None)
     }
@@ -549,6 +567,16 @@ impl Client {
         let result = self.post::<Value>("/api/auth/signout", json!({}));
         self.forget_session();
         result.map(|_| ())
+    }
+
+    pub fn desktop_authorization(&self, path: &str, body: Value) -> ApiResult<String> {
+        #[derive(Deserialize)]
+        struct Response { #[serde(rename = "desktopPath")] path: String, #[serde(rename = "authorizationOrigin")] origin: String }
+        let response: Response = self.post(path, body)?;
+        let token = response.path.strip_prefix("/api/desktop/oauth/start/").filter(|token| token.len() == 43 && token.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+        if token.is_none() { return Err(ApiError::Decode("invalid authorization handoff".into())); }
+        let origin = server_url(&response.origin).map_err(ApiError::Decode)?;
+        Ok(format!("{}{}", origin, response.path))
     }
 
     pub fn me(&self) -> ApiResult<()> {
@@ -728,17 +756,6 @@ impl Client {
             path: String,
         }
         Ok(self.post::<R>(&Self::shares_path(business, conversation), json!({ "days": 14 }))?.path)
-    }
-
-/// A preview link for one artifact that works for seven days without a
-    /// session, as a full address. The server sandboxes the page it serves.
-    pub fn artifact_link(&self, business: &str, artifact: &str) -> ApiResult<String> {
-        #[derive(Deserialize)]
-        struct R {
-            path: String,
-        }
-        let path = self.post::<R>(&format!("/api/businesses/{}/artifacts/{}/links", enc(business), enc(artifact)), json!({}))?.path;
-        Ok(format!("{}{path}", self.base.trim_end_matches('/')))
     }
 
     pub fn revoke_share(&self, business: &str, conversation: &str, id: &str) -> ApiResult<()> {

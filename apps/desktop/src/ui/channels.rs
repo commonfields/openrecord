@@ -5,9 +5,7 @@
 //! and what would it add? Accounts that this workspace cannot connect yet sit
 //! at the end, with one explanation instead of a "Why?" on every row.
 //!
-//! Signing in to Google or Meta, and pasting a Stripe or WordPress key, happen
-//! in the browser: every action here opens that account's row there, and
-//! "Check again" reads the result back.
+//! Setup stays in the desktop. Provider sign-in uses a secure system sheet.
 
 use rune::{Cursor, El, col, el, row};
 
@@ -17,14 +15,6 @@ use crate::state::{App, Load};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::kit;
 use crate::ui::widgets::{Variant, button, failure, ico, label, page_header, skeleton};
-
-/// Opens a path of the web app (for the sign-ins only a browser can finish).
-fn open_web(path: String) -> impl Fn(&mut App, &mut rune::Tx) + 'static {
-    move |_s: &mut App, tx: &mut rune::Tx| {
-        let api = crate::state::api_base();
-        let _ = tx.open_url(&format!("{}{path}", crate::ui::web_url(&api)));
-    }
-}
 
 /// A service's mark on the web's small tile: muted fill with the control shadow.
 fn mark(t: &Theme, key: &str, size: f32) -> El {
@@ -99,6 +89,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         .items_start()
         .child(col().grow(1.0).min_w(0.0).child(page_header(t, "Channels", &format!("The accounts your agent works through for {name}. It reads results from them and changes nothing until you approve it."))))
         .child(button(t, "channels-refresh", "Check again", Variant::Outline).on_press(|s: &mut App| s.refresh()));
+    if s.channel_setup.is_some() { return col().w_full().gap(20.0).child(header).child(super::channel_setup::view(s, t)); }
     let status = match &s.channel_status {
         Load::Ready(st) => st,
         Load::Failed(e) => return col().w_full().gap(20.0).child(header).child(failure(t, "channels-failed", e, |s: &mut App| s.refresh())),
@@ -123,8 +114,9 @@ pub fn view(s: &App, t: &Theme) -> El {
             _ => continue,
         };
         waiting += 1;
+        let setup_key = r.key;
         let act = button(t, &format!("channel-need-{}", r.key), action, Variant::Primary);
-        let act = if r.state.is_none() { act.on_press(|s: &mut App| s.refresh()) } else { act.on_press_tx(open_web(format!("/businesses/{business}/channels#{}", r.key))) };
+        let act = if r.state.is_none() { act.on_press(|s: &mut App| s.refresh()) } else { act.on_press(move |s: &mut App| s.open_channel(setup_key)) };
         needs = needs.child(kit::callout(t, &format!("channel-needs-{}", r.key), tone, what, why.to_string(), Some(act)));
     }
 
@@ -166,8 +158,8 @@ pub fn view(s: &App, t: &Theme) -> El {
                 &t.control_shadow,
             );
             if let Some(url) = p.identity.clone().filter(|i| i.starts_with("http")) {
-                chip = chip.role("link").cursor(Cursor::Pointer).help(url.clone()).on_press_tx(move |_s: &mut App, tx| {
-                    let _ = tx.open_url(&url);
+                chip = chip.role("link").cursor(Cursor::Pointer).help(url.clone()).on_press_tx(move |s: &mut App, tx| {
+                    s.open_link(&url, tx);
                 });
             }
             chips = chips.child(chip);
@@ -216,9 +208,9 @@ fn mark_bare(t: &Theme, key: &str) -> El {
 
 /// One account: its mark and name, whether it is connected and to what, what
 /// the agent gets from it, and the one action its state calls for.
-fn channel_row(t: &Theme, business: &str, r: &Row) -> El {
+fn channel_row(t: &Theme, _business: &str, r: &Row) -> El {
     let key = r.key.to_string();
-    let web_row = format!("/businesses/{business}/channels#{key}");
+    let setup_key = r.key;
     let (dot, state_text, action, variant) = match r.state {
         Some(State::Connected) => (t.supported, r.identity.as_ref().map(|i| format!("Connected to {i}")).unwrap_or_else(|| "Connected".into()), "Manage", Variant::Outline),
         Some(State::Choose) => (t.partial, "Signed in, setup not finished".to_string(), "Finish setup", Variant::Primary),
@@ -227,7 +219,7 @@ fn channel_row(t: &Theme, business: &str, r: &Row) -> El {
         _ => (t.partial, "Status could not load".to_string(), "Check again", Variant::Outline),
     };
     let act = button(t, &format!("channel-act-{key}"), action, variant).min_w(104.0);
-    let act = if r.state.is_none() { act.on_press(|s: &mut App| s.refresh()) } else { act.on_press_tx(open_web(web_row)) };
+    let act = if r.state.is_none() { act.on_press(|s: &mut App| s.refresh()) } else { act.on_press(move |s: &mut App| s.open_channel(setup_key)) };
     row()
         .key(format!("channel-row-{key}"))
         .w_full()
@@ -253,47 +245,10 @@ fn channel_row(t: &Theme, business: &str, r: &Row) -> El {
         .child(act)
 }
 
-/// Optional setups, each a card that says what it adds and opens its task.
-fn tools(t: &Theme, business: &str) -> El {
-    let setup = |id: &str, title: &str, description: &str| {
-        let path = format!("/businesses/{business}/channels#{id}");
-        shadows(
-            col()
-                .key(format!("tool-{id}"))
-                .w_full()
-                .px(18.0)
-                .py(16.0)
-                .gap(10.0)
-                .radius(12.0)
-                .fill(t.card)
-                .child(col().w_full().gap(4.0).child(label(title.to_string(), type_::SM_MEDIUM, t.foreground).wrap()).child(label(description.to_string(), type_::XS, t.muted_foreground).wrap().max_lines(3)))
-                .child(row().child(button(t, &format!("tool-open-{id}"), "Set up", Variant::Outline).on_press_tx(open_web(path)))),
-            &t.card_shadow,
-        )
-    };
-    col()
-        .w_full()
-        .gap(12.0)
-        .child(
-            col()
-                .gap(2.0)
-                .child(label("More the agent can use", type_::SM_MEDIUM, t.foreground).role("heading"))
-                .child(label("Optional. Each one adds a source or a schedule; none of them lets the agent act without your approval.", type_::XS, t.muted_foreground).wrap()),
-        )
-        .child(kit::cols(vec![
-            setup("ai-answer-tracking", "Check AI answers on a schedule", "Choose your buyer questions and how often to check them, so changes in what assistants say show up without asking."),
-            setup("ai-traffic", "See visits from AI assistants", "Import a website log to count AI referrals and crawler visits. Ask whoever runs your website for the log."),
-        ]))
-        .child(kit::cols(vec![
-            setup("research-connections", "Give the agent more research sources", "Add an account you already use for market or competitor research."),
-            setup("plugins", "Choose guidance for your business", "Turn on specialist marketing guidance. It connects nothing and grants no permission to act."),
-        ]))
-        .child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .center_y()
-                .child(label("For your technical team: tool servers, a live traffic feed and agent access for other apps.", type_::XS, t.muted_foreground).wrap().grow(1.0).min_w(0.0))
-                .child(button(t, "tool-open-agent-access", "Advanced connections", Variant::Ghost).on_press_tx(open_web(format!("/businesses/{business}/channels#agent-access")))),
-        )
+/// Optional work starts in the desktop conversation, with human approval preserved.
+fn tools(t: &Theme, _business: &str) -> El {
+    kit::panel(t, "channel-agent-help", "More the agent can do", Some("Plan measurement and research with your agent.".into()), None, 16.0,
+        row().w_full().gap(12.0)
+            .child(button(t, "channel-schedule-help", "Plan AI answer tracking", Variant::Outline).on_press(|s: &mut App| s.ask_agent("Help me plan AI answer tracking for this business. Read the existing questions, goal and tracking setup, then tell me what needs configuring. Do not claim a schedule is active unless you verify it.")))
+            .child(button(t, "channel-research-help", "Review research sources", Variant::Outline).on_press(|s: &mut App| s.ask_agent("Review the research sources available to this business and tell me which useful sources are missing. Do not claim a source is connected unless verified."))))
 }
