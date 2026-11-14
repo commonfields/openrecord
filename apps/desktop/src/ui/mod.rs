@@ -207,7 +207,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     ws = ws.child(main);
     // Over the page panel, so it draws on top of the header beside the traffic lights.
     if !s.sidebar_open {
-        ws = ws.child(shell::collapsed_toggle(t, titlebar_inset));
+        ws = ws.child(shell::collapsed_toggle(s, t, titlebar_inset));
     }
     ws.children(shell::sidebar_overlay(s, t))
 }

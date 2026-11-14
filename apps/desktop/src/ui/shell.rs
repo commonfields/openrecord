@@ -30,8 +30,15 @@ pub fn sidebar_toggle(t: &Theme, open: bool) -> El {
 
 /// Where the collapsed sidebar's button sits: just past the traffic lights,
 /// on the header's line, 32 points down, as the traffic lights are.
-pub fn collapsed_toggle(t: &Theme, titlebar_inset: f32) -> El {
-    row().key("sidebar-toggle-slot").pin(Some(titlebar_inset.max(16.0) + 6.0), Some(18.0), None, None).child(sidebar_toggle(t, false))
+pub fn collapsed_toggle(s: &App, t: &Theme, titlebar_inset: f32) -> El {
+    let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
+    row()
+        .key("sidebar-toggle-slot")
+        .pin(Some(titlebar_inset.max(16.0) + 6.0), Some(18.0), None, None)
+        .gap(2.0)
+        .center_y()
+        .child(find)
+        .child(sidebar_toggle(t, false))
 }
 
 /// The sidebar while collapsed: nothing in the layout, only a thin strip at the
@@ -115,15 +122,7 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         b
     };
 
-    let tools = {
-        let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
-        let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat (⌘N)", false).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx));
-        if open {
-            row().w_full().center_y().justify_between().child(find).child(new_chat)
-        } else {
-            col().gap(4.0).items_center().child(find).child(new_chat)
-        }
-    };
+    let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
 
     let nav_body = col().w_full().gap(if open { 20.0 } else { 8.0 }).child(workspace_links(s, t)).child(chat_history(s, t));
     let nav = col()
@@ -185,16 +184,19 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         side = side.child(resize_edge());
     }
     side
-        .child(row().key("titlebar-band").w_full().h(TITLEBAR).pt(8.0).pr(8.0).center_y().window_drag().child(el().grow(1.0)).child(sidebar_toggle(t, s.sidebar_open)))
         .child(
-            col()
+            row()
+                .key("titlebar-band")
                 .w_full()
-                .gap(8.0)
-                .px(if open { 8.0 } else { 6.0 })
-                .items_center()
-                .child(switcher)
-                .child(tools),
+                .h(TITLEBAR)
+                .pt(8.0)
+                .pr(8.0)
+                .center_y()
+                .window_drag()
+                .child(el().grow(1.0))
+                .child(row().gap(2.0).center_y().child(find).child(sidebar_toggle(t, s.sidebar_open))),
         )
+        .child(col().w_full().gap(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(switcher))
         .child(nav)
         .child(col().w_full().py(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(account))
 }
@@ -322,8 +324,14 @@ fn workspace_links(s: &App, t: &Theme) -> El {
 
 fn chat_history(s: &App, t: &Theme) -> El {
     let open = s.sidebar_full();
+    let new_chat = icon_button(t, "new-chat", &icons::SQUARE_PEN, "New chat (⌘N)", false).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx));
     if !open {
-        return col().w_full().items_center().child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press(|s: &mut App| s.sidebar_open = true));
+        return col()
+            .w_full()
+            .items_center()
+            .gap(4.0)
+            .child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press(|s: &mut App| s.sidebar_open = true))
+            .child(new_chat);
     }
     let now = format::now();
     let archived = s.show_archived;
@@ -356,7 +364,8 @@ fn chat_history(s: &App, t: &Theme) -> El {
     header = header
         .child(el().grow(1.0))
         .child(icon_button(t, "chat-filter", &icons::LIST_FILTER, &filtered.as_ref().map(|n| format!("Filtered to {n}")).unwrap_or_else(|| "Filter chats".into()), filtered.is_some()).on_press(|s: &mut App| s.menu = Some(Menu::ChatFilter)))
-        .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).on_press(|s: &mut App| s.toggle_archived()));
+        .child(icon_button(t, "archive-toggle", &icons::ARCHIVE, if archived { "Back to chats" } else { "Archived chats" }, archived).on_press(|s: &mut App| s.toggle_archived()))
+        .child(new_chat);
 
     let mut list = col().w_full().gap(2.0);
     if archived && matches!(s.archived, crate::state::Load::Loading) && shown.is_empty() {

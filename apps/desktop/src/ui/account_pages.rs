@@ -1,7 +1,7 @@
 //! The account menu's pages in the app: Usage, Businesses, and Clients and
 //! products, laid out as the web lays them out.
 
-use rune::{Cursor, El, col, el, row, text_input};
+use rune::{Color, Cursor, El, col, el, row, text_input};
 
 use crate::account::{ClientRow, Portfolio, Usage};
 use crate::format;
@@ -316,13 +316,17 @@ pub fn clients(s: &App, t: &Theme) -> El {
     col().w_full().gap(16.0).child(top).child(strip).child(panel)
 }
 
+fn a11y_input_label() -> &'static str {
+    "Your website and what you want to achieve"
+}
+
 /// "Add a business" (the web's `CreateBusinessDialog` with its `SetupStartForm`):
 /// the website and the goal in one line, sent with Return or the round button.
-pub fn add_business_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &crate::state::AddBusiness, layer: &mut Vec<El>) {
+pub fn add_business_dialog(s: &App, t: &Theme, _k: &rune_kit::Kit, a: &crate::state::AddBusiness, layer: &mut Vec<El>) {
     let input = text_input(&a.text, type_::SM)
         .key("add-business-input")
         .placeholder("acme.com, we want more booked appointments", t.muted_foreground)
-        .label("Your website and what you want to achieve")
+        .label(a11y_input_label())
         .w_full()
         .max_h(192.0)
         .color(t.foreground)
@@ -349,22 +353,42 @@ pub fn add_business_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &crate::sta
         row().w_full().min_h(48.0).px(12.0).py(8.0).gap(12.0).radius(10.0).items_end().fill(t.card).child(col().grow(1.0).min_w(0.0).py(4.0).child(input)).children((has_text || a.busy).then_some(send)),
         &t.control_shadow,
     );
-    let mut content = col().w_full().px(24.0).pb(20.0).gap(8.0).child(field);
+    let mut content = col().w_full().gap(8.0).child(field);
     if let Some(e) = &a.error {
         content = content.child(label(e.clone(), type_::XS, t.wrong).wrap());
     }
-    let (title, description) = match a.engagement {
-        Some("CLIENT") => ("Add a client business", "Enter the client's website and, if you like, what they want to achieve."),
-        Some(_) => ("Add your business or product", "Enter your website and, if you like, what you want to achieve."),
-        None => ("Add a business", "Enter a website and optionally a goal to start setup."),
+    let a11y = match a.engagement {
+        Some("CLIENT") => "Add a client business",
+        Some(_) => "Add your business or product",
+        None => "Add a business",
     };
+    let form = content
+        .key("add-business-form")
+        .role("dialog")
+        .label(a11y)
+        .w_full()
+        .max_w(560.0)
+        .px(24.0)
+        .modal(true, |s: &mut App| s.add_business = None);
     let _ = s;
-    rune_kit::Dialog::new("add-business", title)
-        .description(description)
-        .width(560.0)
-        .fit()
-        .open(true)
-        .child(content)
-        .on_close(|s: &mut App| s.add_business = None)
-        .build(k, layer);
+    layer.push(
+        el()
+            .key("add-business-scrim")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .fill(Color::BLACK.alpha(0.42))
+            .blur(12.0)
+            .a11y_hidden(),
+    );
+    layer.push(
+        el()
+            .key("add-business-layer")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .padding(16.0)
+            .center()
+            .child(form),
+    );
 }
