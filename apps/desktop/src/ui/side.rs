@@ -129,14 +129,14 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
     let several = web.len() > 1 || !s.side_items().is_empty();
     for (id, name, current) in web {
         let on = *front == SideTab::Browser && current;
-        let close = (several && (!compact || on)).then(|| close_button(format!("side-web-close-{id}"), Box::new(move |s: &mut App| s.close_web_tab(id))));
+        let close = (several && on).then(|| close_button(format!("side-web-close-{id}"), Box::new(move |s: &mut App| s.close_web_tab(id))));
         tabs = tabs.child(tab_button(t, &format!("side-tab-browser-{id}"), &icons::GLOBE, &name, on, close, compact).on_press(move |s: &mut App| s.select_web_tab(id)));
     }
     for (i, item) in s.side_items().iter().enumerate() {
         let (icon, name) = tab_face(s, item);
         let on = front == item;
         let closing = item.clone();
-        let close = (!compact || on).then(|| close_button(format!("side-tab-close-{i}"), Box::new(move |s: &mut App| s.close_tab(&closing))));
+        let close = on.then(|| close_button(format!("side-tab-close-{i}"), Box::new(move |s: &mut App| s.close_tab(&closing))));
         let showing = item.clone();
         tabs = tabs.child(tab_button(t, &format!("side-tab-{i}"), icon, &name, on, close, compact).on_press(move |s: &mut App| s.show_tab(showing.clone())));
     }
@@ -210,8 +210,9 @@ fn scrolled(key: &str, body: El) -> El {
 
 /// What can open beside the chat: a list in the middle of the tab, as the
 /// browser's start list is.
-fn launcher(_s: &App, t: &Theme) -> El {
-    let mut list = col().w_full().max_w(420.0).gap(2.0).child(label("Open beside this chat", type_::XS_MEDIUM, t.muted_foreground).px(10.0).pb(6.0));
+fn launcher(s: &App, t: &Theme) -> El {
+    // As wide as its longest line, so a row's hover sits around its words.
+    let mut list = col().max_w(420.0).gap(2.0).child(label("Open beside this chat", type_::XS_MEDIUM, t.muted_foreground).px(10.0).pb(6.0));
     for what in Launch::ALL {
         let (icon, name, about): (&'static rune::Icon, &str, &str) = match what {
             Launch::Browser => (&icons::GLOBE, "Browser", "Websites and the chat's landing pages"),
@@ -219,14 +220,19 @@ fn launcher(_s: &App, t: &Theme) -> El {
             Launch::Files => (&icons::FOLDER, "Files", "Pages, drafts and documents from this chat"),
             Launch::Analytics => (&icons::NAV_ANALYTICS, "Analytics", "The business's numbers beside the chat"),
         };
+        let hover_key = format!("launch:{}", name.to_lowercase());
+        // Hovered, its icon takes the periwinkle Home's starters draw theirs in.
+        let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
         list = list.child(
             row()
                 .key(format!("side-launch-{}", name.to_lowercase()))
                 .w_full()
                 .h(44.0)
-                .px(10.0)
+                .pl(10.0)
+                .pr(14.0)
                 .gap(12.0)
                 .radius(8.0)
+                .on_hover_change(super::widgets::track_hover(hover_key))
                 .center_y()
                 .role("button")
                 .label(name.to_string())
@@ -234,14 +240,8 @@ fn launcher(_s: &App, t: &Theme) -> El {
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
                 .on_press(move |s: &mut App| s.launch(what))
-                .child(ico(icon, 16.0, t.foreground))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .child(label(name.to_string(), type_::XS_MEDIUM, t.foreground))
-                        .child(label(about.to_string(), type_::XS, t.muted_foreground).truncate()),
-                ),
+                .child(ico(icon, 16.0, if hovered { t.primary_ink } else { t.foreground }))
+                .child(col().child(label(name.to_string(), type_::XS_MEDIUM, t.foreground)).child(label(about.to_string(), type_::XS, t.muted_foreground))),
         );
     }
     col().key("side-launcher").w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)
