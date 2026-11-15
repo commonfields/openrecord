@@ -102,7 +102,19 @@ if [[ $DMG == 1 ]]; then
   cp -R "$APP" "$STAGE/"
   ln -s /Applications "$STAGE/Applications"
   rm -f "$DMG_PATH"
-  hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH"
+  # hdiutil fails now and then on CI runners ("Resource busy"); its error is
+  # shown, and it is tried again a few times before the build gives up.
+  for attempt in 1 2 3 4 5; do
+    if hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH"; then
+      break
+    fi
+    if [[ $attempt == 5 ]]; then
+      echo "hdiutil could not create $DMG_PATH" >&2
+      exit 1
+    fi
+    echo "hdiutil failed (attempt $attempt); trying again" >&2
+    sleep $((attempt * 5))
+  done
   rm -rf "$STAGE"
 
   if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then

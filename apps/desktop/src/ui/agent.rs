@@ -140,7 +140,7 @@ pub fn roll_slot(k: usize, focus: usize, n: usize) -> i32 {
 /// sends it, a press on another brings it into focus.
 fn starters(s: &App, t: &Theme) -> El {
     let n = STARTERS.len();
-    let mut drum = el().key("starters").w_full().max_w(ROLL_W).h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
+    let drum = el().key("starters").w_full().max_w(ROLL_W).h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
         s.starter_hover = inside;
         if !inside {
             s.starter_at = std::time::Instant::now();

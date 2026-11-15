@@ -85,7 +85,6 @@ pub enum Reply {
     /// A business setup started (its id), or why not.
     SetupStarted(ApiResult<String>),
     /// A campaign was saved (the server's copy), or why not.
-    CampaignSaved(String, ApiResult<crate::api::Campaign>),
     /// The Channels page's account statuses for a business.
     ChannelStatus(String, ApiResult<crate::channel_status::Status>),
     /// The account's usage over a number of days.
@@ -286,13 +285,6 @@ impl Net {
 
     pub fn start_setup(&self, website: String, goal: String, engagement: Option<&'static str>) {
         self.spawn(move |c, send| send(Reply::SetupStarted(c.start_setup(&website, &goal, engagement))));
-    }
-
-    pub fn save_campaign(&self, business: String, c: crate::api::Campaign) {
-        self.spawn(move |cl, send| {
-            let r = cl.save_campaign(&business, &c);
-            send(Reply::CampaignSaved(business, r));
-        });
     }
 
     pub fn channel_status(&self, business: String) {
