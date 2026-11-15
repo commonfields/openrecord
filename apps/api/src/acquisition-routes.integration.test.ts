@@ -131,6 +131,22 @@ suite("AI Discovery HTTP (TEST fixtures only)", () => {
     const { report } = await reportRes.json() as { report: { referrals: { provided: boolean; syntheticExcluded: number }; periods: unknown[] } }
     expect(report.referrals).toMatchObject({ provided: false, syntheticExcluded: 1 })
   })
+  it("serves Prompt Analysis of the client's tracked questions, scoped to the session's agency", async () => {
+    const a = await agency()
+    const businessId = await client(a.session)
+    expect(await ok<{ analysis: unknown }>(call("GET", `${base(businessId)}/prompts`, a.session))).toEqual({ analysis: null })
+    const { set } = await ok<{ set: { questions: Array<{ key: string }> } }>(call("POST", `${base(businessId)}/question-sets`, a.session, setBody()))
+    const res = await call("GET", `${base(businessId)}/prompts`, a.session)
+    expect(res.headers.get("cache-control")).toBe("no-store")
+    const { analysis } = await res.json() as { analysis: { questions: number; byStage: Record<string, number>; rows: Array<{ key: string; stage: string; want: string }>; limitations: string[] } }
+    expect(analysis.questions).toBe(set.questions.length)
+    expect(Object.values(analysis.byStage).reduce((x, y) => x + y, 0)).toBe(set.questions.length)
+    expect(analysis.rows.map(r => r.key).sort()).toEqual(set.questions.map(q => q.key).sort())
+    expect(analysis.limitations.join(" ")).toContain("No finished batch yet")
+    expect((await call("GET", `${base(businessId)}/prompts`)).status).toBe(401)
+    expect((await call("GET", `${base(businessId)}/prompts`, (await agency()).session)).status).toBe(404)
+  })
+
   it("disables fixture sets and synthetic exports outside test and demo mode", async () => {
     const a = await agency()
     const businessId = await client(a.session)

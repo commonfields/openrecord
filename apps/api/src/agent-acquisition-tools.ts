@@ -2,6 +2,7 @@ import { Effect, JSONSchema, Schema } from "effect"
 import { AcquisitionRepository, BusinessRepository, acquisitionView, configurationDifferences, type AcquisitionView } from "@openrecord/db"
 import type { AgentToolDef, AgentToolResult } from "./agent-tools.js"
 import { AgentNotInScope } from "./agent-tool-errors.js"
+import { analysePrompts, STAGES } from "./prompt-analysis.js"
 const Window = Schema.Struct({ batchId: Schema.optional(Schema.UUID), questionKey: Schema.optional(Schema.String.pipe(Schema.pattern(/^[A-Z]{2}-[0-9]{2}$/))), limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 20))) })
 const CitationWindow = Schema.Struct({ batchId: Schema.optional(Schema.UUID), questionKey: Schema.optional(Schema.String.pipe(Schema.pattern(/^[A-Z]{2}-[0-9]{2}$/))), limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 20))), offset: Schema.optional(Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))) })
 type Window = typeof Window.Type
@@ -46,6 +47,14 @@ export const ACQUISITION_AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
         data: { ...batchIdentity(view, batch.setId), batchId: batch.id, provider: batch.provider, requestedModel: batch.requestedModel, questionSetVersion: batch.setVersion, status: batch.status, metrics,
           periods: view.batches.slice(-10).map(b => ({ id: b.id, createdAt: b.createdAt, provider: b.provider, requestedModel: b.requestedModel, questionSetVersion: b.setVersion })),
           limitation: "Mention rate uses determinate mention reviews as denominator; recommendation rate uses reviewed eligible answers. Unreviewed and unclear mentions are not counted as absent. Synthetic evidence is excluded." } } satisfies AgentToolResult
+    }) },
+  { name: "analyse_prompts", description: "Tracked buyer questions by buying stage, what the asker wants and whether they name a brand. Gives each question's stage (discovery, consideration, purchase, support), want (recommendation, comparison, price check, how-to, feature check, information), branding (branded, competitor-branded, unbranded) and the brands the question and the latest answers name. Lists unbranded questions whose answers never name the business (visibility up for grabs) and stages with too few questions. These are tracked questions, not demand: never present a count as a prompt or search volume.", ...contract(Schema.Struct({})),
+    run: (accountId, businessId) => Effect.gen(function*() {
+      const view = yield* loadAgentAcquisition(accountId, businessId)
+      const a = view ? analysePrompts(view) : null
+      if (!a) return missing(businessId)
+      return { summary: `Prompt Analysis of ${a.questions} tracked questions: ${STAGES.map(s => `${a.byStage[s]} ${s.toLowerCase()}`).join(", ")}; ${a.byBranding.UNBRANDED} unbranded, ${a.open.questions.length} where answers never name ${a.brand}`,
+        citations: reference(businessId), data: a } satisfies AgentToolResult
     }) },
   { name: "read_buyer_question_results", description: "Read frozen buyer-question results, real reviewed recommendations with exact denominators, insufficient evidence and observation references.", ...contract(Window),
     run: (accountId, businessId, input: Window) => Effect.gen(function*() {

@@ -64,6 +64,7 @@ const META: Readonly<Record<string, Meta>> = {
   read_growth_opportunities: { ns: "strategy", title: "Read growth opportunities and their state", not: "Not for campaigns (read_marketing_campaigns).", evidence: ["none"] },
   read_acquisition_overview: { ns: "research", title: "Read the AI acquisition overview", not: "Not for web search traffic (read_search_performance).", evidence: ["none"] },
   read_buyer_question_results: { ns: "research", title: "Read buyer question check results", not: "Not for proposing new questions (propose_question_set).", evidence: ["none"] },
+  analyse_prompts: { ns: "research", title: "Analyse tracked buyer questions by stage, want and brand", not: "Not for new checks (ask_ai_assistants).", evidence: ["none"] },
   read_competitor_appearances: { ns: "research", title: "Read competitor appearances in AI answers", not: "Not for researching a competitor company (research_company).", evidence: ["none"] },
   read_acquisition_citations: { ns: "research", title: "Read sources AI answers cite", not: "Not for backlinks (run_research).", evidence: ["none"] },
   compare_acquisition_batches: { ns: "research", title: "Compare two AI answer batches", not: "Not as proof of a cause.", evidence: ["none"] },
