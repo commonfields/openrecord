@@ -56,7 +56,8 @@ fn section_tabs(s: &App, t: &Theme) -> El {
             .focusable(true)
             .cursor(Cursor::Pointer)
             .motion(CONTROL)
-            .on_press(move |s: &mut App| s.show_section(sec))
+            // Only the section changes: Analytics beside the chat stays in the panel.
+            .on_press(move |s: &mut App| s.section = sec)
             .child(label(sec.label(), type_::XS_MEDIUM.lh(16.0), if on { t.foreground } else { t.muted_foreground }));
         tab = if on { shadows(tab.fill(t.control), &t.control_shadow) } else { tab.hover(t.hover_tint) };
         track = track.child(tab);
