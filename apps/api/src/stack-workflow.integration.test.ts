@@ -43,6 +43,8 @@ suite("stack workflow: acquisition evidence -> operator investigation -> gated m
   const config = ConfigProvider.fromMap(new Map([
     ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_MODEL", "fixture-conversation-model"], ["AGENT_API_KEY", "TEST-only-key"],
     ["RECORD_PROVIDER", "gemini"], ["GEMINI_MODEL", MODEL], ["AGENT_MEASUREMENT_MAX_USD_PER_ATTEMPT", "0.01"],
+    // The script answers call by call; the decision engine's reads before the first model step would shift it.
+    ["AGENT_DECISION_ENGINE", "false"],
   ]))
   const web = HttpApp.toWebHandlerLayer(makeRouter(), Layer.merge(repos, Layer.setConfigProvider(config)))
   const run = <A, E>(fx: Effect.Effect<A, E, RecordRepository>) => Effect.runPromise(fx.pipe(Effect.provide(repos)))
