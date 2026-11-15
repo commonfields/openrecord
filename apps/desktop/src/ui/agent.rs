@@ -433,8 +433,7 @@ pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
                 .on_press(|s: &mut App| s.helper_as_main()),
-        )
-        .child(icon_button(t, "helper-close", &icons::X, "Close the helper (Esc)", false).on_press(|s: &mut App| s.helper = None));
+        );
     let body = match load {
         Load::Ready(c) => {
             let statuses = task_statuses(&c.messages);
@@ -448,21 +447,16 @@ pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api
         Load::Failed(e) => col().w_full().padding(20.0).child(label(e.clone(), type_::SM_13, t.muted_foreground).wrap()),
         _ => col().w_full().padding(20.0).child(label("Opening the helper…", type_::SM_13, t.muted_foreground)),
     };
-    shadows(
-        col()
-            .key(format!("helper-{id}"))
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .radius(10.0)
-            .fill(t.background)
-            .clip_rounded(10.0)
-            .role("complementary")
-            .label("Helper session")
-            .child(head)
-            .child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true })),
-        &t.panel_shadow,
-    )
+    col()
+        .key(format!("helper-{id}"))
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .fill(t.background)
+        .role("complementary")
+        .label("Helper session")
+        .child(head)
+        .child(col().w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: true }))
 }
 
 /// The left edge of the card beside the panel (an artifact or a helper): drag
@@ -474,7 +468,7 @@ pub fn side_edge(what: &str) -> El {
         .pin(Some(0.0), Some(0.0), None, Some(0.0))
         .w(8.0)
         .role("separator")
-        .label(if what == "artifact" { "Resize artifact panel" } else { "Resize helper panel" })
+        .label("Resize side panel")
         .help("Drag to resize; double-click for half and half")
         .focusable(true)
         .cursor(Cursor::ResizeColumn)
@@ -1083,7 +1077,11 @@ fn chip_in_t() -> Transition {
 
 // ---- The composer -----------------------------------------------------------
 
-const COMPOSER_PILL: f32 = 24.0;
+/// The box's inset around its round buttons, the same on every side, so the
+/// buttons sit concentric with the pill's ends (radius = inset + 16).
+const COMPOSER_INSET: f32 = 6.0;
+const COMPOSER_BUTTON: f32 = 32.0;
+const COMPOSER_PILL: f32 = COMPOSER_INSET + COMPOSER_BUTTON / 2.0;
 
 /// Equalizer bars for the composer's idle voice affordance.
 fn waveform_bars(ink: rune::Color) -> El {
@@ -1134,7 +1132,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     // turn runs, a queue button (once something is typed) and Stop; otherwise Send,
     // only once something is typed.
     let circle = |key: &str, name: &str, help: &str, fill: rune::Color| {
-        row().key(key).size(32.0, 32.0).radius(16.0).center().role("button").label(name).help(help).focusable(true).cursor(Cursor::Pointer).fill(fill).motion(CONTROL)
+        row().key(key).size(COMPOSER_BUTTON, COMPOSER_BUTTON).radius(COMPOSER_BUTTON / 2.0).center().role("button").label(name).help(help).focusable(true).cursor(Cursor::Pointer).fill(fill).motion(CONTROL)
     };
     let mut actions = row().gap(4.0).center_y().self_end();
     if working {
@@ -1164,7 +1162,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 .opacity(if can { 1.0 } else { 0.5 })
                 .hover(t.primary.alpha(0.9))
                 .on_press_tx(|s: &mut App, tx| s.send_message(tx))
-                .child(ico(&icons::ARROW_UP, 16.0, t.primary_foreground)),
+                .child(ico(&icons::CORNER_DOWN_LEFT, 16.0, t.primary_foreground)),
         );
     }
     // Voice input: one control — the blue waveform when the box is empty (no duplicate mic icon).
@@ -1185,8 +1183,8 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     // "Chat actions" on the left of the box: save as playbook, share, attach and providers.
     let plus = row()
         .key("chat-actions-trigger")
-        .size(32.0, 32.0)
-        .radius(16.0)
+        .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
+        .radius(COMPOSER_BUTTON / 2.0)
         .center()
         .self_end()
         .fill(t.foreground.alpha(0.08))
@@ -1199,16 +1197,15 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .hover_group()
         .motion(CONTROL)
         .on_press(|s: &mut App| s.chat_actions = !s.chat_actions)
-        .child(ico(&icons::PLUS, 20.0, t.muted_foreground).group_color(t.foreground));
+        .child(ico(&icons::PLUS, 18.0, t.muted_foreground).group_color(t.foreground));
 
     let mut field = shadows(
         row()
             .key("composer")
             .w_full()
-            .min_h(48.0)
-            .px(14.0)
-            .py(6.0)
-            .gap(10.0)
+            .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
+            .padding(COMPOSER_INSET)
+            .gap(8.0)
             .items_end()
             .radius(COMPOSER_PILL)
             .border(1.0, t.border)
@@ -1220,7 +1217,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 }
             })
             .child(plus)
-            .child(col().grow(1.0).min_w(0.0).self_center().child(input))
+            .child(col().grow(1.0).min_w(0.0).self_center().px(2.0).child(input))
             .child(trailing),
         &t.control_shadow,
     );

@@ -97,3 +97,122 @@ pub fn clear() {
         or_preview_clear();
     }
 }
+
+// ---- The side panel's browser ------------------------------------------------
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn or_browser_show(url: *const std::ffi::c_char, x: f64, y: f64, w: f64, h: f64);
+    fn or_browser_hide();
+    fn or_browser_close();
+    fn or_browser_command(command: i32);
+    fn or_browser_url() -> *const std::ffi::c_char;
+    fn or_browser_state() -> i32;
+}
+
+/// A step for the browser: back, forward, reload or stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserCommand {
+    Back = 1,
+    Forward = 2,
+    Reload = 3,
+    Stop = 4,
+}
+
+/// Places the side panel's browser at `rect` and loads `url` when it shows something else.
+pub fn browser_show(url: Option<&str>, rect: [f32; 4]) {
+    #[cfg(target_os = "macos")]
+    {
+        let url = url.and_then(|u| std::ffi::CString::new(u).ok());
+        // SAFETY: main thread only; C copies the string before returning.
+        unsafe { or_browser_show(url.as_ref().map_or(std::ptr::null(), |u| u.as_ptr()), rect[0] as f64, rect[1] as f64, rect[2] as f64, rect[3] as f64) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (url, rect);
+}
+
+pub fn browser_hide() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_hide()
+    }
+}
+
+pub fn browser_close() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_close()
+    }
+}
+
+pub fn browser_command(c: BrowserCommand) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_command(c as i32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = c;
+}
+
+/// The address the browser shows now, if it has loaded one.
+pub fn browser_url() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a static NUL-terminated buffer, read on the main thread.
+        let s = unsafe { std::ffi::CStr::from_ptr(or_browser_url()) }.to_string_lossy().into_owned();
+        return (!s.is_empty()).then_some(s);
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Whether it can go back, forward, and whether a page is loading.
+pub fn browser_state() -> (bool, bool, bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let v = unsafe { or_browser_state() };
+        return (v & 1 != 0, v & 2 != 0, v & 4 != 0);
+    }
+    #[cfg(not(target_os = "macos"))]
+    (false, false, false)
+}
+
+/// What the address bar's text means: a web address as typed, a bare host
+/// given https, or else a web search.
+pub fn browser_target(input: &str) -> Option<String> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let lower = s.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Some(s.to_string());
+    }
+    let host_like = !s.contains(' ') && (s.contains('.') || s.starts_with("localhost")) ;
+    if host_like {
+        let local = s.starts_with("localhost") || s.starts_with("127.0.0.1");
+        return Some(format!("{}://{s}", if local { "http" } else { "https" }));
+    }
+    let q: String = s.bytes().map(|b| match b {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+        b' ' => "+".into(),
+        _ => format!("%{b:02X}"),
+    }).collect();
+    Some(format!("https://duckduckgo.com/?q={q}"))
+}
+
+#[cfg(test)]
+mod browser_tests {
+    use super::browser_target;
+
+    #[test]
+    fn the_address_bar_reads_addresses_hosts_and_searches() {
+        assert_eq!(browser_target("https://example.com/a").as_deref(), Some("https://example.com/a"));
+        assert_eq!(browser_target("example.com").as_deref(), Some("https://example.com"));
+        assert_eq!(browser_target("localhost:3000").as_deref(), Some("http://localhost:3000"));
+        assert_eq!(browser_target("ai answers & seo").as_deref(), Some("https://duckduckgo.com/?q=ai+answers+%26+seo"));
+        assert_eq!(browser_target("  "), None);
+        // Other schemes are searched for, never opened.
+        assert!(browser_target("file:///etc/passwd").unwrap().starts_with("https://duckduckgo.com/"));
+    }
+}

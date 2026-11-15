@@ -28,13 +28,23 @@ pub fn sidebar_toggle(t: &Theme, open: bool) -> El {
     icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false).on_press(|s: &mut App| s.toggle_sidebar())
 }
 
+/// Where the collapsed sidebar's buttons start: just past the traffic lights.
+fn collapsed_slot_start(titlebar_inset: f32) -> f32 {
+    titlebar_inset.max(16.0) + 6.0
+}
+
+/// Where they end: Find and the sidebar's button, 28 points each, 2 apart.
+pub fn collapsed_slot_end(titlebar_inset: f32) -> f32 {
+    collapsed_slot_start(titlebar_inset) + 28.0 + 2.0 + 28.0
+}
+
 /// Where the collapsed sidebar's button sits: just past the traffic lights,
 /// on the header's line, 32 points down, as the traffic lights are.
 pub fn collapsed_toggle(s: &App, t: &Theme, titlebar_inset: f32) -> El {
     let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
     row()
         .key("sidebar-toggle-slot")
-        .pin(Some(titlebar_inset.max(16.0) + 6.0), Some(18.0), None, None)
+        .pin(Some(collapsed_slot_start(titlebar_inset)), Some(18.0), None, None)
         .gap(2.0)
         .center_y()
         .child(find)

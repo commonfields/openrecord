@@ -543,6 +543,8 @@ pub struct App {
     /// A helper session opened beside the conversation, to review (`?helper=` on the web).
     pub helper: Option<(String, Load<crate::api::Conversation>)>,
     pub artifact: Option<crate::artifacts::Pane>,
+    /// The panel on the right: the artifact or helper, and a browser, as tabs.
+    pub side: crate::side::SidePanel,
     pub preview_rect: Option<[f32; 4]>,
     /// The chat on screen has no business: a general chat (`/api/agent`).
     pub general: bool,
@@ -724,6 +726,7 @@ impl App {
             drafts_open: false,
             helper: None,
             artifact: None,
+            side: Default::default(),
             preview_rect: None,
             settle_next: false,
             syncing: false,
@@ -1472,6 +1475,7 @@ impl App {
         let Some(scope) = self.chat_scope() else { return };
         self.artifact = None;
         self.helper = Some((id.to_string(), Load::Loading));
+        self.show_side_item();
         self.net.helper(scope, id.to_string());
     }
 
@@ -2087,6 +2091,7 @@ impl App {
         self.helper = None;
         self.artifact = Some(crate::artifacts::Pane { business: business.clone(), id: artifact.into(), requested: None,
             loaded: Load::Loading, source: false });
+        self.show_side_item();
         self.net.artifact(business, artifact.into(), None);
     }
 

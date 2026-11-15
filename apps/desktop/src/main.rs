@@ -29,6 +29,7 @@ mod navigation;
 mod prefs;
 mod settings;
 mod setup;
+mod side;
 mod state;
 mod surface;
 mod theme;
@@ -78,13 +79,14 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.toggle_find(tx);
         return true;
     }
-    if s.artifact_visible() && ev.key == rune::Key::Escape {
-        s.artifact = None;
+    // Escape closes the artifact or helper beside the conversation, as on the web.
+    if s.settings.is_none() && (s.artifact_visible() || s.helper_visible()) && ev.key == rune::Key::Escape {
+        s.close_side_item();
         return true;
     }
-    // Escape closes a helper opened beside the conversation, as on the web.
-    if s.settings.is_none() && s.helper.is_some() && ev.key == rune::Key::Escape {
-        s.helper = None;
+    // Escape leaves the browser's address bar, keeping the page.
+    if s.side.browser.editing && ev.key == rune::Key::Escape {
+        s.side.browser.editing = false;
         return true;
     }
     // Then the agent pane beside a page, unless the composer's "/" menu takes the key.
@@ -117,6 +119,11 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.zoom_by(0);
         return true;
     }
+    // ⌥⌘B folds the right panel; the key can arrive as "∫" with Option held.
+    if ev.mods.alt && (ev.is_command('b') || ev.is_command('∫')) {
+        s.toggle_side();
+        return true;
+    }
     if ev.is_command('b') {
         s.toggle_sidebar();
         return true;
@@ -144,6 +151,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("signin", fixtures::signin),
     ("agent", fixtures::agent),
     ("agent-artifact", fixtures::agent_artifact),
+    ("side-browser", fixtures::side_browser),
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),
     ("agent-empty", fixtures::agent_empty),

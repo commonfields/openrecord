@@ -24,6 +24,7 @@ mod shell;
 pub use shell::Resize;
 mod settings;
 mod series;
+mod side;
 mod signin;
 mod sources;
 mod surface;
@@ -51,6 +52,10 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if s.preview_visible() {
         if let (Some(rect), Some(a)) = (s.preview_rect, s.artifact.as_ref().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion); }
     } else { crate::native_preview::hide(); }
+    // The browser tab's page sits over its slot only while nothing is drawn over it.
+    if s.browser_visible() {
+        if let Some(rect) = s.side.browser.rect { crate::native_preview::browser_show(None, rect); }
+    } else { crate::native_preview::browser_hide(); }
     let z = s.zoom();
     // The traffic lights follow the zoom so they stay on the header's line,
     // 32 points down in the interface's own units.
@@ -111,12 +116,13 @@ fn zoomed(s: &App, root: El, z: f32) -> El {
 const SPLIT: rune::Spring = rune::Spring::new(0.38, 0.0);
 
 fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
-    // With the sidebar a narrow rail, the traffic lights sit over the header,
-    // so it starts past them.
-    // Collapsed, the sidebar is out of the layout and the traffic lights sit over the header.
-    // Past the traffic lights and the sidebar button beside them.
-    let leading = if s.sidebar_open { 0.0 } else { titlebar_inset.max(16.0) + 6.0 + 28.0 + 4.0 - 20.0 };
-    let (content, trailing) = match s.view {
+    // Collapsed, the sidebar is out of the layout and the traffic lights sit
+    // over the header: the breadcrumbs start past them and the two buttons
+    // beside them (Find and the sidebar's), with the same 12-point gap the
+    // buttons keep from the lights. The header itself starts 8 points in (the
+    // panel's inset) and pads 20 points of its own.
+    let leading = if s.sidebar_open { 0.0 } else { (shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 - 20.0).max(0.0) };
+    let (content, trailing): (El, Option<El>) = match s.view {
         View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
         View::Agent => (agent_boot(s, &t), None),
         // The inbox fills the panel; its list and reading pane scroll on their own.
@@ -133,6 +139,9 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             (page, None)
         }
     };
+    // The right panel's button sits at the header's right end while it is folded;
+    // open, the panel carries its own.
+    let trailing = if s.side_shown() { trailing } else { Some(row().gap(4.0).center_y().children(trailing).child(side::toggle(t, false))) };
     let panel = shadows(
         col()
             .key("panel")
@@ -147,16 +156,22 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             .child(col().w_full().grow(1.0).min_h(0.0).child(content)),
         &t.panel_shadow,
     );
-    // An artifact or a helper session opens as its own card beside the panel,
-    // its share dragged from its left edge as the sidebar's width is.
-    let side = if s.artifact_visible() {
-        Some(("artifact", artifacts::view(s, t).w_full()))
-    } else if s.helper_visible() {
-        s.helper.as_ref().map(|(id, load)| ("helper", agent::helper_pane(s, t, k, id, load)))
-    } else {
-        None
-    };
-    let panel = col().key("panel-column").grow(1.0).min_w(0.0).h_full().pt(8.0).pb(8.0).pr(if side.is_some() { 0.0 } else { 8.0 }).pl(if s.sidebar_open { 0.0 } else { 8.0 }).child(panel);
+    // The right panel: the artifact or helper and a browser, as tabs. Its share
+    // is dragged from its left edge as the sidebar's width is; widened, it
+    // takes the whole split and the page steps aside.
+    let side_card = s.side_shown().then(|| side::view(s, t, k));
+    let wide = side_card.is_some() && s.side.wide;
+    let panel = col()
+        .key("panel-column")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .pt(8.0)
+        .pb(8.0)
+        .pr(if side_card.is_some() { 0.0 } else { 8.0 })
+        .pl(if s.sidebar_open || wide { 0.0 } else { 8.0 })
+        .opacity(if wide { 0.0 } else { 1.0 })
+        .child(panel);
     // The rows around the panel are always there, so opening a card beside it
     // or the agent pane only narrows it. Built only when needed, they would
     // move the panel to a new parent, and it would crossfade with a copy of itself.
@@ -168,13 +183,19 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         // Layout units already: the zoom scales the whole drawn tree, not its layout.
         .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
         .child(panel.w(0.0).motion(SPLIT));
-    if let Some((what, card)) = side {
-        let w = if s.split_w > 0.0 { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 };
+    if let Some(card) = side_card {
+        let w = if s.split_w <= 0.0 {
+            0.0
+        } else if wide {
+            s.split_w
+        } else {
+            (s.split_w * s.prefs.helper() / 100.0).round()
+        };
         split = split.child(
             // It slides in from the right edge and fades up while the chat
             // narrows beside it; closing plays it backwards.
             col()
-                .key(format!("side-{what}"))
+                .key("side-panel-column")
                 .w(w)
                 .grow(if w > 0.0 { 0.0 } else { 1.0 })
                 // Held at its share: without it the panel's content outweighs it.
@@ -184,10 +205,10 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .h_full()
                 .pt(8.0)
                 .pb(8.0)
-                .pl(8.0)
+                .pl(if wide && !s.sidebar_open { 8.0 } else if wide { 0.0 } else { 8.0 })
                 .pr(8.0)
                 .child(card)
-                .child(agent::side_edge(what)),
+                .children((!wide).then(|| agent::side_edge("side"))),
         );
     }
     // The agent beside a workspace page: its own card left of the page, where
