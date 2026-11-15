@@ -75,6 +75,7 @@ pub enum Reply {
     ChannelDetail { generation: u64, result: ApiResult<crate::channel_setup::Detail> },
     ChannelAction { generation: u64, result: ApiResult<Option<String>> },
     Artifact { business: String, id: String, version: Option<u32>, result: ApiResult<crate::artifacts::Artifact> },
+    Diff { business: String, id: String, result: ApiResult<(u32, u32, Vec<crate::changes::Line>)> },
     /// A business's follow-up policy (read, or as a change left it).
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
@@ -361,6 +362,13 @@ impl Net {
         self.spawn(move |c, send| {
             let result = c.artifact(&business, &id, version);
             send(Reply::Artifact { business, id, version, result });
+        });
+    }
+
+    pub fn artifact_diff(&self, business: String, id: String) {
+        self.spawn(move |c, send| {
+            let result = c.artifact_diff(&business, &id);
+            send(Reply::Diff { business, id, result });
         });
     }
 

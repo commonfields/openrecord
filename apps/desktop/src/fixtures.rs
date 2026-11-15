@@ -1185,6 +1185,31 @@ pub fn side_browser(s: &mut App) {
     s.side.browser.recents = vec!["https://northstar.example/pricing".into()];
 }
 
+/// The panel opened with nothing in it: the list of what can open beside the chat.
+pub fn side_launcher(s: &mut App) {
+    agent(s);
+    s.toggle_side();
+}
+
+/// More tabs than the panel has room to name: each is its icon alone.
+pub fn side_many(s: &mut App) {
+    side_tabs(s);
+    // A snapshot draws one frame, before the split reports its width.
+    s.split_w = 1100.0;
+    s.prefs.helper_width = 40.0;
+    s.show_browser_tab();
+    s.new_web_tab();
+    s.launch(crate::side::Launch::Files);
+    s.launch(crate::side::Launch::Changes);
+    s.side.diff = Some(crate::changes::Diff {
+        id: "fixture-artifact".into(),
+        lines: Load::Ready((1, 2, crate::changes::diff(
+            &["Show up in AI answers".to_string(), "For marketing teams".into(), "Start free".into()],
+            &["Show up in AI answers".to_string(), "For marketing teams and agencies".into(), "Start free".into(), "No card needed".into()],
+        ))),
+    });
+}
+
 /// A helper and then an artifact opened from the same chat: two tabs after the browser.
 pub fn side_tabs(s: &mut App) {
     agent_helper(s);

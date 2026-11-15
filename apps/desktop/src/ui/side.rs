@@ -2,12 +2,12 @@
 //! and a browser) with its widen and fold buttons on the right, over the tab
 //! in front. The browser is a native web view placed over its slot.
 
-use rune::{Cursor, El, col, row, text_input};
+use rune::{Cursor, El, ScrollSpec, col, row, text_input};
 use rune_kit::Kit;
 
 use crate::icons;
 use crate::native_preview::{self, BrowserCommand};
-use crate::side::SideTab;
+use crate::side::{Launch, SideTab};
 use crate::state::App;
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, ico, icon_button, label};
@@ -26,6 +26,10 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
             None => browser(s, t),
         },
         SideTab::Browser => browser(s, t),
+        SideTab::Launcher => launcher(s, t),
+        SideTab::Analytics => scrolled("side-analytics", col().w_full().px(24.0).pt(16.0).pb(24.0).child(super::overview::view(s, t))),
+        SideTab::Files => files(s, t),
+        SideTab::Changes => changes(s, t),
     };
     // A page open in the browser runs to the panel's foot: the page is drawn
     // behind the app, so the panel paints only its top band and leaves the
@@ -67,53 +71,50 @@ fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
     let ready = match tab {
         SideTab::Artifact(_) => s.front_artifact().is_some_and(|p| p.loaded.ready().is_some()),
         SideTab::Helper(_) => s.front_helper().is_some(),
-        // Over a page in the browser it floats on the page instead (`browser`).
-        SideTab::Browser => false,
+        // Over a page in the browser it floats on the page instead (`browser`);
+        // the other tabs sit beside the main chat and need none.
+        _ => false,
     };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
     ready.then(|| col().w_full().pt(8.0).child(super::agent::composer(s, t, &business, crate::state::ComposerSlot::Side)))
 }
 
-/// The tabs on the left, the browser pinned first and the chat's artifacts and
-/// helpers after it in the order they opened; widen and fold on the right.
-/// Level with the main header, with no rule under it.
-fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
-    let mut tabs = row().gap(2.0).center_y().grow(1.0).min_w(0.0).role("tablist").label("Panel tabs");
-    // The browser's tabs first, each its own page; more open with the + after them.
-    let web = s.web_tabs();
-    let several = web.len() > 1;
-    for (id, name, current) in web {
-        let close = several.then(|| {
-            row()
-                .key(format!("side-web-close-{id}"))
-                .size(18.0, 18.0)
-                .radius(5.0)
-                .center()
-                .role("button")
-                .label("Close tab")
-                .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
-                .on_press(move |s: &mut App| s.close_web_tab(id))
-                .child(ico(&icons::X, 12.0, t.muted_foreground))
-        });
-        tabs = tabs.child(tab_button(t, &format!("side-tab-browser-{id}"), &icons::GLOBE, &name, *front == SideTab::Browser && current, close).on_press(move |s: &mut App| s.select_web_tab(id)));
+/// What a tab shows on the strip: its icon and name.
+fn tab_face(s: &App, item: &SideTab) -> (&'static rune::Icon, String) {
+    match item {
+        SideTab::Artifact(id) => (&icons::FILE_TEXT, s.artifacts.iter().find(|p| &p.id == id).and_then(|p| p.loaded.ready()).map(|a| a.title.clone()).unwrap_or_else(|| "Artifact".into())),
+        SideTab::Helper(id) => {
+            let info = s.helpers.iter().find(|(h, _)| h == id).and_then(|(_, l)| l.ready()).and_then(|c| c.session.clone());
+            let role = crate::chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
+            (&icons::USERS, info.and_then(|i| i.title).unwrap_or_else(|| format!("{role} helper")))
+        }
+        SideTab::Analytics => (&icons::NAV_ANALYTICS, "Analytics".into()),
+        SideTab::Files => (&icons::FOLDER, "Files".into()),
+        SideTab::Changes => (&icons::GIT_COMPARE, "Changes".into()),
+        SideTab::Launcher => (&icons::PLUS, "New tab".into()),
+        SideTab::Browser => (&icons::GLOBE, "Browser".into()),
     }
-    for (i, item) in s.side_items().iter().enumerate() {
-        let (icon, name): (&'static rune::Icon, String) = match item {
-            SideTab::Artifact(id) => (
-                &icons::FILE_TEXT,
-                s.artifacts.iter().find(|p| &p.id == id).and_then(|p| p.loaded.ready()).map(|a| a.title.clone()).unwrap_or_else(|| "Artifact".into()),
-            ),
-            SideTab::Helper(id) => {
-                let info = s.helpers.iter().find(|(h, _)| h == id).and_then(|(_, l)| l.ready()).and_then(|c| c.session.clone());
-                let role = crate::chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
-                (&icons::USERS, info.and_then(|i| i.title).unwrap_or_else(|| format!("{role} helper")))
-            }
-            SideTab::Browser => continue,
-        };
-        let closing = item.clone();
-        let close = row()
-            .key(format!("side-tab-close-{i}"))
+}
+
+/// The tabs on the left, the browser's first once it is open, the rest in the
+/// order they opened; widen and fold on the right. Level with the main header,
+/// with no rule under it. When the panel is too narrow for names, each tab is
+/// its icon alone, all the same size, with the one in front keeping its close.
+fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
+    let web = if s.side.browser.shown { s.web_tabs() } else { Vec::new() };
+    let launcher = *front == SideTab::Launcher;
+    let count = web.len() + s.side_items().len() + usize::from(launcher);
+    // The panel's width, as the split gives it (`ui::workspace`), less its insets.
+    let panel = if s.side.wide { s.split_w } else { (s.split_w * s.prefs.helper() / 100.0).round() } - 12.0;
+    // Lead, right pad, + and the widen and fold buttons, and the gaps between.
+    let room = panel - lead - 10.0 - 3.0 * 28.0 - 4.0 * 2.0 - 8.0;
+    let compact = s.split_w > 0.0 && count > 0 && room / count as f32 - 2.0 < 104.0;
+    // Clipped, tall enough for the front tab's shadow, so a strip with more
+    // tabs than room never runs under the buttons on its right.
+    let mut tabs = row().h(40.0).px(2.0).gap(2.0).center_y().grow(1.0).min_w(0.0).clip_rounded(0.0).role("tablist").label("Panel tabs");
+    let close_button = |key: String, act: Box<dyn Fn(&mut App)>| {
+        row()
+            .key(key)
             .size(18.0, 18.0)
             .radius(5.0)
             .center()
@@ -122,12 +123,29 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
             .help("Close (Esc)")
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
-            .on_press(move |s: &mut App| s.close_tab(&closing))
-            .child(ico(&icons::X, 12.0, t.muted_foreground));
-        let showing = item.clone();
-        tabs = tabs.child(tab_button(t, &format!("side-tab-{i}"), icon, &name, front == item, Some(close)).on_press(move |s: &mut App| s.show_tab(showing.clone())));
+            .on_press(move |s: &mut App| act(s))
+            .child(ico(&icons::X, 12.0, t.muted_foreground))
+    };
+    let several = web.len() > 1 || !s.side_items().is_empty();
+    for (id, name, current) in web {
+        let on = *front == SideTab::Browser && current;
+        let close = (several && (!compact || on)).then(|| close_button(format!("side-web-close-{id}"), Box::new(move |s: &mut App| s.close_web_tab(id))));
+        tabs = tabs.child(tab_button(t, &format!("side-tab-browser-{id}"), &icons::GLOBE, &name, on, close, compact).on_press(move |s: &mut App| s.select_web_tab(id)));
     }
-    tabs = tabs.child(icon_button(t, "side-tab-new", &icons::PLUS, "New tab", false).on_press(|s: &mut App| s.new_web_tab()));
+    for (i, item) in s.side_items().iter().enumerate() {
+        let (icon, name) = tab_face(s, item);
+        let on = front == item;
+        let closing = item.clone();
+        let close = (!compact || on).then(|| close_button(format!("side-tab-close-{i}"), Box::new(move |s: &mut App| s.close_tab(&closing))));
+        let showing = item.clone();
+        tabs = tabs.child(tab_button(t, &format!("side-tab-{i}"), icon, &name, on, close, compact).on_press(move |s: &mut App| s.show_tab(showing.clone())));
+    }
+    if launcher {
+        let close = Some(close_button("side-tab-close-new".into(), Box::new(|s: &mut App| s.close_tab(&SideTab::Launcher))));
+        tabs = tabs.child(tab_button(t, "side-tab-new-list", &icons::PLUS, "New tab", true, close, compact));
+    } else {
+        tabs = tabs.child(icon_button(t, "side-tab-new", &icons::PLUS, "New tab", false).on_press(|s: &mut App| s.open_launcher()));
+    }
     let wide = s.side.wide;
     row()
         .key("side-strip")
@@ -147,32 +165,213 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .child(toggle(t, true))
 }
 
-fn tab_button(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, on: bool, close: Option<El>) -> El {
+/// A tab: its icon and name, or (compact) its icon alone in the middle of a
+/// square, with room for the close beside it when it is the one in front.
+fn tab_button(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, on: bool, close: Option<El>, compact: bool) -> El {
     let ink = if on { t.foreground } else { t.muted_foreground };
     let mut b = row()
         .key(key)
         .h(28.0)
-        .pl(8.0)
-        .pr(if close.is_some() { 4.0 } else { 10.0 })
-        .gap(6.0)
-        .min_w(0.0)
-        .max_w(220.0)
         .radius(7.0)
         .center_y()
         .role("tab")
         .label(name.to_string())
+        .help(name.to_string())
         .checked(on)
         .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
         .motion(CONTROL)
-        .child(ico(icon, 14.0, ink))
-        .child(label(name.to_string(), if on { type_::XS_MEDIUM } else { type_::XS }, ink).truncate().min_w(0.0))
-        .children(close);
+        .child(ico(icon, 14.0, ink));
+    b = if compact {
+        match close {
+            // Even padding on both sides, the icon and its close as one pair.
+            Some(c) => b.px(5.0).gap(2.0).child(c),
+            None => b.w(28.0).center(),
+        }
+    } else {
+        b.pl(8.0)
+            .pr(if close.is_some() { 4.0 } else { 10.0 })
+            .gap(6.0)
+            .min_w(0.0)
+            .max_w(220.0)
+            .child(label(name.to_string(), if on { type_::XS_MEDIUM } else { type_::XS }, ink).truncate().min_w(0.0))
+            .children(close)
+    };
     if on {
         b = shadows(b.fill(t.accent), &t.control_shadow);
     }
     b
+}
+
+fn scrolled(key: &str, body: El) -> El {
+    col().key(key).w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: false })
+}
+
+/// What can open beside the chat: a list in the middle of the tab, as the
+/// browser's start list is.
+fn launcher(_s: &App, t: &Theme) -> El {
+    let mut list = col().w_full().max_w(420.0).gap(2.0).child(label("Open beside this chat", type_::XS_MEDIUM, t.muted_foreground).px(10.0).pb(6.0));
+    for what in Launch::ALL {
+        let (icon, name, about): (&'static rune::Icon, &str, &str) = match what {
+            Launch::Browser => (&icons::GLOBE, "Browser", "Websites and the chat's landing pages"),
+            Launch::Changes => (&icons::GIT_COMPARE, "Changes", "What the agent changed, version by version"),
+            Launch::Files => (&icons::FOLDER, "Files", "Pages, drafts and documents from this chat"),
+            Launch::Analytics => (&icons::NAV_ANALYTICS, "Analytics", "The business's numbers beside the chat"),
+        };
+        list = list.child(
+            row()
+                .key(format!("side-launch-{}", name.to_lowercase()))
+                .w_full()
+                .h(44.0)
+                .px(10.0)
+                .gap(12.0)
+                .radius(8.0)
+                .center_y()
+                .role("button")
+                .label(name.to_string())
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(move |s: &mut App| s.launch(what))
+                .child(ico(icon, 16.0, t.foreground))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .child(label(name.to_string(), type_::XS_MEDIUM, t.foreground))
+                        .child(label(about.to_string(), type_::XS, t.muted_foreground).truncate()),
+                ),
+        );
+    }
+    col().key("side-launcher").w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)
+}
+
+fn empty(t: &Theme, key: &str, text: &str) -> El {
+    col().key(key).w_full().grow(1.0).min_h(0.0).center().padding(24.0).child(label(text.to_string(), type_::XS, t.muted_foreground).wrap().max_w(360.0))
+}
+
+/// The chat's artifacts, one row each; a row opens it beside the chat.
+fn files(s: &App, t: &Theme) -> El {
+    let all = s.chat_artifacts();
+    if all.is_empty() {
+        return empty(t, "side-files-empty", "Nothing made in this chat yet. Pages, campaign drafts and documents the agent makes show here.");
+    }
+    let mut list = col().w_full().gap(2.0).px(12.0).py(12.0);
+    for (i, r) in all.into_iter().enumerate() {
+        let caption = r.caption();
+        let icon: &'static rune::Icon = if crate::artifacts::is_page(&r.kind) { &icons::GLOBE } else { &icons::FILE_TEXT };
+        let title = if r.title.is_empty() { "Untitled".to_string() } else { r.title.clone() };
+        list = list.child(
+            row()
+                .key(format!("side-file-{i}"))
+                .w_full()
+                .h(44.0)
+                .px(10.0)
+                .gap(12.0)
+                .radius(8.0)
+                .center_y()
+                .role("button")
+                .label(title.clone())
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(move |s: &mut App| s.open_file(&r))
+                .child(ico(icon, 15.0, t.muted_foreground))
+                .child(col().grow(1.0).min_w(0.0).child(label(title, type_::XS_MEDIUM, t.foreground).truncate()).child(label(caption, type_::XS, t.muted_foreground).truncate())),
+        );
+    }
+    scrolled("side-files", list)
+}
+
+/// What changed: the chat's artifacts on the left of a picker, and the one
+/// chosen, its latest version set against the one before, line by line.
+fn changes(s: &App, t: &Theme) -> El {
+    let all = s.chat_artifacts();
+    if all.is_empty() {
+        return empty(t, "side-changes-empty", "No changes yet. When the agent edits a page or a draft in this chat, what changed shows here.");
+    }
+    let chosen = s.side.diff.as_ref().map(|d| d.id.clone());
+    let mut pick = row().key("side-changes-pick").w_full().gap(4.0).px(12.0).pt(12.0).flex_wrap();
+    for (i, r) in all.iter().enumerate() {
+        let on = chosen.as_deref() == Some(r.id.as_str());
+        let (id, title) = (r.id.clone(), if r.title.is_empty() { "Untitled".to_string() } else { r.title.clone() });
+        let mut chip = row()
+            .key(format!("side-change-{i}"))
+            .h(26.0)
+            .px(10.0)
+            .gap(6.0)
+            .radius(13.0)
+            .center_y()
+            .max_w(240.0)
+            .border(1.0, t.border)
+            .role("tab")
+            .checked(on)
+            .label(title.clone())
+            .cursor(Cursor::Pointer)
+            .hover(t.hover_tint)
+            .on_press(move |s: &mut App| s.show_diff(&id))
+            .child(label(if r.title.is_empty() { "Untitled".to_string() } else { r.title.clone() }, type_::XS, if on { t.foreground } else { t.muted_foreground }).truncate().min_w(0.0))
+            .child(label(format!("v{}", r.version), type_::XS, t.muted_foreground));
+        if on {
+            chip = chip.fill(t.accent);
+        }
+        pick = pick.child(chip);
+    }
+    let body = match s.side.diff.as_ref() {
+        None => empty(t, "side-changes-pick-one", "Pick a page or draft to see what its latest version changed."),
+        Some(d) => match &d.lines {
+            crate::state::Load::Ready((from, to, lines)) => {
+                let (added, removed) = lines.iter().fold((0, 0), |(a, r), l| match l {
+                    crate::changes::Line::Added(_) => (a + 1, r),
+                    crate::changes::Line::Removed(_) => (a, r + 1),
+                    _ => (a, r),
+                });
+                let head = if *from == 0 { format!("v{to}, the first version") } else { format!("v{from} to v{to}: {added} added, {removed} removed") };
+                let mut out = col().w_full().gap(1.0).px(12.0).pb(16.0).child(label(head, type_::XS_MEDIUM, t.muted_foreground).py(8.0));
+                // Unchanged runs fold to their first and last line, so the changes stand out.
+                let mut i = 0;
+                while i < lines.len() {
+                    let run = lines[i..].iter().take_while(|l| matches!(l, crate::changes::Line::Same(_))).count();
+                    if run > 4 {
+                        out = out.child(diff_line(t, &lines[i])).child(label(format!("{} unchanged lines", run - 2), type_::XS, t.muted_foreground).px(8.0).py(2.0)).child(diff_line(t, &lines[i + run - 1]));
+                        i += run;
+                    } else {
+                        out = out.child(diff_line(t, &lines[i]));
+                        i += 1;
+                    }
+                }
+                if added + removed == 0 {
+                    out = out.child(label("The words are the same; only the layout or style changed.", type_::XS, t.muted_foreground).py(8.0));
+                }
+                scrolled("side-diff", out)
+            }
+            crate::state::Load::Failed(e) => empty(t, "side-diff-failed", e),
+            _ => empty(t, "side-diff-loading", "Comparing versions…"),
+        },
+    };
+    col().key("side-changes").w_full().grow(1.0).min_h(0.0).child(pick).child(body)
+}
+
+fn diff_line(t: &Theme, l: &crate::changes::Line) -> El {
+    use crate::changes::Line;
+    let (mark, text, ink, fill) = match l {
+        Line::Same(x) => (" ", x, t.muted_foreground, None),
+        Line::Added(x) => ("+", x, t.foreground, Some(t.supported_soft)),
+        Line::Removed(x) => ("−", x, t.muted_foreground, Some(t.wrong_soft)),
+    };
+    let mut r = row()
+        .w_full()
+        .px(8.0)
+        .py(3.0)
+        .gap(8.0)
+        .radius(4.0)
+        .child(label(mark.to_string(), type_::XS_MEDIUM, if matches!(l, Line::Added(_)) { t.supported } else if matches!(l, Line::Removed(_)) { t.wrong } else { t.muted_foreground }).w(10.0))
+        .child(label(text.clone(), type_::XS, ink).wrap().grow(1.0).min_w(0.0));
+    if let Some(f) = fill {
+        r = r.fill(f);
+    }
+    r
 }
 
 /// The browser: back, forward, reload and the address on one line, the page
@@ -184,7 +383,9 @@ fn browser(s: &App, t: &Theme) -> El {
     let nav = |key: &str, icon: &'static rune::Icon, name: &str, enabled: bool| {
         icon_button(t, key, icon, name, false).disabled(!enabled).opacity(if enabled { 1.0 } else { 0.4 })
     };
-    let address: El = if b.editing || !open {
+    // Typing an address only while the field still has focus: a click
+    // anywhere else puts the page's name back.
+    let address: El = if (b.editing && b.address.focused) || !open {
         text_input(&b.address, type_::XS)
             .key("browser-address")
             .placeholder("Search or enter address", t.muted_foreground)

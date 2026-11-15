@@ -12,6 +12,7 @@ mod native_preview;
 mod api;
 mod brand_marks;
 mod brands;
+mod changes;
 mod channel_marks;
 mod channel_status;
 mod channel_setup;
@@ -153,6 +154,8 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent", fixtures::agent),
     ("agent-artifact", fixtures::agent_artifact),
     ("side-browser", fixtures::side_browser),
+    ("side-launcher", fixtures::side_launcher),
+    ("side-many", fixtures::side_many),
     ("side-tabs", fixtures::side_tabs),
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),

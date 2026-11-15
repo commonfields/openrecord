@@ -194,6 +194,30 @@ static void passThrough(NSView *host) {
     if (!class_addMethod(cls, sel, (IMP)hostHitTestThrough, method_getTypeEncoding(m))) hostHitTest = method_setImplementation(m, (IMP)hostHitTestThrough);
 }
 
+// Clicks on the page since the app last asked: the app's own fields never
+// see them, so the address bar learns of them here to stop editing.
+static int pageClicks;
+static id clickMonitor;
+static void watchClicks(void) {
+    if (clickMonitor) return;
+    clickMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *e) {
+        if (browserBox && !browserBox.hidden && e.window == browserBox.window) {
+            NSPoint p = [browserBox.superview convertPoint:e.locationInWindow fromView:nil];
+            if (NSPointInRect(p, browserBox.frame)) {
+                BOOL kept = NO;
+                if (browserHost) {
+                    NSPoint local = [browserHost convertPoint:e.locationInWindow fromView:nil];
+                    CGFloat y = browserHost.isFlipped ? local.y : browserHost.bounds.size.height - local.y;
+                    for (int i = 0; i < browserKeeps; i++) if (NSPointInRect(NSMakePoint(local.x, y), browserKeep[i])) kept = YES;
+                }
+                if (!kept) pageClicks++;
+            }
+        }
+        return e;
+    }];
+}
+int or_browser_take_click(void) { int n = pageClicks; pageClicks = 0; return n > 0 ? 1 : 0; }
+
 // Whether clicks over the page reach it: not while a menu or dialog is open.
 void or_browser_pass_through(int on) { browserPassThrough = on != 0; }
 
@@ -298,6 +322,7 @@ void or_browser_show(const char *url, double x, double y, double w, double h) {
     if (browserBox.superview != frameView) { [browserBox removeFromSuperview]; [frameView addSubview:browserBox positioned:NSWindowBelow relativeTo:host]; }
     passThrough(host);
     browserHost = host;
+    watchClicks();
     CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
     NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
     if (!NSEqualRects(browserBox.frame, frame)) { [browserBox setFrame:frame]; [browser setFrame:browserBox.bounds]; }

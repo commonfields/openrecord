@@ -112,10 +112,22 @@ unsafe extern "C" {
     fn or_window_background(r: f64, g: f64, b: f64);
     fn or_browser_pass_through(on: i32);
     fn or_browser_drop(id: i32);
+    fn or_browser_take_click() -> i32;
     fn or_browser_select(id: i32);
     fn or_browser_zoom(zoom: f64);
     fn or_browser_page_light() -> i32;
     fn or_browser_backdrop(r: f64, g: f64, b: f64);
+}
+
+/// Whether the page was clicked since the last ask.
+pub fn browser_take_click() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: main thread only.
+        unsafe { or_browser_take_click() != 0 }
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// Forgets one browser tab's page.
