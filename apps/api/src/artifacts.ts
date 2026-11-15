@@ -29,6 +29,7 @@ import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolResult } from "./agent-tools.js"
 import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
+import { markChanges, summarize } from "./artifact-diff.js"
 
 export const ARTIFACT_KINDS = ["LANDING_PAGE", "ARTICLE", "EMAIL", "AD_COPY", "SOCIAL_POST", "BRIEF", "REPORT", "OTHER"] as const
 export type ArtifactKind = typeof ARTIFACT_KINDS[number]
@@ -112,6 +113,14 @@ export const readArtifact = (accountId: string, businessId: string, artifactId: 
   return { ...summary({ ...rows[0], chars: text.length }), content: text, shownVersion: shown,
     versions: versions.map(v => ({ version: Number(v["version"]), title: String(v["title"]), note: (v["note"] as string | null) ?? null,
       source: v["source"] === "OPERATOR" ? "OPERATOR" as const : "ASSISTANT" as const, createdAt: iso(v["created_at"]), chars: Number(v["chars"]) })) } satisfies Artifact
+})
+
+/** What changed from version `from` to `to`, compared as their rendered documents. Null when either is missing. */
+export const versionChanges = (accountId: string, businessId: string, artifactId: string, from: number, to: number) => Effect.gen(function*() {
+  if (from < 1 || from === to) return null
+  const [a, b] = [yield* readArtifact(accountId, businessId, artifactId, from), yield* readArtifact(accountId, businessId, artifactId, to)]
+  if (!a || !b || a.shownVersion !== from || b.shownVersion !== to) return null
+  return { from, to, ...summarize(artifactDocument(a), artifactDocument(b)) }
 })
 
 /** Saves a new artifact, or returns the business's artifact whose current version already holds exactly this content. */
@@ -218,9 +227,12 @@ export const dispatchArtifact = (ctx: ToolContext, name: string, raw: unknown) =
     const input = yield* Schema.decodeUnknown(EditArtifact, { onExcessProperty: "error" })(raw)
     if (input.edits && input.content !== undefined) return yield* Effect.fail(new ArtifactRefused({ reason: "NothingToChange" }))
     const artifact = yield* reviseArtifact(ctx, input, "ASSISTANT")
+    // What actually changed, measured on the saved versions, so the reply names it rather than recalling it.
+    const changes = yield* versionChanges(ctx.accountId, ctx.businessId, artifact.id, artifact.version - 1, artifact.version)
     return { summary: `Artifact updated: ${artifact.title} (version ${artifact.version})`, citations: [citation(artifact)], artifacts: [artifact],
       data: { artifactId: artifact.id, kind: artifact.kind, version: artifact.version, saved: true, published: false,
-        instruction: "The person sees the new version beside the chat. Say what changed in a sentence or two; do not repeat the content." } } satisfies AgentToolResult
+        ...(changes ? { changes: { rewritten: changes.rewritten, addedWords: changes.addedWords, removedWords: changes.removedWords, changes: changes.changes.slice(0, 6) } } : {}),
+        instruction: "The person sees the new version beside the chat and can show what changed. Say what changed in a sentence or two from `changes`; do not repeat the content." } } satisfies AgentToolResult
   }
   const input = yield* Schema.decodeUnknown(CreateArtifact, { onExcessProperty: "error" })(raw)
   // A landing page is something to look at; an outline in Markdown is not one.
@@ -330,7 +342,25 @@ export const artifactsApi = (withSession: WithSession) => {
       // A download is the artifact as written: the Markdown source, or the HTML document.
       if (query.get("download") === "1") return HttpServerResponse.text(artifact.format === "HTML" ? artifactDocument(artifact) : artifact.content, { status: 200, headers: {
         ...PREVIEW_HEADERS, "content-type": artifact.format === "HTML" ? "text/html; charset=utf-8" : "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${fileName(artifact)}"` } })
+      // ?compare=n: this version with what changed since version n marked.
+      const compare = Number(query.get("compare") ?? "")
+      if (Number.isInteger(compare) && compare >= 1 && compare !== artifact.shownVersion) {
+        const earlier = yield* readArtifact(s.accountId, businessId, artifactId, compare)
+        if (!earlier || earlier.shownVersion !== compare) return yield* json(404, { _tag: "VersionNotFound" })
+        const marked = markChanges(artifactDocument(earlier), artifactDocument(artifact))
+        if (marked) return HttpServerResponse.text(marked, { status: 200, headers: PREVIEW_HEADERS })
+      }
       return HttpServerResponse.text(artifactDocument(artifact), { status: 200, headers: PREVIEW_HEADERS })
+    }))),
+    // What changed between two versions: ?to=m (the current one) and ?from=n (the one before it).
+    HttpRouter.get(`${base}/:artifact/changes`, scopedRoute((s, businessId, artifactId, query) => Effect.gen(function*() {
+      const current = yield* readArtifact(s.accountId, businessId, artifactId)
+      if (!current) return yield* json(404, { _tag: "ArtifactNotFound" })
+      const num = (k: string) => { const n = Number(query.get(k) ?? ""); return Number.isInteger(n) && n >= 1 ? n : undefined }
+      const to = num("to") ?? current.version, from = num("from") ?? to - 1
+      if (from < 1) return yield* json(200, { changes: null }, { "cache-control": "no-store" })
+      const changes = yield* versionChanges(s.accountId, businessId, artifactId, from, to)
+      return yield* (changes ? json(200, { changes }, { "cache-control": "no-store" }) : json(404, { _tag: "VersionNotFound" }))
     }))),
     HttpRouter.post(`${base}/:artifact/links`, scopedRoute((s, businessId, artifactId) => Effect.gen(function*() {
       const body = decode(LinkRequest, (yield* readJson) ?? {})

@@ -90,6 +90,8 @@ suite("artifacts (disposable PostgreSQL)", () => {
     expect(again._tag === "Right" && again.right.data).toMatchObject({ artifactId, saved: false })
     const edited = await run(dispatchToolSpec(ctx, "edit_artifact", { artifactId, edits: [{ find: "two weeks", replace: "three weeks" }], note: "Longer lead time" }))
     expect(edited._tag === "Right" && edited.right).toMatchObject({ artifacts: [{ id: artifactId, version: 2 }] })
+    // The result says what changed, measured on the two saved versions.
+    expect(edited._tag === "Right" && edited.right.data).toMatchObject({ changes: { rewritten: false, addedWords: 1, removedWords: 1, changes: [{ near: "Wedding cakes in Bandung", before: "two", after: "three" }] } })
     for (const [find, reason] of [["four weeks", "EditNotFound"], ["e", "EditAmbiguous"]] as const) {
       const refused = await run(dispatchToolSpec(ctx, "edit_artifact", { artifactId, edits: [{ find, replace: "x" }] }))
       expect(refused._tag === "Left" && refused.left).toMatchObject({ _tag: "ArtifactRefused", reason, edit: 1 })
@@ -149,6 +151,31 @@ suite("artifacts (disposable PostgreSQL)", () => {
     expect((await call("POST", `${base}/${artifactId}/archive`, f.session, {})).status).toBe(200)
     expect((await call("GET", path, null)).status).toBe(404)
     expect(await (await call("GET", base, f.session)).json()).toMatchObject({ artifacts: [] })
+  })
+
+  it("shows what changed between versions: a summary and the page with the change marked", async () => {
+    const f = await fixture(), other = await fixture(), ctx = { accountId: f.accountId, userId: f.userId, businessId: f.businessId }
+    const created = await run(dispatchToolSpec(ctx, "create_artifact", { kind: "LANDING_PAGE", format: "HTML", title: "Wedding cakes page", content: PAGE }))
+    const artifactId = created._tag === "Right" ? (created.right.data as { artifactId: string }).artifactId : ""
+    const base = `/api/businesses/${f.businessId}/artifacts/${artifactId}`
+    // One version: nothing to compare yet.
+    expect(await (await call("GET", `${base}/changes`, f.session)).json()).toEqual({ changes: null })
+    await run(dispatchToolSpec(ctx, "edit_artifact", { artifactId, edits: [{ find: "Order two weeks ahead.", replace: "Order three weeks ahead. Free delivery in the city." }] }))
+    const res = await call("GET", `${base}/changes`, f.session)
+    expect(res.headers.get("cache-control")).toBe("no-store")
+    expect(await res.json()).toMatchObject({ changes: { from: 1, to: 2, rewritten: false, removedWords: 1, addedWords: 6,
+      changes: [{ near: "Wedding cakes in Bandung", before: "two", after: "three" }, { near: "Wedding cakes in Bandung", before: "", after: "Free delivery in the city." }] } })
+    // The marked page keeps the preview's sandbox and marks only text.
+    const marked = await call("GET", `${base}/preview?version=2&compare=1`, f.session)
+    expect(marked.headers.get("content-security-policy")).toMatch(/^sandbox; default-src 'none'/)
+    const html = await marked.text()
+    expect(html).toContain(`<del class="or-change">two</del>`)
+    expect(html).toContain(`<ins class="or-change">three</ins>`)
+    expect(html).toContain("ins.or-change{")
+    expect((await call("GET", `${base}/preview?version=2&compare=9`, f.session)).status).toBe(404)
+    expect((await call("GET", `${base}/changes?from=1&to=9`, f.session)).status).toBe(404)
+    expect((await call("GET", `/api/businesses/${other.businessId}/artifacts/${artifactId}/changes`, other.session)).status).toBe(404)
+    expect((await call("GET", `${base}/changes`, null)).status).toBe(401)
   })
 
   it("carries what a run wrote onto its reply and into the run journal", async () => {
