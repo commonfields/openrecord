@@ -112,7 +112,8 @@ export const executeAgentRequest = <R>(job: Job, responder: Responder<R>) => Eff
       WHERE request_id=${job.request_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   } else {
     const failure = outcome.cause._tag === "Fail" ? outcome.cause.error : null
-    const reason = failure instanceof AgentModelError ? failure.reason : "UNAVAILABLE"
+    // A provider that asks for payment (HTTP 402) is out of credit or billing: the person can act on that, so it is told apart.
+    const reason = failure instanceof AgentModelError ? (failure.reason === "UNAVAILABLE" && failure.httpStatus === 402 ? "PAYMENT_REQUIRED" : failure.reason) : "UNAVAILABLE"
     yield* sql`UPDATE agent_request_jobs SET status=${reason === "CANCELLED" ? "CANCELLED" : "FAILED"},failure_reason=${reason},finished_at=now(),lease_until=NULL,claim_id=NULL
       WHERE request_id=${job.request_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   }

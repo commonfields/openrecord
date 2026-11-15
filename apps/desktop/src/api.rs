@@ -33,6 +33,7 @@ impl ApiError {
             ApiError::Status(404, _) => "That item no longer exists or belongs to another account.".into(),
             ApiError::Status(422, _) => "Some fields are missing or invalid. Check them and try again.".into(),
             ApiError::Status(429, _) => "The provider is rate limiting requests. Try again in a minute.".into(),
+            ApiError::Status(_, reason) if turn_failure(reason).is_some() => turn_failure(reason).unwrap_or_default().into(),
             ApiError::Status(s, _) if *s >= 500 => "The server could not complete the request. Try again shortly.".into(),
             ApiError::Offline(_) => "OpenRecord's server can't be reached. Check that it is running and try again.".into(),
             _ => "Something went wrong. Check your connection and try again.".into(),
@@ -1182,5 +1183,39 @@ mod server_tests {
         assert!(server_url("https://app.example.com/path").is_err());
         assert!(server_url("app.example.com:port").is_err());
         assert!(server_url("").is_err());
+    }
+}
+
+/// Why an agent turn stopped, in words the person can act on. The API stores
+/// the reason on the request (`failureReason`); None for anything else.
+pub fn turn_failure(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "PAYMENT_REQUIRED" => "The hosted model's provider account has run out of credit or billing. Add billing for it, or pick your own model under the chat box.",
+        "UNCONFIGURED" => "The hosted model isn't set up on this server. Pick your own model under the chat box.",
+        "UNAVAILABLE" => "The model didn't answer. Try again, or pick another model under the chat box.",
+        "RATE_LIMITED" => "The model is limiting requests right now. Try again in a minute.",
+        "TIMEOUT" => "The model took too long to answer. Try again, or ask for one part at a time.",
+        "CONTEXT_LIMIT" => "This chat has grown too long for the model. Start a new chat, or branch from an earlier reply.",
+        "TOOL_LIMIT" => "The agent ran out of steps before it could answer. Ask for one part at a time.",
+        "MALFORMED" => "The model's answer couldn't be read. Try again, or pick another model.",
+        "INTERRUPTED" => "The agent stopped before it finished, because the server restarted. Send it again.",
+        "QUEUE_EXPIRED" => "The request waited too long to start. Send it again.",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod turn_failure_tests {
+    use super::{ApiError, turn_failure};
+
+    #[test]
+    fn a_stopped_turn_says_why_and_what_to_do() {
+        assert!(ApiError::Status(503, "PAYMENT_REQUIRED".into()).message().contains("billing"));
+        assert!(ApiError::Status(503, "CONTEXT_LIMIT".into()).message().contains("new chat"));
+        for r in ["UNCONFIGURED", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT", "TOOL_LIMIT", "MALFORMED", "INTERRUPTED", "QUEUE_EXPIRED"] {
+            assert!(turn_failure(r).is_some(), "{r} has no message");
+        }
+        // Anything else keeps the general message.
+        assert_eq!(ApiError::Status(500, "boom".into()).message(), "The server could not complete the request. Try again shortly.");
     }
 }
