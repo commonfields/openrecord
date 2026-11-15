@@ -1,7 +1,27 @@
 # Roadmap (current; max 3 active milestones)
 
-1. Close dogfood loop — land intervention record + candidate evidence surfaces, verify with green CI, re-run OpenRecord-on-OpenRecord. (This branch.)
-2. First 3 paid pilots — $750 audit offer, manually operated, corpus target 3–5 companies × 20–30 problems; falsifies or supports the intervention-corpus moat.
-3. Intervention corpus V1 — only if pilots show customers act and return: before/after compare view, propagation-time expectations, key-relevance study for boolean candidates.
+Updated 2026-11-15. Product and UI work happens in the macOS app
+(`apps/desktop`, Rust + Rune). The web app (`apps/web`) keeps working against
+the same API but gets no new UI unless asked for by name.
 
-Everything else: BACKLOG (before/after compare, matcher study, portfolio/agency UI, billing/teams, SOC2, additional providers, Truth Delivery scope decision, website fix-or-remove, positioning model) or FROZEN (agent expansion, Jev productization, browser crawling, autonomous remediation, scores) until customer evidence reactivates it.
+1. Ship the desktop app. Cut the first `desktop-v0.1.0` release through the
+   Desktop workflow so the in-app updater has something to offer, then add
+   Developer ID signing and notarization so a copy opens on another Mac
+   without a warning.
+2. The agent does the work from a website and a goal. The person gives only
+   the URL and what they want in the chat; the agent drafts, edits and, with
+   approval, publishes. In place: artifacts in tabs beside the chat and edited
+   from it, steering a running turn, blanks the agent asks about. Next: putting
+   an approved artifact live on a connected site from the chat.
+3. Close the dogfood loop. Run OpenRecord on OpenRecord from the desktop app,
+   end to end, then decide whether to restart the paid-pilot plan below.
+
+Paused, not dropped (the roadmap of 2026-10-07): the first 3 paid pilots
+($750 audit offer, 3 to 5 companies with 20 to 30 problems each) and the
+intervention corpus V1 that depended on them.
+
+Everything else: BACKLOG (before/after compare, matcher study,
+portfolio/agency UI, billing/teams, SOC2, additional providers, Truth Delivery
+scope decision, website fix-or-remove, positioning model) or FROZEN (Jev
+productization, browser crawling, autonomous remediation without approval,
+scores) until customer evidence reactivates it.
