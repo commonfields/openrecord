@@ -9,7 +9,6 @@ mod campaigns;
 mod channels;
 mod channel_setup;
 mod charts;
-mod cube3d;
 mod discovery;
 pub mod find;
 pub mod issues;
