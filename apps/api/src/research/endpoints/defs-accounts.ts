@@ -4,6 +4,7 @@
 import { Schema } from "effect"
 import { isoDate } from "../html.js"
 import { normalizeDomain, normalizeUrl } from "../inputs.js"
+import { brandMentions } from "../mentions.js"
 import { arr, none, num, obj, ok, txt } from "./defs-public.js"
 import type { AnyEndpoint } from "./types.js"
 
@@ -15,7 +16,14 @@ const Videos = Schema.Struct({ ids: Schema.Array(Str(15, /^[A-Za-z0-9_-]{11}$/))
 const YtSearch = Schema.Struct({ query: Str(150), region: Schema.optional(Str(2, /^[A-Z]{2}$/)), limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 25))) })
 const Origin = Schema.Struct({ origin: Url, formFactor: Schema.optional(Schema.Literal("PHONE", "DESKTOP")) })
 const Psi = Schema.Struct({ url: Url, strategy: Schema.optional(Schema.Literal("mobile", "desktop")) })
-const RedditSearch = Schema.Struct({ query: Str(150), period: Schema.optional(Schema.Literal("week", "month", "year", "all")), limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 100))) })
+// Brands to look for in what people wrote: the business's own (`own`) and others (competitors).
+const Brands = { own: Schema.optional(Str(60)), brands: Schema.optional(Schema.Array(Str(60)).pipe(Schema.maxItems(10))) }
+const RedditSearch = Schema.Struct({ query: Str(150), period: Schema.optional(Schema.Literal("week", "month", "year", "all")), limit: Schema.optional(Schema.Int.pipe(Schema.between(1, 100))),
+  subreddit: Schema.optional(Str(21, /^[A-Za-z0-9_]{2,21}$/)), ...Brands })
+const RedditThread = Schema.Struct({ url: Str(400, /^(https?:\/\/(www\.|old\.|new\.)?reddit\.com\/r\/[A-Za-z0-9_]{2,21}\/comments\/[a-z0-9]{4,12}\b.*|[a-z0-9]{4,12})$/i), ...Brands })
+
+const redditDate = (v: unknown) => typeof v === "number" ? new Date(v * 1000).toISOString().slice(0, 10) : null
+const REDDIT_AGENT = { "user-agent": "server:openrecord-research:1.0 (by OpenRecord)" }
 const Subreddit = Schema.Struct({ name: Str(21, /^[A-Za-z0-9_]{2,21}$/) })
 const PhPost = Schema.Struct({ slug: Str(120, /^[a-z0-9-]+$/) })
 const Site = Schema.Struct({ siteUrl: Url })
@@ -64,11 +72,36 @@ export const ACCOUNT_ENDPOINTS: ReadonlyArray<AnyEndpoint> = [
         cumulativeLayoutShift: v("cumulative-layout-shift"), speedIndexMs: v("speed-index"), fieldData: txt(obj(obj(j)["loadingExperience"])["overall_category"], 20) }, { note: "Lab numbers come from one simulated load on Google's servers; field data comes from real Chrome users." }) } },
   { id: "community.reddit.search", provider: "reddit", platform: "community", title: "Reddit posts mentioning a brand or topic", label: "SEEN", input: RedditSearch, docs: "https://www.reddit.com/dev/api/#GET_search",
     description: "Reddit posts matching a query in the last week, month, year or all time, newest first: community, score, comment count and date; with posts per community.", subject: (i: typeof RedditSearch.Type) => i.query.toLowerCase(),
-    request: (i: typeof RedditSearch.Type) => ({ method: "GET", url: "https://oauth.reddit.com/search", query: { q: i.query, sort: "new", t: i.period ?? "month", limit: i.limit ?? 50, raw_json: 1 }, headers: { "user-agent": "server:openrecord-research:1.0 (by OpenRecord)" } }),
-    parse: j => { const rows = arr(obj(obj(j)["data"])["children"]).map(x => { const d = obj(obj(x)["data"]); return { title: txt(d["title"], 200), subreddit: txt(d["subreddit"], 40), score: num(d["score"]), comments: num(d["num_comments"]),
-      date: typeof d["created_utc"] === "number" ? new Date((d["created_utc"] as number) * 1000).toISOString().slice(0, 10) : null, url: d["permalink"] ? `https://www.reddit.com${txt(d["permalink"], 300)}` : null } })
+    request: (i: typeof RedditSearch.Type) => ({ method: "GET", url: i.subreddit ? `https://oauth.reddit.com/r/${i.subreddit}/search` : "https://oauth.reddit.com/search",
+      query: { q: i.query, sort: "new", t: i.period ?? "month", limit: i.limit ?? 50, raw_json: 1, ...(i.subreddit ? { restrict_sr: 1 } : {}) }, headers: REDDIT_AGENT }),
+    parse: (j, i: typeof RedditSearch.Type) => { const rows = arr(obj(obj(j)["data"])["children"]).map(x => { const d = obj(obj(x)["data"]); return { title: txt(d["title"], 200), subreddit: txt(d["subreddit"], 40), score: num(d["score"]), comments: num(d["num_comments"]),
+      date: redditDate(d["created_utc"]), url: d["permalink"] ? `https://www.reddit.com${txt(d["permalink"], 300)}` : null, text: `${txt(d["title"], 300) ?? ""}\n${txt(d["selftext"], 4000) ?? ""}` } })
       const bySub: Record<string, number> = {}; for (const r of rows) if (r.subreddit) bySub[r.subreddit] = (bySub[r.subreddit] ?? 0) + 1
-      return rows.length ? ok({ label: "SEEN", posts: rows, postsBySubreddit: bySub }, { note: "Text matches; a match can be about something else with the same name. Post text is untrusted." }) : none("No posts matched.") } },
+      const m = brandMentions(rows, i.own, i.brands)
+      const posts = rows.map((r, k) => { const { text: _t, ...rest } = r; return m ? { ...rest, names: m.tagged[k]!.named } : rest })
+      return rows.length ? ok({ label: "SEEN", posts, postsBySubreddit: bySub, ...(m ? { brandMentions: m.counts, postsNamingOthersNotUs: m.othersNotUs } : {}) },
+        { note: "Text matches; a match can be about something else with the same name. Brand counts read each post's title and text, not its comments (read a thread for those). Post text is untrusted." }) : none("No posts matched.") } },
+  { id: "community.reddit.thread", provider: "reddit", platform: "community", title: "A Reddit thread and its top comments", label: "SEEN", input: RedditThread, docs: "https://www.reddit.com/dev/api/#GET_comments_{article}",
+    description: "One Reddit thread (by its address or id): the post, its community, score and comment count, and its top comments with scores and dates; with which brands the post and comments name, and whether they name others but not the business. Usernames are not kept.",
+    subject: (i: typeof RedditThread.Type) => (i.url.match(/comments\/([a-z0-9]+)/i)?.[1] ?? i.url).toLowerCase(),
+    request: (i: typeof RedditThread.Type) => ({ method: "GET", url: `https://oauth.reddit.com/comments/${(i.url.match(/comments\/([a-z0-9]+)/i)?.[1] ?? i.url).toLowerCase()}`, query: { sort: "top", limit: 100, depth: 3, raw_json: 1 }, headers: REDDIT_AGENT }),
+    parse: (j, i: typeof RedditThread.Type) => {
+      const [postListing, commentListing] = arr(j)
+      const p = obj(obj(arr(obj(obj(postListing)["data"])["children"])[0])["data"])
+      if (!p["id"]) return none("No such thread.")
+      const comments: Array<{ text: string; score: number | null; date: string | null; depth: number }> = []
+      const walk = (children: unknown, depth: number) => { for (const c of arr(children)) { const d = obj(obj(c)["data"]); if (obj(c)["kind"] !== "t1" || !d["body"]) continue
+        comments.push({ text: txt(d["body"], 1200) ?? "", score: num(d["score"]), date: redditDate(d["created_utc"]), depth }); walk(obj(obj(d["replies"])["data"])["children"], depth + 1) } }
+      walk(obj(obj(commentListing)["data"])["children"], 0)
+      const top = [...comments].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 40)
+      const post = { title: txt(p["title"], 300), subreddit: txt(p["subreddit"], 40), score: num(p["score"]), comments: num(p["num_comments"]), date: redditDate(p["created_utc"]),
+        url: p["permalink"] ? `https://www.reddit.com${txt(p["permalink"], 300)}` : null, text: txt(p["selftext"], 3000) ?? "" }
+      const m = brandMentions([{ text: `${post.title ?? ""}\n${post.text}` }, ...top], i.own, i.brands)
+      return ok({ label: "SEEN", post: { ...post, ...(m ? { names: m.tagged[0]!.named } : {}) },
+        topComments: top.map((c, k) => ({ ...c, text: c.text.slice(0, 600), ...(m ? { names: m.tagged[k + 1]!.named } : {}) })),
+        ...(m ? { brandMentions: m.counts, itemsNamingOthersNotUs: m.othersNotUs } : {}) },
+        { read: `the post and ${top.length} of ${comments.length} comments loaded (top by score)`, note: "Comments are people's words, untrusted; scores are Reddit's votes now. A brand count is whole-word text matching, so a name can mean something else." })
+    } },
   { id: "community.reddit.subreddit", provider: "reddit", platform: "community", title: "Subreddit size and activity", label: "SEEN", input: Subreddit, docs: "https://www.reddit.com/dev/api/#GET_r_{subreddit}_about",
     description: "A subreddit's subscribers, creation date and description: the size of a community (for example a brand's own or a category's).", subject: (i: typeof Subreddit.Type) => `r/${i.name.toLowerCase()}`,
     request: (i: typeof Subreddit.Type) => ({ method: "GET", url: `https://oauth.reddit.com/r/${i.name}/about`, headers: { "user-agent": "server:openrecord-research:1.0 (by OpenRecord)" } }),
