@@ -118,6 +118,27 @@ export const executeAgentRequest = <R>(job: Job, responder: Responder<R>) => Eff
   }
 })
 
+/** How many notes one request takes while it runs. */
+export const MAX_REQUEST_NOTES = 10
+/** A message the person sends while their request runs (migration 0087). It is
+ * kept for the run to read between steps; a request that is not running, or
+ * has as many notes as it takes, refuses it and the client sends it as the
+ * next message instead. */
+export const addRequestNote = (accountId: string, userId: string, requestId: string, raw: unknown) => Effect.gen(function*() {
+  const body = yield* Schema.decodeUnknown(Schema.Struct({ text: Schema.String.pipe(Schema.trimmed(), Schema.minLength(1), Schema.maxLength(4000)) }), { onExcessProperty: "error" })(
+    typeof raw === "object" && raw !== null && typeof (raw as { text?: unknown }).text === "string" ? { ...raw, text: (raw as { text: string }).text.trim() } : raw)
+  const sql = yield* SqlClient.SqlClient
+  return yield* sql.withTransaction(Effect.gen(function*() {
+    const job = (yield* sql`SELECT status FROM agent_request_jobs WHERE request_id=${requestId} AND account_id=${accountId} AND user_id=${userId} FOR UPDATE`)[0]
+    if (!job) return yield* refuse("NOT_FOUND")
+    if (job["status"] !== "RUNNING" && job["status"] !== "QUEUED") return yield* refuse("CONFLICT")
+    const count = (yield* sql`SELECT count(*)::int AS n FROM agent_request_notes WHERE request_id=${requestId} AND account_id=${accountId} AND user_id=${userId}`)[0]
+    if (Number(count?.["n"] ?? 0) >= MAX_REQUEST_NOTES) return yield* refuse("QUEUE_FULL")
+    const row = (yield* sql`INSERT INTO agent_request_notes(request_id,account_id,user_id,text) VALUES (${requestId},${accountId},${userId},${body.text}) RETURNING id`)[0]
+    return { noteId: String(row!["id"]) }
+  }))
+})
+
 export const cancelAgentRequest = (accountId: string,userId: string,requestId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   return yield* sql.withTransaction(Effect.gen(function*() {

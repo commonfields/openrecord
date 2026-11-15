@@ -93,6 +93,12 @@ pub struct Message {
     pub origin: Option<crate::chat::Origin>,
     #[serde(default)]
     pub attachments: Vec<crate::chat::Attachment>,
+    /// What the person sent while this turn worked, that the run read.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// Questions the run left for the person, with what it assumed.
+    #[serde(default)]
+    pub blanks: Vec<crate::chat::Blank>,
     #[serde(default)]
     pub context: Option<crate::chat::ContextUse>,
 }
@@ -113,6 +119,8 @@ impl Message {
             inference: None,
             origin: None,
             attachments: Vec::new(),
+            notes: Vec::new(),
+            blanks: Vec::new(),
             context: None,
         }
     }

@@ -507,7 +507,7 @@ pub fn funnel(s: &App, t: &Theme, i: &Insights, steps: &[Step<'_>]) -> El {
             format!("The biggest drop is from \"{from}\" to \"{to}\": {} make it through", pct1(r)),
             "Improving the weakest hand-off usually moves the end result most. Ask the agent what is getting in the way there.".into(),
             Some(button(t, "funnel-ask", "Find the cause", Variant::Outline).on_press(ask(format!(
-                "Our funnel loses the most people between \"{from}\" and \"{to}\" ({} make it through). Look at the evidence we have and propose what to change, for me to approve.",
+                "Our funnel loses the most people between \"{from}\" and \"{to}\" ({} make it through). Look at the data we have and propose what to change, for me to approve.",
                 pct1(r)
             )))),
         ));

@@ -4,6 +4,7 @@ import { Effect, Fiber, type Either } from "effect"
 import type { AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent, type ModelResponse } from "./agent-model.js"
 import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
+import { LEAVE_BLANK, MAX_BLANKS_PER_REPLY, blankOf, type BlankRef } from "./agent-blanks.js"
 import type { HarnessSelection } from "@openrecord/contracts"
 import { harnessModel } from "./harness-model.js"
 import { resolveHarness } from "./harness-store.js"
@@ -85,6 +86,10 @@ const FINAL_NOTICE = "OpenRecord runtime notice: the step or tool budget for thi
 // past that is told once, so it spends what is left on the request instead of
 // reading around it; the budget still ends it.
 const PACE_STEP = 8
+// What the person sent while the run was working, handed to the model beside
+// the tool results. It is theirs, not tool output, so it is not marked untrusted.
+export const noteNotice = (notes: ReadonlyArray<string>) =>
+  `The person sent ${notes.length === 1 ? "this message" : "these messages"} while you were working. ${notes.length === 1 ? "It is" : "They are"} from them, not from a tool: treat ${notes.length === 1 ? "it" : "them"} as their latest instruction for this request. Change your plan if needed rather than starting over, keep work already done that still applies, and say briefly in your answer how you took ${notes.length === 1 ? "it" : "them"} into account.\n${notes.map(n => `«${n}»`).join("\n")}`
 const PACE_NOTICE = "OpenRecord runtime notice: this request has used eight steps. Make only the reads the answer still needs, several in one step, then answer and say plainly what was not checked."
 const verificationNotice = (missing: ReadonlyArray<string>) =>
   `OpenRecord runtime check: this workflow requires ${missing.join(", ")} before a final answer. Call ${missing.length > 1 ? "them" : "it"} now, or say plainly why it could not be run.`
@@ -93,7 +98,7 @@ type Usage = { observedModel: string | null; promptTokens: number | null; output
 // How the agent talks. Friendly is the default voice; the person can ask for
 // shorter or deeper answers in Settings → Agent.
 const VOICE = `
-How to answer: write like a capable marketing partner talking to a busy business owner. Open with the answer in one or two plain sentences. Then say what it means for their business and why it matters, and end with the next step you suggest, or offer to do it. Say what you checked in everyday words, never tool names or internal codes. Avoid jargon; if a term is needed, explain it in a few words. Be warm and direct, never stiff, and skip filler and repeated caveats; state real gaps once, plainly. The chat renders Markdown: use short paragraphs, bullets or a numbered list for steps, a table only to compare several items, and bold sparingly for the one thing to remember. No headings in short answers. When numbers you read with your tools compare items or change over time, you may add one chart: a fenced block with the language chart holding JSON, either {"type":"bar"|"line"|"donut","title":"…","unit":"%" or a unit or null,"labels":["…"],"series":[{"name":"…","values":[numbers or null]}],"note":"source and date"} (at most 8 series and 60 labels; donut takes one series of shares) or {"type":"stats","title":"…","stats":[{"label":"…","value":"…","hint":"…"}]} for up to 6 headline numbers. Only numbers your tools returned, never estimates presented as measurements; null for unknown, never 0; say the source and date in note. Keep the written answer complete without the chart.`
+How to answer: write like a capable marketing partner talking to a busy business owner. Open with the answer in one or two plain sentences. Then say what it means for their business and why it matters, and end with the next step you suggest, or offer to do it. Say what you checked in everyday words, never tool names or internal codes. Avoid jargon; if a term is needed, explain it in a few words. Never write the word "evidence" in anything the person reads, including the titles you give helper tasks: name what was checked, the sources or the numbers instead. Be warm and direct, never stiff, and skip filler and repeated caveats; state real gaps once, plainly. The chat renders Markdown: use short paragraphs, bullets or a numbered list for steps, a table only to compare several items, and bold sparingly for the one thing to remember. No headings in short answers. When numbers you read with your tools compare items or change over time, you may add one chart: a fenced block with the language chart holding JSON, either {"type":"bar"|"line"|"donut","title":"…","unit":"%" or a unit or null,"labels":["…"],"series":[{"name":"…","values":[numbers or null]}],"note":"source and date"} (at most 8 series and 60 labels; donut takes one series of shares) or {"type":"stats","title":"…","stats":[{"label":"…","value":"…","hint":"…"}]} for up to 6 headline numbers. Only numbers your tools returned, never estimates presented as measurements; null for unknown, never 0; say the source and date in note. Keep the written answer complete without the chart.`
 const STYLE: Readonly<Record<AgentResponseStyle, string>> = {
   friendly: "",
   concise: "\nThe person asked for concise answers: the answer and one next step, at most four sentences or three short bullets.",
@@ -176,6 +181,10 @@ export const runConversation = (input: {
   const tasks: TaskRef[] = []
   const artifacts: ArtifactRef[] = []
   const activity: AgentActivity[] = []
+  // Notes the person sent mid-turn that this run read, in order.
+  const notesRead: string[] = []
+  // Questions left for the person while the work carried on.
+  const blanks: BlankRef[] = []
   const startedAt = Date.now()
   const deadline = input.deadline ?? startedAt + EXECUTION_LIMITS.runMs
   const evidenceForAnswer: { tool: string; summary: string; excerpt: string }[] = []
@@ -319,7 +328,7 @@ export const runConversation = (input: {
       const outcome: RunOutcome = gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED"
       yield* journal.record("VERIFICATION", { passed: gaps.length === 0, missing, gaps, outcome })
       return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks), artifacts: mergeArtifacts(artifacts),
-        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt,
+        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}),
         context: { historyChars: built.historyChars, budgetChars: built.budgetChars, verbatim: built.verbatimMessages, compacted: built.compactedMessages, omitted: built.omittedMessages } }
     }
     // The model ignored the final notice; the run cannot end with an answer.
@@ -402,7 +411,9 @@ export const runConversation = (input: {
       decisions.push(...(result.right.decisions ?? []))
       tasks.push(...(result.right.tasks ?? []))
       artifacts.push(...(result.right.artifacts ?? []))
-      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary,
+      const blank = call.name === LEAVE_BLANK && blanks.length < MAX_BLANKS_PER_REPLY ? blankOf(result.right) : undefined
+      if (blank) blanks.push(blank)
+      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary, ...(blank ? { blank } : {}),
         citations: result.right.citations.slice(0, 20).map(c => ({ kind: c.kind, id: c.id, text: c.text.slice(0, 140) })),
         ...(effect === "propose" || effect === "record" ? { receipt: proposalReceipt(result.right) } : {}),
         ...(result.right.artifacts?.length ? { artifacts: result.right.artifacts } : {}),
@@ -419,6 +430,15 @@ export const runConversation = (input: {
     } else if (step === PACE_STEP) {
       yield* journal.record("VERIFICATION", { action: "PACED", step })
       results.push({ text: PACE_NOTICE })
+    }
+    // The person may have written while these tools ran: the next step reads it.
+    if (journal.notes) {
+      const notes = yield* journal.notes()
+      if (notes.length) {
+        notesRead.push(...notes.map(n => n.text))
+        yield* journal.record("VERIFICATION", { action: "NOTES_READ", step, noteIds: notes.map(n => n.id) })
+        results.push({ text: noteNotice(notes.map(n => n.text)) })
+      }
     }
     contents.push({ role: "user", parts: results })
   }

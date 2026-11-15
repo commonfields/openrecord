@@ -474,6 +474,100 @@ pub struct Progress {
     pub answer: String,
     /// The last journal sequence read.
     pub seq: i64,
+    /// The notes sent mid-turn that the run has read, by id.
+    pub notes_read: Vec<String>,
+    /// Questions the run left for the person so far.
+    pub blanks: Vec<Blank>,
+}
+
+/// What the agent will take as given for a message, shown above the chat box
+/// once the person pauses typing (feedforward), so they can correct it before
+/// sending rather than after a whole turn. Built only from what the app knows
+/// for certain: never a guess about what the model will do.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Forward {
+    /// The business the chat is about, or that it is a general chat.
+    Scope(String),
+    Files(usize),
+    /// Changes anything live only after the person approves it.
+    ApprovalOnly,
+    /// Likely a long turn, and it can be added to while it works.
+    Long,
+    /// The reply style, which a press changes.
+    Style(crate::prefs::Style),
+}
+
+impl Forward {
+    pub fn text(&self) -> String {
+        match self {
+            Forward::Scope(s) => s.clone(),
+            Forward::Files(1) => "Reads the attached file".into(),
+            Forward::Files(n) => format!("Reads {n} attached files"),
+            Forward::ApprovalOnly => "Prepares changes for your approval; nothing goes live".into(),
+            Forward::Long => "May take a few minutes; you can add to it while it works".into(),
+            Forward::Style(s) => format!("{} answer", match s {
+                crate::prefs::Style::Friendly => "Friendly",
+                crate::prefs::Style::Concise => "Short",
+                crate::prefs::Style::Detailed => "Detailed",
+            }),
+        }
+    }
+}
+
+/// What the agent will take as given for `text`, in the order shown.
+pub fn feedforward(text: &str, business: Option<&str>, files: usize, style: crate::prefs::Style) -> Vec<Forward> {
+    let t = text.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    let mut out = vec![Forward::Scope(match business {
+        Some(b) => format!("About {b}"),
+        None => "General chat, no business data".into(),
+    })];
+    if files > 0 {
+        out.push(Forward::Files(files));
+    }
+    if business.is_some() && has(&["publish", "post ", "go live", "launch", "send ", "email", "update the site", "change the page", "edit the page", "on my site", "on the website"]) {
+        out.push(Forward::ApprovalOnly);
+    }
+    if business.is_some() && has(&["research", "find ", "compare", "audit", "analys", "analyz", "investigat", "competitor", "landing page", "write a", "draft", "plan "]) {
+        out.push(Forward::Long);
+    }
+    out.push(Forward::Style(style));
+    out
+}
+
+/// A question the agent left for the person while it carried on, with the
+/// answer it assumed meanwhile (`leave_blank`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Blank {
+    pub id: String,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub assumed: String,
+}
+
+impl Blank {
+    /// How an answer is sent, as a message or a note to the run.
+    pub fn answer_text(&self, answer: &str) -> String {
+        format!("For «{}»: {}", self.question, answer.trim())
+    }
+
+    /// The answer the person gave, if a message or note in `texts` gives one.
+    pub fn answered_in<'a>(&self, texts: impl IntoIterator<Item = &'a str>) -> Option<String> {
+        let head = format!("For «{}»:", self.question);
+        texts.into_iter().find_map(|t| t.strip_prefix(&head).map(|a| a.trim().to_string()))
+    }
+}
+
+/// A message sent while the agent works: it goes to the run, which reads it
+/// between steps, instead of waiting in the queue for the turn to end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Steer {
+    /// This window's own number for it, until the server names it.
+    pub local: u64,
+    pub id: Option<String>,
+    pub text: String,
+    pub read: bool,
 }
 
 /// How much of an answer still being written is drawn: everything before a
@@ -518,7 +612,7 @@ pub fn sse_events(buffer: &mut String) -> Vec<(String, String)> {
 
 impl Default for Progress {
     fn default() -> Self {
-        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), answer: String::new(), seq: 0 }
+        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), answer: String::new(), seq: 0, notes_read: Vec::new(), blanks: Vec::new() }
     }
 }
 
@@ -565,9 +659,19 @@ impl Progress {
                     self.current_tool = Some(s(p, "tool")).filter(|t| !t.is_empty());
                 }
                 "TOOL_COMPLETED" | "TOOL_FAILED" => {
+                    if let Some(b) = p.get("blank").and_then(|b| serde_json::from_value::<Blank>(b.clone()).ok()) {
+                        if !self.blanks.iter().any(|x| x.id == b.id) {
+                            self.blanks.push(b);
+                        }
+                    }
                     self.current = None;
                     self.current_tool = None;
                     self.trace.push(Activity::Tool { tool: s(p, "tool"), text: s(p, "summary"), failed: e.kind == "TOOL_FAILED" });
+                }
+                "VERIFICATION" if p.get("action").and_then(Value::as_str) == Some("NOTES_READ") => {
+                    for id in p.get("noteIds").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                        self.notes_read.push(id.to_string());
+                    }
                 }
                 "VERIFICATION" if p.get("action").and_then(Value::as_str) == Some("REMINDED") => {
                     self.phase = Phase::Checking;
@@ -740,6 +844,16 @@ impl Client {
     }
 
     /// Stops one request; it settles on its own after this.
+    /// Sends a note to a request while its run works; its id, or why it was refused.
+    pub fn note(&self, request: &str, text: &str) -> ApiResult<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct R {
+            note_id: String,
+        }
+        self.post::<R>(&format!("/api/agent/requests/{}/notes", enc(request)), json!({ "text": text })).map(|r| r.note_id)
+    }
+
     pub fn cancel_request(&self, request: &str) -> ApiResult<()> {
         self.post::<Value>(&format!("/api/agent/requests/{}/cancel", enc(request)), json!({})).map(|_| ())
     }
@@ -764,6 +878,23 @@ impl Client {
 
     pub fn catalog(&self) -> ApiResult<Vec<ModelOption>> {
         Ok(model_options(&self.get::<Value>("/api/agent/providers")?))
+    }
+}
+
+#[cfg(test)]
+mod feedforward_tests {
+    use super::{Forward, feedforward};
+    use crate::prefs::Style;
+
+    #[test]
+    fn it_names_only_what_the_app_knows_for_certain() {
+        let f = feedforward("Draft a landing page and publish it on the website", Some("Northstar"), 1, Style::Concise);
+        assert_eq!(f, vec![Forward::Scope("About Northstar".into()), Forward::Files(1), Forward::ApprovalOnly, Forward::Long, Forward::Style(Style::Concise)]);
+        // A quick question about the business gets the plain facts only.
+        assert_eq!(feedforward("How many visits yesterday?", Some("Northstar"), 0, Style::Friendly), vec![Forward::Scope("About Northstar".into()), Forward::Style(Style::Friendly)]);
+        // A general chat has no business data and promises nothing about publishing.
+        assert_eq!(feedforward("publish this", None, 0, Style::Friendly)[0], Forward::Scope("General chat, no business data".into()));
+        assert!(!feedforward("publish this", None, 0, Style::Friendly).contains(&Forward::ApprovalOnly));
     }
 }
 

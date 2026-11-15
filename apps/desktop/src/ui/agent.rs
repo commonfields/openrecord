@@ -11,7 +11,7 @@ use crate::api::Message;
 use crate::brands;
 use crate::chat::{self, Activity, Progress};
 use crate::icons;
-use crate::state::{App, Load, Page, Turn, View};
+use crate::state::{ComposerSlot, App, Load, Page, Turn, View};
 use crate::theme::{Theme, hex, shadows, type_};
 use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, icon_button, label};
 
@@ -57,6 +57,14 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     match &s.turn {
         Turn::Working { progress, started, stopping, .. } => {
             list = list.child(live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping));
+            // Questions it left while it carries on, answerable now.
+            for b in &progress.blanks {
+                list = list.child(blank_card(s, t, b));
+            }
+            // What the person sent while it works, where they sent it, with whether the agent has it yet.
+            for n in &s.steer {
+                list = list.child(steer_note(s, t, n));
+            }
             if !progress.answer.is_empty() {
                 list = list.child(live_reply(t, k, &progress.answer));
             }
@@ -99,7 +107,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
     let body = if fresh { start(s, t, &business) } else { transcript };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
-    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business))
+    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main))
 }
 
 /// Ways to begin, each a request the agent can act on at once: its name, what
@@ -292,7 +300,7 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
             if !pl.references.is_empty() {
                 let mut refs = row().w_full().gap(8.0).flex_wrap().label("Where this came from");
                 for (j, r) in pl.references.iter().enumerate() {
-                    let mut l = label(if r.text.is_empty() { "Evidence".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
+                    let mut l = label(if r.text.is_empty() { "Source".to_string() } else { r.text.clone() }, type_::XS, t.foreground).key(format!("draft-ref-{j}"));
                     if let Some(u) = r.url().map(str::to_string) {
                         l = l.role("link").cursor(Cursor::Pointer).help(u.clone()).on_press_tx(move |s: &mut App, tx| {
                             s.open_link(&u, tx);
@@ -405,24 +413,13 @@ fn pane_edge() -> El {
 /// Read-only; "Open as main chat" is where to reply. Escape or the close button
 /// slides it away.
 pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api::Conversation>) -> El {
-    let info = load.ready().and_then(|c| c.session.clone());
-    let role = chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
-    let title = info.as_ref().and_then(|i| i.title.clone());
+    // The tab names the helper; this row only offers to carry on with it.
     let head = row()
         .w_full()
-        .h(48.0)
+        .h(40.0)
         .px(16.0)
-        .gap(8.0)
         .center_y()
-        .child(row().size(24.0, 24.0).radius(6.0).center().fill(t.accent).child(ico(&icons::USERS, 14.0, t.muted_foreground)))
-        .child(
-            row()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(4.0)
-                .child(label(format!("{role} helper"), type_::XS_MEDIUM, t.foreground))
-                .children(title.map(|x| label(x, type_::XS, t.muted_foreground).truncate().min_w(0.0))),
-        )
+        .child(el().grow(1.0))
         .child(
             label("Open as main chat", type_::XS_MEDIUM, t.muted_foreground)
                 .key("helper-main")
@@ -437,12 +434,14 @@ pub fn helper_pane(s: &App, t: &Theme, k: &Kit, id: &str, load: &Load<crate::api
     let body = match load {
         Load::Ready(c) => {
             let statuses = task_statuses(&c.messages);
-            let mut list = col().w_full().gap(12.0).px(20.0).py(16.0);
+            // A reading column, as the main chat keeps one: lines stay short
+            // enough to read however wide the panel is.
+            let mut list = col().w_full().max_w(s.prefs.chat_width.max()).gap(12.0);
             for (i, m) in c.messages.iter().enumerate() {
                 // Keys and folds of their own, apart from the main conversation's.
                 list = list.child(message(s, t, k, 100_000 + i, m, &statuses));
             }
-            list
+            col().w_full().items_center().px(24.0).pb(24.0).child(list)
         }
         Load::Failed(e) => col().w_full().padding(20.0).child(label(e.clone(), type_::SM_13, t.muted_foreground).wrap()),
         _ => col().w_full().padding(20.0).child(label("Opening the helper…", type_::SM_13, t.muted_foreground)),
@@ -563,6 +562,110 @@ fn prose(t: &Theme, k: &Kit) -> MarkdownStyle {
         .heading_font(4, TextStyle::new(14.0, 600.0).lh(22.4))
 }
 
+/// A question the agent left without stopping: the question, its answers to
+/// pick, and the answer it assumes until one is picked. Picking one while the
+/// agent works reaches it at its next step; afterwards it asks it to update
+/// what it made. "Other" types an answer of the person's own.
+fn blank_card(s: &App, t: &Theme, b: &chat::Blank) -> El {
+    let answer = s.blank_answer(b);
+    let mut choices = row().gap(6.0).flex_wrap().center_y();
+    let mut options = b.options.clone();
+    if !options.iter().any(|o| o.eq_ignore_ascii_case(&b.assumed)) {
+        options.insert(0, b.assumed.clone());
+    }
+    for (j, o) in options.iter().enumerate() {
+        let picked = answer.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(o));
+        let (blank, choice) = (b.clone(), o.clone());
+        let mut chip = row()
+            .key(format!("blank-{}-{j}", b.id))
+            .h(28.0)
+            .px(12.0)
+            .radius(14.0)
+            .center_y()
+            .role("button")
+            .label(format!("Answer {}: {o}", b.question))
+            .checked(picked)
+            .focusable(answer.is_none())
+            .border(1.0, if picked { t.primary } else { t.border })
+            .motion(CONTROL)
+            .child(label(o.clone(), type_::XS_MEDIUM, if picked { t.foreground } else { t.muted_foreground }));
+        if answer.is_none() {
+            chip = chip.cursor(Cursor::Pointer).hover(t.hover_tint).on_press_tx(move |s: &mut App, tx| s.answer_blank(&blank, &choice, tx));
+        } else if picked {
+            chip = chip.fill(t.accent);
+        }
+        choices = choices.child(chip);
+    }
+    if answer.is_none() {
+        let blank = b.clone();
+        choices = choices.child(
+            label("Other…", type_::XS_MEDIUM, t.muted_foreground)
+                .key(format!("blank-{}-other", b.id))
+                .role("button")
+                .px(8.0)
+                .py(6.0)
+                .radius(6.0)
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press_tx(move |s: &mut App, tx| s.answer_blank_freely(&blank, tx)),
+        );
+    }
+    let status = match &answer {
+        Some(a) => format!("You answered: {a}"),
+        None => format!("Assuming {} until you answer", b.assumed),
+    };
+    shadows(
+        col()
+            .key(format!("blank-{}", b.id))
+            .w_full()
+            .max_w(560.0)
+            .px(14.0)
+            .py(12.0)
+            .gap(8.0)
+            .radius(12.0)
+            .fill(t.card)
+            .role("group")
+            .label(format!("Question from the agent: {}", b.question))
+            .transition(chip_in_t())
+            .child(label(b.question.clone(), type_::SM_MEDIUM, t.foreground).wrap())
+            .child(choices)
+            .child(label(status, type_::XS11, t.muted_foreground)),
+        &t.card_shadow,
+    )
+}
+
+/// A message sent while the agent worked: the user's bubble, and under it
+/// whether the run has read it yet (it reads between steps).
+fn steer_note(s: &App, t: &Theme, n: &chat::Steer) -> El {
+    let state = if n.read { "Read by the agent" } else if n.id.is_some() { "The agent reads it at its next step" } else { "Sending…" };
+    col()
+        .key(format!("steer-{}", n.local))
+        .w_full()
+        .items_end()
+        .gap(4.0)
+        .transition(chip_in_t())
+        .child(user_bubble(s, t, &n.text))
+        .child(
+            row()
+                .gap(4.0)
+                .center_y()
+                .live_region(LiveRegion::Polite)
+                .child(ico(if n.read { &icons::CHECK } else { &icons::CORNER_DOWN_RIGHT }, 12.0, t.muted_foreground))
+                .child(label(state, type_::XS11, t.muted_foreground)),
+        )
+}
+
+/// The person's message bubble.
+fn user_bubble(s: &App, t: &Theme, text: &str) -> El {
+    col()
+        .max_w(s.prefs.chat_width.max().min(900.0) * 0.85)
+        .px(16.0)
+        .py(10.0)
+        .radius(16.0)
+        .fill(t.accent)
+        .child(label(text.to_string(), type_::SM.lh(22.0), t.foreground).wrap().selectable(true))
+}
+
 fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
     let user = m.role == "user";
     let mut c = col().key(format!("msg-{i}")).w_full().gap(4.0).hover_group();
@@ -579,17 +682,14 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
             c = c.child(files);
         }
         if !m.text.is_empty() {
-            c = c.child(
-                col()
-                    .max_w(s.prefs.chat_width.max().min(900.0) * 0.85)
-                    .px(16.0)
-                    .py(10.0)
-                    .radius(16.0)
-                    .fill(t.accent)
-                    .child(label(m.text.clone(), type_::SM.lh(22.0), t.foreground).wrap().selectable(true)),
-            );
+            c = c.child(user_bubble(s, t, &m.text));
         }
-        return c.child(copy_button(s, t, i, &m.text));
+        c = c.child(copy_button(s, t, i, &m.text));
+        // What the person added while that turn worked, as sent.
+        for note in &m.notes {
+            c = c.child(user_bubble(s, t, note)).child(label("Sent while the agent worked", type_::XS11, t.muted_foreground));
+        }
+        return c;
     }
     let mut body = col().w_full().gap(6.0);
     body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
@@ -631,6 +731,10 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     }
     if !m.artifacts.is_empty() {
         body = body.children(artifacts(t, i, &m.artifacts));
+        // The questions it left while it worked stay on the reply, answerable.
+        for b in &m.blanks {
+            body = body.child(blank_card(s, t, b));
+        }
     }
     if !m.decisions.is_empty() {
         body = body.children(decisions(s, t, i, &m.decisions));
@@ -915,30 +1019,18 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
 }
 
 fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
-    // Rune's task chip: a status mark, the helper's role, its title and where it stands.
+    // A helper's chip: its title and where it stands, nothing else. The role
+    // ("Review") is left out: the title already says what the helper does.
     let mut c = row().w_full().pt(4.0).gap(6.0).flex_wrap();
     for task in &m.tasks {
         let status = statuses.get(&task.id).unwrap_or(&task.status).as_str();
-        let (icon, ink) = match status {
-            "RUNNING" => (&icons::LOADER, t.foreground.alpha(0.7)),
-            "COMPLETED" => (&icons::CHECK, t.muted_foreground),
-            _ => (&icons::X, t.wrong),
+        let state_ink = match status {
+            "RUNNING" => t.working,
+            "COMPLETED" => t.muted_foreground.alpha(0.8),
+            _ => t.wrong,
         };
-        let mark = if status == "RUNNING" { crate::ui::cube3d::view(t, &format!("task-cube-{i}-{}", task.id), 16.0, true) } else { ico(icon, 14.0, ink) };
-        let mut chip = row()
-            .key(format!("task-{i}-{}", task.id))
-            .h(32.0)
-            .px(10.0)
-            .gap(8.0)
-            .center_y()
-            .radius(8.0)
-            .fill(t.card)
-            .max_w(560.0)
-            .motion(CONTROL)
-            .child(mark)
-            .child(label(chat::role_label(&task.role), type_::SM_MEDIUM, t.foreground))
-            .child(label(task.title.clone(), type_::SM, t.muted_foreground).truncate().min_w(0.0))
-            .child(label(chat::task_status(status), type_::XS, t.muted_foreground.alpha(0.8)));
+        let mut chip = item_chip(t, format!("task-{i}-{}", task.id), &task.title)
+            .child(label(chat::task_status(status), type_::XS, state_ink));
         if !task.session_id.is_empty() {
             let id = task.session_id.clone();
             chip = chip
@@ -951,9 +1043,28 @@ fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<
                 .on_press(move |s: &mut App| s.open_helper(&id));
         }
         let n = c_count(&m.tasks, &task.id);
-        c = c.child(chip_in(shadows(chip, &t.card_shadow), n));
+        c = c.child(chip_in(chip, n));
     }
     c
+}
+
+/// The one chip shape the chat uses for what a reply made or started: a title
+/// on the card colour, one line, no icon.
+fn item_chip(t: &Theme, key: String, title: &str) -> El {
+    shadows(
+        row()
+            .key(key)
+            .h(32.0)
+            .px(12.0)
+            .gap(8.0)
+            .center_y()
+            .radius(8.0)
+            .fill(t.card)
+            .max_w(560.0)
+            .motion(CONTROL)
+            .child(label(title.to_string(), type_::SM, t.foreground).truncate().min_w(0.0)),
+        &t.card_shadow,
+    )
 }
 
 fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
@@ -963,32 +1074,23 @@ fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
 /// The proposals a reply saved that still wait for a decision, each opening in the inbox.
 /// What a reply wrote, opened beside its conversation.
 fn artifacts(t: &Theme, i: usize, refs: &[chat::ArtifactRef]) -> Vec<El> {
-    use crate::ui::widgets::{Variant, button};
+    // Just the title; a press opens it as a tab of the right panel.
     refs.iter()
         .map(|r| {
             let id = r.id.clone();
             row()
-                .key(format!("artifact-{i}-{}", r.id))
                 .w_full()
-                .px(16.0)
-                .py(12.0)
-                .gap(12.0)
-                .radius(12.0)
-                .center_y()
-                .fill(t.card)
-                .role("group")
-                .label("Made in this reply")
                 .transition(chip_in_t())
-                .child(ico(&icons::FILE_TEXT, 16.0, t.muted_foreground))
                 .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).max_lines(1))
-                        .child(label(r.caption(), type_::XS, t.muted_foreground).wrap().max_lines(2)),
+                    item_chip(t, format!("artifact-{i}-{}", r.id), &r.title)
+                        .role("link")
+                        .label(format!("Open {}", r.title))
+                        .help(r.caption())
+                        .focusable(true)
+                        .cursor(Cursor::Pointer)
+                        .hover(t.hover_tint)
+                        .on_press(move |s: &mut App| s.open_artifact(&id)),
                 )
-                .child(button(t, &format!("artifact-open-{i}-{}", r.id), "Open preview", Variant::Outline).on_press(move |s: &mut App| s.open_artifact(&id)))
         })
         .collect()
 }
@@ -1094,45 +1196,57 @@ fn waveform_bars(ink: rune::Color) -> El {
         .child(el().size(2.0, 16.0).radius(1.0).fill(ink))
 }
 
-fn composer(s: &App, t: &Theme, business: &str) -> El {
+/// The chat box. The right panel draws the same one under an artifact or a
+/// helper (`ComposerSlot::Side`): its own text, the same model, files and
+/// buttons, and what is sent goes to the chat about the tab in front.
+pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
+    let side = slot == ComposerSlot::Side;
+    let text_state = if side { &s.side.composer } else { &s.composer };
     let working = matches!(s.turn, Turn::Working { .. });
     let blocked = s.model_unavailable();
-    let has_text = !s.composer.text.trim().is_empty();
+    let has_text = !text_state.text.trim().is_empty();
     let placeholder = if blocked {
         "The model you used is unavailable now. Pick another model below"
     } else if working {
-        "Send follow-up"
+        "Add to what the agent is doing"
+    } else if side && matches!(s.side_tab(), crate::side::SideTab::Helper(_)) {
+        "Ask about this helper's work"
+    } else if side {
+        "Ask for a change to this page"
     } else if !s.transcript().is_empty() {
         "Reply to the agent, or type / for commands"
     } else {
         "Describe a task or ask a question"
     };
-    let input = text_input(&s.composer, type_::BASE)
-        .key("composer-input")
+    let mut input = text_input(text_state, type_::BASE)
+        .key(slot.key("composer-input"))
         .placeholder(placeholder, t.muted_foreground)
         .label("Message the agent")
         .w_full()
         .py(4.0)
         .max_h(192.0)
         .color(t.foreground)
-        .on_edit(|s: &mut App| &mut s.composer)
-        // While the "/" menu is open, arrows, Tab, Return and Escape drive it.
-        .on_input_key(|s: &mut App, ev, tx| s.composer_key(ev, tx))
+        .on_edit(move |s: &mut App| if side { &mut s.side.composer } else { &mut s.composer })
         .on_input_paste(|s: &mut App, content, _tx| s.composer_paste(content))
         // Return sends, or with "Send with Enter" off adds a line (⌘Return sends then).
-        .on_submit(|s: &mut App, tx| {
+        .on_submit(move |s: &mut App, tx| {
             if s.prefs.enter_to_send {
-                s.send_message(tx);
+                s.send_from(slot, tx);
+            } else if side {
+                s.side.composer.insert("\n");
             } else {
                 s.composer.insert("\n");
             }
-        })
-        .autofocus();
+        });
+    if !side {
+        // While the "/" menu is open, arrows, Tab, Return and Escape drive it.
+        input = input.on_input_key(|s: &mut App, ev, tx| s.composer_key(ev, tx)).autofocus();
+    }
     // The buttons at the box's right end, as the web composer draws them: while a
     // turn runs, a queue button (once something is typed) and Stop; otherwise Send,
     // only once something is typed.
     let circle = |key: &str, name: &str, help: &str, fill: rune::Color| {
-        row().key(key).size(COMPOSER_BUTTON, COMPOSER_BUTTON).radius(COMPOSER_BUTTON / 2.0).center().role("button").label(name).help(help).focusable(true).cursor(Cursor::Pointer).fill(fill).motion(CONTROL)
+        row().key(slot.key(key)).size(COMPOSER_BUTTON, COMPOSER_BUTTON).radius(COMPOSER_BUTTON / 2.0).center().role("button").label(name).help(help).focusable(true).cursor(Cursor::Pointer).fill(fill).motion(CONTROL)
     };
     let mut actions = row().gap(4.0).center_y().self_end();
     if working {
@@ -1142,7 +1256,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 circle("queue", "Queue message", "Queue it. It sends when the agent finishes.", t.accent)
                     .disabled(!can)
                     .opacity(if can { 1.0 } else { 0.5 })
-                    .on_press_tx(|s: &mut App, tx| s.send_message(tx))
+                    .on_press_tx(move |s: &mut App, tx| s.send_from(slot, tx))
                     .child(ico(&icons::ARROW_UP, 16.0, t.foreground)),
             );
         }
@@ -1161,7 +1275,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 .disabled(!can)
                 .opacity(if can { 1.0 } else { 0.5 })
                 .hover(t.primary.alpha(0.9))
-                .on_press_tx(|s: &mut App, tx| s.send_message(tx))
+                .on_press_tx(move |s: &mut App, tx| s.send_from(slot, tx))
                 .child(ico(&icons::CORNER_DOWN_LEFT, 16.0, t.primary_foreground)),
         );
     }
@@ -1171,8 +1285,8 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         trailing = trailing.child(
             circle("voice-affordance", "Start voice input", "Voice input (macOS dictation)", t.primary)
                 .hover(t.primary.alpha(0.9))
-                .on_press_tx(|_s: &mut App, tx| {
-                    tx.focus("composer-input", false);
+                .on_press_tx(move |_s: &mut App, tx| {
+                    tx.focus(&slot.key("composer-input"), false);
                     crate::dictation::start();
                 })
                 .child(waveform_bars(t.primary_foreground)),
@@ -1182,7 +1296,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     }
     // "Chat actions" on the left of the box: save as playbook, share, attach and providers.
     let plus = row()
-        .key("chat-actions-trigger")
+        .key(slot.key("chat-actions-trigger"))
         .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
         .radius(COMPOSER_BUTTON / 2.0)
         .center()
@@ -1196,12 +1310,15 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         .hover(t.hover_tint)
         .hover_group()
         .motion(CONTROL)
-        .on_press(|s: &mut App| s.chat_actions = !s.chat_actions)
+        .on_press(move |s: &mut App| {
+            s.composer_slot = slot;
+            s.chat_actions = !s.chat_actions;
+        })
         .child(ico(&icons::PLUS, 18.0, t.muted_foreground).group_color(t.foreground));
 
     let mut field = shadows(
         row()
-            .key("composer")
+            .key(slot.key("composer"))
             .w_full()
             .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
             .padding(COMPOSER_INSET)
@@ -1223,7 +1340,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
     );
     // The "/" menu sits over the transcript just above the box, inset 8 points
     // each side, every entry listed: the web's `absolute inset-x-2 bottom-full mb-2`.
-    if let Some(menu) = command_menu(s, t) {
+    if let Some(menu) = command_menu(s, t).filter(|_| !side) {
         field = field.child(menu);
     }
 
@@ -1240,7 +1357,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
             // "Change the business or client": opens "Start a new chat", as the web's chip does.
             let name = if s.general { "General chat".to_string() } else { business.to_string() };
             row()
-                .key("chat-context")
+                .key(slot.key("chat-context"))
                 .gap(4.0)
                 .center_y()
                 .max_w(224.0)
@@ -1262,19 +1379,51 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         })
         .child(el().grow(1.0));
     let mut right = row().gap(12.0).center_y();
-    if let Some(f) = followups_trigger(s, t) {
+    if let Some(f) = followups_trigger(s, t, slot) {
         right = right.child(f);
     }
-    if let Some(m) = context_meter(s, t) {
+    if let Some(m) = context_meter(s, t, slot) {
         right = right.child(m);
     }
-    right = right.child(model_trigger(s, t, working));
-    right = right.child(reasoning_trigger(s, t, working));
+    right = right.child(model_trigger(s, t, working, slot));
+    right = right.child(reasoning_trigger(s, t, working, slot));
     options = options.child(right);
+
+    // Feedforward: once the person pauses, what the agent will take as given,
+    // to correct before sending. The reply style changes with a press.
+    let ahead = if side { Vec::new() } else { s.feedforward() };
+    let ahead = (!ahead.is_empty()).then(|| {
+        let mut r = row().key("feedforward").w_full().px(12.0).pb(4.0).gap(6.0).flex_wrap().center_y().role("note").label("What the agent will assume").transition(Transition::opacity());
+        for (j, f) in ahead.iter().enumerate() {
+            let style = matches!(f, chat::Forward::Style(_));
+            let mut chip = row()
+                .key(format!("forward-{j}"))
+                .h(24.0)
+                .px(10.0)
+                .gap(4.0)
+                .radius(12.0)
+                .center_y()
+                .border(1.0, t.border)
+                .child(label(f.text(), type_::XS, t.muted_foreground));
+            if style {
+                chip = chip
+                    .role("button")
+                    .label(format!("{}, press to change", f.text()))
+                    .help("Change how the agent answers")
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .child(ico(&icons::CHEVRON_DOWN, 12.0, t.muted_foreground))
+                    .on_press(|s: &mut App| s.cycle_style());
+            }
+            r = r.child(chip);
+        }
+        r
+    });
 
     // The web's `space-y-0.5`: queued messages, attached files, the box, then its options.
     let mut stack = col().w_full().max_w(s.prefs.chat_width.max()).gap(2.0);
-    if !s.queued.is_empty() {
+    if !s.queued.is_empty() && !side {
         stack = stack.child(queued(t, &s.queued));
     }
     if !s.attachments.is_empty() {
@@ -1288,7 +1437,7 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
         stack = stack.child(label(e.clone(), type_::XS, t.wrong).px(12.0).wrap().live_region(LiveRegion::Polite));
     }
     // Beside the decisions stack when it would overlap the box, the composer centres in the room left.
-    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.child(field).child(options))
+    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.children(ahead).child(field).child(options))
 }
 
 /// A file attached to a message: its name and length, removable before sending.
@@ -1385,7 +1534,7 @@ fn queued(t: &Theme, list: &[String]) -> El {
 }
 
 /// How full the chat's memory was on the last turn, as a small ring and percent.
-fn context_meter(s: &App, t: &Theme) -> Option<El> {
+fn context_meter(s: &App, t: &Theme, slot: ComposerSlot) -> Option<El> {
     let messages = s.conversation.ready()?.messages.as_slice();
     let use_ = messages.iter().rev().find_map(|m| m.context.as_ref()).filter(|c| c.budget_chars > 0)?;
     let pct = use_.percent();
@@ -1404,7 +1553,7 @@ fn context_meter(s: &App, t: &Theme) -> Option<El> {
     }
     Some(
         row()
-            .key("context-meter")
+            .key(slot.key("context-meter"))
             .gap(4.0)
             .center_y()
             .role("img")
@@ -1417,7 +1566,7 @@ fn context_meter(s: &App, t: &Theme) -> Option<El> {
 }
 
 /// The composer's model button: the chosen model's logo and name.
-fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
+fn model_trigger(s: &App, t: &Theme, locked: bool, slot: ComposerSlot) -> El {
     let chosen = s.chosen_model();
     let name = match (&s.catalog, chosen) {
         (_, Some(o)) if !s.model_unavailable() => o.name.clone(),
@@ -1426,7 +1575,7 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
         _ => "Choose a model".into(),
     };
     let mut r = row()
-        .key("model-picker")
+        .key(slot.key("model-picker"))
         .gap(4.0)
         .center_y()
         .max_w(224.0)
@@ -1437,8 +1586,9 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
         .cursor(if locked { Cursor::Default } else { Cursor::Pointer })
         .opacity(if locked { 0.5 } else { 1.0 })
         .hover_group()
-        .on_press(|s: &mut App| {
+        .on_press(move |s: &mut App| {
             if !matches!(s.turn, Turn::Working { .. }) {
+                s.composer_slot = slot;
                 s.open_model_menu();
             }
         });
@@ -1450,13 +1600,13 @@ fn model_trigger(s: &App, t: &Theme, locked: bool) -> El {
 }
 
 /// The reasoning effort for the next reply, beside the model, when the model reports any.
-fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
+fn reasoning_trigger(s: &App, t: &Theme, locked: bool, slot: ComposerSlot) -> El {
     // Always shown, as on the web; disabled while the model reports no reasoning controls.
     let none = s.chosen_model().filter(|_| !s.model_unavailable()).is_none_or(|m| m.efforts.is_empty());
     let locked = locked || none;
     let name = s.reasoning_effort().map(chat::effort_label).unwrap_or_else(|| "Reasoning".into());
     row()
-        .key("reasoning-picker")
+        .key(slot.key("reasoning-picker"))
         .gap(4.0)
         .center_y()
         .role("button")
@@ -1468,6 +1618,7 @@ fn reasoning_trigger(s: &App, t: &Theme, locked: bool) -> El {
         .hover_group()
         .on_press(move |s: &mut App| {
             if !locked && !matches!(s.turn, Turn::Working { .. }) {
+                s.composer_slot = slot;
                 s.menu = Some(crate::state::Menu::Reasoning);
             }
         })
@@ -1507,7 +1658,7 @@ pub fn reasoning_menu(s: &App, t: &Theme) -> El {
     for e in efforts {
         m = m.child(row_(format!("effort-{e}"), chat::effort_label(&e), current.as_deref() == Some(e.as_str()), Some(e.clone())));
     }
-    m.anchored("reasoning-picker", Side::Top, Align::End, 8.0).modal(true, |s: &mut App| s.menu = None)
+    m.anchored(s.composer_slot.key("reasoning-picker"), Side::Top, Align::End, 8.0).modal(true, |s: &mut App| s.menu = None)
 }
 
 /// Remembers which menu row the pointer is over, so its highlight eases in and out.
@@ -1674,7 +1825,7 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         .child(manage)
         .role("dialog")
         .label("Choose an agent model")
-        .anchored("model-picker", Side::Top, Align::End, 8.0)
+        .anchored(s.composer_slot.key("model-picker"), Side::Top, Align::End, 8.0)
         .modal(true, |s: &mut App| s.menu = None)
 }
 
@@ -1840,7 +1991,7 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
         let draft = s.composer.text.trim();
         let can_save = !draft.is_empty() && !draft.starts_with('/');
         let can_share = s.chat_id.is_some() && s.conversation.ready().is_some();
-        let _ = Menu::new("chat-actions")
+        let _ = Menu::new(s.composer_slot.key("chat-actions"))
             .open(true)
             .placement(Placement::TopEnd)
             .min_width(240.0)
@@ -1869,7 +2020,7 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
 
 /// "Follow-ups", "Follow-ups on" or "Follow-ups elsewhere", by the model picker.
 /// Only on a person's own chat, not a helper session.
-fn followups_trigger(s: &App, t: &Theme) -> Option<El> {
+fn followups_trigger(s: &App, t: &Theme, slot: ComposerSlot) -> Option<El> {
     if s.general {
         return None;
     }
@@ -1885,7 +2036,7 @@ fn followups_trigger(s: &App, t: &Theme) -> Option<El> {
     };
     Some(
         row()
-            .key("followups-trigger")
+            .key(slot.key("followups-trigger"))
             .gap(5.0)
             .center_y()
             .role("button")

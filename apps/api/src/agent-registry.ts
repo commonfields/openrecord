@@ -8,6 +8,7 @@
 // a pending proposal of the same kind, or a server-derived idempotency key.
 // That makes a retried or resumed run safe without trusting model input.
 import { Effect, Schema } from "effect"
+import { blankDeclaration, leaveBlank } from "./agent-blanks.js"
 import { AgentProposalRepository } from "@openrecord/db"
 import { dispatchGrowthProposal, growthProposalDeclarations } from "./agent-growth-tools.js"
 import { acquisitionProposalDeclarations, dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
@@ -114,6 +115,8 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     run: (ctx, args) => dispatchAcquisitionProposal(ctx.accountId, ctx.userId, ctx.businessId, declaration.name, args) })),
   ...AGENT_TOOLS.map((t): AgentToolSpec => ({ declaration: { name: t.name, description: t.description, parametersJsonSchema: t.parameters },
     effect: "read", replay: "safe", scope: "general", run: (ctx, args) => runAgentTool(ctx.accountId, ctx.businessId, t.name, args) })),
+  // A question left for the person while the work carries on; it writes nothing.
+  { declaration: blankDeclaration, effect: "read", replay: "safe", scope: "general", run: (_ctx, args) => leaveBlank(args) },
   { declaration: { name: "propose_check_run", description: "Prepare a REQUEST_CHECK proposal for a stored question. Never executes. Human approval and provider/model selection required.",
       parametersJsonSchema: { type: "object", properties: { questionId: { type: "string", format: "uuid" } }, required: ["questionId"], additionalProperties: false } },
     effect: "propose", replay: "deduplicated", scope: "general", run: proposeCheckRun },

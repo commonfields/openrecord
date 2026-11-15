@@ -50,7 +50,7 @@ fn kit(t: &Theme) -> Kit {
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if !s.artifact_visible() { crate::native_preview::clear(); }
     if s.preview_visible() {
-        if let (Some(rect), Some(a)) = (s.preview_rect, s.artifact.as_ref().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion); }
+        if let (Some(rect), Some(a)) = (s.preview_rect, s.front_artifact().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion); }
     } else { crate::native_preview::hide(); }
     // The browser tab's page sits over its slot only while nothing is drawn over it.
     if s.browser_visible() {

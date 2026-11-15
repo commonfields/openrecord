@@ -216,3 +216,4 @@ mod browser_tests {
         assert!(browser_target("file:///etc/passwd").unwrap().starts_with("https://duckduckgo.com/"));
     }
 }
+

@@ -491,7 +491,7 @@ fn memory(s: &App, t: &Theme, k: &Kit, business: &str) -> El {
         t,
         "memory",
         &format!("What the agent remembers about {business}"),
-        Some("Notes the agent reads at the start of every chat for this business. It saves them when you state a preference or decision, or when results teach something. They guide it; they are not evidence."),
+        Some("Notes the agent reads at the start of every chat for this business. It saves them when you state a preference or decision, or when results teach something. They guide it; they are not facts it can quote."),
         rows,
     )
 }

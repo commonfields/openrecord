@@ -3,7 +3,7 @@ import { SqlClient } from "@effect/sql"
 import { decodeRouteId } from "@openrecord/contracts"
 import { Effect } from "effect"
 import { HttpServerRequest } from "@effect/platform"
-import { cancelAgentRequest, enqueueAgentRequest } from "./agent-request-queue.js"
+import { addRequestNote, cancelAgentRequest, enqueueAgentRequest } from "./agent-request-queue.js"
 import { json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const PRIVATE = { "cache-control": "no-store" }
@@ -43,6 +43,13 @@ export const agentRequestApi = (withSession: WithSession) => {
       const sql=yield* SqlClient.SqlClient
       const rows=yield* sql`SELECT request_id,status,result,failure_reason,conversation_id FROM agent_request_jobs WHERE request_id=${id} AND account_id=${session.accountId} AND user_id=${session.userId}`
       return rows[0] ? yield* json(200,rows[0],PRIVATE) : yield* json(404,{ _tag:"NotFound" })
+    })).pipe(Effect.catchAll(failure))),
+    // A message for the run while it works; 409 once it no longer runs.
+    HttpRouter.post("/api/agent/requests/:requestId/notes",operator(session => Effect.gen(function*() {
+      const { params }=yield* HttpRouter.RouteContext
+      const id=params["requestId"] ?? ""
+      if (decodeRouteId(id)._tag === "Left") return yield* json(422,{ _tag:"InvalidRequest" })
+      return yield* json(201,yield* addRequestNote(session.accountId,session.userId,id,yield* readJson),PRIVATE)
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.post("/api/agent/requests/:requestId/cancel",operator(session => Effect.gen(function*() {
       const { params }=yield* HttpRouter.RouteContext

@@ -1,163 +1,41 @@
-//! A document beside the conversation: the body of the right panel's item tab.
+//! A document beside the conversation: the body of an artifact tab in the
+//! right panel. The panel puts the chat box under it.
 use super::widgets::{Variant, button, label};
 use crate::{
     state::{App, Load},
     theme::{Theme, type_},
 };
-use rune::{El, ScrollSpec, col, row};
+use rune::{El, col, row};
 
 pub fn view(s: &App, t: &Theme) -> El {
-    let p = s.artifact.as_ref().expect("artifact pane");
-    let a = p.loaded.ready();
-    let mut pane = col()
-        .key("artifact-pane")
-        .w(0.0)
-        .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .fill(t.background);
-    if let Some(a) = a {
-        let mut tools = row()
-            .w_full()
-            .px(12.0)
-            .py(8.0)
-            .gap(6.0)
-            .center_y()
-            .flex_wrap()
-            .child(
-                button(
-                    t,
-                    "artifact-preview",
-                    "Preview",
-                    if p.source {
-                        Variant::Ghost
-                    } else {
-                        Variant::Outline
-                    },
-                )
-                .on_press(|s: &mut App| {
-                    if let Some(p) = &mut s.artifact {
-                        p.source = false;
-                    }
-                }),
-            )
-            .child(
-                button(
-                    t,
-                    "artifact-source",
-                    "Source",
-                    if p.source {
-                        Variant::Outline
-                    } else {
-                        Variant::Ghost
-                    },
-                )
-                .on_press(|s: &mut App| {
-                    if let Some(p) = &mut s.artifact {
-                        p.source = true;
-                    }
-                }),
-            )
-            .child(
-                button(t, "artifact-copy", "Copy", Variant::Ghost).on_press_tx(
-                    |s: &mut App, tx| {
-                        if let Some(a) = s.artifact.as_ref().and_then(|p| p.loaded.ready()) {
-                            tx.copy(a.content.clone());
-                        }
-                    },
-                ),
-            );
-        for v in a.versions.iter().take(8) {
-            let version = v.version;
-            tools = tools.child(
-                button(
-                    t,
-                    &format!("artifact-v{version}"),
-                    &format!("v{version}"),
-                    if version == a.shown_version {
-                        Variant::Outline
-                    } else {
-                        Variant::Ghost
-                    },
-                )
-                .on_press(move |s: &mut App| s.artifact_version(Some(version))),
-            );
-        }
-        tools = tools.child(
-            button(t, "artifact-latest", "Latest", Variant::Ghost)
-                .on_press(|s: &mut App| s.artifact_version(None)),
-        );
-        pane = pane.child(tools).child(
-            label(
-                format!(
-                    "Version {} · Saved draft · Nothing published",
-                    a.shown_version
-                ),
-                type_::XS,
-                t.muted_foreground,
-            )
-            .px(16.0)
-            .pb(10.0),
-        );
-        let body = if p.source {
-            col()
-                .w_full()
-                .padding(20.0)
-                .child(
-                    label(a.content.clone(), type_::XS, t.foreground)
-                        .wrap()
-                        .selectable(true),
-                )
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-        } else {
-            col()
-                .key("artifact-html")
-                .w_full()
-                .h_full()
-                .fill(rune::Color::WHITE)
-                .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
-                    s.preview_rect = Some(r);
-                    if s.preview_visible() {
-                        if let Some(a) = s.artifact.as_ref().and_then(|p| p.loaded.ready()) {
-                            crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
-                        }
-                    }
-                })
-                .child(label("Rendering document", type_::XS, t.muted_foreground).padding(20.0))
-        };
-        pane = pane.child(body.grow(1.0).min_h(0.0)).child(
-            row().w_full().padding(12.0).child(
-                button(
-                    t,
-                    "artifact-change",
-                    "Change with the agent",
-                    Variant::Outline,
-                )
-                .on_press(|s: &mut App| {
-                    if let Some(a) = s.artifact.as_ref().and_then(|p| p.loaded.ready()) {
-                        s.composer
-                            .replace_text(&format!("Change the artifact \"{}\": ", a.title));
-                    }
-                }),
-            ),
-        );
-    } else {
+    let Some(p) = s.front_artifact() else { return col() };
+    let pane = col().key(format!("artifact-pane-{}", p.id)).w_full().grow(1.0).min_h(0.0);
+    if p.loaded.ready().is_none() {
         let text = match &p.loaded {
             Load::Failed(e) => e.as_str(),
             _ => "Reading the saved document…",
         };
-        pane = pane
-            .child(
-                label(text.to_string(), type_::SM, t.muted_foreground)
-                    .padding(20.0)
-                    .wrap(),
-            )
-            .child(
-                button(t, "artifact-retry", "Try again", Variant::Outline)
-                    .on_press(|s: &mut App| s.artifact_version(None)),
-            );
+        let mut c = pane.child(label(text.to_string(), type_::SM, t.muted_foreground).padding(20.0).wrap());
+        if matches!(p.loaded, Load::Failed(_)) {
+            c = c.child(row().px(20.0).child(button(t, "artifact-retry", "Try again", Variant::Outline).on_press(|s: &mut App| s.artifact_version(None))));
+        }
+        return c;
     }
-    pane
+    // The page, then the chat box under it where the main chat has its own.
+    let slot = col()
+        .key("artifact-html")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .fill(rune::Color::WHITE)
+        .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
+            s.preview_rect = Some(r);
+            if s.preview_visible() {
+                if let Some(a) = s.front_artifact().and_then(|p| p.loaded.ready()) {
+                    crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
+                }
+            }
+        })
+        .child(label("Rendering document", type_::XS, t.muted_foreground).padding(20.0));
+    pane.child(slot)
 }

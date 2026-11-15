@@ -90,6 +90,7 @@ const META: Readonly<Record<string, Meta>> = {
   read_issue: { ns: "research", title: "Read one representation issue", not: "Not for the issue list (read_open_issues).", evidence: ["none"] },
   read_record_outcomes: { ns: "measurement", title: "Read record outcomes", not: "Not for the results ledger (read_results).", evidence: ["none"] },
   read_proposals: { ns: "work", title: "Read saved drafts, proposals and decisions", not: "Not for past decision reasons alone (read_decision_feedback).", evidence: ["none"] },
+  leave_blank: { ns: "work", title: "Ask the person a choice without stopping", not: "Not for anything a tool can read, and not for asking before starting: carry on with the assumed answer.", evidence: ["none"] },
   propose_check_run: { ns: "research", title: "Propose re-checking a buyer question", not: "Not for proposing new questions (propose_question_set).", evidence: ["proposal"] },
   diagnose_marketing_problems: { ns: "strategy", title: "Diagnose marketing problems from evidence", not: "Workflow only; not in ordinary turns.", evidence: ["none"] },
   propose_first_improvement: { ns: "strategy", title: "Propose the first improvement", not: "Workflow only; not in ordinary turns.", evidence: ["proposal"] },

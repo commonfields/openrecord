@@ -47,7 +47,8 @@ fn setup(s: &mut App, waker: Waker) {
 }
 
 fn poll(s: &mut App, _clock: f64, tx: &mut Tx) -> bool {
-    s.poll(tx)
+    let native = s.poll_native(tx);
+    s.poll(tx) || native
 }
 
 fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
@@ -152,6 +153,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent", fixtures::agent),
     ("agent-artifact", fixtures::agent_artifact),
     ("side-browser", fixtures::side_browser),
+    ("side-tabs", fixtures::side_tabs),
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),
     ("agent-empty", fixtures::agent_empty),
@@ -161,6 +163,9 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-chart-table", fixtures::agent_chart_table),
     ("agent-chart-top", fixtures::agent_chart_top),
     ("agent-working", fixtures::agent_working),
+    ("agent-steer", fixtures::agent_steer),
+    ("agent-blanks", fixtures::agent_blanks),
+    ("agent-feedforward", fixtures::agent_feedforward),
     ("agent-models", fixtures::agent_models),
     ("agent-models-many", fixtures::agent_models_many),
     ("agent-commands", fixtures::agent_commands),

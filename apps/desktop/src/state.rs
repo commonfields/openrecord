@@ -216,6 +216,24 @@ pub enum PortfolioSort {
     Name,
 }
 
+/// Which chat box something came from: the main one, or the right panel's
+/// under an artifact or helper. Their keys differ so each anchors its own menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ComposerSlot {
+    #[default]
+    Main,
+    Side,
+}
+
+impl ComposerSlot {
+    pub fn key(self, name: &str) -> String {
+        match self {
+            ComposerSlot::Main => name.to_string(),
+            ComposerSlot::Side => format!("side-{name}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
     Businesses,
@@ -511,6 +529,8 @@ pub struct App {
     pub command_index: usize,
     /// The composer's "+" menu and the dialogs it opens.
     pub chat_actions: bool,
+    /// The chat box whose "+", model or reasoning menu is open, to anchor it there.
+    pub composer_slot: ComposerSlot,
     pub save_playbook: Option<SavePlaybook>,
     pub share: Option<ShareChat>,
     /// Automatic follow-ups for the business on screen, and their dialog.
@@ -541,8 +561,10 @@ pub struct App {
     /// Accepted drafts in the work pane, folded open.
     pub drafts_open: bool,
     /// A helper session opened beside the conversation, to review (`?helper=` on the web).
-    pub helper: Option<(String, Load<crate::api::Conversation>)>,
-    pub artifact: Option<crate::artifacts::Pane>,
+    /// Helper sessions opened beside the conversation, each a tab of the right panel.
+    pub helpers: Vec<(String, Load<crate::api::Conversation>)>,
+    /// Artifacts opened beside the conversation, each a tab of the right panel.
+    pub artifacts: Vec<crate::artifacts::Pane>,
     /// The panel on the right: the artifact or helper, and a browser, as tabs.
     pub side: crate::side::SidePanel,
     pub preview_rect: Option<[f32; 4]>,
@@ -573,6 +595,14 @@ pub struct App {
     pub visual_tables: std::collections::BTreeSet<String>,
     /// Messages waiting for the turn under way, and files for the next message.
     pub queued: Vec<String>,
+    /// Messages sent to the run under way (steering), oldest first, and the next local number.
+    pub steer: Vec<crate::chat::Steer>,
+    pub steer_next: u64,
+    /// The chat box's text when it last changed, and when: the feedforward
+    /// row shows once the person has paused.
+    pub composer_seen: (String, std::time::Instant),
+    /// Answers picked for the agent's questions this session, by question id.
+    pub blank_answers: std::collections::HashMap<String, String>,
     pub attachments: Vec<crate::chat::Attachment>,
     pub attach_error: Option<String>,
     /// The chat history: archived chats instead of live ones, and one business only.
@@ -724,8 +754,8 @@ impl App {
             general: false,
             proposals: Load::Idle,
             drafts_open: false,
-            helper: None,
-            artifact: None,
+            helpers: Vec::new(),
+            artifacts: Vec::new(),
             side: Default::default(),
             preview_rect: None,
             settle_next: false,
@@ -747,6 +777,7 @@ impl App {
             followup_error: None,
             command_index: 0,
             chat_actions: false,
+            composer_slot: ComposerSlot::Main,
             save_playbook: None,
             share: None,
             open_logs: Default::default(),
@@ -755,6 +786,10 @@ impl App {
             update: crate::update::Update::Unknown,
             visual_tables: Default::default(),
             queued: Vec::new(),
+            steer: Vec::new(),
+            steer_next: 0,
+            blank_answers: Default::default(),
+            composer_seen: (String::new(), std::time::Instant::now()),
             attachments: Vec::new(),
             attach_error: None,
             show_archived: false,
@@ -987,8 +1022,7 @@ impl App {
         }
         self.net.playbooks(Some(id.to_string()));
         self.proposals = Load::Loading;
-        self.helper = None;
-        self.artifact = None;
+        self.clear_side_items();
         self.net.proposals(id.to_string());
         self.followups = Load::Loading;
         self.net.followups(id.to_string());
@@ -1473,15 +1507,15 @@ impl App {
     /// Opens a helper session beside the conversation, read-only.
     pub fn open_helper(&mut self, id: &str) {
         let Some(scope) = self.chat_scope() else { return };
-        self.artifact = None;
-        self.helper = Some((id.to_string(), Load::Loading));
-        self.show_side_item();
-        self.net.helper(scope, id.to_string());
+        if self.add_helper_tab(id, Load::Loading) {
+            self.net.helper(scope, id.to_string());
+        }
     }
 
     /// Makes the helper the main chat, where replies can be written.
     pub fn helper_as_main(&mut self) {
-        if let Some((id, _)) = self.helper.take() {
+        if let Some(id) = self.front_helper().map(|(id, _)| id.clone()) {
+            self.close_tab(&crate::side::SideTab::Helper(id.clone()));
             self.open_session(&id);
         }
     }
@@ -1629,8 +1663,7 @@ impl App {
             return;
         }
         self.pane = false;
-        self.helper = None;
-        self.artifact = None;
+        self.clear_side_items();
         if std::mem::take(&mut self.pane_folded_sidebar) {
             self.sidebar_open = true;
         }
@@ -1648,8 +1681,7 @@ impl App {
             self.select_business(business);
         }
         self.general = business.is_empty();
-        self.helper = None;
-        self.artifact = None;
+        self.clear_side_items();
         self.open_session(id);
     }
 
@@ -1663,8 +1695,7 @@ impl App {
     pub fn new_chat(&mut self) {
         self.enter_agent();
         // Home and a new chat open with nothing beside them.
-        self.helper = None;
-        self.artifact = None;
+        self.clear_side_items();
         self.general = false;
         self.chat_id = None;
         self.conversation = Load::Idle;
@@ -1681,8 +1712,7 @@ impl App {
         self.general = chat.business_id.is_none();
         self.enter_agent();
         // What was open beside the last chat belongs to it.
-        self.helper = None;
-        self.artifact = None;
+        self.clear_side_items();
         self.chat_id = Some(chat.id.clone());
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
@@ -1871,6 +1901,14 @@ impl App {
 
     /// Sends what the composer holds, or queues it while a turn runs: it
     /// goes out when the agent finishes, as the web composer queues follow-ups.
+    /// Sends from either chat box.
+    pub fn send_from(&mut self, slot: ComposerSlot, tx: &mut Tx) {
+        match slot {
+            ComposerSlot::Main => self.send_message(tx),
+            ComposerSlot::Side => self.send_side(tx),
+        }
+    }
+
     pub fn send_message(&mut self, tx: &mut Tx) {
         let text = self.composer.text.trim().to_string();
         if text.is_empty() || self.model_unavailable() {
@@ -1879,10 +1917,105 @@ impl App {
         self.composer.clear();
         self.command_index = 0;
         if matches!(self.turn, Turn::Working { .. }) {
-            self.queued.push(text);
+            self.steer_or_queue(text);
             return;
         }
         self.dispatch(text, tx);
+    }
+
+    /// While a turn runs: a message goes to the run itself, which reads it at
+    /// its next step. A slash command, or a turn not yet accepted or being
+    /// stopped, queues it for after instead.
+    pub fn steer_or_queue(&mut self, text: String) {
+        let request = match &self.turn {
+            Turn::Working { request: Some(r), stopping: false, .. } if !text.starts_with('/') => r.clone(),
+            _ => {
+                self.queued.push(text);
+                return;
+            }
+        };
+        let local = self.steer_next;
+        self.steer_next += 1;
+        self.steer.push(crate::chat::Steer { local, id: None, text: text.clone(), read: false });
+        self.net.note(request, local, text);
+    }
+
+    #[cfg(test)]
+    pub fn settle_steer_for_test(&mut self) {
+        self.settle_steer();
+    }
+
+    /// How long a pause in typing is before the feedforward row shows.
+    pub const PAUSE: std::time::Duration = std::time::Duration::from_millis(700);
+
+    /// What the agent will take as given for the message being typed, once the
+    /// person has paused; empty while they type, for a command, or mid-turn.
+    pub fn feedforward(&self) -> Vec<crate::chat::Forward> {
+        let text = self.composer.text.trim();
+        if text.is_empty() || text.starts_with('/') || !matches!(self.turn, Turn::Idle) || self.composer_seen.0 != self.composer.text || self.composer_seen.1.elapsed() < Self::PAUSE {
+            return Vec::new();
+        }
+        let business = if self.general { None } else { self.active_business().map(|b| b.name.as_str()) };
+        crate::chat::feedforward(text, business, self.attachments.len(), self.prefs.response_style)
+    }
+
+    /// The next reply style, for the feedforward chip.
+    pub fn cycle_style(&mut self) {
+        use crate::prefs::Style;
+        self.prefs.response_style = match self.prefs.response_style {
+            Style::Friendly => Style::Concise,
+            Style::Concise => Style::Detailed,
+            Style::Detailed => Style::Friendly,
+        };
+        self.prefs.save();
+    }
+
+    /// The answer the person gave to a question the agent left: one they just
+    /// picked, or one in a later message or note.
+    pub fn blank_answer(&self, b: &crate::chat::Blank) -> Option<String> {
+        if let Some(a) = self.blank_answers.get(&b.id) {
+            return Some(a.clone());
+        }
+        let mut texts: Vec<&str> = self.steer.iter().map(|n| n.text.as_str()).collect();
+        texts.extend(self.queued.iter().map(String::as_str));
+        if let Some(c) = self.conversation.ready() {
+            for m in c.messages.iter().filter(|m| m.role == "user") {
+                texts.push(m.text.as_str());
+                texts.extend(m.notes.iter().map(String::as_str));
+            }
+        }
+        b.answered_in(texts)
+    }
+
+    /// Answers a question the agent left. While it works the answer reaches the
+    /// run at its next step; afterwards it goes as a message, for the agent to
+    /// redo what depended on the assumption.
+    pub fn answer_blank(&mut self, b: &crate::chat::Blank, answer: &str, tx: &mut Tx) {
+        let answer = answer.trim();
+        if answer.is_empty() || self.model_unavailable() {
+            return;
+        }
+        self.blank_answers.insert(b.id.clone(), answer.to_string());
+        let text = b.answer_text(answer);
+        if matches!(self.turn, Turn::Working { .. }) {
+            self.steer_or_queue(text);
+        } else if answer != b.assumed {
+            self.dispatch(format!("{text}. You had assumed «{}»: update what depended on it.", b.assumed), tx);
+        }
+    }
+
+    /// Puts "For «question»: " in the chat box, for an answer of the person's own.
+    pub fn answer_blank_freely(&mut self, b: &crate::chat::Blank, tx: &mut Tx) {
+        self.composer.replace_text(format!("For «{}»: ", b.question));
+        tx.focus("composer-input", false);
+    }
+
+    /// The turn ended: notes it never read go out next, as ordinary messages.
+    fn settle_steer(&mut self) {
+        let unread: Vec<String> = self.steer.drain(..).filter(|n| !n.read).map(|n| n.text).collect();
+        for (i, text) in unread.into_iter().enumerate() {
+            self.queued.insert(i, text);
+        }
     }
 
     /// Sends a slash command at once (or queues it behind the turn under way).
@@ -2088,11 +2221,10 @@ impl App {
         self.notices_open = false;
         self.preview_rect = None;
         let Some(business) = self.active.clone() else { return };
-        self.helper = None;
-        self.artifact = Some(crate::artifacts::Pane { business: business.clone(), id: artifact.into(), requested: None,
-            loaded: Load::Loading, source: false });
-        self.show_side_item();
-        self.net.artifact(business, artifact.into(), None);
+        let pane = crate::artifacts::Pane { business: business.clone(), id: artifact.into(), requested: None, loaded: Load::Loading, source: false };
+        if self.add_artifact_tab(pane) {
+            self.net.artifact(business, artifact.into(), None);
+        }
     }
 
     pub fn create_share(&mut self) {
@@ -2224,7 +2356,7 @@ impl App {
         });
     }
 
-    fn dispatch(&mut self, text: String, tx: &mut Tx) {
+    pub(crate) fn dispatch(&mut self, text: String, tx: &mut Tx) {
         let Some(business) = self.chat_scope() else { return };
         let conversation = match (&self.chat_id, self.conversation.ready()) {
             (Some(id), Some(c)) if &c.id == id => Some((id.clone(), c.revision)),
@@ -2545,6 +2677,11 @@ impl App {
                 if let Turn::Working { request: Some(r), progress, .. } = &mut self.turn {
                     if *r == id {
                         progress.apply(&events);
+                        for n in &mut self.steer {
+                            if n.id.as_ref().is_some_and(|i| progress.notes_read.contains(i)) {
+                                n.read = true;
+                            }
+                        }
                     }
                 }
             }
@@ -2586,10 +2723,8 @@ impl App {
             },
             Reply::Artifact { business, id, version, result } => {
                 let result = self.failed(result);
-                if let Some(p) = &mut self.artifact {
-                    if p.business == business && p.id == id && p.requested == version {
-                        p.loaded = to_load(result);
-                    }
+                if let Some(p) = self.artifacts.iter_mut().find(|p| p.business == business && p.id == id && p.requested == version) {
+                    p.loaded = to_load(result);
                 }
             },
             Reply::Archived { archived, result, .. } => {
@@ -2610,6 +2745,31 @@ impl App {
                         self.net.conversation(business, conversation);
                     }
                     tx.scroll_to_bottom("transcript");
+                }
+            }
+            Reply::NoteSent { local, result } => {
+                let read = match &self.turn {
+                    Turn::Working { progress, .. } => progress.notes_read.clone(),
+                    _ => Vec::new(),
+                };
+                match result {
+                    Ok(id) => {
+                        if let Some(n) = self.steer.iter_mut().find(|n| n.local == local) {
+                            n.read = read.contains(&id);
+                            n.id = Some(id);
+                        }
+                    }
+                    // Refused (the run had just finished, or took all it can): it goes next instead.
+                    Err(_) => {
+                        if let Some(at) = self.steer.iter().position(|n| n.local == local) {
+                            let n = self.steer.remove(at);
+                            if matches!(self.turn, Turn::Working { .. }) {
+                                self.queued.insert(0, n.text);
+                            } else {
+                                self.queued.push(n.text);
+                            }
+                        }
+                    }
                 }
             }
             Reply::CancelFailed => {
@@ -2633,6 +2793,7 @@ impl App {
                 if request.is_some() && !matches!(self.turn, Turn::Working { .. }) {
                     return;
                 }
+                self.settle_steer();
                 match self.failed(result) {
                     Ok(()) => {
                         // An answer that was shown as it was written stays until the stored
@@ -2779,8 +2940,8 @@ impl App {
             Reply::Proposals(..) => {}
             Reply::Helper(id, r) => {
                 let r = self.failed(r);
-                if let Some((open, load)) = &mut self.helper {
-                    if *open == id {
+                if let Some((_, load)) = self.helpers.iter_mut().find(|(open, _)| *open == id) {
+                    {
                         *load = match r {
                             Ok(Some(c)) => Load::Ready(c),
                             Ok(None) => Load::Failed("This helper session no longer exists.".into()),

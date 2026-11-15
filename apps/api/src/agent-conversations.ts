@@ -31,7 +31,7 @@ const Activity = Schema.Union(
 const Attachment = Schema.Struct({ name: Schema.String, type: Schema.String, text: Schema.String })
 const ContextUse = Schema.Struct({ historyChars: Schema.Number, budgetChars: Schema.Number, verbatim: Schema.Number, compacted: Schema.Number, omitted: Schema.Number })
 const Message = Schema.Struct({ context: Schema.optional(ContextUse), attachments: Schema.optional(Schema.Array(Attachment).pipe(Schema.maxItems(3))), activity: Schema.optional(Schema.Array(Activity).pipe(Schema.maxItems(24))), durationMs: Schema.optional(Schema.Number), role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
-  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), artifacts: Schema.optional(Schema.Array(ArtifactRefSchema).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
+  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), artifacts: Schema.optional(Schema.Array(ArtifactRefSchema).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), notes: Schema.optional(Schema.Array(Schema.String).pipe(Schema.maxItems(10))), blanks: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, question: Schema.String, options: Schema.Array(Schema.String), assumed: Schema.String })).pipe(Schema.maxItems(3))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session),
   title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
@@ -223,6 +223,10 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
     readonly artifacts?: ReadonlyArray<import("./artifacts.js").ArtifactRef> | undefined
     readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
     readonly context?: typeof ContextUse.Type | undefined
+    /** Notes the person sent while the run worked, that it read. */
+    readonly notes?: ReadonlyArray<string> | undefined
+    /** Questions the run left for the person, with what it assumed. */
+    readonly blanks?: ReadonlyArray<{ readonly id: string; readonly question: string; readonly options: ReadonlyArray<string>; readonly assumed: string }> | undefined
   }, unknown, R>
 /** The agent without session tools; the turn context is not passed on. */
 const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
@@ -284,6 +288,8 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
   // turns see the start of each, so one large file never crowds out the chat.
   const history: AgentHistory = current.messages.map(m => m.attachments?.length
     ? { ...m, text: withAttachments(m.text, m.attachments.map(f => f.text.length > HISTORY_FILE_CHARS ? { ...f, text: `${f.text.slice(0, HISTORY_FILE_CHARS)}\n[… the rest of this file was read on the turn it was attached]` } : f)) } : m)
+    // What the person added while a turn worked belongs to that turn's request.
+    .map(m => m.notes?.length ? { ...m, text: `${m.text}\n\nAdded while you were working:\n${m.notes.map(n => `«${n}»`).join("\n")}` } : m)
   const workflow = agentWorkflow(scope.businessId, body.message)
   const { runId, journal } = yield* startRun(scope, { conversationId: current.id, leaseId: lease, requestId: body.requestId, objective: body.message,
     workflow: workflow ? { id: workflow.id, version: workflow.version } : null, budget: workflow?.budget ?? runBudget })
@@ -304,7 +310,7 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
         // The operator's first turn in a top-level chat also asks for a topic title.
         generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined, style: body.style, surfaces: body.surfaces })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.artifacts?.length ? { artifacts: reply.artifacts } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}), ...(reply.notes?.length ? { notes: reply.notes.slice(0, 10) } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.artifacts?.length ? { artifacts: reply.artifacts } : {}), ...(reply.blanks?.length ? { blanks: reply.blanks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
     const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       // Background grants may be revoked while the model is answering. The

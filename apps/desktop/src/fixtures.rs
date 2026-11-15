@@ -438,8 +438,7 @@ pub fn agent_helper(s: &mut App) {
         ],
         session: Some(crate::chat::SessionInfo { parent_session_id: Some("c1".into()), title: Some("How others explain onboarding".into()), role: Some("researcher".into()) }),
     };
-    s.helper = Some(("s2".into(), Load::Ready(helper)));
-    s.show_side_item();
+    s.add_helper_tab("s2", Load::Ready(helper));
 }
 
 /// An accepted draft in the chat's work pane.
@@ -1157,11 +1156,10 @@ pub fn agent_series(s: &mut App) {
 pub fn agent_artifact(s: &mut App) {
     agent(s);
     let content = "# A clearer path to your next campaign\n\nOne team, one plan, and a record of what shipped.\n\n## This week\n\n- Review the landing page\n- Connect the measurement account\n- Agree the launch date\n\n**Draft for review.** Nothing is published.";
-    s.artifact = Some(crate::artifacts::Pane { business: s.active.clone().unwrap(), id: "fixture-artifact".into(), requested: None,
+    s.add_artifact_tab(crate::artifacts::Pane { business: s.active.clone().unwrap(), id: "fixture-artifact".into(), requested: None,
         loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
             versions: vec![crate::artifacts::Version { version: 2, title: "Campaign brief".into() }, crate::artifacts::Version { version: 1, title: "First brief".into() }] }),
         source: false });
-    s.show_side_item();
 }
 pub fn channels_wordpress(s: &mut App) {
     channels(s);
@@ -1185,4 +1183,48 @@ pub fn side_browser(s: &mut App) {
     agent(s);
     s.show_browser_tab();
     s.side.browser.recents = vec!["https://northstar.example/pricing".into()];
+}
+
+/// A helper and then an artifact opened from the same chat: two tabs after the browser.
+pub fn side_tabs(s: &mut App) {
+    agent_helper(s);
+    let helper = s.helpers.clone();
+    agent_artifact(s);
+    for (id, load) in helper {
+        s.add_helper_tab(&id, load);
+    }
+    s.show_tab(crate::side::SideTab::Artifact("fixture-artifact".into()));
+}
+
+/// Two messages sent while the agent works: one it has read, one waiting for its next step.
+pub fn agent_steer(s: &mut App) {
+    agent_working(s);
+    s.steer = vec![
+        crate::chat::Steer { local: 0, id: Some("n1".into()), text: "Only count teams on the annual plan.".into(), read: true },
+        crate::chat::Steer { local: 1, id: Some("n2".into()), text: "And keep it to one paragraph.".into(), read: false },
+    ];
+}
+
+/// The agent left two questions while it drafts; one is answered already.
+pub fn agent_blanks(s: &mut App) {
+    agent_steer(s);
+    s.steer.clear();
+    let blank = |id: &str, q: &str, opts: &[&str], assumed: &str| crate::chat::Blank { id: id.into(), question: q.into(), options: opts.iter().map(|o| o.to_string()).collect(), assumed: assumed.into() };
+    if let Turn::Working { progress, .. } = &mut s.turn {
+        progress.blanks = vec![
+            blank("b1", "Say \"no credit card needed\" on the page?", &["Yes", "No"], "No"),
+            blank("b2", "Who is the page for?", &["Marketing leads", "Agencies", "Founders"], "Marketing leads"),
+        ];
+    }
+    s.blank_answers.insert("b2".into(), "Agencies".into());
+}
+
+/// A message typed and paused on: what the agent will take as given shows above the box.
+pub fn agent_feedforward(s: &mut App) {
+    agent(s);
+    let text = "Draft a landing page for agencies and publish it on the website";
+    s.composer = rune::TextEdit::new(text);
+    s.draft_key = format!("{}:{}", s.chat_scope().unwrap_or_default(), s.chat_id.clone().unwrap_or_default());
+    s.drafts.set(&s.draft_key.clone(), text);
+    s.composer_seen = (text.into(), std::time::Instant::now() - std::time::Duration::from_secs(2));
 }

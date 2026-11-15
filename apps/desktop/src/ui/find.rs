@@ -44,7 +44,7 @@ fn items(s: &App) -> Vec<Item> {
     let bid = s.active.clone();
     if bid.is_some() {
         let name = s.active_business().map(|x| x.name.clone()).unwrap_or_else(|| "Workspace".into());
-        let review = |topic: &str| Go::Ask(format!("Review {topic} for this business using the available tools. Show the evidence and what needs my attention."));
+        let review = |topic: &str| Go::Ask(format!("Review {topic} for this business using the available tools. Show what you checked and what needs my attention."));
         let pages: [(&str, Go, &'static rune::Icon, &str); 11] = [
             ("Agent", Go::View(View::Agent), &icons::LAYOUT_GRID, "chat setup status plan report"),
             ("Channels", Go::Page(Page::Channels), &icons::GLOBE, "channels connect integrations google ads meta stripe wordpress analytics"),

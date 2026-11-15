@@ -182,3 +182,4 @@ const char *or_browser_url(void) {
     return browserURL;
 }
 int or_browser_state(void) { return (browser.canGoBack ? 1 : 0) | (browser.canGoForward ? 2 : 0) | (browser.loading ? 4 : 0); }
+
