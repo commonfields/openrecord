@@ -221,6 +221,9 @@ pub struct Outgoing {
     pub attachments: Vec<Attachment>,
     /// How the person wants answers written (friendly when absent).
     pub style: Option<String>,
+    /// The artifacts open beside the chat, the one in front first: what a change
+    /// asked for in the chat applies to.
+    pub viewing: Vec<String>,
 }
 
 /// How much of the chat's memory the model was sent on a turn.

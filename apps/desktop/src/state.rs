@@ -2365,7 +2365,7 @@ impl App {
         // The live steps' open lines belong to the turn before.
         self.open_logs.retain(|(i, _)| *i != usize::MAX);
         self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
-        let out = crate::chat::Outgoing { message: text, selection: self.turn_selection(), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()) };
+        let out = crate::chat::Outgoing { message: text, selection: self.turn_selection(), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()), viewing: self.viewing_artifacts() };
         self.attach_error = None;
         self.net.send(business, conversation, out);
         // The sent message and the bottom of the chat land at once, with no glide up.

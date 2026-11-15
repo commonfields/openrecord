@@ -642,6 +642,9 @@ impl Client {
         if let Some(style) = &out.style {
             body["style"] = json!(style);
         }
+        if !out.viewing.is_empty() {
+            body["viewing"] = json!({ "artifacts": out.viewing });
+        }
         // This app draws generated views, so the agent may answer with ```ui blocks.
         body["surfaces"] = json!(["ui"]);
         if !out.attachments.is_empty() {

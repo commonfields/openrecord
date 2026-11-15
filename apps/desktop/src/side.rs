@@ -91,6 +91,20 @@ impl App {
         }
     }
 
+    /// What a turn tells the agent is open beside the chat: with an artifact in
+    /// front of the panel, that one first, then the chat's other open artifacts.
+    pub fn viewing_artifacts(&self) -> Vec<String> {
+        let SideTab::Artifact(front) = self.side_tab() else { return Vec::new() };
+        if !self.side_shown() {
+            return Vec::new();
+        }
+        let rest = self.side_items().iter().filter_map(|t| match t {
+            SideTab::Artifact(id) if *id != front => Some(id.clone()),
+            _ => None,
+        });
+        std::iter::once(front.clone()).chain(rest).take(8).collect()
+    }
+
     pub fn front_artifact_mut(&mut self) -> Option<&mut crate::artifacts::Pane> {
         match self.side_tab() {
             SideTab::Artifact(id) => self.artifacts.iter_mut().find(|p| p.id == id),
@@ -195,18 +209,16 @@ impl App {
         self.side.front = SideTab::Browser;
     }
 
-    /// Sends what the panel's chat box holds to the chat, naming the tab in
-    /// front so the agent knows what it is about. Queued behind a turn under way.
+    /// Sends what the panel's chat box holds to the chat, naming a helper in
+    /// front so the agent knows what it is about (an artifact goes with the turn). Queued behind a turn under way.
     pub fn send_side(&mut self, tx: &mut Tx) {
         let text = self.side.composer.text.trim().to_string();
         if text.is_empty() || self.model_unavailable() {
             return;
         }
         let about = match self.side_tab() {
-            SideTab::Artifact(id) => {
-                let title = self.front_artifact().and_then(|p| p.loaded.ready()).map(|a| a.title.clone()).unwrap_or_else(|| "page".into());
-                format!("About the page \"{title}\" (artifact {id}) open beside the chat: {text}")
-            }
+            // The turn names the artifact in front itself (`viewing_artifacts`).
+            SideTab::Artifact(_) => text,
             SideTab::Helper(id) => {
                 let title = self.front_helper().and_then(|(_, l)| l.ready()).and_then(|c| c.session.as_ref()).and_then(|i| i.title.clone()).unwrap_or_else(|| "helper".into());
                 format!("About the helper \"{title}\" (session {id}): {text}")
