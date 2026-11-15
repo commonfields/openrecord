@@ -73,6 +73,11 @@ export const harnessApi = (withSession: WithSession) => {
       const token = req.headers["authorization"]?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? ""
       return yield* act(yield* authenticateBridge(token))
     }).pipe(Effect.catchAll(failure))
+  // A new chat, empty or branched from another chat up to one of its messages.
+  const NewConversation = Schema.Struct({
+    conversationId: Schema.UUID,
+    from: Schema.optional(Schema.Struct({ conversationId: Schema.UUID, through: Schema.Int.pipe(Schema.between(0, 199)) })),
+  })
   return HttpRouter.empty.pipe(
     HttpRouter.get("/api/agent/conversation", operator(session => Effect.gen(function*() {
       const req = yield* HttpServerRequest.HttpServerRequest
@@ -81,9 +86,9 @@ export const harnessApi = (withSession: WithSession) => {
       return yield* json(200, { conversation: yield* loadConversation({ ...session, businessId: null }, id) }, { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.post("/api/agent/conversation", operator(session => Effect.gen(function*() {
-      const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
+      const body = decode(NewConversation, yield* readJson)
       if (!body) return yield* invalid()
-      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: null }, body.conversationId) }, { "cache-control": "no-store" })
+      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: null }, body.conversationId, body.from) }, { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.del("/api/agent/conversation", operator(session => Effect.gen(function*() {
       const req = yield* HttpServerRequest.HttpServerRequest
@@ -126,10 +131,10 @@ export const harnessApi = (withSession: WithSession) => {
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.post("/api/businesses/:id/agent/conversation", operator(session => Effect.gen(function*() {
       const id = yield* routeId
-      const body = decode(Schema.Struct({ conversationId: Schema.UUID }), yield* readJson)
+      const body = decode(NewConversation, yield* readJson)
       if (!id || !body) return yield* invalid()
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, id))) return yield* json(404, { _tag: "BusinessNotFound" })
-      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: id }, body.conversationId) }, { "cache-control": "no-store" })
+      return yield* json(200, { conversation: yield* createConversation({ ...session, businessId: id }, body.conversationId, body.from) }, { "cache-control": "no-store" })
     })).pipe(Effect.catchAll(failure))),
     HttpRouter.get(
       "/api/agent/providers",

@@ -81,7 +81,12 @@ pub struct ArtifactRef {
 impl ArtifactRef {
     /// "Landing page, version 2", in the words the web's card uses.
     pub fn caption(&self) -> String {
-        let kind = match self.kind.as_str() {
+        format!("{}, version {}. Saved to your library; nothing is published yet.", self.kind_label(), self.version.max(1))
+    }
+
+    /// What kind of piece it is, for people: "Landing page", "Email", …
+    pub fn kind_label(&self) -> &'static str {
+        match self.kind.as_str() {
             "LANDING_PAGE" => "Landing page",
             "ARTICLE" => "Article",
             "EMAIL" => "Email",
@@ -90,8 +95,7 @@ impl ArtifactRef {
             "BRIEF" => "Brief",
             "REPORT" => "Report",
             _ => "Document",
-        };
-        format!("{kind}, version {}. Saved to your library; nothing is published yet.", self.version.max(1))
+        }
     }
 }
 

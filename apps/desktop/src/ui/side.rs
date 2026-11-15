@@ -17,7 +17,7 @@ pub fn toggle(t: &Theme, open: bool) -> El {
     icon_button(t, "side-toggle", &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false).on_press(|s: &mut App| s.toggle_side())
 }
 
-pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
+pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
     let tab = s.side_tab();
     let body = match &tab {
         SideTab::Artifact(_) => super::artifacts::view(s, t),
@@ -27,6 +27,22 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         },
         SideTab::Browser => browser(s, t),
     };
+    // A page open in the browser runs to the panel's foot: the page is drawn
+    // behind the app, so the panel paints only its top band and leaves the
+    // rest clear, the chat box floating over the page.
+    if s.browser_page_shown() {
+        return col()
+            .key("side-panel")
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .radius(10.0)
+            .clip_rounded(10.0)
+            .role("complementary")
+            .label("Side panel")
+            .child(strip(s, t, &tab, lead).fill(t.background))
+            .child(col().w_full().grow(1.0).min_h(0.0).child(body));
+    }
     shadows(
         col()
             .key("side-panel")
@@ -38,7 +54,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .clip_rounded(10.0)
             .role("complementary")
             .label("Side panel")
-            .child(strip(s, t, &tab))
+            .child(strip(s, t, &tab, lead))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body))
             .children(chat_box(s, t, &tab)),
         &t.panel_shadow,
@@ -51,6 +67,7 @@ fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
     let ready = match tab {
         SideTab::Artifact(_) => s.front_artifact().is_some_and(|p| p.loaded.ready().is_some()),
         SideTab::Helper(_) => s.front_helper().is_some(),
+        // Over a page in the browser it floats on the page instead (`browser`).
         SideTab::Browser => false,
     };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
@@ -60,9 +77,27 @@ fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
 /// The tabs on the left, the browser pinned first and the chat's artifacts and
 /// helpers after it in the order they opened; widen and fold on the right.
 /// Level with the main header, with no rule under it.
-fn strip(s: &App, t: &Theme, front: &SideTab) -> El {
+fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
     let mut tabs = row().gap(2.0).center_y().grow(1.0).min_w(0.0).role("tablist").label("Panel tabs");
-    tabs = tabs.child(tab_button(t, "side-tab-browser", &icons::GLOBE, "Browser", *front == SideTab::Browser, None).on_press(|s: &mut App| s.show_browser_tab()));
+    // The browser's tabs first, each its own page; more open with the + after them.
+    let web = s.web_tabs();
+    let several = web.len() > 1;
+    for (id, name, current) in web {
+        let close = several.then(|| {
+            row()
+                .key(format!("side-web-close-{id}"))
+                .size(18.0, 18.0)
+                .radius(5.0)
+                .center()
+                .role("button")
+                .label("Close tab")
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(move |s: &mut App| s.close_web_tab(id))
+                .child(ico(&icons::X, 12.0, t.muted_foreground))
+        });
+        tabs = tabs.child(tab_button(t, &format!("side-tab-browser-{id}"), &icons::GLOBE, &name, *front == SideTab::Browser && current, close).on_press(move |s: &mut App| s.select_web_tab(id)));
+    }
     for (i, item) in s.side_items().iter().enumerate() {
         let (icon, name): (&'static rune::Icon, String) = match item {
             SideTab::Artifact(id) => (
@@ -92,12 +127,14 @@ fn strip(s: &App, t: &Theme, front: &SideTab) -> El {
         let showing = item.clone();
         tabs = tabs.child(tab_button(t, &format!("side-tab-{i}"), icon, &name, front == item, Some(close)).on_press(move |s: &mut App| s.show_tab(showing.clone())));
     }
+    tabs = tabs.child(icon_button(t, "side-tab-new", &icons::PLUS, "New tab", false).on_press(|s: &mut App| s.new_web_tab()));
     let wide = s.side.wide;
     row()
         .key("side-strip")
         .w_full()
         .h(48.0)
-        .pl(10.0)
+        .pl(lead)
+        .motion(super::widgets::CONTROL)
         .pr(10.0)
         .gap(4.0)
         .center_y()
@@ -160,7 +197,11 @@ fn browser(s: &App, t: &Theme) -> El {
                 s.browser_go(&text);
             })
     } else {
-        let now = native_preview::browser_url().or_else(|| b.url.clone()).unwrap_or_default();
+        // A landing page from the chat shows its title, not where its copy sits on disk.
+        let now = match s.browser_artifact().and_then(|p| p.loaded.ready()) {
+            Some(a) => a.title.clone(),
+            None => native_preview::browser_url().or_else(|| b.url.clone()).unwrap_or_default(),
+        };
         label(now, type_::XS, t.muted_foreground)
             .key("browser-address-shown")
             .w_full()
@@ -185,6 +226,7 @@ fn browser(s: &App, t: &Theme) -> El {
     let bar = row()
         .w_full()
         .h(44.0)
+        .fill(t.background)
         .px(8.0)
         .gap(2.0)
         .center_y()
@@ -196,23 +238,75 @@ fn browser(s: &App, t: &Theme) -> El {
             nav("browser-reload", &icons::REFRESH_CW, "Reload", open).on_press(|s: &mut App| s.browser_command(BrowserCommand::Reload))
         })
         .child(field.ml(6.0))
+        .children(open.then(|| {
+            // The page's own zoom: the app around it stays as it is.
+            let z = if b.zoom > 0.0 { b.zoom } else { 1.0 };
+            row()
+                .ml(4.0)
+                .gap(0.0)
+                .center_y()
+                .child(icon_button(t, "browser-zoom-out", &icons::MINUS, "Zoom out of the page", false).on_press(|s: &mut App| s.zoom_page(-1)))
+                .child(
+                    row()
+                        .key("browser-zoom-reset")
+                        .w(40.0)
+                        .h(28.0)
+                        .center()
+                        .child(label(format!("{}%", (z * 100.0).round() as i32), type_::XS, t.muted_foreground))
+                        .role("button")
+                        .label("Reset page zoom")
+                        .help("Actual size")
+                        .cursor(Cursor::Pointer)
+                        .on_press(|s: &mut App| s.zoom_page(0)),
+                )
+                .child(icon_button(t, "browser-zoom-in", &icons::PLUS, "Zoom in on the page", false).on_press(|s: &mut App| s.zoom_page(1)))
+        }))
         .children(open.then(|| icon_button(t, "browser-home", &icons::X, "Close page", false).on_press(|s: &mut App| s.browser_home())));
 
     let page = if open {
-        col()
+        // Clear while the page shows (it is behind the app); white while it is
+        // put away for a menu or dialog over it.
+        let shown = s.browser_visible();
+        let mut page = col()
             .key("browser-page")
             .w_full()
             .grow(1.0)
             .min_h(0.0)
-            .fill(rune::Color::WHITE)
             .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
                 s.side.browser.rect = Some(r);
+                if s.browser_artifact().is_none() {
+                    native_preview::browser_keep(&[]);
+                }
                 if s.browser_visible() {
                     let pending = s.side.browser.pending.take();
                     native_preview::browser_show(pending.as_deref(), r);
                 }
-            })
-            .child(label("Loading…", type_::XS, t.muted_foreground).padding(20.0))
+            });
+        if !shown {
+            page = page.fill(rune::Color::WHITE).child(label("Loading…", type_::XS, t.muted_foreground).padding(20.0));
+        }
+        // A landing page from the chat: the chat box floats over its foot.
+        if s.browser_artifact().is_some() {
+            let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
+            // The chat box takes the page's look: light over a light page, dark over a dark one.
+            let owned;
+            let ct: &Theme = match native_preview::browser_page_light() {
+                Some(light) => {
+                    owned = Theme::get(!light);
+                    &owned
+                }
+                None => t,
+            };
+            page = page.child(
+                col()
+                    .key("browser-chat")
+                    // The chat box and its details on the page itself, no card behind them.
+                    .pin(Some(0.0), None, Some(0.0), Some(0.0))
+                    .on_drawn_layout(|_: &mut App, r: [f32; 4]| native_preview::browser_keep(&[r]))
+                    .child(super::agent::composer(s, ct, &business, crate::state::ComposerSlot::Side)),
+            );
+        }
+        page
     } else {
         start(s, t)
     };
@@ -255,7 +349,7 @@ fn start(s: &App, t: &Theme) -> El {
     col().w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)
 }
 
-fn host(url: &str) -> String {
+pub fn host(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);
     rest.split('/').next().unwrap_or(rest).trim_start_matches("www.").to_string()
 }

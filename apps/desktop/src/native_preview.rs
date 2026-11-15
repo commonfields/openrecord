@@ -108,6 +108,102 @@ unsafe extern "C" {
     fn or_browser_command(command: i32);
     fn or_browser_url() -> *const std::ffi::c_char;
     fn or_browser_state() -> i32;
+    fn or_browser_keep(rects: *const f64, count: i32);
+    fn or_window_background(r: f64, g: f64, b: f64);
+    fn or_browser_pass_through(on: i32);
+    fn or_browser_drop(id: i32);
+    fn or_browser_select(id: i32);
+    fn or_browser_zoom(zoom: f64);
+    fn or_browser_page_light() -> i32;
+    fn or_browser_backdrop(r: f64, g: f64, b: f64);
+}
+
+/// Forgets one browser tab's page.
+pub fn browser_drop(id: u32) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_drop(id as i32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = id;
+}
+
+/// Brings a browser tab's page to the front.
+pub fn browser_select(id: u32) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_select(id as i32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = id;
+}
+
+/// The page's own zoom, apart from the app's.
+pub fn browser_zoom(zoom: f32) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_zoom(zoom as f64)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = zoom;
+}
+
+/// Whether the page in front is light where the chat box floats; None until known.
+pub fn browser_page_light() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: main thread only.
+        match unsafe { or_browser_page_light() } {
+            1 => Some(true),
+            0 => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Whether clicks over the browser's page reach it (not while a menu is open).
+pub fn browser_pass_through(on: bool) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_pass_through(on as i32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
+/// The panel's colour, behind the page's rounded corners.
+pub fn browser_backdrop(c: rune::Color) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_browser_backdrop(rune::color::srgb_encode(c.r) as f64, rune::color::srgb_encode(c.g) as f64, rune::color::srgb_encode(c.b) as f64)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = c;
+}
+
+/// The places the app draws over the browser's page, which keep their clicks
+/// (the floating chat box); window points.
+pub fn browser_keep(rects: &[[f32; 4]]) {
+    #[cfg(target_os = "macos")]
+    {
+        let flat: Vec<f64> = rects.iter().take(4).flat_map(|r| r.iter().map(|v| *v as f64)).collect();
+        // SAFETY: main thread only; C copies the rects before returning.
+        unsafe { or_browser_keep(flat.as_ptr(), (flat.len() / 4) as i32) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = rects;
+}
+
+/// The window's own colour, shown wherever the app leaves its view clear.
+pub fn window_background(c: rune::Color) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_window_background(rune::color::srgb_encode(c.r) as f64, rune::color::srgb_encode(c.g) as f64, rune::color::srgb_encode(c.b) as f64)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = c;
 }
 
 /// A step for the browser: back, forward, reload or stop.

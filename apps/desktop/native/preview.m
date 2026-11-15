@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
 // A document renderer, never an application browser. It has no app cookies,
 // persistent storage, script execution, popups, or external navigation.
@@ -115,13 +116,37 @@ void or_oauth_start(const char *raw) {
 // nothing with the document renderer above: its own non-persistent data store
 // (no app session, no cookies kept between launches), web pages only (http and
 // https), and a page's "open in a new window" loads in place instead.
+// The folder of the app's own copies of artifact pages: the one place on disk
+// the browser may open, so a page the agent wrote shows as a page.
+static NSURL *pagesFolder;
+static BOOL inPages(NSURL *url) {
+    return url.isFileURL && pagesFolder && [url.URLByStandardizingPath.path hasPrefix:[pagesFolder.URLByStandardizingPath.path stringByAppendingString:@"/"]];
+}
+// Reads the colour behind the page's foot, where the chat box floats, so the
+// box can take the page's light or dark look.
+static NSMutableDictionary<NSNumber *, NSNumber *> *browserLight;
+static NSMutableDictionary<NSNumber *, WKWebView *> *browsers;
+static void probeLight(WKWebView *view) {
+    NSString *js = @"(function(){function c(e){while(e&&e.nodeType===1){var m=(getComputedStyle(e).backgroundColor.match(/[\\d.]+/g)||[]).map(Number);if(m.length>=3&&(m.length<4||m[3]>0.5))return m;e=e.parentElement}return null}var e=document.elementFromPoint(innerWidth/2,Math.max(0,innerHeight-40));var m=c(e)||c(document.body)||c(document.documentElement);if(!m)return 1;return(0.299*m[0]+0.587*m[1]+0.114*m[2])>140?1:0})()";
+    NSNumber *key = [[browsers allKeysForObject:view] firstObject];
+    if (!key) return;
+    [view evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
+        if (!error && [result isKindOfClass:[NSNumber class]]) {
+            if (!browserLight) browserLight = [NSMutableDictionary new];
+            browserLight[key] = result;
+        }
+    }];
+}
 @interface ORBrowserPolicy : NSObject <WKNavigationDelegate, WKUIDelegate>
 @end
 @implementation ORBrowserPolicy
 - (void)webView:(WKWebView *)view decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))done {
     NSString *scheme = action.request.URL.scheme.lowercaseString;
-    BOOL web = [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"about"];
+    BOOL web = [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"about"] || inPages(action.request.URL);
     done(web ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+}
+- (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
+    probeLight(view);
 }
 - (WKWebView *)webView:(WKWebView *)view createWebViewWithConfiguration:(WKWebViewConfiguration *)config forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {
     if (action.request.URL) [view loadRequest:action.request];
@@ -130,10 +155,107 @@ void or_oauth_start(const char *raw) {
 @end
 static WKWebView *browser;
 static ORBrowserPolicy *browserPolicy;
+// One web view per browser tab, kept while the tab is open so its page and
+// history survive switching; `browser` is the tab in front.
+static int browserId;
 static char browserURL[4096];
+// The app's view the browser sits behind, and the places on the page the app
+// draws over and keeps its clicks for (the floating chat box), in its points.
+static NSView *browserHost;
+// The page sits in a box of the panel's colour: the page is rounded on every
+// corner, the box only at the foot where the panel itself is rounded, so the
+// page's top corners show the panel and its foot follows the panel's curve.
+static NSView *browserBox;
+static NSColor *browserPanel;
+static BOOL browserPassThrough = YES;
+static NSRect browserKeep[4];
+static int browserKeeps;
+static IMP hostHitTest;
 
-void or_browser_hide(void) { [browser setHidden:YES]; }
-void or_browser_close(void) { [browser stopLoading]; [browser removeFromSuperview]; browser = nil; browserPolicy = nil; browserURL[0] = 0; }
+// Over the page, a click or scroll goes to the page; over what the app draws
+// on it, to the app.
+static NSView *hostHitTestThrough(NSView *self, SEL cmd, NSPoint point) {
+    if (self == browserHost && browserPassThrough && browserBox && !browserBox.hidden && browserBox.superview == self.superview && NSPointInRect(point, browserBox.frame)) {
+        NSPoint local = [self convertPoint:point fromView:self.superview];
+        CGFloat y = self.isFlipped ? local.y : self.bounds.size.height - local.y;
+        BOOL kept = NO;
+        for (int i = 0; i < browserKeeps; i++) if (NSPointInRect(NSMakePoint(local.x, y), browserKeep[i])) kept = YES;
+        if (!kept) return [browserBox hitTest:point] ?: [browser hitTest:point];
+    }
+    return ((NSView *(*)(NSView *, SEL, NSPoint))hostHitTest)(self, cmd, point);
+}
+static void passThrough(NSView *host) {
+    if (hostHitTest) return;
+    Class cls = object_getClass(host);
+    SEL sel = @selector(hitTest:);
+    Method m = class_getInstanceMethod(cls, sel);
+    hostHitTest = method_getImplementation(m);
+    // Its own override, so no other view's hit testing changes.
+    if (!class_addMethod(cls, sel, (IMP)hostHitTestThrough, method_getTypeEncoding(m))) hostHitTest = method_setImplementation(m, (IMP)hostHitTestThrough);
+}
+
+// Whether clicks over the page reach it: not while a menu or dialog is open.
+void or_browser_pass_through(int on) { browserPassThrough = on != 0; }
+
+// The panel's colour, behind the page's rounded corners.
+void or_browser_backdrop(double r, double g, double b) {
+    NSColor *c = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+    if ([c isEqual:browserPanel]) return;
+    browserPanel = c;
+    if (browserBox) browserBox.layer.backgroundColor = c.CGColor;
+}
+
+// The places the app draws over the page, in window points from the top left.
+void or_browser_keep(const double *rects, int count) {
+    browserKeeps = count < 0 ? 0 : (count > 4 ? 4 : count);
+    for (int i = 0; i < browserKeeps; i++) browserKeep[i] = NSMakeRect(rects[i * 4], rects[i * 4 + 1], rects[i * 4 + 2], rects[i * 4 + 3]);
+}
+
+// The window's own colour, which shows wherever the app leaves its view clear.
+void or_window_background(double r, double g, double b) {
+    NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;
+    if (!window) for (NSWindow *candidate in NSApp.windows) {
+        if (candidate.visible && candidate.canBecomeMainWindow) { window = candidate; break; }
+    }
+    NSColor *c = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+    if (window && ![window.backgroundColor isEqual:c]) window.backgroundColor = c;
+}
+
+void or_browser_hide(void) { [browserBox setHidden:YES]; }
+
+// Forgets one tab's page.
+void or_browser_drop(int id) {
+    WKWebView *v = browsers[@(id)];
+    [v stopLoading];
+    [v removeFromSuperview];
+    [browsers removeObjectForKey:@(id)];
+    [browserLight removeObjectForKey:@(id)];
+    if (id == browserId) { browser = nil; browserURL[0] = 0; }
+}
+
+// The tab in front closes its page (back to the start list).
+void or_browser_close(void) { or_browser_drop(browserId); browserKeeps = 0; [browserBox setHidden:YES]; }
+
+// Brings another tab's page to the front; it loads on the next show.
+void or_browser_select(int id) {
+    if (id == browserId) return;
+    [browser removeFromSuperview];
+    browserId = id;
+    browser = browsers[@(id)];
+    if (browser && browserBox) { [browserBox addSubview:browser]; [browser setFrame:browserBox.bounds]; }
+}
+
+// The page's own zoom, apart from the app's.
+void or_browser_zoom(double zoom) {
+    if (@available(macOS 11.0, *)) { if (browser && browser.pageZoom != zoom) browser.pageZoom = zoom; }
+}
+
+// 1 light, 0 dark, -1 not known; asks again for next time.
+int or_browser_page_light(void) {
+    if (browser) probeLight(browser);
+    NSNumber *n = browserLight[@(browserId)];
+    return n ? n.intValue : -1;
+}
 
 // Places the browser at the rect (window points, top-left origin) and, when
 // `url` is given and differs from what it shows, loads it.
@@ -149,20 +271,48 @@ void or_browser_show(const char *url, double x, double y, double w, double h) {
         config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
         config.preferences.javaScriptCanOpenWindowsAutomatically = NO;
         browser = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
-        browserPolicy = [ORBrowserPolicy new];
+        if (!browserPolicy) browserPolicy = [ORBrowserPolicy new];
         browser.navigationDelegate = browserPolicy;
         browser.UIDelegate = browserPolicy;
         browser.allowsBackForwardNavigationGestures = YES;
+        browser.wantsLayer = YES;
+        browser.layer.cornerRadius = 10.0;
+        browser.layer.masksToBounds = YES;
+        browser.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        if (!browsers) browsers = [NSMutableDictionary new];
+        browsers[@(browserId)] = browser;
     }
-    if (browser.superview != host) { [browser removeFromSuperview]; [host addSubview:browser]; }
+    if (!browserBox) {
+        browserBox = [[NSView alloc] initWithFrame:NSZeroRect];
+        browserBox.wantsLayer = YES;
+        browserBox.layer.cornerRadius = 10.0;
+        // Unflipped layer: min Y is the foot.
+        browserBox.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+        browserBox.layer.masksToBounds = YES;
+        if (browserPanel) browserBox.layer.backgroundColor = browserPanel.CGColor;
+    }
+    if (browser.superview != browserBox) { [browser removeFromSuperview]; [browserBox addSubview:browser]; }
+    // Behind the app's own view, not on it: the app draws over the page (the
+    // chat box floats on it) and leaves the rest of the page's place clear.
+    NSView *frameView = host.superview;
+    if (browserBox.superview != frameView) { [browserBox removeFromSuperview]; [frameView addSubview:browserBox positioned:NSWindowBelow relativeTo:host]; }
+    passThrough(host);
+    browserHost = host;
     CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
-    NSRect frame = NSMakeRect(x, top, w, h);
-    if (!NSEqualRects(browser.frame, frame)) [browser setFrame:frame];
+    NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
+    if (!NSEqualRects(browserBox.frame, frame)) { [browserBox setFrame:frame]; [browser setFrame:browserBox.bounds]; }
     if (url && url[0]) {
         NSURL *next = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
-        if (next && ![next isEqual:browser.URL]) [browser loadRequest:[NSURLRequest requestWithURL:next]];
+        if (next && ![next isEqual:browser.URL]) {
+            if (next.isFileURL) {
+                pagesFolder = next.URLByDeletingLastPathComponent;
+                [browser loadFileURL:next allowingReadAccessToURL:pagesFolder];
+            } else {
+                [browser loadRequest:[NSURLRequest requestWithURL:next]];
+            }
+        }
     }
-    if (browser.hidden) [browser setHidden:NO];
+    if (browserBox.hidden) [browserBox setHidden:NO];
 }
 
 // 1 back, 2 forward, 3 reload, 4 stop.

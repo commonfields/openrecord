@@ -23,7 +23,7 @@ mod shell;
 pub use shell::Resize;
 mod settings;
 mod series;
-mod side;
+pub mod side;
 mod signin;
 mod sources;
 mod surface;
@@ -54,6 +54,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     // The browser tab's page sits over its slot only while nothing is drawn over it.
     if s.browser_visible() {
         if let Some(rect) = s.side.browser.rect { crate::native_preview::browser_show(None, rect); }
+        crate::native_preview::browser_zoom(if s.side.browser.zoom > 0.0 { s.side.browser.zoom } else { 1.0 });
+        // While a menu or dialog is open over it, clicks are the app's.
+        crate::native_preview::browser_pass_through(s.native_view_clear());
     } else { crate::native_preview::browser_hide(); }
     let z = s.zoom();
     // The traffic lights follow the zoom so they stay on the header's line,
@@ -93,7 +96,13 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     // Every hover eases in and out over 150 milliseconds on the web's curve
     // (Tailwind's default `transition`), instead of landing at once.
     let ease = rune::Curve::Tween { duration: 0.15, easing: rune::Easing::cubic(0.4, 0.0, 0.2, 1.0) };
-    let root = rune_kit::root(screen.fill(t.sidebar).hover_motion_within(ease, ease), layers);
+    // The window's own colour is the sidebar's, so where the app leaves its
+    // view clear (over a page in the browser, drawn behind it) the frame
+    // around the page still reads as the app.
+    crate::native_preview::window_background(t.sidebar);
+    crate::native_preview::browser_backdrop(t.background);
+    let screen = if s.screen == Screen::Workspace && s.browser_page_shown() { screen } else { screen.fill(t.sidebar) };
+    let root = rune_kit::root(screen.hover_motion_within(ease, ease), layers);
     zoomed(s, root, z)
 }
 
@@ -158,8 +167,12 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // The right panel: the artifact or helper and a browser, as tabs. Its share
     // is dragged from its left edge as the sidebar's width is; widened, it
     // takes the whole split and the page steps aside.
-    let side_card = s.side_shown().then(|| side::view(s, t, k));
-    let wide = side_card.is_some() && s.side.wide;
+    let wide = s.side_shown() && s.side.wide;
+    // Widened with the sidebar folded, the panel reaches the window's left edge:
+    // its tabs start past the traffic lights and the sidebar's buttons, 12
+    // points after them as the header's breadcrumbs do (the card sits 8 in).
+    let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 } else { 10.0 };
+    let side_card = s.side_shown().then(|| side::view(s, t, k, strip_lead));
     let panel = col()
         .key("panel-column")
         .grow(1.0)
@@ -204,7 +217,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .h_full()
                 .pt(8.0)
                 .pb(8.0)
-                .pl(if wide && !s.sidebar_open { 8.0 } else if wide { 0.0 } else { 8.0 })
+                // 4 points from the page beside it: the two read as one surface, split.
+                .pl(if wide && !s.sidebar_open { 8.0 } else if wide { 0.0 } else { 4.0 })
                 .pr(8.0)
                 .child(card)
                 .children((!wide).then(|| agent::side_edge("side"))),

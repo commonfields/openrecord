@@ -16,6 +16,7 @@ pub enum Reply {
     SignedOut,
     Businesses(ApiResult<Vec<Business>>),
     Chats(ApiResult<Vec<ChatSummary>>),
+    Branched(String, ApiResult<crate::api::Conversation>),
     Decisions(ApiResult<Vec<Decision>>),
     Overview(String, ApiResult<Overview>),
     Issues(String, ApiResult<Vec<Issue>>),
@@ -182,6 +183,15 @@ impl Net {
             send(Reply::Businesses(c.businesses()));
             send(Reply::Chats(c.chats()));
             send(Reply::Decisions(c.decisions()));
+        });
+    }
+
+    /// Branches a chat at one of its messages into a new chat.
+    pub fn branch(&self, business: String, from: String, through: usize) {
+        self.spawn(move |c, send| {
+            let r = c.branch_conversation(&business, &crate::api::uuid(), &from, through);
+            send(Reply::Branched(business, r));
+            send(Reply::Chats(c.chats()));
         });
     }
 

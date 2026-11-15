@@ -1157,7 +1157,7 @@ pub fn agent_artifact(s: &mut App) {
     agent(s);
     let content = "# A clearer path to your next campaign\n\nOne team, one plan, and a record of what shipped.\n\n## This week\n\n- Review the landing page\n- Connect the measurement account\n- Agree the launch date\n\n**Draft for review.** Nothing is published.";
     s.add_artifact_tab(crate::artifacts::Pane { business: s.active.clone().unwrap(), id: "fixture-artifact".into(), requested: None,
-        loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
+        loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), kind: "BRIEF".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
             versions: vec![crate::artifacts::Version { version: 2, title: "Campaign brief".into() }, crate::artifacts::Version { version: 1, title: "First brief".into() }] }),
         source: false });
 }

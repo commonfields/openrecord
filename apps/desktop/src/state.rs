@@ -2096,6 +2096,19 @@ impl App {
     }
 
     /// Asks the question behind the latest reply again.
+    /// Carries the chat up to message `i` into a new chat and opens it there;
+    /// the original stays as it was in the history.
+    pub fn branch_reply(&mut self, i: usize) {
+        if matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let (Some(scope), Some(id)) = (self.chat_scope(), self.chat_id.clone()) else { return };
+        if self.conversation.ready().is_none_or(|c| c.id != id || i >= c.messages.len()) {
+            return;
+        }
+        self.net.branch(scope, id, i);
+    }
+
     pub fn retry_reply(&mut self, tx: &mut Tx) {
         if matches!(self.turn, Turn::Working { .. }) {
             return;
@@ -2426,6 +2439,18 @@ impl App {
                     Err(e) => self.conversation = Load::Failed(e),
                 }
             }
+            Reply::Branched(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
+                Ok(c) => {
+                    self.clear_side_items();
+                    self.chat_id = Some(c.id.clone());
+                    self.turn = Turn::Idle;
+                    self.conversation = Load::Ready(c);
+                    tx.settle();
+                    tx.scroll_to_bottom("transcript");
+                    tx.focus("composer-input", false);
+                }
+                Err(e) => self.notice = Some(if e.is_empty() { "Couldn't branch the chat. Try again.".into() } else { e }),
+            },
             Reply::TurnQueued { business, conversation, request: id } if self.chat_scope().as_deref() == Some(business.as_str()) => {
                 if self.chat_id.is_none() {
                     self.chat_id = Some(conversation);
@@ -2487,6 +2512,9 @@ impl App {
                 let result = self.failed(result);
                 if let Some(p) = self.artifacts.iter_mut().find(|p| p.business == business && p.id == id && p.requested == version) {
                     p.loaded = to_load(result);
+                    if p.loaded.ready().is_some_and(|a| crate::artifacts::is_page(&a.kind)) {
+                        self.show_page_artifact(&id);
+                    }
                 }
             },
             Reply::Archived { archived, result, .. } => {
@@ -2811,6 +2839,7 @@ impl App {
             | Reply::Channels(..)
             | Reply::Campaigns(..)
             | Reply::Conversation(..)
+            | Reply::Branched(..)
             | Reply::TurnQueued { .. } => {}
         }
     }

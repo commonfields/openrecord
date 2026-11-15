@@ -34,6 +34,8 @@ pub struct SidePanel {
     pub composer: TextEdit,
     /// The browser's address when the panel was last drawn, to redraw when a page moves on.
     pub seen_url: Option<String>,
+    /// Whether that page was light, to redraw the chat box over it when it changes.
+    pub seen_light: Option<bool>,
 }
 
 #[derive(Default)]
@@ -49,11 +51,32 @@ pub struct Browser {
     pub recents: Vec<String>,
     /// Where the page is drawn, in window points.
     pub rect: Option<[f32; 4]>,
+    /// The landing page the browser was asked to show: an artifact from the chat.
+    pub artifact: Option<String>,
+    /// The page's zoom, apart from the app's (1 is 100%; 0 reads as 1).
+    pub zoom: f32,
+    /// This tab's number; the others wait in `parked`, in `order` on the strip.
+    pub id: u32,
+    pub next_id: u32,
+    pub parked: Vec<WebTab>,
+    pub order: Vec<u32>,
 }
+
+/// A browser tab not in front: what it shows, kept until it comes back.
+pub struct WebTab {
+    pub id: u32,
+    pub url: Option<String>,
+    pub artifact: Option<String>,
+    pub zoom: f32,
+    /// Its name on the strip.
+    pub title: String,
+}
+
+pub const ZOOMS: [f32; 9] = [0.5, 0.67, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0];
 
 impl Default for SidePanel {
     fn default() -> Self {
-        Self { open: false, front: SideTab::Browser, items: Vec::new(), wide: false, for_item: false, browser: Browser::default(), composer: TextEdit::default(), seen_url: None }
+        Self { open: false, front: SideTab::Browser, items: Vec::new(), wide: false, for_item: false, browser: Browser::default(), composer: TextEdit::default(), seen_url: None, seen_light: None }
     }
 }
 
@@ -94,10 +117,18 @@ impl App {
     /// What a turn tells the agent is open beside the chat: with an artifact in
     /// front of the panel, that one first, then the chat's other open artifacts.
     pub fn viewing_artifacts(&self) -> Vec<String> {
-        let SideTab::Artifact(front) = self.side_tab() else { return Vec::new() };
         if !self.side_shown() {
             return Vec::new();
         }
+        // A landing page open in the browser is what the person is looking at.
+        let front = match self.side_tab() {
+            SideTab::Artifact(id) => id,
+            SideTab::Browser => match self.browser_artifact() {
+                Some(p) => p.id.clone(),
+                None => return Vec::new(),
+            },
+            SideTab::Helper(_) => return Vec::new(),
+        };
         let rest = self.side_items().iter().filter_map(|t| match t {
             SideTab::Artifact(id) if *id != front => Some(id.clone()),
             _ => None,
@@ -256,6 +287,11 @@ impl App {
                 self.side.seen_url = now;
                 changed = true;
             }
+            let light = native_preview::browser_page_light();
+            if light != self.side.seen_light {
+                self.side.seen_light = light;
+                changed = true;
+            }
             tx.wake_after(std::time::Duration::from_millis(400));
         }
         changed
@@ -275,14 +311,138 @@ impl App {
             && self.menu_entries().is_empty()
     }
 
+    /// A page is open in the browser tab in front: it runs to the panel's foot.
+    pub fn browser_page_shown(&self) -> bool {
+        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some()
+    }
+
+    /// The page is drawn behind the app, so a menu or dialog the app opens
+    /// draws over it: it stays in view, and only gives the app back its clicks.
     pub fn browser_visible(&self) -> bool {
-        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some() && self.native_view_clear()
+        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some()
+    }
+
+    /// The browser's tabs on the strip, in order: number, name, and whether in front.
+    pub fn web_tabs(&self) -> Vec<(u32, String, bool)> {
+        let b = &self.side.browser;
+        let order = if b.order.is_empty() { vec![b.id] } else { b.order.clone() };
+        order
+            .into_iter()
+            .map(|id| {
+                if id == b.id {
+                    (id, self.web_tab_title(), true)
+                } else {
+                    (id, b.parked.iter().find(|p| p.id == id).map(|p| p.title.clone()).unwrap_or_else(|| "New tab".into()), false)
+                }
+            })
+            .collect()
+    }
+
+    /// The tab in front's name: the landing page's title, the site, or "New tab".
+    fn web_tab_title(&self) -> String {
+        let b = &self.side.browser;
+        if let Some(a) = b.artifact.as_deref().and_then(|id| self.artifacts.iter().find(|p| p.id == id)).and_then(|p| p.loaded.ready()) {
+            return a.title.clone();
+        }
+        match &b.url {
+            Some(u) => crate::ui::side::host(&native_preview::browser_url().unwrap_or_else(|| u.clone())),
+            None => "Browser".into(),
+        }
+    }
+
+    fn park_web_tab(&mut self) {
+        let title = self.web_tab_title();
+        let b = &mut self.side.browser;
+        if b.order.is_empty() {
+            b.order.push(b.id);
+        }
+        b.parked.push(WebTab { id: b.id, url: b.url.take(), artifact: b.artifact.take(), zoom: b.zoom, title });
+        b.pending = None;
+        b.editing = false;
+    }
+
+    fn unpark_web_tab(&mut self, id: u32) {
+        let b = &mut self.side.browser;
+        let tab = b.parked.iter().position(|p| p.id == id).map(|i| b.parked.remove(i));
+        b.id = id;
+        b.url = tab.as_ref().and_then(|t| t.url.clone());
+        b.artifact = tab.as_ref().and_then(|t| t.artifact.clone());
+        b.zoom = tab.as_ref().map(|t| t.zoom).unwrap_or(1.0);
+        // Its page is kept natively; this reloads it only if it was lost.
+        b.pending = b.url.clone();
+        native_preview::browser_select(id);
+    }
+
+    /// A new, empty browser tab in front.
+    pub fn new_web_tab(&mut self) {
+        self.park_web_tab();
+        let b = &mut self.side.browser;
+        b.next_id = b.next_id.max(b.id + 1).max(b.order.iter().copied().max().unwrap_or(0) + 1);
+        let id = b.next_id;
+        b.next_id += 1;
+        b.order.push(id);
+        b.id = id;
+        b.zoom = 1.0;
+        b.address.clear();
+        native_preview::browser_select(id);
+        self.show_browser_tab();
+    }
+
+    pub fn select_web_tab(&mut self, id: u32) {
+        if id != self.side.browser.id {
+            self.park_web_tab();
+            self.unpark_web_tab(id);
+        }
+        self.show_browser_tab();
+    }
+
+    /// Closes a browser tab; the last one only goes back to its start list.
+    pub fn close_web_tab(&mut self, id: u32) {
+        let order = self.web_tabs().into_iter().map(|t| t.0).collect::<Vec<_>>();
+        if order.len() <= 1 {
+            self.browser_home();
+            return;
+        }
+        let at = order.iter().position(|&x| x == id).unwrap_or(0);
+        self.side.browser.order.retain(|&x| x != id);
+        if id == self.side.browser.id {
+            native_preview::browser_drop(id);
+            let next = order[if at > 0 { at - 1 } else { 1 }];
+            self.unpark_web_tab(next);
+        } else {
+            self.side.browser.parked.retain(|p| p.id != id);
+            native_preview::browser_drop(id);
+        }
+    }
+
+    /// Zooms the page by a step (or back to 100% with 0), leaving the app as it is.
+    pub fn zoom_page(&mut self, step: i32) {
+        let b = &mut self.side.browser;
+        let now = if b.zoom > 0.0 { b.zoom } else { 1.0 };
+        b.zoom = if step == 0 {
+            1.0
+        } else {
+            let i = ZOOMS.iter().position(|z| (z - now).abs() < 0.01).unwrap_or(4) as i32;
+            ZOOMS[(i + step).clamp(0, ZOOMS.len() as i32 - 1) as usize]
+        };
+    }
+
+    /// Loads the app's own copy of a page in the browser, kept out of recents.
+    pub fn browser_open_page(&mut self, url: &str) {
+        let b = &mut self.side.browser;
+        b.editing = false;
+        b.url = Some(url.to_string());
+        match self.side.browser.rect {
+            Some(r) if self.browser_visible() => native_preview::browser_show(Some(url), r),
+            _ => self.side.browser.pending = Some(url.to_string()),
+        }
     }
 
     /// Opens what the address bar holds: an address, a host, or a search.
     pub fn browser_go(&mut self, input: &str) {
         let Some(url) = native_preview::browser_target(input) else { return };
         let b = &mut self.side.browser;
+        b.artifact = None;
         b.editing = false;
         b.recents.retain(|u| u != &url);
         b.recents.insert(0, url.clone());
@@ -314,6 +474,7 @@ impl App {
     pub fn browser_home(&mut self) {
         let b = &mut self.side.browser;
         b.url = None;
+        b.artifact = None;
         b.pending = None;
         b.editing = false;
         native_preview::browser_close();
