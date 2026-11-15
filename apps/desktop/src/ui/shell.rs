@@ -265,10 +265,6 @@ fn resize_edge() -> El {
         })
 }
 
-fn group_label(t: &Theme, text_: &str) -> El {
-    label(text_, type_::SM_MEDIUM, t.muted_foreground).px(8.0).pb(4.0)
-}
-
 /// One row of the sidebar's list: an icon and a name, with a count on the
 /// right, or only the icon (and a dot for the count) on the collapsed rail.
 fn nav_link(s: &App, t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, active: bool, count: i64) -> El {
@@ -740,7 +736,6 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),
         Menu::IssueModel | Menu::IssueFact | Menu::IssueSort => crate::ui::issues::menu(s, t, s.menu?),
         // The campaign brief editor that opened this menu is not on the page.
-        Menu::Choice => None,
     }
 }
 

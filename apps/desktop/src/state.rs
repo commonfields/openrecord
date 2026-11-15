@@ -88,73 +88,6 @@ impl Page {
     }
 }
 
-/// The campaign open in the editor: the brief as saved, each text field as it
-/// is being typed, and whether there are changes to save.
-#[derive(Debug, Clone)]
-pub struct CampaignEdit {
-    pub campaign: crate::api::Campaign,
-    /// Brief and distribution fields by their brief key; deliverable fields as "task.{i}.{field}".
-    pub fields: std::collections::BTreeMap<String, TextEdit>,
-    pub dirty: bool,
-    pub saving: bool,
-    pub error: Option<String>,
-    /// A campaign to open once unsaved changes are kept or discarded (`None` inside: a new brief).
-    pub pending: Option<Option<crate::api::Campaign>>,
-}
-
-pub const CAMPAIGN_TEXT: [&str; 22] = [
-    "title", "owner", "goal", "audience", "offer", "message", "hypothesis", "launchDate", "metric", "baseline", "target", "reviewDate",
-    "result", "learning", "nextMove", "primaryChannel", "rationale", "destination", "cadence", "budget", "conversionEvent", "trackingPlan",
-];
-
-impl CampaignEdit {
-    pub fn new(c: crate::api::Campaign) -> CampaignEdit {
-        let get = |k: &str| -> String {
-            match k {
-                "title" => c.title.clone(), "owner" => c.owner.clone(), "goal" => c.goal.clone(), "audience" => c.audience.clone(),
-                "offer" => c.offer.clone(), "message" => c.message.clone(), "hypothesis" => c.hypothesis.clone(), "launchDate" => c.launch_date.clone(),
-                "metric" => c.metric.clone(), "baseline" => c.baseline.clone(), "target" => c.target.clone(), "reviewDate" => c.review_date.clone(),
-                "result" => c.result.clone(), "learning" => c.learning.clone(), "nextMove" => c.next_move.clone(), "primaryChannel" => c.channel.clone(),
-                "rationale" => c.rationale.clone(), "destination" => c.destination.clone(), "cadence" => c.cadence.clone(), "budget" => c.budget.clone(),
-                "conversionEvent" => c.conversion_event.clone(), "trackingPlan" => c.tracking_plan.clone(), _ => String::new(),
-            }
-        };
-        let mut fields = std::collections::BTreeMap::new();
-        for k in CAMPAIGN_TEXT {
-            fields.insert(k.to_string(), TextEdit::new(&get(k)));
-        }
-        for (i, t) in c.tasks.iter().enumerate() {
-            for (f, v) in [("title", &t.title), ("owner", &t.owner), ("due", &t.due), ("note", &t.note)] {
-                fields.insert(format!("task.{i}.{f}"), TextEdit::new(v));
-            }
-        }
-        CampaignEdit { campaign: c, fields, dirty: false, saving: false, error: None, pending: None }
-    }
-
-    pub fn text(&self, k: &str) -> String {
-        self.fields.get(k).map(|e| e.text.clone()).unwrap_or_default()
-    }
-
-    /// The brief with every field as typed.
-    pub fn current(&self) -> crate::api::Campaign {
-        let mut c = self.campaign.clone();
-        let t = |k: &str| self.text(k);
-        c.title = t("title"); c.owner = t("owner"); c.goal = t("goal"); c.audience = t("audience"); c.offer = t("offer");
-        c.message = t("message"); c.hypothesis = t("hypothesis"); c.launch_date = t("launchDate"); c.metric = t("metric");
-        c.baseline = t("baseline"); c.target = t("target"); c.review_date = t("reviewDate"); c.result = t("result");
-        c.learning = t("learning"); c.next_move = t("nextMove"); c.channel = t("primaryChannel"); c.rationale = t("rationale");
-        c.destination = t("destination"); c.cadence = t("cadence"); c.budget = t("budget"); c.conversion_event = t("conversionEvent");
-        c.tracking_plan = t("trackingPlan");
-        for (i, task) in c.tasks.iter_mut().enumerate() {
-            task.title = self.text(&format!("task.{i}.title"));
-            task.owner = self.text(&format!("task.{i}.owner"));
-            task.due = self.text(&format!("task.{i}.due"));
-            task.note = self.text(&format!("task.{i}.note"));
-        }
-        c
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct AddBusiness {
     pub text: TextEdit,
@@ -162,23 +95,6 @@ pub struct AddBusiness {
     pub engagement: Option<&'static str>,
     pub busy: bool,
     pub error: Option<String>,
-}
-
-/// What a form's select changes.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ChoiceTarget {
-    /// A campaign choice: status, decision, motion or funnelStage.
-    Campaign(&'static str),
-    /// A deliverable's channel or status.
-    Task(usize, &'static str),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Choice {
-    pub anchor: String,
-    pub options: Vec<&'static str>,
-    pub current: String,
-    pub target: ChoiceTarget,
 }
 
 /// The AI answers page's filters and view, as the web keeps them in its URL.
@@ -241,8 +157,6 @@ pub enum Menu {
     Model,
     Reasoning,
     ChatFilter,
-    /// A form's select, open over its button.
-    Choice,
     /// The AI answers toolbar's model, fact and sort pickers.
     IssueModel,
     IssueFact,
@@ -482,15 +396,10 @@ pub struct App {
     pub portfolio: Load<Vec<crate::account::Portfolio>>,
     pub client_rows: Load<Vec<crate::account::ClientRow>>,
     pub list_query: TextEdit,
-    /// The Channels page: its account statuses, the tab shown, and the row open.
+    /// The Channels page: its account statuses and the channel being set up.
     pub channel_status: Load<crate::channel_status::Status>,
-    pub channel_tools: bool,
     pub channel_setup: Option<crate::channel_setup::Setup>,
     pub channel_generation: u64,
-    pub channel_open: Option<String>,
-    pub campaign_edit: Option<CampaignEdit>,
-    /// The select open in a form: its button's key, its options and what picking one changes.
-    pub choice: Option<Choice>,
     /// "Add a business": the line typed, whether it is a client or our own, and how it went.
     pub add_business: Option<AddBusiness>,
     pub issue_query: IssueQuery,
@@ -718,12 +627,8 @@ impl App {
             client_rows: Load::Idle,
             list_query: TextEdit::new(""),
             channel_status: Load::Idle,
-            channel_tools: false,
             channel_setup: None,
             channel_generation: 0,
-            channel_open: None,
-            campaign_edit: None,
-            choice: None,
             add_business: None,
             issue_query: IssueQuery::default(),
             portfolio_sort: PortfolioSort::Attention,
@@ -1092,104 +997,6 @@ impl App {
         }
     }
 
-    /// Opens a campaign in the editor, or a new brief (`None`); with unsaved
-    /// changes it asks first, as the web's discard dialog does.
-    pub fn open_campaign(&mut self, c: Option<crate::api::Campaign>) {
-        if let Some(e) = self.campaign_edit.as_mut().filter(|e| e.dirty) {
-            e.pending = Some(c);
-            return;
-        }
-        let c = c.unwrap_or_else(|| crate::api::Campaign { id: crate::api::uuid(), status: "DRAFT".into(), decision: "UNDECIDED".into(), ..Default::default() });
-        self.campaign_edit = Some(CampaignEdit::new(c));
-    }
-
-    /// Discards unsaved edits and opens what was waiting.
-    pub fn discard_campaign_changes(&mut self) {
-        let next = self.campaign_edit.as_mut().and_then(|e| e.pending.take());
-        if let Some(e) = self.campaign_edit.as_mut() {
-            e.dirty = false;
-        }
-        if let Some(c) = next {
-            self.open_campaign(c);
-        }
-    }
-
-    /// Changes one of the brief's choices (stage, decision, motion, funnel stage).
-    pub fn set_campaign_choice(&mut self, which: &str, value: &str) {
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        let c = &mut e.campaign;
-        match which {
-            "status" => c.status = value.into(),
-            "decision" => c.decision = value.into(),
-            "motion" => c.motion = value.into(),
-            "funnelStage" => c.funnel_stage = value.into(),
-            _ => return,
-        }
-        e.dirty = true;
-    }
-
-    /// Changes a deliverable's channel or status.
-    pub fn set_task_choice(&mut self, i: usize, which: &str, value: &str) {
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        if let Some(t) = e.campaign.tasks.get_mut(i) {
-            if which == "channel" { t.channel = value.into() } else { t.status = value.into() }
-            e.dirty = true;
-        }
-    }
-
-    pub fn add_task(&mut self) {
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        if e.campaign.tasks.len() >= 100 {
-            return;
-        }
-        let mut c = e.current();
-        c.tasks.push(crate::api::CampaignTask { id: crate::api::uuid(), title: "New deliverable".into(), channel: "WEBSITE".into(), status: "TODO".into(), ..Default::default() });
-        let dirty = true;
-        let mut next = CampaignEdit::new(c);
-        next.dirty = dirty;
-        next.campaign.revision = e.campaign.revision;
-        *e = next;
-    }
-
-    pub fn remove_task(&mut self, i: usize) {
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        let mut c = e.current();
-        if i < c.tasks.len() {
-            c.tasks.remove(i);
-        }
-        let mut next = CampaignEdit::new(c);
-        next.dirty = true;
-        *e = next;
-    }
-
-    /// Starts the next experiment from a closed one (the web's "Start the next experiment").
-    pub fn next_experiment(&mut self) {
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        if e.dirty {
-            e.error = Some("Save your learning before starting the next experiment.".into());
-            return;
-        }
-        let was = e.current();
-        let mut c = crate::api::Campaign { id: crate::api::uuid(), status: "DRAFT".into(), decision: "UNDECIDED".into(), ..Default::default() };
-        c.title = format!("Next: {}", was.title).chars().take(200).collect();
-        c.goal = was.goal;
-        c.audience = was.audience;
-        c.hypothesis = was.next_move;
-        c.baseline = was.result.chars().take(500).collect();
-        self.campaign_edit = Some(CampaignEdit::new(c));
-    }
-
-    pub fn save_campaign(&mut self) {
-        let Some(b) = self.active.clone() else { return };
-        let Some(e) = self.campaign_edit.as_mut() else { return };
-        if e.saving {
-            return;
-        }
-        e.saving = true;
-        e.error = None;
-        self.net.save_campaign(b, e.current());
-    }
-
     /// Opens "Add a business" (the web's `CreateBusinessDialog`).
     pub fn open_add_business(&mut self, engagement: Option<&'static str>) {
         self.menu = None;
@@ -1211,27 +1018,6 @@ impl App {
         a.error = None;
         let engagement = a.engagement;
         self.net.start_setup(website, goal, engagement);
-    }
-
-    /// Opens (or closes) a form's select.
-    pub fn open_choice(&mut self, c: Choice) {
-        if self.choice.as_ref().is_some_and(|x| x.anchor == c.anchor) && self.menu == Some(Menu::Choice) {
-            self.menu = None;
-            self.choice = None;
-        } else {
-            self.choice = Some(c);
-            self.menu = Some(Menu::Choice);
-        }
-    }
-
-    pub fn pick_choice(&mut self, value: &str) {
-        self.menu = None;
-        if let Some(c) = self.choice.take() {
-            match c.target {
-                ChoiceTarget::Campaign(which) => self.set_campaign_choice(which, value),
-                ChoiceTarget::Task(i, which) => self.set_task_choice(i, which, value),
-            }
-        }
     }
 
     pub fn set_issue_state(&mut self, state: &str) {
@@ -2589,33 +2375,6 @@ impl App {
                     }
                 }
             },
-            Reply::CampaignSaved(b, r) if here(self, &b) => {
-                let r = match r {
-                    Ok(saved) => Ok(saved),
-                    Err(ApiError::Unauthorized) => Err(self.failed::<()>(Err(ApiError::Unauthorized)).err().unwrap_or_default()),
-                    Err(ApiError::Status(409, _)) => Err("Someone changed this campaign. Keep your draft, then reopen the latest version before saving.".to_string()),
-                    Err(ApiError::Status(422, body)) => Err(serde_json::from_str::<serde_json::Value>(&body)
-                        .ok()
-                        .and_then(|v| v.get("reason").and_then(|x| x.as_str()).map(str::to_string))
-                        .unwrap_or_else(|| "Could not save the campaign. Your draft is still here.".into())),
-                    Err(_) => Err("Could not save the campaign. Your draft is still here.".to_string()),
-                };
-                match r {
-                    Ok(saved) => {
-                        self.campaign_edit = Some(CampaignEdit::new(saved));
-                        if let Some(id) = self.active.clone() {
-                            self.net.campaigns(id);
-                        }
-                    }
-                    Err(msg) => {
-                        if let Some(e) = self.campaign_edit.as_mut() {
-                            e.saving = false;
-                            e.error = Some(msg);
-                        }
-                    }
-                }
-            }
-            Reply::CampaignSaved(..) => {}
             Reply::ChannelStatus(b, r) if here(self, &b) => self.channel_status = to_load(self.failed(r)),
             Reply::ChannelStatus(..) => {}
             Reply::Portfolio(r) => self.portfolio = to_load(self.failed(r)),
