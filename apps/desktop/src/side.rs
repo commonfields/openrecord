@@ -1,21 +1,54 @@
 //! The panel on the right of the workspace: tabs for what opened beside the
-//! chat (an artifact or a helper session) and a browser. It folds away with its
-//! own button (⌥⌘B), and can widen over the whole split.
+//! chat (an artifact, a helper session, the browser, analytics, the chat's
+//! files and what changed in them). Each chat keeps its own panel. It folds
+//! away with its own button (⌥⌘B), and can widen over the whole split.
 
 use rune::{TextEdit, Tx};
 
 use crate::native_preview::{self, BrowserCommand};
 use crate::state::{App, Screen, View};
 
-/// One of the panel's tabs. The browser is always there, pinned first; the
-/// artifacts and helper sessions opened from the chat follow it, in the order
-/// they were opened.
+/// One of the panel's tabs. The browser's tabs come first once a page has
+/// been opened; the rest follow in the order they were opened. A panel with
+/// nothing chosen shows the list to choose from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SideTab {
+    /// The list of what can open beside the chat: browser, changes, files, analytics.
     #[default]
+    Launcher,
     Browser,
     Artifact(String),
     Helper(String),
+    Analytics,
+    Files,
+    Changes,
+}
+
+/// What can be opened from the list, in its order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    Browser,
+    Changes,
+    Files,
+    Analytics,
+}
+
+impl Launch {
+    pub const ALL: [Launch; 4] = [Launch::Browser, Launch::Changes, Launch::Files, Launch::Analytics];
+}
+
+/// One chat's panel while another chat is on screen.
+#[derive(Default)]
+pub struct SideState {
+    open: bool,
+    front: SideTab,
+    items: Vec<SideTab>,
+    wide: bool,
+    for_item: bool,
+    browser: Browser,
+    diff: Option<crate::changes::Diff>,
+    artifacts: Vec<crate::artifacts::Pane>,
+    helpers: Vec<(String, crate::state::Load<crate::api::Conversation>)>,
 }
 
 pub struct SidePanel {
@@ -34,6 +67,15 @@ pub struct SidePanel {
     pub composer: TextEdit,
     /// The browser's address when the panel was last drawn, to redraw when a page moves on.
     pub seen_url: Option<String>,
+    /// Whether that page was light, to redraw the chat box over it when it changes.
+    pub seen_light: Option<bool>,
+    /// The chat this panel belongs to (`App::side_key`), and the other chats' panels.
+    pub owner: String,
+    pub stash: std::collections::HashMap<String, SideState>,
+    /// The last browser tab number given out, across every chat's panel.
+    pub web_ids: u32,
+    /// The change open in the Changes tab.
+    pub diff: Option<crate::changes::Diff>,
 }
 
 #[derive(Default)]
@@ -49,11 +91,47 @@ pub struct Browser {
     pub recents: Vec<String>,
     /// Where the page is drawn, in window points.
     pub rect: Option<[f32; 4]>,
+    /// The landing page the browser was asked to show: an artifact from the chat.
+    pub artifact: Option<String>,
+    /// The page's zoom, apart from the app's (1 is 100%; 0 reads as 1).
+    pub zoom: f32,
+    /// This tab's number; the others wait in `parked`, in `order` on the strip.
+    pub id: u32,
+    pub parked: Vec<WebTab>,
+    pub order: Vec<u32>,
+    /// The browser has been opened in this chat's panel, so its tabs show.
+    pub shown: bool,
 }
+
+/// A browser tab not in front: what it shows, kept until it comes back.
+pub struct WebTab {
+    pub id: u32,
+    pub url: Option<String>,
+    pub artifact: Option<String>,
+    pub zoom: f32,
+    /// Its name on the strip.
+    pub title: String,
+}
+
+pub const ZOOMS: [f32; 9] = [0.5, 0.67, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0];
 
 impl Default for SidePanel {
     fn default() -> Self {
-        Self { open: false, front: SideTab::Browser, items: Vec::new(), wide: false, for_item: false, browser: Browser::default(), composer: TextEdit::default(), seen_url: None }
+        Self {
+            open: false,
+            front: SideTab::Launcher,
+            items: Vec::new(),
+            wide: false,
+            for_item: false,
+            browser: Browser::default(),
+            composer: TextEdit::default(),
+            seen_url: None,
+            seen_light: None,
+            owner: String::new(),
+            stash: Default::default(),
+            web_ids: 0,
+            diff: None,
+        }
     }
 }
 
@@ -79,9 +157,23 @@ impl App {
         self.screen == Screen::Workspace && self.side.open && (!self.side.for_item || self.side_item())
     }
 
-    /// The tab in front: the chosen one while it is there, else the browser.
+    /// The tab in front: the chosen one while it is there, else the last one
+    /// opened, the browser, or the list to choose from.
     pub fn side_tab(&self) -> SideTab {
-        if self.side.front != SideTab::Browser && self.side_items().contains(&self.side.front) { self.side.front.clone() } else { SideTab::Browser }
+        let f = &self.side.front;
+        match f {
+            SideTab::Launcher => return SideTab::Launcher,
+            SideTab::Browser if self.side.browser.shown => return SideTab::Browser,
+            _ if self.side_items().contains(f) => return f.clone(),
+            _ => {}
+        }
+        if let Some(last) = self.side_items().last() {
+            last.clone()
+        } else if self.side.browser.shown {
+            SideTab::Browser
+        } else {
+            SideTab::Launcher
+        }
     }
 
     pub fn front_artifact(&self) -> Option<&crate::artifacts::Pane> {
@@ -94,10 +186,18 @@ impl App {
     /// What a turn tells the agent is open beside the chat: with an artifact in
     /// front of the panel, that one first, then the chat's other open artifacts.
     pub fn viewing_artifacts(&self) -> Vec<String> {
-        let SideTab::Artifact(front) = self.side_tab() else { return Vec::new() };
         if !self.side_shown() {
             return Vec::new();
         }
+        // A landing page open in the browser is what the person is looking at.
+        let front = match self.side_tab() {
+            SideTab::Artifact(id) => id,
+            SideTab::Browser => match self.browser_artifact() {
+                Some(p) => p.id.clone(),
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
         let rest = self.side_items().iter().filter_map(|t| match t {
             SideTab::Artifact(id) if *id != front => Some(id.clone()),
             _ => None,
@@ -124,7 +224,108 @@ impl App {
         self.side.for_item = false;
         if !self.side.open {
             self.side.wide = false;
+            self.side.browser.editing = false;
         }
+    }
+
+    /// The list of what can open beside the chat, in front (the + after the tabs).
+    pub fn open_launcher(&mut self) {
+        self.side.open = true;
+        self.side.for_item = false;
+        self.side.front = SideTab::Launcher;
+        self.side.browser.editing = false;
+    }
+
+    /// Opens what was picked from the list. The browser opens a new tab when
+    /// one already shows a page; the others are one tab each.
+    pub fn launch(&mut self, what: Launch) {
+        let tab = match what {
+            Launch::Browser => {
+                if self.side.browser.shown && self.side.browser.url.is_some() {
+                    self.new_web_tab();
+                } else {
+                    self.show_browser_tab();
+                }
+                return;
+            }
+            Launch::Changes => SideTab::Changes,
+            Launch::Files => SideTab::Files,
+            Launch::Analytics => {
+                if let (Some(id), crate::state::Load::Idle) = (self.active.clone(), &self.insights) {
+                    self.insights = crate::state::Load::Loading;
+                    self.net.insights(id, self.days);
+                }
+                SideTab::Analytics
+            }
+        };
+        if !self.side.items.contains(&tab) {
+            self.side.items.push(tab.clone());
+        }
+        self.side.open = true;
+        self.side.for_item = false;
+        self.side.front = tab;
+    }
+
+    /// Which chat the panel belongs to: the business (or general) and the chat,
+    /// or a new chat before its first message.
+    pub fn side_key(&self) -> String {
+        let scope = self.chat_scope().unwrap_or_else(|| "-".into());
+        format!("{scope}:{}", self.chat_id.as_deref().unwrap_or("new"))
+    }
+
+    /// A new chat just got its id: its panel goes with it.
+    pub fn adopt_side(&mut self) {
+        self.side.owner = self.side_key();
+    }
+
+    /// Another chat came on screen: the last one's panel is put away with its
+    /// tabs, pages and zoom, and this one's comes back (closed if it had none).
+    pub fn switch_side(&mut self) {
+        let key = self.side_key();
+        if key == self.side.owner {
+            return;
+        }
+        let b = &self.side.browser;
+        let top = b.parked.iter().map(|p| p.id).chain(b.order.iter().copied()).chain([b.id]).max().unwrap_or(0);
+        self.side.web_ids = self.side.web_ids.max(top);
+        let recents = std::mem::take(&mut self.side.browser.recents);
+        let away = SideState {
+            open: self.side.open,
+            front: std::mem::take(&mut self.side.front),
+            items: std::mem::take(&mut self.side.items),
+            wide: self.side.wide,
+            for_item: self.side.for_item,
+            browser: std::mem::take(&mut self.side.browser),
+            diff: self.side.diff.take(),
+            artifacts: std::mem::take(&mut self.artifacts),
+            helpers: std::mem::take(&mut self.helpers),
+        };
+        let old = std::mem::replace(&mut self.side.owner, key.clone());
+        self.side.stash.insert(old, away);
+        let back = match self.side.stash.remove(&key) {
+            Some(st) => st,
+            None => {
+                self.side.web_ids += 1;
+                SideState { browser: Browser { id: self.side.web_ids, zoom: 1.0, ..Browser::default() }, ..SideState::default() }
+            }
+        };
+        self.side.open = back.open;
+        self.side.front = back.front;
+        self.side.items = back.items;
+        self.side.wide = back.wide;
+        self.side.for_item = back.for_item;
+        self.side.browser = back.browser;
+        self.side.diff = back.diff;
+        self.artifacts = back.artifacts;
+        self.helpers = back.helpers;
+        let b = &mut self.side.browser;
+        b.recents = recents;
+        b.editing = false;
+        // Its page is kept natively; this reloads it only if it was lost.
+        b.pending = b.url.clone();
+        native_preview::browser_select(b.id);
+        self.side.seen_url = None;
+        self.side.seen_light = None;
     }
 
     pub fn show_tab(&mut self, tab: SideTab) {
@@ -170,17 +371,32 @@ impl App {
     /// Closes one tab; the one before it comes forward. A panel opened only
     /// for the chat's tabs folds away with the last of them.
     pub fn close_tab(&mut self, tab: &SideTab) {
+        if *tab == SideTab::Launcher {
+            // Back to what was in front before; with nothing else, the panel folds.
+            self.side.front = self.side.items.last().cloned().unwrap_or(SideTab::Browser);
+            if self.side.items.is_empty() && !self.side.browser.shown {
+                self.side.open = false;
+                self.side.wide = false;
+            }
+            return;
+        }
+        if *tab == SideTab::Browser {
+            let id = self.side.browser.id;
+            self.close_web_tab(id);
+            return;
+        }
         let Some(i) = self.side.items.iter().position(|x| x == tab) else { return };
         self.side.items.remove(i);
         match tab {
             SideTab::Artifact(id) => self.artifacts.retain(|p| &p.id != id),
             SideTab::Helper(id) => self.helpers.retain(|(h, _)| h != id),
-            SideTab::Browser => {}
+            SideTab::Changes => self.side.diff = None,
+            _ => {}
         }
         if &self.side.front == tab {
             self.side.front = if i > 0 { self.side.items[i - 1].clone() } else { self.side.items.first().cloned().unwrap_or(SideTab::Browser) };
         }
-        if self.side.items.is_empty() && self.side.for_item {
+        if self.side.items.is_empty() && (self.side.for_item || !self.side.browser.shown) {
             self.side.open = false;
             self.side.wide = false;
         }
@@ -192,21 +408,14 @@ impl App {
         self.close_tab(&tab);
     }
 
-    /// The chat's tabs belong to it: another chat opens with none.
-    pub fn clear_side_items(&mut self) {
-        self.artifacts.clear();
-        self.helpers.clear();
-        self.side.items.clear();
-        if self.side.for_item {
-            self.side.open = false;
-            self.side.wide = false;
-        }
-    }
-
     pub fn show_browser_tab(&mut self) {
         self.side.open = true;
         self.side.for_item = false;
         self.side.front = SideTab::Browser;
+        if !self.side.browser.shown {
+            self.side.browser.shown = true;
+            self.side.browser.zoom = 1.0;
+        }
     }
 
     /// Sends what the panel's chat box holds to the chat, naming a helper in
@@ -223,7 +432,7 @@ impl App {
                 let title = self.front_helper().and_then(|(_, l)| l.ready()).and_then(|c| c.session.as_ref()).and_then(|i| i.title.clone()).unwrap_or_else(|| "helper".into());
                 format!("About the helper \"{title}\" (session {id}): {text}")
             }
-            SideTab::Browser => text,
+            _ => text,
         };
         self.side.composer.clear();
         if matches!(self.turn, crate::state::Turn::Working { .. }) {
@@ -250,10 +459,30 @@ impl App {
                 changed = true;
             }
         }
+        // The address bar goes back to the page's name once the person clicks
+        // anywhere else: elsewhere in the app takes its focus, and a click on
+        // the page itself is told by the browser.
+        if self.side.browser.editing {
+            let clicked = native_preview::browser_take_click();
+            if clicked || !self.side.browser.address.focused {
+                self.side.browser.editing = false;
+                if clicked {
+                    tx.blur();
+                }
+                changed = true;
+            } else {
+                tx.wake_after(std::time::Duration::from_millis(120));
+            }
+        }
         if self.browser_visible() {
             let now = native_preview::browser_url();
             if now != self.side.seen_url {
                 self.side.seen_url = now;
+                changed = true;
+            }
+            let light = native_preview::browser_page_light();
+            if light != self.side.seen_light {
+                self.side.seen_light = light;
                 changed = true;
             }
             tx.wake_after(std::time::Duration::from_millis(400));
@@ -275,14 +504,150 @@ impl App {
             && self.menu_entries().is_empty()
     }
 
+    /// A page is open in the browser tab in front: it runs to the panel's foot.
+    pub fn browser_page_shown(&self) -> bool {
+        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some()
+    }
+
+    /// The page is drawn behind the app, so a menu or dialog the app opens
+    /// draws over it: it stays in view, and only gives the app back its clicks.
     pub fn browser_visible(&self) -> bool {
-        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some() && self.native_view_clear()
+        self.side_shown() && self.side_tab() == SideTab::Browser && self.side.browser.url.is_some()
+    }
+
+    /// The browser's tabs on the strip, in order: number, name, and whether in front.
+    pub fn web_tabs(&self) -> Vec<(u32, String, bool)> {
+        let b = &self.side.browser;
+        let order = if b.order.is_empty() { vec![b.id] } else { b.order.clone() };
+        order
+            .into_iter()
+            .map(|id| {
+                if id == b.id {
+                    (id, self.web_tab_title(), true)
+                } else {
+                    (id, b.parked.iter().find(|p| p.id == id).map(|p| p.title.clone()).unwrap_or_else(|| "New tab".into()), false)
+                }
+            })
+            .collect()
+    }
+
+    /// The tab in front's name: the landing page's title, the site, or "New tab".
+    fn web_tab_title(&self) -> String {
+        let b = &self.side.browser;
+        if let Some(a) = b.artifact.as_deref().and_then(|id| self.artifacts.iter().find(|p| p.id == id)).and_then(|p| p.loaded.ready()) {
+            return a.title.clone();
+        }
+        match &b.url {
+            Some(u) => crate::ui::side::host(&native_preview::browser_url().unwrap_or_else(|| u.clone())),
+            None => "Browser".into(),
+        }
+    }
+
+    fn park_web_tab(&mut self) {
+        let title = self.web_tab_title();
+        let b = &mut self.side.browser;
+        if b.order.is_empty() {
+            b.order.push(b.id);
+        }
+        b.parked.push(WebTab { id: b.id, url: b.url.take(), artifact: b.artifact.take(), zoom: b.zoom, title });
+        b.pending = None;
+        b.editing = false;
+    }
+
+    fn unpark_web_tab(&mut self, id: u32) {
+        let b = &mut self.side.browser;
+        let tab = b.parked.iter().position(|p| p.id == id).map(|i| b.parked.remove(i));
+        b.id = id;
+        b.url = tab.as_ref().and_then(|t| t.url.clone());
+        b.artifact = tab.as_ref().and_then(|t| t.artifact.clone());
+        b.zoom = tab.as_ref().map(|t| t.zoom).unwrap_or(1.0);
+        // Its page is kept natively; this reloads it only if it was lost.
+        b.pending = b.url.clone();
+        native_preview::browser_select(id);
+    }
+
+    /// A new, empty browser tab in front.
+    pub fn new_web_tab(&mut self) {
+        if !self.side.browser.shown {
+            self.show_browser_tab();
+            return;
+        }
+        self.park_web_tab();
+        let b = &mut self.side.browser;
+        let top = b.order.iter().copied().chain([b.id]).max().unwrap_or(0);
+        self.side.web_ids = self.side.web_ids.max(top) + 1;
+        let id = self.side.web_ids;
+        let b = &mut self.side.browser;
+        b.order.push(id);
+        b.id = id;
+        b.zoom = 1.0;
+        b.address.clear();
+        native_preview::browser_select(id);
+        self.show_browser_tab();
+    }
+
+    pub fn select_web_tab(&mut self, id: u32) {
+        if id != self.side.browser.id {
+            self.park_web_tab();
+            self.unpark_web_tab(id);
+        }
+        self.show_browser_tab();
+    }
+
+    /// Closes a browser tab; the last one only goes back to its start list.
+    pub fn close_web_tab(&mut self, id: u32) {
+        let order = self.web_tabs().into_iter().map(|t| t.0).collect::<Vec<_>>();
+        if order.len() <= 1 {
+            // The last one closes the browser; the panel shows what else is open.
+            self.browser_home();
+            self.side.browser.shown = false;
+            self.side.browser.zoom = 1.0;
+            if self.side_items().is_empty() {
+                self.side.open = false;
+                self.side.wide = false;
+            }
+            return;
+        }
+        let at = order.iter().position(|&x| x == id).unwrap_or(0);
+        self.side.browser.order.retain(|&x| x != id);
+        if id == self.side.browser.id {
+            native_preview::browser_drop(id);
+            let next = order[if at > 0 { at - 1 } else { 1 }];
+            self.unpark_web_tab(next);
+        } else {
+            self.side.browser.parked.retain(|p| p.id != id);
+            native_preview::browser_drop(id);
+        }
+    }
+
+    /// Zooms the page by a step (or back to 100% with 0), leaving the app as it is.
+    pub fn zoom_page(&mut self, step: i32) {
+        let b = &mut self.side.browser;
+        let now = if b.zoom > 0.0 { b.zoom } else { 1.0 };
+        b.zoom = if step == 0 {
+            1.0
+        } else {
+            let i = ZOOMS.iter().position(|z| (z - now).abs() < 0.01).unwrap_or(4) as i32;
+            ZOOMS[(i + step).clamp(0, ZOOMS.len() as i32 - 1) as usize]
+        };
+    }
+
+    /// Loads the app's own copy of a page in the browser, kept out of recents.
+    pub fn browser_open_page(&mut self, url: &str) {
+        let b = &mut self.side.browser;
+        b.editing = false;
+        b.url = Some(url.to_string());
+        match self.side.browser.rect {
+            Some(r) if self.browser_visible() => native_preview::browser_show(Some(url), r),
+            _ => self.side.browser.pending = Some(url.to_string()),
+        }
     }
 
     /// Opens what the address bar holds: an address, a host, or a search.
     pub fn browser_go(&mut self, input: &str) {
         let Some(url) = native_preview::browser_target(input) else { return };
         let b = &mut self.side.browser;
+        b.artifact = None;
         b.editing = false;
         b.recents.retain(|u| u != &url);
         b.recents.insert(0, url.clone());
@@ -306,6 +671,10 @@ impl App {
         let n = now.len();
         self.side.browser.address.replace_text(now);
         self.side.browser.address.set_selection(0, n);
+        // Asked for here so the field is built focused; the runtime clears it
+        // when focus moves elsewhere.
+        self.side.browser.address.focused = true;
+        native_preview::browser_take_click();
         self.side.browser.editing = true;
         tx.focus("browser-address", false);
     }
@@ -314,6 +683,7 @@ impl App {
     pub fn browser_home(&mut self) {
         let b = &mut self.side.browser;
         b.url = None;
+        b.artifact = None;
         b.pending = None;
         b.editing = false;
         native_preview::browser_close();
@@ -414,13 +784,60 @@ mod tests {
     }
 
     #[test]
-    fn another_chat_opens_with_none_of_the_last_ones_tabs() {
+    fn each_chat_keeps_its_own_panel() {
         let mut s = App::new();
         crate::fixtures::agent(&mut s);
+        s.chat_id = Some("c1".into());
+        s.switch_side();
         s.show_browser_tab();
         s.add_artifact_tab(pane("a1"));
-        s.clear_side_items();
-        assert!(s.side_shown(), "opened by the person, the panel stays on the browser");
-        assert_eq!(s.side_tab(), SideTab::Browser);
+        s.side.browser.zoom = 1.5;
+        // Another chat opens with its panel closed and none of the first one's tabs.
+        s.chat_id = Some("c2".into());
+        s.switch_side();
+        assert!(!s.side_shown());
+        assert!(s.side.items.is_empty() && s.artifacts.is_empty());
+        assert!(!s.side.browser.shown);
+        // Back on the first chat, its panel is as it was left.
+        s.chat_id = Some("c1".into());
+        s.switch_side();
+        assert!(s.side_shown());
+        assert_eq!(s.side.items, vec![SideTab::Artifact("a1".into())]);
+        assert!(s.side.browser.shown);
+        assert_eq!(s.side.browser.zoom, 1.5);
+    }
+
+    #[test]
+    fn opening_the_panel_lists_what_can_open_and_a_pick_takes_its_place() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.toggle_side();
+        assert!(s.side_shown());
+        assert_eq!(s.side_tab(), SideTab::Launcher);
+        s.launch(super::Launch::Files);
+        assert_eq!(s.side_tab(), SideTab::Files);
+        // The + lists them again; picking the same one brings its tab forward.
+        s.open_launcher();
+        s.launch(super::Launch::Files);
+        assert_eq!(s.side.items, vec![SideTab::Files]);
+        // Closing the last tab folds the panel.
+        s.close_side_item();
+        assert!(!s.side_shown());
+    }
+
+    #[test]
+    fn a_new_chat_keeps_its_panel_once_it_gets_an_id() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.chat_id = None;
+        s.switch_side();
+        s.launch(super::Launch::Analytics);
+        s.chat_id = Some("c9".into());
+        s.adopt_side();
+        s.chat_id = Some("c1".into());
+        s.switch_side();
+        s.chat_id = Some("c9".into());
+        s.switch_side();
+        assert_eq!(s.side_tab(), SideTab::Analytics);
     }
 }

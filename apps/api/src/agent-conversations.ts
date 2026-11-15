@@ -169,7 +169,10 @@ export const archiveConversation = (scope: { readonly accountId: string; readonl
     WHERE id = ${id} AND account_id = ${scope.accountId} AND user_id = ${scope.userId} AND expires_at > now() RETURNING id`
   return rows.length > 0
 })
-export const createConversation = (scope: ConversationScope, id: string) => Effect.gen(function*() {
+/** A new chat can start as a branch of another: a copy of that chat's
+ * messages up to and including `through`, in the same scope. */
+export type BranchFrom = { readonly conversationId: string; readonly through: number }
+export const createConversation = (scope: ConversationScope, id: string, from?: BranchFrom) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   return yield* sql.withTransaction(Effect.gen(function*() {
     // Serialize new-chat retries and concurrent clicks without deleting history.
@@ -184,12 +187,19 @@ export const createConversation = (scope: ConversationScope, id: string) => Effe
       if (!saved) return yield* Effect.fail(new AgentConversationRefused({ reason: "NOT_FOUND" }))
       return saved
     }
+    let copied: unknown[] = []
+    if (from) {
+      const source = yield* loadConversation(scope, from.conversationId)
+      if (!source || from.through < 0 || from.through >= source.messages.length) return yield* Effect.fail(new AgentConversationRefused({ reason: "NOT_FOUND" }))
+      copied = source.messages.slice(0, from.through + 1)
+    }
     // Archiving only changes which thread opens by default. An existing turn
     // keeps its lease and can safely save its reply to the original ID.
     yield* sql`UPDATE agent_conversations SET archived_at=now() WHERE account_id=${scope.accountId}
       AND business_id IS NOT DISTINCT FROM ${scope.businessId}::uuid AND user_id=${scope.userId} AND archived_at IS NULL`
-    yield* sql`INSERT INTO agent_conversations(id,account_id,business_id,user_id) VALUES(${id},${scope.accountId},${scope.businessId},${scope.userId})`
-    return { id, messages: [], revision: 0 }
+    yield* sql`INSERT INTO agent_conversations(id,account_id,business_id,user_id,messages,last_reply) VALUES(${id},${scope.accountId},${scope.businessId},${scope.userId},${JSON.stringify(copied)}::jsonb,
+      ${from ? sql`(SELECT jsonb_build_object('title', last_reply->'title') FROM agent_conversations WHERE id=${from.conversationId})` : null})`
+    return copied.length ? (yield* loadConversation(scope, id))! : { id, messages: [], revision: 0 }
   }))
 })
 export const deleteConversation = (scope: ConversationScope, conversationId?: string) => Effect.gen(function*() {

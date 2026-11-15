@@ -16,6 +16,7 @@ pub enum Reply {
     SignedOut,
     Businesses(ApiResult<Vec<Business>>),
     Chats(ApiResult<Vec<ChatSummary>>),
+    Branched(String, ApiResult<crate::api::Conversation>),
     Decisions(ApiResult<Vec<Decision>>),
     Overview(String, ApiResult<Overview>),
     Issues(String, ApiResult<Vec<Issue>>),
@@ -74,6 +75,7 @@ pub enum Reply {
     ChannelDetail { generation: u64, result: ApiResult<crate::channel_setup::Detail> },
     ChannelAction { generation: u64, result: ApiResult<Option<String>> },
     Artifact { business: String, id: String, version: Option<u32>, result: ApiResult<crate::artifacts::Artifact> },
+    Diff { business: String, id: String, result: ApiResult<(u32, u32, Vec<crate::changes::Line>)> },
     /// A business's follow-up policy (read, or as a change left it).
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
     /// The Overview's data for a business over a number of days.
@@ -182,6 +184,15 @@ impl Net {
             send(Reply::Businesses(c.businesses()));
             send(Reply::Chats(c.chats()));
             send(Reply::Decisions(c.decisions()));
+        });
+    }
+
+    /// Branches a chat at one of its messages into a new chat.
+    pub fn branch(&self, business: String, from: String, through: usize) {
+        self.spawn(move |c, send| {
+            let r = c.branch_conversation(&business, &crate::api::uuid(), &from, through);
+            send(Reply::Branched(business, r));
+            send(Reply::Chats(c.chats()));
         });
     }
 
@@ -351,6 +362,13 @@ impl Net {
         self.spawn(move |c, send| {
             let result = c.artifact(&business, &id, version);
             send(Reply::Artifact { business, id, version, result });
+        });
+    }
+
+    pub fn artifact_diff(&self, business: String, id: String) {
+        self.spawn(move |c, send| {
+            let result = c.artifact_diff(&business, &id);
+            send(Reply::Diff { business, id, result });
         });
     }
 

@@ -1157,7 +1157,7 @@ pub fn agent_artifact(s: &mut App) {
     agent(s);
     let content = "# A clearer path to your next campaign\n\nOne team, one plan, and a record of what shipped.\n\n## This week\n\n- Review the landing page\n- Connect the measurement account\n- Agree the launch date\n\n**Draft for review.** Nothing is published.";
     s.add_artifact_tab(crate::artifacts::Pane { business: s.active.clone().unwrap(), id: "fixture-artifact".into(), requested: None,
-        loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
+        loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), kind: "BRIEF".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
             versions: vec![crate::artifacts::Version { version: 2, title: "Campaign brief".into() }, crate::artifacts::Version { version: 1, title: "First brief".into() }] }),
         source: false });
 }
@@ -1183,6 +1183,31 @@ pub fn side_browser(s: &mut App) {
     agent(s);
     s.show_browser_tab();
     s.side.browser.recents = vec!["https://northstar.example/pricing".into()];
+}
+
+/// The panel opened with nothing in it: the list of what can open beside the chat.
+pub fn side_launcher(s: &mut App) {
+    agent(s);
+    s.toggle_side();
+}
+
+/// More tabs than the panel has room to name: each is its icon alone.
+pub fn side_many(s: &mut App) {
+    side_tabs(s);
+    // A snapshot draws one frame, before the split reports its width.
+    s.split_w = 1100.0;
+    s.prefs.helper_width = 40.0;
+    s.show_browser_tab();
+    s.new_web_tab();
+    s.launch(crate::side::Launch::Files);
+    s.launch(crate::side::Launch::Changes);
+    s.side.diff = Some(crate::changes::Diff {
+        id: "fixture-artifact".into(),
+        lines: Load::Ready((1, 2, crate::changes::diff(
+            &["Show up in AI answers".to_string(), "For marketing teams".into(), "Start free".into()],
+            &["Show up in AI answers".to_string(), "For marketing teams and agencies".into(), "Start free".into(), "No card needed".into()],
+        ))),
+    });
 }
 
 /// A helper and then an artifact opened from the same chat: two tabs after the browser.

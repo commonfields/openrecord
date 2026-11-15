@@ -632,6 +632,17 @@ impl Client {
         Ok(self.post::<R>(&path, json!({ "conversationId": id }))?.conversation)
     }
 
+    /// Starts a new conversation as a copy of another one up to and including
+    /// message `through`: a branch the person can take somewhere else.
+    pub fn branch_conversation(&self, business: &str, id: &str, from: &str, through: usize) -> ApiResult<Conversation> {
+        #[derive(Deserialize)]
+        struct R {
+            conversation: Conversation,
+        }
+        let path = format!("{}/conversation", agent_base(business));
+        Ok(self.post::<R>(&path, json!({ "conversationId": id, "from": { "conversationId": from, "through": through } }))?.conversation)
+    }
+
     /// Queues a turn and returns once the API has accepted it.
     pub fn send(&self, business: &str, conversation: &str, revision: i64, request_id: &str, out: &crate::chat::Outgoing) -> ApiResult<()> {
         let path = format!("{}/requests", agent_base(business));

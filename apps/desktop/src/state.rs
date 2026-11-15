@@ -927,7 +927,6 @@ impl App {
         }
         self.net.playbooks(Some(id.to_string()));
         self.proposals = Load::Loading;
-        self.clear_side_items();
         self.net.proposals(id.to_string());
         self.followups = Load::Loading;
         self.net.followups(id.to_string());
@@ -1346,6 +1345,7 @@ impl App {
             None => {
                 self.new_chat();
                 self.general = true;
+                self.adopt_side();
             }
         }
     }
@@ -1449,7 +1449,6 @@ impl App {
             return;
         }
         self.pane = false;
-        self.clear_side_items();
         if std::mem::take(&mut self.pane_folded_sidebar) {
             self.sidebar_open = true;
         }
@@ -1467,7 +1466,6 @@ impl App {
             self.select_business(business);
         }
         self.general = business.is_empty();
-        self.clear_side_items();
         self.open_session(id);
     }
 
@@ -1480,10 +1478,10 @@ impl App {
 
     pub fn new_chat(&mut self) {
         self.enter_agent();
-        // Home and a new chat open with nothing beside them.
-        self.clear_side_items();
         self.general = false;
         self.chat_id = None;
+        // Each chat keeps its own panel; a new chat's opens closed.
+        self.switch_side();
         self.conversation = Load::Idle;
         self.turn = Turn::Idle;
     }
@@ -1497,9 +1495,9 @@ impl App {
         // A chat without a business is a general chat.
         self.general = chat.business_id.is_none();
         self.enter_agent();
-        // What was open beside the last chat belongs to it.
-        self.clear_side_items();
         self.chat_id = Some(chat.id.clone());
+        // What was open beside the last chat stays with it; this chat's comes back.
+        self.switch_side();
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
         self.settle_next = true;
@@ -1666,6 +1664,7 @@ impl App {
     pub fn open_session(&mut self, id: &str) {
         self.enter_agent();
         self.chat_id = Some(id.to_string());
+        self.switch_side();
         self.turn = Turn::Idle;
         self.conversation = Load::Loading;
         self.settle_next = true;
@@ -2096,6 +2095,19 @@ impl App {
     }
 
     /// Asks the question behind the latest reply again.
+    /// Carries the chat up to message `i` into a new chat and opens it there;
+    /// the original stays as it was in the history.
+    pub fn branch_reply(&mut self, i: usize) {
+        if matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let (Some(scope), Some(id)) = (self.chat_scope(), self.chat_id.clone()) else { return };
+        if self.conversation.ready().is_none_or(|c| c.id != id || i >= c.messages.len()) {
+            return;
+        }
+        self.net.branch(scope, id, i);
+    }
+
     pub fn retry_reply(&mut self, tx: &mut Tx) {
         if matches!(self.turn, Turn::Working { .. }) {
             return;
@@ -2426,9 +2438,23 @@ impl App {
                     Err(e) => self.conversation = Load::Failed(e),
                 }
             }
+            Reply::Branched(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
+                Ok(c) => {
+                    self.chat_id = Some(c.id.clone());
+                    self.switch_side();
+                    self.turn = Turn::Idle;
+                    self.conversation = Load::Ready(c);
+                    tx.settle();
+                    tx.scroll_to_bottom("transcript");
+                    tx.focus("composer-input", false);
+                }
+                Err(e) => self.notice = Some(if e.is_empty() { "Couldn't branch the chat. Try again.".into() } else { e }),
+            },
             Reply::TurnQueued { business, conversation, request: id } if self.chat_scope().as_deref() == Some(business.as_str()) => {
                 if self.chat_id.is_none() {
+                    // The new chat's panel goes with it.
                     self.chat_id = Some(conversation);
+                    self.adopt_side();
                 }
                 if let Turn::Working { request, .. } = &mut self.turn {
                     *request = Some(id);
@@ -2487,8 +2513,17 @@ impl App {
                 let result = self.failed(result);
                 if let Some(p) = self.artifacts.iter_mut().find(|p| p.business == business && p.id == id && p.requested == version) {
                     p.loaded = to_load(result);
+                    if p.loaded.ready().is_some_and(|a| crate::artifacts::is_page(&a.kind)) {
+                        self.show_page_artifact(&id);
+                    }
                 }
             },
+            Reply::Diff { business, id, result } => {
+                if self.active.as_deref() == Some(business.as_str()) {
+                    let result = self.failed(result);
+                    self.diff_loaded(&id, result);
+                }
+            }
             Reply::Archived { archived, result, .. } => {
                 if let Err(e) = self.failed(result) {
                     if !e.is_empty() {
@@ -2570,7 +2605,11 @@ impl App {
                         }
                         // A reply that arrives all at once is revealed word by word once it loads.
                         self.reveal_next = self.pending_answer.is_none() && rune::tooling::headless_run().is_none() && !self.prefs.reduce_motion;
+                        let new = self.chat_id.is_none();
                         self.chat_id = Some(conversation.clone());
+                        if new {
+                            self.adopt_side();
+                        }
                         self.net.conversation(business, conversation);
                     }
                     Err(e) if e.is_empty() => {}
@@ -2811,6 +2850,7 @@ impl App {
             | Reply::Channels(..)
             | Reply::Campaigns(..)
             | Reply::Conversation(..)
+            | Reply::Branched(..)
             | Reply::TurnQueued { .. } => {}
         }
     }

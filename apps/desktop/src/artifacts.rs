@@ -8,6 +8,8 @@ use serde::Deserialize;
 pub struct Artifact {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub kind: String,
     pub format: String,
     pub content: String,
     #[serde(skip)]
@@ -43,7 +45,58 @@ impl Client {
         Ok(artifact)
     }
 }
+/// Where the browser reads an artifact page from: the app's own copy of one
+/// version, so a newer version is a new address and the browser loads it.
+fn page_path(id: &str, version: u32) -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(std::path::PathBuf::from(home).join(format!("Library/Caches/OpenRecord/pages/{id}-v{version}.html")))
+}
+
+/// Whether an artifact opens in the browser rather than as a document tab.
+pub fn is_page(kind: &str) -> bool {
+    kind == "LANDING_PAGE"
+}
+
 impl App {
+    /// Opens a landing page from the chat in the panel's browser.
+    pub fn open_page_artifact(&mut self, id: &str) {
+        self.notices_open = false;
+        let Some(business) = self.active.clone() else { return };
+        // A page already open stays: the landing page gets a tab of its own.
+        if self.side.browser.url.is_some() && self.side.browser.artifact.as_deref() != Some(id) {
+            self.new_web_tab();
+        }
+        self.side.browser.artifact = Some(id.to_string());
+        self.show_browser_tab();
+        // Held beside the chat (not as a tab) so a newer version reloads it.
+        self.artifacts.retain(|p| p.id != id);
+        self.artifacts.push(Pane { business: business.clone(), id: id.into(), requested: None, loaded: Load::Loading, source: false });
+        self.net.artifact(business, id.into(), None);
+    }
+
+    /// A page artifact just read: written to its copy and shown in the
+    /// browser, when the browser is still the place it was asked for.
+    pub fn show_page_artifact(&mut self, id: &str) {
+        if self.side.browser.artifact.as_deref() != Some(id) {
+            return;
+        }
+        let Some(a) = self.artifacts.iter().find(|p| p.id == id).and_then(|p| p.loaded.ready()) else { return };
+        let Some(path) = page_path(id, a.shown_version) else { return };
+        let written = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&path, &a.preview_html));
+        if written.is_err() {
+            self.notice = Some("Couldn't open the page in the browser. Try again.".into());
+            return;
+        }
+        self.browser_open_page(&format!("file://{}", path.display()));
+    }
+
+    /// The artifact the browser shows now, if it shows one.
+    pub fn browser_artifact(&self) -> Option<&Pane> {
+        let id = self.side.browser.artifact.as_deref()?;
+        let shown = crate::native_preview::browser_url().or_else(|| self.side.browser.url.clone())?;
+        shown.contains(&format!("/pages/{id}-v")).then(|| self.artifacts.iter().find(|p| p.id == id)).flatten()
+    }
+
     /// After a reply lands, re-reads each open artifact the reply saved a newer
     /// version of, so a change asked for in the chat shows in its tab at once.
     pub fn refresh_open_artifacts(&mut self, c: &crate::api::Conversation) {

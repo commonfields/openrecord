@@ -12,6 +12,7 @@ mod native_preview;
 mod api;
 mod brand_marks;
 mod brands;
+mod changes;
 mod channel_marks;
 mod channel_status;
 mod channel_setup;
@@ -153,6 +154,8 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent", fixtures::agent),
     ("agent-artifact", fixtures::agent_artifact),
     ("side-browser", fixtures::side_browser),
+    ("side-launcher", fixtures::side_launcher),
+    ("side-many", fixtures::side_many),
     ("side-tabs", fixtures::side_tabs),
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),
@@ -239,6 +242,9 @@ fn main() {
         .chrome(Chrome { full_size_content: true, traffic_lights: Some((16.0, 22.0)), drag_regions: true })
         .titlebar(rune::Titlebar::new(50.0).traffic_lights(16.0, 22.0))
         .standard_menus()
+        // Clear where the app paints nothing, so the browser's page, drawn
+        // behind the app's view, shows through with the chat box over it.
+        .window_options(rune::WindowOptions { transparent: true, ..Default::default() })
         // Fills the screen at launch, so the chat and the notifications have room side by side.
         .maximized(true)
         .run();

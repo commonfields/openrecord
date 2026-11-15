@@ -727,7 +727,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         body = body.child(resources(s, t, i, m));
     }
     if !m.tasks.is_empty() && m.origin.as_ref().is_none_or(|o| o.kind != "result") {
-        body = body.child(tasks(t, i, m, statuses));
+        body = body.child(tasks(s, t, i, m, statuses));
     }
     if !m.artifacts.is_empty() {
         body = body.children(artifacts(t, i, &m.artifacts));
@@ -771,6 +771,10 @@ fn reply_actions(s: &App, t: &Theme, i: usize, text_: &str) -> El {
         .child(act(format!("bad-{i}"), &icons::THUMBS_DOWN, "Not helpful", rated == Some(false)).on_press(move |s: &mut App| s.rate_reply(i, false)));
     if latest {
         r = r.child(act(format!("retry-{i}"), &icons::REFRESH_CW, "Ask again", false).on_press_tx(|s: &mut App, tx| s.retry_reply(tx)));
+    }
+    // A saved reply can start a new chat that carries everything up to it.
+    if s.chat_id.is_some() && !matches!(s.turn, Turn::Working { .. }) {
+        r = r.child(act(format!("branch-{i}"), &icons::GIT_BRANCH, "Branch into a new chat", false).on_press(move |s: &mut App| s.branch_reply(i)));
     }
     r
 }
@@ -988,23 +992,33 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
         });
     let mut c = col().w_full().pt(2.0).gap(8.0).child(toggle);
     if open {
-        let mut chips = row().gap(6.0).flex_wrap();
+        let mut chips = row().gap(8.0).flex_wrap();
         for (j, cit) in m.citations.iter().enumerate() {
             let url = cit.url().map(str::to_string);
             let name = if cit.text.is_empty() { url.clone().unwrap_or_else(|| "Open source".into()) } else { cit.text.clone() };
+            // The chat box's shape at a smaller size: a pill on the card
+            // colour with a hairline border, its icon in a round frame.
+            let icon = row()
+                .size(20.0, 20.0)
+                .radius(10.0)
+                .center()
+                .fill(t.accent)
+                .child(ico(if url.is_some() { &icons::GLOBE } else { &icons::FILE_TEXT }, 11.0, t.muted_foreground).group_color(t.foreground));
             let mut chip = row()
                 .key(format!("source-{i}-{j}"))
-                .gap(4.0)
+                .h(28.0)
+                .gap(6.0)
                 .center_y()
-                .px(6.0)
-                .py(2.0)
-                .radius(6.0)
-                .fill(t.accent.alpha(0.6))
-                .hover(t.accent)
+                .pl(4.0)
+                .pr(12.0)
+                .radius(14.0)
+                .border(1.0, t.border)
+                .fill(t.card)
+                .hover(t.accent.alpha(0.5))
                 .hover_group()
                 .motion(CONTROL)
                 .max_w(288.0)
-                .child(ico(if url.is_some() { &icons::GLOBE } else { &icons::FILE_TEXT }, 12.0, t.muted_foreground).group_color(t.foreground))
+                .child(icon)
                 .child(label(name, type_::XS, t.muted_foreground).group_color(t.foreground).truncate());
             if let Some(u) = url {
                 chip = chip.role("link").help(u.clone()).cursor(Cursor::Pointer).on_press_tx(move |s: &mut App, tx| {
@@ -1018,53 +1032,66 @@ fn resources(s: &App, t: &Theme, i: usize, m: &Message) -> El {
     c
 }
 
-fn tasks(t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
-    // A helper's chip: its title and where it stands, nothing else. The role
-    // ("Review") is left out: the title already says what the helper does.
-    let mut c = row().w_full().pt(4.0).gap(6.0).flex_wrap();
+fn tasks(s: &App, t: &Theme, i: usize, m: &Message, statuses: &std::collections::HashMap<String, String>) -> El {
+    // A helper: what it is doing, which kind of helper, and where it stands.
+    let mut c = col().w_full().pt(4.0).gap(6.0);
     for task in &m.tasks {
         let status = statuses.get(&task.id).unwrap_or(&task.status).as_str();
-        let state_ink = match status {
-            "RUNNING" => t.working,
-            "COMPLETED" => t.muted_foreground.alpha(0.8),
-            _ => t.wrong,
+        let state = match status {
+            "RUNNING" => {
+                let spin = ico(&icons::LOADER, 14.0, t.working);
+                if s.prefs.reduce_motion { spin } else { spin.looping(rune::LoopSpec::rotation(1.0)) }
+            }
+            "COMPLETED" => ico(&icons::CHECK, 14.0, t.muted_foreground),
+            _ => ico(&icons::CIRCLE_ALERT, 14.0, t.wrong),
         };
-        let mut chip = item_chip(t, format!("task-{i}-{}", task.id), &task.title)
-            .child(label(chat::task_status(status), type_::XS, state_ink));
+        let detail = format!("{} helper, {}", chat::role_label(if task.role.is_empty() { "general" } else { &task.role }), chat::task_status(status).to_lowercase());
+        let mut card = item_card(t, format!("task-{i}-{}", task.id), &icons::USERS, &task.title, &detail, state);
         if !task.session_id.is_empty() {
             let id = task.session_id.clone();
-            chip = chip
+            card = card
                 .role("link")
                 .label(format!("Open the helper session: {}", task.title))
                 .help(task.model.clone().unwrap_or_else(|| "Open the helper session".into()))
                 .focusable(true)
                 .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
                 .on_press(move |s: &mut App| s.open_helper(&id));
         }
         let n = c_count(&m.tasks, &task.id);
-        c = c.child(chip_in(chip, n));
+        c = c.child(chip_in(card, n));
     }
     c
 }
 
-/// The one chip shape the chat uses for what a reply made or started: a title
-/// on the card colour, one line, no icon.
-fn item_chip(t: &Theme, key: String, title: &str) -> El {
-    shadows(
-        row()
-            .key(key)
-            .h(32.0)
-            .px(12.0)
-            .gap(8.0)
-            .center_y()
-            .radius(8.0)
-            .fill(t.card)
-            .max_w(560.0)
-            .motion(CONTROL)
-            .child(label(title.to_string(), type_::SM, t.foreground).truncate().min_w(0.0)),
-        &t.card_shadow,
-    )
+/// What a reply made or started (a landing page, a helper at work): a small
+/// card with its kind in a rounded tile, the title over one quiet line that
+/// says what it is, and where it stands on the right.
+fn item_card(t: &Theme, key: String, icon: &'static rune::Icon, title: &str, detail: &str, trailing: El) -> El {
+    row()
+        .key(key)
+        .w_full()
+        .max_w(440.0)
+        .pl(8.0)
+        .pr(14.0)
+        .py(8.0)
+        .gap(12.0)
+        .center_y()
+        .radius(12.0)
+        .border(1.0, t.border)
+        .fill(t.card)
+        .hover(t.accent.alpha(0.5))
+        .hover_group()
+        .motion(CONTROL)
+        .child(row().size(36.0, 36.0).radius(9.0).center().fill(t.accent).child(ico(icon, 16.0, t.muted_foreground).group_color(t.foreground)))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(1.0)
+                .child(label(title.to_string(), type_::SM_MEDIUM, t.foreground).truncate().min_w(0.0))
+                .child(label(detail.to_string(), type_::XS, t.muted_foreground).truncate().min_w(0.0)),
+        )
+        .child(trailing)
 }
 
 fn c_count(tasks: &[chat::TaskRef], id: &str) -> usize {
@@ -1078,18 +1105,20 @@ fn artifacts(t: &Theme, i: usize, refs: &[chat::ArtifactRef]) -> Vec<El> {
     refs.iter()
         .map(|r| {
             let id = r.id.clone();
+            let page = crate::artifacts::is_page(&r.kind);
+            let detail = format!("{}, version {}", r.kind_label(), r.version.max(1));
+            let icon = if page { &icons::GLOBE } else { &icons::FILE_TEXT };
             row()
                 .w_full()
                 .transition(chip_in_t())
                 .child(
-                    item_chip(t, format!("artifact-{i}-{}", r.id), &r.title)
+                    item_card(t, format!("artifact-{i}-{}", r.id), icon, &r.title, &detail, ico(&icons::CHEVRON_RIGHT, 14.0, t.muted_foreground).group_color(t.foreground))
                         .role("link")
                         .label(format!("Open {}", r.title))
                         .help(r.caption())
                         .focusable(true)
                         .cursor(Cursor::Pointer)
-                        .hover(t.hover_tint)
-                        .on_press(move |s: &mut App| s.open_artifact(&id)),
+                        .on_press(move |s: &mut App| if page { s.open_page_artifact(&id) } else { s.open_artifact(&id) }),
                 )
         })
         .collect()
@@ -1103,20 +1132,27 @@ fn decisions(s: &App, t: &Theme, i: usize, refs: &[chat::DecisionRef]) -> Vec<El
         let Some(d) = s.decisions.iter().find(|d| d.key == key) else { continue };
         let busy = s.deciding.as_deref() == Some(key.as_str());
         let here = s.decision.as_deref() == Some(key.as_str());
-        let summary = if d.summary.is_empty() { None } else { Some(label(d.summary.clone(), type_::SM_13, t.muted_foreground).wrap().max_lines(3)) };
+        // Kind, title, then what it is about: three steps of the type scale,
+        // one weight for the title only, the footer set apart by a hairline.
+        let summary = if d.summary.is_empty() { None } else { Some(label(d.summary.clone(), type_::SM_13, t.muted_foreground).wrap().max_lines(3).pt(4.0)) };
+        let eyebrow = row()
+            .gap(8.0)
+            .center_y()
+            .pb(8.0)
+            .child(el().size(6.0, 6.0).radius(3.0).fill(t.review))
+            .child(label(d.label.clone(), type_::XS, t.muted_foreground));
         let mut c = col()
             .key(format!("decision-{i}-{key}"))
             .w_full()
-            .px(16.0)
-            .py(14.0)
-            .gap(6.0)
+            .padding(16.0)
             .radius(12.0)
+            .border(1.0, t.border)
             .fill(t.card)
             .role("group")
             .label("Waiting for your decision")
             .transition(chip_in_t())
-            .child(label(d.label.clone(), type_::XS_MEDIUM, t.muted_foreground))
-            .child(label(d.title.clone(), type_::BASE_MEDIUM, t.foreground).wrap())
+            .child(eyebrow)
+            .child(label(d.title.clone(), type_::SM_MEDIUM, t.foreground).wrap())
             .children(summary);
         if let Some((k, e)) = &s.decision_error {
             if k == &key {
@@ -1160,9 +1196,9 @@ fn decisions(s: &App, t: &Theme, i: usize, refs: &[chat::DecisionRef]) -> Vec<El
             let (k1, k2) = (key.clone(), key.clone());
             let decline = button(t, &format!("decline-{i}-{key}"), d.decline.as_str(), Variant::Outline);
             let approve = button(t, &format!("approve-{i}-{key}"), if busy { "Working…" } else { d.approve.as_str() }, Variant::Primary);
-            let mut bar = row().w_full().pt(6.0).gap(8.0).center_y().flex_wrap();
+            let mut bar = row().w_full().mt(14.0).pt(12.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border).gap(12.0).center_y().flex_wrap();
             bar = bar.child(match blocked.map(str::to_string).or_else(|| d.note.clone()) {
-                Some(n) => label(n, type_::XS, t.muted_foreground).wrap().grow(1.0).min_w(200.0),
+                Some(n) => label(n, type_::XS, t.muted_foreground.alpha(0.8)).wrap().grow(1.0).min_w(200.0),
                 None => el().grow(1.0),
             });
             bar.child(if busy { decline.opacity(0.5) } else { decline.on_press_tx(move |s: &mut App, tx| s.decline_in_chat(&k1, tx)) })
