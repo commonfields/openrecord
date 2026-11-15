@@ -1167,45 +1167,17 @@ fn composer(s: &App, t: &Theme, business: &str) -> El {
                 .child(ico(&icons::ARROW_UP, 16.0, t.primary_foreground)),
         );
     }
-    // The microphone (when voice input is on): macOS dictation into the composer.
+    // Voice input: one control — the blue waveform when the box is empty (no duplicate mic icon).
     let mut trailing = row().gap(4.0).center_y().self_end();
-    if s.prefs.voice_input && !working {
-        trailing = trailing.child(
-            row()
-                .key("mic")
-                .size(32.0, 32.0)
-                .radius(16.0)
-                .center()
-                .role("button")
-                .label("Start voice input")
-                .help("Voice input")
-                .focusable(true)
-                .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
-                .hover_group()
-                .on_press_tx(|_s: &mut App, tx| {
-                    tx.focus("composer-input", false);
-                    crate::dictation::start();
-                })
-                .child(ico(&icons::MIC, 20.0, t.muted_foreground).group_color(t.foreground)),
-        );
-    }
     if !working && !has_text && s.prefs.voice_input {
         trailing = trailing.child(
-            row()
-                .key("voice-affordance")
-                .size(32.0, 32.0)
-                .radius(16.0)
-                .center()
-                .role("button")
-                .label("Start voice input")
-                .cursor(Cursor::Pointer)
-                .fill(t.primary_foreground)
+            circle("voice-affordance", "Start voice input", "Voice input (macOS dictation)", t.primary)
+                .hover(t.primary.alpha(0.9))
                 .on_press_tx(|_s: &mut App, tx| {
                     tx.focus("composer-input", false);
                     crate::dictation::start();
                 })
-                .child(waveform_bars(t.background)),
+                .child(waveform_bars(t.primary_foreground)),
         );
     } else {
         trailing = trailing.child(actions);
