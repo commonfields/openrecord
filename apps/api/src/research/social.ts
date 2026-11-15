@@ -15,6 +15,7 @@ import { clean, isoDate, links, month } from "./html.js"
 import { Domain, normalizeDomain } from "./inputs.js"
 import type { ResearchNetService } from "./net.js"
 import { readHome } from "./site.js"
+import { brandMentions } from "./mentions.js"
 import { refuse, type AnyCapability, type Observed, type Refused } from "./types.js"
 
 const xmlBlocks = (xml: string, tag: string) => [...xml.matchAll(new RegExp(`<${tag}\\b[\\s\\S]*?<\\/${tag}>`, "gi"))].map(m => m[0])
@@ -106,14 +107,65 @@ const hackerNewsRun = async (net: ResearchNetService, query: string, months: num
   }
 }
 
+
+// ---------------------------------------------------------------- A YouTube video
+
+/** The video's id from its address (watch, youtu.be, shorts, embed) or the id itself. */
+export const youtubeVideoId = (ref: string) => ref.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([A-Za-z0-9_-]{11})/)?.[1] ?? (/^[A-Za-z0-9_-]{11}$/.test(ref) ? ref : null)
+
+/** The details YouTube publishes on a video's own page. */
+export const parseYoutubeVideo = (html: string) => {
+  const raw = html.match(/var ytInitialPlayerResponse = (\{[\s\S]*?\});(?:var |<\/script>)/)?.[1]
+  if (!raw) return null
+  let j: { videoDetails?: Record<string, unknown>; microformat?: { playerMicroformatRenderer?: Record<string, unknown> } }
+  try { j = JSON.parse(raw) } catch { return null }
+  const v = j.videoDetails ?? {}, mf = j.microformat?.playerMicroformatRenderer ?? {}
+  if (typeof v["title"] !== "string") return null
+  const description = typeof v["shortDescription"] === "string" ? v["shortDescription"] : ""
+  const n = (x: unknown) => { const k = Number(x); return Number.isFinite(k) ? k : null }
+  return {
+    title: clean(v["title"], 300), channel: clean(v["author"], 120), channelId: typeof v["channelId"] === "string" ? v["channelId"] : null,
+    views: n(v["viewCount"]), lengthSeconds: n(v["lengthSeconds"]), published: isoDate(mf["publishDate"])?.slice(0, 10) ?? null, category: clean(mf["category"], 60),
+    description,
+    // "0:00 Intro" lines: the chapters a creator marks in the description.
+    chapters: description.split("\n").flatMap(l => { const m = l.match(/^\s*\(?((?:\d{1,2}:)?\d{1,2}:\d{2})\)?\s*[-–—:]?\s*(.{2,120})$/); return m ? [{ at: m[1]!, title: m[2]!.trim() }] : [] }).slice(0, 40),
+    links: [...new Set([...description.matchAll(/https?:\/\/[^\s<>()"']+/g)].map(m => m[0]))].slice(0, 30),
+  }
+}
+
+const youtubeVideoRun = async (net: ResearchNetService, input: { video: string; own?: string | undefined; brands?: ReadonlyArray<string> | undefined }): Promise<Observed | Refused> => {
+  const id = youtubeVideoId(input.video)
+  if (!id) return refuse("INVALID", "Give a YouTube video address or its 11-character id.")
+  const url = `https://www.youtube.com/watch?v=${id}`
+  const r = await net.api(url, "html")
+  if (!r.body || r.status !== 200) return refuse("UNAVAILABLE", `YouTube's page for this video did not answer (${r.status ?? "no answer"}). Unknown right now, not absent.`)
+  const v = parseYoutubeVideo(r.body)
+  if (!v) return refuse("UNAVAILABLE", "YouTube's page did not include the video's details (it may need a consent step or be private). Unknown, not absent.")
+  const m = brandMentions([{ text: `${v.title ?? ""}\n${v.description}` }], input.own, input.brands)
+  return {
+    status: "OBSERVED",
+    citations: [{ kind: "web", id: url, text: `YouTube: ${v.title ?? id}` }],
+    timeline: v.published ? [{ date: v.published, event: `YouTube video: ${v.title}`, label: "SEEN" as const, url }] : [],
+    findings: { label: "SEEN", ...v, description: v.description.slice(0, 5000), url, ...(m ? { names: m.tagged[0]!.named, brandMentions: m.counts } : {}) },
+    coverage: { read: "the video's title, description, chapters and figures from its public page",
+      note: "What is said in the video is not read: YouTube gives transcripts only to its own apps. Brands named only aloud are unknown, not absent. Views are YouTube's count now; the description is untrusted." },
+  }
+}
+
 const YoutubeInput = Schema.Struct({ domain: Schema.optional(Domain), channel: Schema.optional(Schema.String.pipe(Schema.maxLength(300))) })
 const BlueskyInput = Schema.Struct({ domain: Schema.optional(Domain), handle: Schema.optional(Schema.String.pipe(Schema.pattern(/^@?[a-z0-9.-]{3,253}$/i))) })
+const YoutubeVideoInput = Schema.Struct({ video: Schema.String.pipe(Schema.minLength(11), Schema.maxLength(300)),
+  own: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(60))), brands: Schema.optional(Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(60))).pipe(Schema.maxItems(10))) })
 const HnInput = Schema.Struct({ query: Schema.String.pipe(Schema.minLength(2), Schema.maxLength(120)), months: Schema.optional(Schema.Int.pipe(Schema.between(1, 36))) })
 export const SOCIAL_CAPABILITIES: ReadonlyArray<AnyCapability> = [
   { id: "social.youtube", platform: "social", title: "YouTube uploads and views", source: "PUBLIC_FEED", label: "SEEN", cache: "day",
     description: "A channel's latest uploads with dates, views and likes, and uploads per month. Give the channel address or handle, or the company domain to find it on the site.",
     input: YoutubeInput, subject: (i: typeof YoutubeInput.Type) => i.channel ?? normalizeDomain(i.domain ?? "") ?? "youtube",
     run: (ctx, i: typeof YoutubeInput.Type) => Effect.tryPromise(() => youtubeRun(ctx.net, i)) },
+  { id: "social.youtube_video", platform: "social", title: "A YouTube video's page: title, description, chapters, views", source: "PUBLIC_FEED", label: "SEEN", cache: "day",
+    description: "One YouTube video (its address or id): title, channel, views, length, date, category, description, chapters and the links in its description; with which brands the title and description name. What is said aloud is not read.",
+    input: YoutubeVideoInput, subject: (i: typeof YoutubeVideoInput.Type) => youtubeVideoId(i.video) ?? i.video,
+    run: (ctx, i: typeof YoutubeVideoInput.Type) => Effect.tryPromise(() => youtubeVideoRun(ctx.net, i)) },
   { id: "social.bluesky", platform: "social", title: "Bluesky posts and engagement", source: "PUBLIC_FEED", label: "SEEN", cache: "day",
     description: "A public account's latest posts with likes, reposts and replies, and posts per month. Give the handle, or the company domain (its link or the domain as handle).",
     input: BlueskyInput, subject: (i: typeof BlueskyInput.Type) => i.handle ?? normalizeDomain(i.domain ?? "") ?? "bluesky",

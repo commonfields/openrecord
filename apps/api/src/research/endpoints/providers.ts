@@ -32,7 +32,9 @@ const HAND_WRITTEN: ReadonlyArray<Provider> = [
     note: "A lab test from Google's servers plus real-user field data when the page has enough Chrome traffic." },
   { id: "reddit", name: "Reddit", hosts: ["oauth.reddit.com"], auth: { kind: "client_credentials", tokenUrl: "https://www.reddit.com/api/v1/access_token" },
     connect: { how: "Create a Reddit app of type \"script\" for your account and paste client_id:client_secret.", url: "https://www.reddit.com/prefs/apps", format: /^[A-Za-z0-9_-]{10,40}:[A-Za-z0-9_-]{20,60}$/, example: "abc123:xyz..." },
-    note: "Reddit's official API under your own app and Reddit's API terms; read-only searches and community data." },
+    note: "Reddit's official API under your own app and Reddit's API terms; read-only searches and community data.",
+    // OpenRecord's own Reddit app (client_id:client_secret), when it has one approved for this use; calls are then priced by RESEARCH_PRICES_MICRO.
+    platformKeyEnv: "OPENRECORD_REDDIT_CREDENTIAL" },
   { id: "producthunt", name: "Product Hunt", hosts: ["api.producthunt.com"], auth: { kind: "bearer" },
     connect: { how: "Create a Product Hunt API application and paste its developer token.", url: "https://www.producthunt.com/v2/oauth/applications", format: /^[A-Za-z0-9_-]{30,80}$/, example: "..." },
     note: "Product Hunt's official API under your own developer token." },
