@@ -439,6 +439,7 @@ pub fn agent_helper(s: &mut App) {
         session: Some(crate::chat::SessionInfo { parent_session_id: Some("c1".into()), title: Some("How others explain onboarding".into()), role: Some("researcher".into()) }),
     };
     s.helper = Some(("s2".into(), Load::Ready(helper)));
+    s.show_side_item();
 }
 
 /// An accepted draft in the chat's work pane.
@@ -1160,6 +1161,7 @@ pub fn agent_artifact(s: &mut App) {
         loaded: Load::Ready(crate::artifacts::Artifact { id: "fixture-artifact".into(), title: "Campaign brief".into(), format: "MARKDOWN".into(), content: content.into(), preview_html: "<!doctype html><html><body><h1>A clearer path to your next campaign</h1><p>Draft for review.</p></body></html>".into(), version: 2, shown_version: 2,
             versions: vec![crate::artifacts::Version { version: 2, title: "Campaign brief".into() }, crate::artifacts::Version { version: 1, title: "First brief".into() }] }),
         source: false });
+    s.show_side_item();
 }
 pub fn channels_wordpress(s: &mut App) {
     channels(s);
@@ -1176,4 +1178,11 @@ pub fn channels_google(s: &mut App) {
             crate::channel_setup::Choice { connection: "fixture-google".into(), id: "sc-domain:northstar.test".into(), title: "northstar.test · Marketing team".into(), bound: false },
         ] }), site: rune::TextEdit::new(""), username: rune::TextEdit::new(""), secret: rune::TextEdit::new("").secure(),
         busy: false, authorizing: false, error: None, confirming_disconnect: false });
+}
+
+/// The right panel on its Browser tab, before a page is open.
+pub fn side_browser(s: &mut App) {
+    agent(s);
+    s.show_browser_tab();
+    s.side.browser.recents = vec!["https://northstar.example/pricing".into()];
 }

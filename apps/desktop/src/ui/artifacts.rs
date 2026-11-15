@@ -1,47 +1,21 @@
-//! A document beside the conversation, in the normal flex layout.
-use super::widgets::{Variant, button, icon_button, label};
+//! A document beside the conversation: the body of the right panel's item tab.
+use super::widgets::{Variant, button, label};
 use crate::{
     state::{App, Load},
-    theme::{Theme, shadows, type_},
+    theme::{Theme, type_},
 };
 use rune::{El, ScrollSpec, col, row};
 
 pub fn view(s: &App, t: &Theme) -> El {
     let p = s.artifact.as_ref().expect("artifact pane");
     let a = p.loaded.ready();
-    let title = a.map(|a| a.title.as_str()).unwrap_or("Opening artifact");
-    let head = row()
-        .w_full()
-        .h(48.0)
-        .px(16.0)
-        .gap(8.0)
-        .center_y()
-        .child(
-            label(title.to_string(), type_::SM_MEDIUM, t.foreground)
-                .grow(1.0)
-                .min_w(0.0)
-                .truncate(),
-        )
-        .child(
-            icon_button(
-                t,
-                "artifact-close",
-                &crate::icons::X,
-                "Close artifact (Esc)",
-                false,
-            )
-            .on_press(|s: &mut App| s.artifact = None),
-        );
     let mut pane = col()
         .key("artifact-pane")
         .w(0.0)
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .radius(10.0)
-        .clip_rounded(10.0)
-        .fill(t.background)
-        .child(head);
+        .fill(t.background);
     if let Some(a) = a {
         let mut tools = row()
             .w_full()
@@ -185,5 +159,5 @@ pub fn view(s: &App, t: &Theme) -> El {
                     .on_press(|s: &mut App| s.artifact_version(None)),
             );
     }
-    shadows(pane, &t.panel_shadow)
+    pane
 }

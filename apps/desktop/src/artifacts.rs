@@ -51,21 +51,15 @@ impl App {
         self.net.artifact(p.business.clone(), p.id.clone(), version);
     }
     pub fn artifact_visible(&self) -> bool {
-        self.screen == crate::state::Screen::Workspace
-            && self.view == crate::state::View::Agent
-            && self.artifact.is_some()
+        self.side_shown() && self.side_tab() == crate::side::SideTab::Item && self.artifact.is_some()
     }
     /// A helper session beside the conversation, when no artifact holds that place.
     pub fn helper_visible(&self) -> bool {
-        self.screen == crate::state::Screen::Workspace
-            && self.view == crate::state::View::Agent
-            && (self.active.is_some() || self.general)
-            && self.helper.is_some()
-            && !self.artifact_visible()
+        self.side_shown() && self.side_tab() == crate::side::SideTab::Item && self.helper.is_some() && self.artifact.is_none()
     }
-    /// Whether a card (an artifact or a helper) is open beside the panel.
+    /// Whether the right panel is open beside the page.
     pub fn side_visible(&self) -> bool {
-        self.artifact_visible() || self.helper_visible()
+        self.side_shown()
     }
     pub fn preview_visible(&self) -> bool {
         self.artifact_visible()
@@ -73,16 +67,7 @@ impl App {
                 .artifact
                 .as_ref()
                 .is_some_and(|p| !p.source && p.loaded.ready().is_some())
-            && self.settings.is_none()
-            && self.menu.is_none()
-            && self.find.is_none()
-            && self.new_chat.is_none()
-            && !self.chat_actions
-            && !self.notices_open
-            && self.share.is_none()
-            && self.save_playbook.is_none()
-            && self.add_business.is_none()
-            && self.menu_entries().is_empty()
+            && self.native_view_clear()
     }
 }
 

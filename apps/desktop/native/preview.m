@@ -109,3 +109,76 @@ void or_oauth_start(const char *raw) {
     authorization.prefersEphemeralWebBrowserSession = YES;
     if (![authorization start]) { authorizationResult = -1; authorization = nil; }
 }
+
+// ---- The side panel's browser -----------------------------------------------
+// A separate, ordinary web view for the side panel's Browser tab. It shares
+// nothing with the document renderer above: its own non-persistent data store
+// (no app session, no cookies kept between launches), web pages only (http and
+// https), and a page's "open in a new window" loads in place instead.
+@interface ORBrowserPolicy : NSObject <WKNavigationDelegate, WKUIDelegate>
+@end
+@implementation ORBrowserPolicy
+- (void)webView:(WKWebView *)view decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))done {
+    NSString *scheme = action.request.URL.scheme.lowercaseString;
+    BOOL web = [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"about"];
+    done(web ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+}
+- (WKWebView *)webView:(WKWebView *)view createWebViewWithConfiguration:(WKWebViewConfiguration *)config forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {
+    if (action.request.URL) [view loadRequest:action.request];
+    return nil;
+}
+@end
+static WKWebView *browser;
+static ORBrowserPolicy *browserPolicy;
+static char browserURL[4096];
+
+void or_browser_hide(void) { [browser setHidden:YES]; }
+void or_browser_close(void) { [browser stopLoading]; [browser removeFromSuperview]; browser = nil; browserPolicy = nil; browserURL[0] = 0; }
+
+// Places the browser at the rect (window points, top-left origin) and, when
+// `url` is given and differs from what it shows, loads it.
+void or_browser_show(const char *url, double x, double y, double w, double h) {
+    NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;
+    if (!window) for (NSWindow *candidate in NSApp.windows) {
+        if (candidate.visible && candidate.canBecomeMainWindow) { window = candidate; break; }
+    }
+    if (!window || w <= 0 || h <= 0) return;
+    NSView *host = window.contentView;
+    if (!browser) {
+        WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
+        config.preferences.javaScriptCanOpenWindowsAutomatically = NO;
+        browser = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
+        browserPolicy = [ORBrowserPolicy new];
+        browser.navigationDelegate = browserPolicy;
+        browser.UIDelegate = browserPolicy;
+        browser.allowsBackForwardNavigationGestures = YES;
+    }
+    if (browser.superview != host) { [browser removeFromSuperview]; [host addSubview:browser]; }
+    CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
+    NSRect frame = NSMakeRect(x, top, w, h);
+    if (!NSEqualRects(browser.frame, frame)) [browser setFrame:frame];
+    if (url && url[0]) {
+        NSURL *next = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
+        if (next && ![next isEqual:browser.URL]) [browser loadRequest:[NSURLRequest requestWithURL:next]];
+    }
+    if (browser.hidden) [browser setHidden:NO];
+}
+
+// 1 back, 2 forward, 3 reload, 4 stop.
+void or_browser_command(int command) {
+    switch (command) {
+        case 1: [browser goBack]; break;
+        case 2: [browser goForward]; break;
+        case 3: [browser reload]; break;
+        case 4: [browser stopLoading]; break;
+    }
+}
+
+// What the browser shows now, for the address bar; empty before it loads.
+const char *or_browser_url(void) {
+    NSString *u = browser.URL.absoluteString ?: @"";
+    strlcpy(browserURL, u.UTF8String ?: "", sizeof browserURL);
+    return browserURL;
+}
+int or_browser_state(void) { return (browser.canGoBack ? 1 : 0) | (browser.canGoForward ? 2 : 0) | (browser.loading ? 4 : 0); }
