@@ -44,7 +44,7 @@ export const diffTokens = (a: ReadonlyArray<Token>, b: ReadonlyArray<Token>, max
   const A = a.slice(start, endA), B = b.slice(start, endB)
   const n = A.length, m = B.length, offset = max + 1
   const trace: Int32Array[] = []
-  let v = new Int32Array(2 * max + 3)
+  const v = new Int32Array(2 * max + 3)
   let found = -1
   outer: for (let d = 0; d <= max; d++) {
     trace.push(v.slice())
