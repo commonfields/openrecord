@@ -36,6 +36,9 @@ const withoutSchemaIds = (schema: unknown) => {
   return rest
 }
 
+/** Registered tools have a card; session and extension tools are always declared whole. */
+export const hasCard = (tool: ToolDeclaration) => NEAR_MISS.has(tool.name)
+
 export const hasLazySchema = (tool: ToolDeclaration) => NEAR_MISS.has(tool.name) && bytes(tool.parametersJsonSchema) > LAZY_SCHEMA_BYTES
 
 /** The card for one tool. Tools without catalog metadata (session and extension tools) are declared whole. */
