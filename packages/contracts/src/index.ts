@@ -355,6 +355,9 @@ export const AgentMessageRequest = Schema.Struct({
    * blocks (generated views from the app's component catalog). The agent is told about
    * them only when the client says it draws them. */
   surfaces: Schema.optional(Schema.Array(Schema.Literal("ui")).pipe(Schema.maxItems(4))),
+  /** The saved artifacts open beside the chat, the one in front first. A change the
+   * person asks for without naming another piece applies to that one. */
+  viewing: Schema.optional(Schema.Struct({ artifacts: Schema.Array(Schema.UUID).pipe(Schema.minItems(1), Schema.maxItems(8)) })),
 })
 export type AgentMessageRequest = typeof AgentMessageRequest.Type
 export type AgentResponseStyle = NonNullable<AgentMessageRequest["style"]>
