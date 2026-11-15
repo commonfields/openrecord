@@ -838,10 +838,10 @@ fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity], durat
 
 // ---- The turn still running (the web's `LiveTrace`) -----------------------------
 
-/// Thinking and working: a glossy black Rubik's cube spinning in 3D. Still
-/// when motion is reduced.
+/// Thinking and working: the app's loader, turning. Still when motion is reduced.
 fn thinking_glyph(t: &Theme, reduce: bool) -> El {
-    row().size(24.0, 24.0).center().a11y_hidden().child(crate::ui::cube3d::view(t, "thinking-cube", 24.0, !reduce))
+    let mark = ico(&icons::LOADER, 16.0, t.muted_foreground);
+    row().size(24.0, 24.0).center().a11y_hidden().child(if reduce { mark } else { mark.looping(rune::LoopSpec::rotation(1.0)) })
 }
 
 /// A finished thought's mark, as Claude Code sets one: a quiet "∴".
@@ -870,7 +870,7 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
-/// A turn still running: the cube spinning beside "Thinking" (or "Working"
+/// A turn still running: the loader turning beside "Thinking" (or "Working"
 /// once a tool runs) and a rolling timer; under it the step under way, which
 /// slides in each time it changes; and the steps already done, folded into one
 /// of Rune's collapsibles.

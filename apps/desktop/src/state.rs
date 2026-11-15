@@ -2621,6 +2621,9 @@ impl App {
             Reply::Portfolio(r) => self.portfolio = to_load(self.failed(r)),
             Reply::ClientRows(r) => self.client_rows = to_load(self.failed(r)),
             Reply::Conversation(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => {
+                if let Ok(Some(c)) = &r {
+                    self.refresh_open_artifacts(c);
+                }
                 self.syncing = false;
                 self.synced_at = std::time::Instant::now();
                 match self.failed(r) {

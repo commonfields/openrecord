@@ -44,6 +44,19 @@ impl Client {
     }
 }
 impl App {
+    /// After a reply lands, re-reads each open artifact the reply saved a newer
+    /// version of, so a change asked for in the chat shows in its tab at once.
+    pub fn refresh_open_artifacts(&mut self, c: &crate::api::Conversation) {
+        let Some(last) = c.messages.iter().rev().find(|m| m.role == "agent") else { return };
+        for r in &last.artifacts {
+            if let Some(p) = self.artifacts.iter_mut().find(|p| p.id == r.id && p.requested.is_none()) {
+                if p.loaded.ready().is_some_and(|a| (a.version as i64) < r.version) {
+                    p.loaded = Load::Loading;
+                    self.net.artifact(p.business.clone(), p.id.clone(), None);
+                }
+            }
+        }
+    }
     pub fn artifact_version(&mut self, version: Option<u32>) {
         let Some(p) = self.front_artifact_mut() else { return };
         p.requested = version;
