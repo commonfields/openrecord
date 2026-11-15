@@ -46,6 +46,8 @@ pub enum Reply {
     TurnResumed { business: String, conversation: String, request: String, message: String },
     /// Stop was pressed but the API did not take it.
     CancelFailed,
+    /// A note sent to a running request: its id, or the error that refused it.
+    NoteSent { local: u64, result: ApiResult<String> },
     /// A decision was approved (`true`) or declined, or the call failed.
     Decided { key: String, approved: bool, result: ApiResult<()> },
     /// The models a re-check can run on.
@@ -425,6 +427,10 @@ impl Net {
                 send(Reply::CancelFailed);
             }
         });
+    }
+
+    pub fn note(&self, request: String, local: u64, text: String) {
+        self.spawn(move |c, send| send(Reply::NoteSent { local, result: c.note(&request, &text) }));
     }
 
     pub fn identity(&self) {

@@ -2,7 +2,7 @@
 //! and a browser) with its widen and fold buttons on the right, over the tab
 //! in front. The browser is a native web view placed over its slot.
 
-use rune::{Cursor, El, ScrollSpec, col, el, row, text_input};
+use rune::{Cursor, El, col, row, text_input};
 use rune_kit::Kit;
 
 use crate::icons;
@@ -19,9 +19,9 @@ pub fn toggle(t: &Theme, open: bool) -> El {
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let tab = s.side_tab();
-    let body = match tab {
-        SideTab::Item if s.artifact.is_some() => super::artifacts::view(s, t).w_full().grow(1.0).min_h(0.0),
-        SideTab::Item => match &s.helper {
+    let body = match &tab {
+        SideTab::Artifact(_) => super::artifacts::view(s, t),
+        SideTab::Helper(_) => match s.front_helper() {
             Some((id, load)) => super::agent::helper_pane(s, t, k, id, load),
             None => browser(s, t),
         },
@@ -38,37 +38,60 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .clip_rounded(10.0)
             .role("complementary")
             .label("Side panel")
-            .child(strip(s, t, tab))
-            .child(el().w_full().h(1.0).fill(t.border))
-            .child(col().w_full().grow(1.0).min_h(0.0).child(body)),
+            .child(strip(s, t, &tab))
+            .child(col().w_full().grow(1.0).min_h(0.0).child(body))
+            .children(chat_box(s, t, &tab)),
         &t.panel_shadow,
     )
 }
 
-/// The tabs on the left; widen and fold on the right. Level with the main header.
-fn strip(s: &App, t: &Theme, tab: SideTab) -> El {
+/// Under an artifact or a helper, the main chat box, the same in look and use,
+/// where the main chat has its own.
+fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
+    let ready = match tab {
+        SideTab::Artifact(_) => s.front_artifact().is_some_and(|p| p.loaded.ready().is_some()),
+        SideTab::Helper(_) => s.front_helper().is_some(),
+        SideTab::Browser => false,
+    };
+    let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
+    ready.then(|| col().w_full().pt(8.0).child(super::agent::composer(s, t, &business, crate::state::ComposerSlot::Side)))
+}
+
+/// The tabs on the left, the browser pinned first and the chat's artifacts and
+/// helpers after it in the order they opened; widen and fold on the right.
+/// Level with the main header, with no rule under it.
+fn strip(s: &App, t: &Theme, front: &SideTab) -> El {
     let mut tabs = row().gap(2.0).center_y().grow(1.0).min_w(0.0).role("tablist").label("Panel tabs");
-    if s.side_item() {
-        let (icon, name): (&'static rune::Icon, String) = if let Some(a) = &s.artifact {
-            (&icons::FILE_TEXT, a.loaded.ready().map(|a| a.title.clone()).unwrap_or_else(|| "Artifact".into()))
-        } else {
-            (&icons::USERS, "Helper".into())
+    tabs = tabs.child(tab_button(t, "side-tab-browser", &icons::GLOBE, "Browser", *front == SideTab::Browser, None).on_press(|s: &mut App| s.show_browser_tab()));
+    for (i, item) in s.side_items().iter().enumerate() {
+        let (icon, name): (&'static rune::Icon, String) = match item {
+            SideTab::Artifact(id) => (
+                &icons::FILE_TEXT,
+                s.artifacts.iter().find(|p| &p.id == id).and_then(|p| p.loaded.ready()).map(|a| a.title.clone()).unwrap_or_else(|| "Artifact".into()),
+            ),
+            SideTab::Helper(id) => {
+                let info = s.helpers.iter().find(|(h, _)| h == id).and_then(|(_, l)| l.ready()).and_then(|c| c.session.clone());
+                let role = crate::chat::role_label(info.as_ref().and_then(|i| i.role.as_deref()).unwrap_or("general"));
+                (&icons::USERS, info.and_then(|i| i.title).unwrap_or_else(|| format!("{role} helper")))
+            }
+            SideTab::Browser => continue,
         };
+        let closing = item.clone();
         let close = row()
-            .key("side-item-close")
+            .key(format!("side-tab-close-{i}"))
             .size(18.0, 18.0)
             .radius(5.0)
             .center()
             .role("button")
-            .label("Close (Esc)")
+            .label("Close tab")
             .help("Close (Esc)")
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
-            .on_press(|s: &mut App| s.close_side_item())
+            .on_press(move |s: &mut App| s.close_tab(&closing))
             .child(ico(&icons::X, 12.0, t.muted_foreground));
-        tabs = tabs.child(tab_button(t, "side-tab-item", icon, &name, tab == SideTab::Item, Some(close)).on_press(|s: &mut App| s.side.tab = SideTab::Item));
+        let showing = item.clone();
+        tabs = tabs.child(tab_button(t, &format!("side-tab-{i}"), icon, &name, front == item, Some(close)).on_press(move |s: &mut App| s.show_tab(showing.clone())));
     }
-    tabs = tabs.child(tab_button(t, "side-tab-browser", &icons::GLOBE, "Browser", tab == SideTab::Browser, None).on_press(|s: &mut App| s.show_browser_tab()));
     let wide = s.side.wide;
     row()
         .key("side-strip")
@@ -228,7 +251,8 @@ fn start(s: &App, t: &Theme) -> El {
                 .child(label(url, type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0)),
         );
     }
-    col().w_full().grow(1.0).min_h(0.0).items_center().px(24.0).pt(40.0).child(list).scroll(ScrollSpec { stick_bottom: false })
+    // In the middle of the tab, across and down.
+    col().w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)
 }
 
 fn host(url: &str) -> String {

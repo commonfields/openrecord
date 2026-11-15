@@ -61,7 +61,7 @@ impl Style {
         match self {
             Style::Friendly => "The answer first, what it means for your business, and the next step, in plain words.",
             Style::Concise => "Just the answer and one next step.",
-            Style::Detailed => "The reasoning and evidence behind each point, with alternatives and trade-offs.",
+            Style::Detailed => "The reasoning and sources behind each point, with alternatives and trade-offs.",
         }
     }
 }

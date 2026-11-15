@@ -45,17 +45,18 @@ impl Client {
 }
 impl App {
     pub fn artifact_version(&mut self, version: Option<u32>) {
-        let Some(p) = &mut self.artifact else { return };
+        let Some(p) = self.front_artifact_mut() else { return };
         p.requested = version;
         p.loaded = Load::Loading;
-        self.net.artifact(p.business.clone(), p.id.clone(), version);
+        let (b, id) = (p.business.clone(), p.id.clone());
+        self.net.artifact(b, id, version);
     }
     pub fn artifact_visible(&self) -> bool {
-        self.side_shown() && self.side_tab() == crate::side::SideTab::Item && self.artifact.is_some()
+        self.side_shown() && matches!(self.side_tab(), crate::side::SideTab::Artifact(_))
     }
     /// A helper session beside the conversation, when no artifact holds that place.
     pub fn helper_visible(&self) -> bool {
-        self.side_shown() && self.side_tab() == crate::side::SideTab::Item && self.helper.is_some() && self.artifact.is_none()
+        self.side_shown() && matches!(self.side_tab(), crate::side::SideTab::Helper(_))
     }
     /// Whether the right panel is open beside the page.
     pub fn side_visible(&self) -> bool {
@@ -64,8 +65,7 @@ impl App {
     pub fn preview_visible(&self) -> bool {
         self.artifact_visible()
             && self
-                .artifact
-                .as_ref()
+                .front_artifact()
                 .is_some_and(|p| !p.source && p.loaded.ready().is_some())
             && self.native_view_clear()
     }
