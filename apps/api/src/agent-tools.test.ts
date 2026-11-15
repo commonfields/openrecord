@@ -14,6 +14,7 @@ const decode = (tool: string, input: unknown) =>
 describe("agent tool harness", () => {
   it("registers exactly the read-only toolset", () => {
     expect(AGENT_TOOLS.map((t) => t.name).sort()).toEqual([
+      "analyse_prompts",
       "assess_web_page",
       "audit_website",
       "compare_acquisition_batches",

@@ -60,7 +60,7 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
   },
   visibility: {
     match: /\b(ai (answers?|assistants?|search|visibility|overviews?)|chatgpt|claude|gemini|perplexity|copilot|llms?|aeo|geo|cit(e|es|ed|ing|ations?)|sources?|mentions?|competitors?|compar\w+|alternatives?|buyer questions?|prompts?|visibility|research|reddit|youtube|forums?|review sites?|outreach)\b/,
-    tools: ["read_competitors", "read_acquisition_overview", "read_acquisition_citations", "read_buyer_question_results", "read_competitor_appearances",
+    tools: ["read_competitors", "read_acquisition_overview", "analyse_prompts", "read_acquisition_citations", "read_buyer_question_results", "read_competitor_appearances",
       "read_ai_referral_evidence", "discover_buyer_questions", "ask_ai_assistants", "propose_question_set", "propose_acquisition_measurement",
       "compare_acquisition_batches", "propose_check_run", "research_company", "web_research", "cross_source_marketing_investigation",
       "read_representations", "read_open_issues", "read_issue", "read_observation", "draft_source_action", "read_discovery_scopes",

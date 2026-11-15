@@ -49,5 +49,6 @@ export const ROUTING_CASES: ReadonlyArray<RoutingCaseDef> = [
   { id: "business-truth", task: "What are the approved facts about our business?", expect: ["read_business_truth"] },
   { id: "ai-referrals", task: "How many visits came from AI referrals and crawlers?", expect: ["read_ai_referral_evidence"] },
   { id: "client-report", task: "Draft a private client report for this month", expect: ["prepare_client_report"] },
+  { id: "prompt-analysis", task: "Which of our tracked prompts are unbranded and at what buying stage are people asking?", expect: ["analyse_prompts"] },
   { id: "competitor-appearances", task: "Where do competitors appear in AI answers instead of us?", expect: ["read_competitor_appearances"] },
 ]
