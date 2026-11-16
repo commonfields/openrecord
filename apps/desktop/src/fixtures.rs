@@ -948,8 +948,8 @@ pub fn campaign_open(s: &mut App) {
     s.campaign_run_id = s.campaign_open.clone();
     s.campaign_runs = Load::Ready(vec![crate::api::CampaignRun {
         campaign_revision: 4, status: "WAITING_FOR_APPROVAL".into(), stale: false,
-        tasks: vec![crate::api::CampaignRunTask { title: "Pricing guide".into(), state: "WAITING_FOR_APPROVAL".into(), next: "Review the exact linked WordPress change before publication.".into() },
-            crate::api::CampaignRunTask { title: "Email the trial list".into(), state: "HUMAN_HANDOFF".into(), next: "Give the owner the draft and channel handoff.".into() }],
+        tasks: vec![crate::api::CampaignRunTask { title: "Pricing guide".into(), state: "WAITING_FOR_APPROVAL".into(), next: "Review the exact linked WordPress change before publication.".into(), ..Default::default() },
+            crate::api::CampaignRunTask { title: "Email the trial list".into(), state: "HUMAN_HANDOFF".into(), next: "Give the owner the draft and channel handoff.".into(), ..Default::default() }],
     }]);
 }
 

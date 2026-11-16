@@ -9,6 +9,7 @@
 // That makes a retried or resumed run safe without trusting model input.
 import { Effect, Schema } from "effect"
 import { blankDeclaration, leaveBlank } from "./agent-blanks.js"
+import { campaignPublicationDeclarations, dispatchCampaignPublication } from "./campaign-publication.js"
 import { AgentProposalRepository } from "@openrecord/db"
 import { dispatchGrowthProposal, growthProposalDeclarations } from "./agent-growth-tools.js"
 import { acquisitionProposalDeclarations, dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
@@ -62,6 +63,11 @@ const proposeCheckRun = (ctx: ToolContext, args: unknown) => Effect.gen(function
 
 const declared = (list: ReadonlyArray<ToolDeclaration>, name: string) => list.find(d => d.name === name)!
 export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
+  // A hosted campaign page: link an exact artifact revision, prepare it for approval, read delivery, issue a prelaunch test link.
+  ...campaignPublicationDeclarations.map((declaration): AgentToolSpec => {
+    const effect = declaration.name === "read_campaign_delivery" ? "read" : declaration.name === "prepare_campaign_publication" ? "propose" : "record"
+    return { declaration, effect, replay: effect === "read" ? "safe" : "deduplicated", scope: "general", run: (ctx, args) => dispatchCampaignPublication(ctx, declaration.name, args) }
+  }),
   // Finished pieces of work the person sees rendered beside the chat. A save is a new row or a new version, never a publication.
   ...artifactDeclarations.map((declaration): AgentToolSpec => {
     const reads = declaration.name === "read_artifact" || declaration.name === "list_artifacts"
@@ -170,6 +176,7 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
   if (tag === "CampaignRevisionRefused") return { ...toolFailure("REFUSED"), guidance: "Read the current campaign. Edits require its current revision, DRAFT stage, unfinished tasks and no linked delivery proposals. Do not overwrite stale content or retry unchanged inputs. Explain the blocker or offer a separately named alternative." }
+  if (tag === "PublicationRefused") return { ...toolFailure("REFUSED"), guidance: `Publication refused: ${(e as { reason?: string }).reason ?? "unknown"}. Read current campaign delivery and artifact revisions. Do not retry unchanged inputs or bypass prelaunch testing or operator approval.` }
   if (tag === "CampaignMeasurementRefused") return { ...toolFailure("REFUSED"), guidance: `Refused: ${(e as { reason?: string }).reason ?? "unknown"}${(e as { bindingId?: string }).bindingId ? ` (existing binding ${(e as { bindingId?: string }).bindingId})` : ""}. Read read_campaign_outcome and the opportunity's plan. A bound deliverable is never rebound silently; only an operator can dissolve a binding. Do not retry unchanged inputs.` }
   if (tag === "CampaignRunRefused") return { ...toolFailure("REFUSED"), guidance: `Refused: ${(e as { reason?: string }).reason ?? "unknown"}. The campaign run is stale, cancelled, too large or has a conflicting delivery link, or the change is not a pending change prepared for this run. Read its current run and brief. Do not replay external work, replace links or retry unchanged inputs.` }
   if (tag === "AgentInvestigationConflict") return { ...toolFailure("REFUSED"), guidance: "The investigation state changed. Read read_investigation for its current state_note_id before deciding whether a new state change is still appropriate. Do not blindly retry." }
@@ -254,9 +261,10 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
+export interface DecisionRef { readonly type: "CAMPAIGN_PUBLICATION" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
+  ...(typeof receipt["publicationId"] === "string" && UUID.test(receipt["publicationId"]) ? [{ type: "CAMPAIGN_PUBLICATION" as const, id: receipt["publicationId"] }] : []),
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
   ...(typeof receipt["wordpressChangeId"] === "string" && UUID.test(receipt["wordpressChangeId"]) ? [{ type: "WORDPRESS_CHANGE" as const, id: receipt["wordpressChangeId"] }] : []),

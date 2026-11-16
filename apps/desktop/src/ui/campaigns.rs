@@ -545,10 +545,48 @@ fn delivery(s: &App, t: &Theme, c: &Campaign) -> El {
         Load::Ready(runs) => {
             let mut list = col().w_full().gap(12.0);
             for run in runs {
-                let mut r = col().w_full().gap(6.0).child(label(format!("Revision {} · {}{}",run.campaign_revision,words(&run.status),if run.stale { " · earlier campaign revision" } else { "" }),type_::SM_MEDIUM,t.foreground));
+                let mut r = col().w_full().gap(6.0).child(label(format!("Revision {}: {}{}",run.campaign_revision,words(&run.status),if run.stale { ", from an earlier campaign revision" } else { "" }),type_::SM_MEDIUM,t.foreground));
                 for task in &run.tasks {
-                    r = r.child(label(format!("{} · {}",task.title,words(&task.state)),type_::SM_13,t.foreground).wrap())
+                    r = r.child(label(format!("{}: {}",task.title,words(&task.state)),type_::SM_13,t.foreground).wrap())
                         .child(label(task.next.clone(),type_::XS,t.muted_foreground).wrap());
+                    let mut actions = row().gap(8.0).flex_wrap();
+                    if let Some(artifact) = &task.artifact_id {
+                        let id = artifact.clone();
+                        actions = actions.child(campaign_button(t, &format!("delivery-artifact-{id}"), "Review artifact", Variant::Outline).on_press(move |s: &mut App| s.open_artifact(&id)));
+                    }
+                    if let Some(publication) = &task.publication_id {
+                        let id = publication.clone();
+                        if task.state == "NEEDS_TRACKING_TEST" || task.state == "AWAITING_APPROVAL" {
+                            let id = id.clone();
+                            actions = actions.child(campaign_button(t, &format!("delivery-test-{id}"), "Test inquiry form", Variant::Outline).on_press(move |s: &mut App| {
+                                if let Some(b) = s.active.clone() { s.net.campaign_publication(b, id.clone(), crate::net::PublicationAction::Test); }
+                            }));
+                        }
+                        if let Some(url) = &task.live_url {
+                            let url = url.clone();
+                            actions = actions.child(campaign_button(t, &format!("delivery-live-{id}"), "Open live page", Variant::Outline).on_press(move |s: &mut App| s.browser_open_page(&url)));
+                            let contacts_id = id.clone();
+                            actions = actions.child(campaign_button(t, &format!("delivery-inquiries-{id}"), "Read inquiries", Variant::Outline).on_press(move |s: &mut App| {
+                                if let Some(b) = s.active.clone() { s.net.campaign_publication(b, contacts_id.clone(), crate::net::PublicationAction::Inquiries); }
+                            }));
+                            r = r.child(label(format!("{} recorded inquiries, not counting test submissions", task.inquiries), type_::XS, t.muted_foreground).wrap());
+                            let withdraw_id = id.clone();
+                            let confirming = s.campaign_withdraw_confirm.as_deref() == Some(id.as_str());
+                            actions = actions.child(campaign_button(t, &format!("delivery-withdraw-{id}"), if confirming { "Confirm withdrawal" } else { "Withdraw page" }, Variant::Ghost).on_press(move |s: &mut App| {
+                                if confirming { if let Some(b) = s.active.clone() { s.net.campaign_publication(b, withdraw_id.clone(), crate::net::PublicationAction::Withdraw); } s.campaign_withdraw_confirm = None; }
+                                else { s.campaign_withdraw_confirm = Some(withdraw_id.clone()); }
+                            }));
+                            if confirming {
+                                r = r.child(label("This stops public access and new inquiries. Existing inquiries remain available for their retention period.", type_::XS, t.wrong).wrap());
+                                actions = actions.child(campaign_button(t, &format!("delivery-keep-{id}"), "Keep live", Variant::Outline).on_press(|s: &mut App| s.campaign_withdraw_confirm = None));
+                            }
+                        }
+                        if let Some((shown, text)) = &s.campaign_contacts { if shown == &id {
+                            r = r.child(label("Private inquiries, kept for 30 days", type_::XS_MEDIUM, t.foreground))
+                                .child(label(text.clone(), type_::SM_13, t.foreground).wrap().selectable(true));
+                        }}
+                    }
+                    r = r.child(actions);
                 }
                 list=list.child(r);
             }

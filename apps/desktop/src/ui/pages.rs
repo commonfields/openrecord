@@ -214,6 +214,15 @@ fn decision_detail(s: &App, t: &Theme, d: &Decision, now: i64) -> El {
         .children(summary);
 
     let mut panel = col().key("decision-paragraphs").w_full().gap(24.0);
+    if let Some(artifact) = &d.artifact {
+        let id = artifact.clone();
+        panel = panel.child(button(t, "publication-review-artifact", "Review saved artifact", Variant::Outline).on_press(move |s: &mut App| s.open_artifact(&id)));
+    }
+    if matches!(d.act, Act::Publication { .. }) {
+        let id = d.id.clone();
+        let business = d.business_id.clone();
+        panel = panel.child(button(t, "publication-prelaunch-test", "Open prelaunch test", Variant::Outline).on_press(move |s: &mut App| s.net.campaign_publication(business.clone(), id.clone(), crate::net::PublicationAction::Test)));
+    }
     if !d.sections.is_empty() {
         for (i, sec) in d.sections.iter().enumerate() {
             let mut cell = col().key(format!("section-{i}")).w_full().gap(6.0).child(label(sec.label.clone(), type_::SM_MEDIUM, t.foreground));

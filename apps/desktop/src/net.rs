@@ -10,6 +10,10 @@ use crate::api::{
     ApiError, ApiResult, Business, Campaign, Channel, ChatSummary, Client, Conversation, Decision, Issue, Overview,
 };
 
+#[derive(Clone, Copy)]
+pub enum PublicationAction { Test, Inquiries, Withdraw }
+pub enum PublicationResult { Test(String), Inquiries(String), Withdrawn }
+
 pub enum Reply {
     Restored(ApiResult<()>),
     SignedIn(ApiResult<()>),
@@ -25,6 +29,7 @@ pub enum Reply {
     Channels(String, ApiResult<Vec<Channel>>),
     Campaigns(String, ApiResult<Vec<Campaign>>),
     CampaignRuns(String, String, ApiResult<Vec<crate::api::CampaignRun>>),
+    CampaignPublication(String, String, ApiResult<PublicationResult>),
     CampaignSaved { business: String, id: String, result: ApiResult<Campaign> },
     Conversation(String, ApiResult<Option<Conversation>>),
     /// A turn was accepted: the conversation it belongs to (new or existing).
@@ -225,6 +230,26 @@ impl Net {
 
     pub fn chats(&self) {
         self.spawn(|c, send| send(Reply::Chats(c.chats())));
+    }
+
+    pub fn campaign_publication(&self, business: String, publication: String, action: PublicationAction) {
+        self.spawn(move |client, send| {
+            let path = format!("/api/businesses/{}/campaign-publications/{}", crate::api::enc(&business), crate::api::enc(&publication));
+            let result = match action {
+                PublicationAction::Test => client.post::<serde_json::Value>(&format!("{path}/test"), serde_json::json!({})).and_then(|v| {
+                    v["testUrl"].as_str().map(str::to_string).map(PublicationResult::Test).ok_or_else(|| ApiError::Decode("missing prelaunch test URL".into()))
+                }),
+                PublicationAction::Inquiries => client.get::<serde_json::Value>(&format!("{path}/inquiries")).map(|v| {
+                    let contacts = v["inquiries"].as_array().map(|rows| rows.iter().map(|r| {
+                        let contact: serde_json::Value = serde_json::from_str(r["contact"].as_str().unwrap_or("{}")).unwrap_or(serde_json::Value::Null);
+                        format!("{}\n{}", contact["email"].as_str().unwrap_or("Contact unavailable"), contact["message"].as_str().unwrap_or(""))
+                    }).collect::<Vec<_>>().join("\n\n")).unwrap_or_default();
+                    PublicationResult::Inquiries(if contacts.is_empty() { "No retained inquiries. Test inquiries are excluded; contact details expire after 30 days.".into() } else { contacts })
+                }),
+                PublicationAction::Withdraw => client.post::<serde_json::Value>(&format!("{path}/withdraw"), serde_json::json!({})).map(|_| PublicationResult::Withdrawn),
+            };
+            send(Reply::CampaignPublication(business, publication, result));
+        });
     }
 
     pub fn decisions(&self) {

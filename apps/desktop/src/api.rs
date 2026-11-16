@@ -395,8 +395,16 @@ pub struct CampaignRun {
     pub stale: bool,
     pub tasks: Vec<CampaignRunTask>,
 }
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct CampaignRunTask {
+    #[serde(default, rename = "artifactId")]
+    pub artifact_id: Option<String>,
+    #[serde(default, rename = "publicationId")]
+    pub publication_id: Option<String>,
+    #[serde(default, rename = "liveUrl")]
+    pub live_url: Option<String>,
+    #[serde(default)]
+    pub inquiries: u64,
     pub title: String,
     pub state: String,
     #[serde(rename = "nextMove")]
@@ -830,7 +838,20 @@ impl Client {
         #[derive(Deserialize)]
         struct Response { runs: Vec<CampaignRun> }
         let v: Response = self.get(&format!("/api/businesses/{}/campaigns/{}/runs", enc(business), enc(campaign)))?;
-        Ok(v.runs)
+        #[derive(Deserialize)]
+        struct Progress { revision: i64, deliverables: Vec<PublicationProgress> }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PublicationProgress { title: String, state: String, stale: bool, next_action: String, artifact_id: String, publication_id: Option<String>, live_url: Option<String>, inquiries: u64 }
+        let progress: Progress = self.get(&format!("/api/businesses/{}/campaign-publications/campaigns/{}", enc(business), enc(campaign)))?;
+        let mut runs = v.runs;
+        if !progress.deliverables.is_empty() {
+            let stale = progress.deliverables.iter().any(|d| d.stale);
+            let status = if progress.deliverables.iter().all(|d| d.state == "LIVE") { "LIVE" } else { "IN_PROGRESS" };
+            runs.insert(0, CampaignRun { campaign_revision: progress.revision, status: status.into(), stale,
+                tasks: progress.deliverables.into_iter().map(|d| CampaignRunTask { title: d.title, state: d.state, next: d.next_action, artifact_id: Some(d.artifact_id), publication_id: d.publication_id, live_url: d.live_url, inquiries: d.inquiries }).collect() });
+        }
+        Ok(runs)
     }
 
     pub fn save_campaign(&self, business: &str, id: &str, revision: i64, brief: Value) -> ApiResult<Campaign> {
