@@ -8,6 +8,7 @@ import { makeTokenCipher, parseCipherKeys } from "@openrecord/ga4"
 import { artifactDocument, PREVIEW_HEADERS, readArtifact } from "./artifacts.js"
 import { json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
+import { blockingCount, checkDeliverable, type Finding } from "./deliverable-checks.js"
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex")
 const token = () => randomBytes(32).toString("base64url")
@@ -65,8 +66,9 @@ export const campaignDeliveryProgress = (ctx: Pick<ToolContext, "accountId" | "b
       v.title AS title,b.content_digest AS "contentDigest",b.campaign_revision AS "campaignRevision",a.version AS "currentArtifactVersion",a.archived_at AS "archivedAt",
       p.id AS "publicationId",p.status,p.destination,p.cta_label AS "ctaLabel",p.privacy_notice AS "privacyNotice",p.published_at AS "publishedAt",
       EXISTS(SELECT 1 FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='TEST') AS "trackingTested",
-      (SELECT count(*)::int FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='PRODUCTION') AS "inquiries"
-    FROM campaign_artifact_bindings b JOIN agent_artifacts a ON a.id=b.artifact_id
+      (SELECT count(*)::int FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='PRODUCTION') AS "inquiries",
+      k.findings AS "checks", COALESCE(k.blocking,0) AS "blocking"
+    FROM campaign_artifact_bindings b LEFT JOIN campaign_deliverable_checks k ON k.binding_id=b.id JOIN agent_artifacts a ON a.id=b.artifact_id
     JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
     LEFT JOIN campaign_publications p ON p.binding_id=b.id
     WHERE b.business_id=${ctx.businessId} AND b.campaign_id=${campaignId} ORDER BY b.task_id,b.created_at DESC,b.id DESC`
@@ -75,10 +77,25 @@ export const campaignDeliveryProgress = (ctx: Pick<ToolContext, "accountId" | "b
     // Only a website deliverable can become a hosted page; an email or a post is handed to the owner to send.
     const web = (channels.get(String(r["taskId"])) ?? "WEBSITE") === "WEBSITE"
     const stale = Number(r["campaignRevision"]) !== Number(campaigns[0]!["revision"]) || Number(r["artifactVersion"]) !== Number(r["currentArtifactVersion"]) || r["archivedAt"] !== null
-    const state = stale ? "NEEDS_REVISION" : r["status"] === "PUBLISHED" ? "LIVE" : r["status"] === "REJECTED" || r["status"] === "WITHDRAWN" ? r["status"] : !r["publicationId"] ? "DRAFT_READY" : r["trackingTested"] === true ? "AWAITING_APPROVAL" : "NEEDS_TRACKING_TEST"
-    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : web ? "Prepare the linked artifact for publication" : "Ready for the owner to send or post; OpenRecord does not deliver this channel", channel: channels.get(String(r["taskId"])) ?? "WEBSITE" }
+    const state = stale ? "NEEDS_REVISION" : r["status"] === "PUBLISHED" ? "LIVE" : r["status"] === "REJECTED" || r["status"] === "WITHDRAWN" ? r["status"] : !r["publicationId"] ? "DRAFT_READY" : Number(r["blocking"] ?? 0) > 0 ? "NEEDS_FIXES" : r["trackingTested"] === true ? "AWAITING_APPROVAL" : "NEEDS_TRACKING_TEST"
+    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_FIXES" ? "Fix the blocking checks in a new revision, link it and prepare it again" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : web ? "Prepare the linked artifact for publication" : "Ready for the owner to send or post; OpenRecord does not deliver this channel", channel: channels.get(String(r["taskId"])) ?? "WEBSITE" }
   })
   return { campaignId, revision: Number(campaigns[0]["revision"]), deliverables, note: "Inquiries are recorded submissions, not qualified leads, revenue or causal lift. Test submissions are excluded. Existing published versions remain live when a draft changes, until withdrawn or separately replaced." }
+})
+
+/** Runs the pre-launch checks on a linked revision once and keeps them; the same revision is never checked twice. */
+const checkBinding = (ctx: Pick<ToolContext, "accountId" | "businessId">, bindingId: string) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const kept = (yield* sql`SELECT findings FROM campaign_deliverable_checks WHERE binding_id=${bindingId} AND business_id=${ctx.businessId}`)[0]
+  if (kept) return kept["findings"] as ReadonlyArray<Finding>
+  const row = (yield* sql`SELECT b.content_digest,v.content,a.format FROM campaign_artifact_bindings b JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
+    JOIN agent_artifacts a ON a.id=b.artifact_id WHERE b.id=${bindingId} AND b.business_id=${ctx.businessId}`)[0]
+  if (!row) return yield* refuse("NotFound")
+  const facts = (yield* sql`SELECT predicate,value_text FROM authoritative_facts WHERE business_id=${ctx.businessId} AND status='ACTIVE' LIMIT 500`).map(f => `${f["predicate"]}: ${f["value_text"]}`)
+  const findings = (yield* checkDeliverable(row["format"] === "HTML" ? "HTML" : "MARKDOWN", String(row["content"]), facts, true)).slice(0, 60)
+  yield* sql`INSERT INTO campaign_deliverable_checks(binding_id,business_id,content_digest,findings,blocking)
+    VALUES (${bindingId},${ctx.businessId},${String(row["content_digest"])},${JSON.stringify(findings)}::jsonb,${blockingCount(findings)}) ON CONFLICT (binding_id) DO NOTHING`
+  return findings
 })
 
 export const prepareCampaignPublication = (ctx: ToolContext, raw: unknown) => Effect.gen(function*() {
@@ -93,13 +110,17 @@ export const prepareCampaignPublication = (ctx: ToolContext, raw: unknown) => Ef
   const current = progress.deliverables.find(d => d["bindingId"] === input.bindingId)
   if (!current || current.stale) return yield* refuse("StaleBinding")
   if (current.channel !== "WEBSITE") return yield* refuse("NotAWebsiteDeliverable")
+  const findings = yield* checkBinding(ctx, input.bindingId)
   const page = token(), destination = `${origin}/p/${page}`
   const rows = yield* sql`INSERT INTO campaign_publications(business_id,binding_id,page_token,destination,cta_label,privacy_notice,prepared_by_user_id)
     VALUES (${ctx.businessId},${input.bindingId},${page},${destination},${input.ctaLabel.trim()},${input.privacyNotice.trim()},${ctx.userId})
     ON CONFLICT(binding_id) DO NOTHING RETURNING id`
   const publication = (yield* sql`SELECT id,destination,status,cta_label,privacy_notice FROM campaign_publications WHERE binding_id=${input.bindingId}`)[0]!
   if (publication["cta_label"] !== input.ctaLabel.trim() || publication["privacy_notice"] !== input.privacyNotice.trim()) return yield* refuse("PreparationChanged")
-  return { publicationId: String(publication["id"]), destination: String(publication["destination"]), status: String(publication["status"]), reused: !rows.length, published: publication["status"] === "PUBLISHED", nextAction: "Open the prelaunch test, submit a test inquiry, then review exact publication in Needs you. Preparing does not publish." }
+  const blocking = blockingCount(findings)
+  return { publicationId: String(publication["id"]), destination: String(publication["destination"]), status: String(publication["status"]), reused: !rows.length, published: publication["status"] === "PUBLISHED",
+    checks: { blocking, findings },
+    nextAction: blocking ? "Approval is blocked by the checks below. Fix them with edit_artifact, link the new revision and prepare it again." : "Open the prelaunch test, submit a test inquiry, then review exact publication in Needs you. Preparing does not publish." }
 })
 
 const ownedPublication = (ctx: Pick<ToolContext, "accountId" | "businessId">, id: string) => Effect.gen(function*() {
@@ -131,6 +152,9 @@ export const approveCampaignPublication = (session: Session, businessId: string,
     if (!cipher()) return yield* refuse("PublishingNotConfigured")
     const latest = yield* campaignDeliveryProgress(ctx, String(current["campaign_id"]))
     if (!latest.deliverables.some(d => d["bindingId"] === current["binding_id"] && !d.stale)) return yield* refuse("StaleBinding")
+    const checks = (yield* sql`SELECT blocking FROM campaign_deliverable_checks WHERE binding_id=${current["binding_id"] as string}`)[0]
+    if (!checks) return yield* refuse("ChecksMissing")
+    if (Number(checks["blocking"]) > 0) return yield* refuse("ChecksBlocking")
     const tested = yield* sql`SELECT 1 FROM campaign_inquiries WHERE publication_id=${id} AND purpose='TEST'`
     if (!tested.length) return yield* refuse("TrackingNotTested")
     const rows = yield* sql`UPDATE campaign_publications SET status='PUBLISHED',published_at=now(),decided_at=now(),decided_by_user_id=${session.userId}
@@ -181,12 +205,14 @@ export const pendingCampaignPublications = (accountId: string, businessId: strin
   return yield* sql`SELECT p.id,p.prepared_at AS "createdAt",p.destination,p.cta_label AS "ctaLabel",p.privacy_notice AS "privacyNotice",
       b.artifact_id AS "artifactId",b.artifact_version AS "artifactVersion",b.content_digest AS "contentDigest",v.title,
       EXISTS(SELECT 1 FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='TEST') AS "trackingTested",
+      COALESCE(k.findings,'[]'::jsonb) AS "checks", COALESCE(k.blocking,0) AS "blocking", k.binding_id IS NOT NULL AS "checked",
       (a.version<>b.artifact_version OR a.archived_at IS NOT NULL OR c.revision<>b.campaign_revision OR EXISTS(
         SELECT 1 FROM campaign_artifact_bindings newer WHERE newer.campaign_id=b.campaign_id AND newer.task_id=b.task_id
           AND (newer.created_at,newer.id)>(b.created_at,b.id))) AS stale
     FROM campaign_publications p JOIN campaign_artifact_bindings b ON b.id=p.binding_id
     JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
     JOIN agent_artifacts a ON a.id=b.artifact_id JOIN marketing_campaigns c ON c.id=b.campaign_id
+    LEFT JOIN campaign_deliverable_checks k ON k.binding_id=b.id
     JOIN businesses biz ON biz.id=p.business_id WHERE p.business_id=${businessId} AND biz.account_id=${accountId} AND p.status='PREPARED'`
 })
 const cleanupContacts = Effect.gen(function*() {

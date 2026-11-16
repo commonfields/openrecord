@@ -5,7 +5,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect, Layer, Redacted, Schema } from "effect"
 import pg from "pg"
 import { AuthRepositoryLive, BusinessRepositoryLive } from "@openrecord/db"
-import { campaignPublicationApi, bindCampaignArtifact, prepareCampaignPublication, campaignDeliveryProgress, dispatchCampaignPublication } from "./campaign-publication.js"
+import { campaignPublicationApi, bindCampaignArtifact, prepareCampaignPublication, campaignDeliveryProgress, dispatchCampaignPublication, pendingCampaignPublications } from "./campaign-publication.js"
 import { createArtifact, dispatchArtifact, reviseArtifact } from "./artifacts.js"
 import { draftMarketingCampaign } from "./campaign-agent.js"
 import { requireSession } from "./router.js"
@@ -15,6 +15,8 @@ import { memoryJournal } from "./agent-run.js"
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
 const PAGE = '<!doctype html><html><head><style>h1{color:navy}</style></head><body><h1>Wedding cakes in Bandung</h1><p>Tell us about your wedding.</p><script>fetch("/api/auth/me")</script><form action="https://evil.test">Bad form</form></body></html>'
+// The same page without its own form: scripts are only a warning, so this one can be approved.
+const CLEAN = PAGE.replace('<form action="https://evil.test">Bad form</form>', "")
 suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and live inquiry", () => {
   const layer = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const web = HttpApp.toWebHandlerLayer(campaignPublicationApi(run => Effect.flatMap(requireSession, ({ session }) => run(session))), layer)
@@ -23,7 +25,7 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
   afterAll(async () => { await web.dispose(); await pool.end() })
   afterEach(() => vi.unstubAllEnvs())
   const run = <A, E>(effect: Effect.Effect<A, E, import("@effect/sql").SqlClient.SqlClient | import("@openrecord/db").BusinessRepository>) => Effect.runPromise(effect.pipe(Effect.provide(layer)))
-  const fixture = async () => {
+  const fixture = async (content = CLEAN) => {
     vi.stubEnv("GA4_TOKEN_ENCRYPTION_KEYS", `k1:${Buffer.alloc(32, 7).toString("base64")}`)
     vi.stubEnv("CAMPAIGN_PUBLIC_BASE_URL", "http://localhost:3001")
     const accountId = String((await pool.query("INSERT INTO accounts(name) VALUES('TEST P0') RETURNING id")).rows[0].id)
@@ -35,7 +37,7 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     const call = (method: string, path: string, body?: unknown, headers: Record<string,string> = {}) => web.handler(new Request(`http://localhost${path}`, { method, headers: { cookie: `or_session=${sid}`, ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
     const draft = await run(draftMarketingCampaign(ctx, { title: "Wedding inquiries", goal: "More wedding cake inquiries", audience: "Couples planning a wedding", offer: "Wedding cake consultation", message: "A cake designed for your wedding", hypothesis: "Specific wedding information may increase inquiries", deliverables: [{ title: "Wedding landing page", channel: "WEBSITE", content: "A proposed draft, not delivery" }] }))
     const campaign = Schema.decodeUnknownSync(Schema.Struct({ campaignId: Schema.UUID, revision: Schema.Number, tasks: Schema.Array(Schema.Struct({ id: Schema.UUID })) }))(draft.data)
-    const { artifact } = await run(createArtifact(ctx, { kind: "LANDING_PAGE", format: "HTML", title: "Wedding cakes", content: PAGE }, "ASSISTANT"))
+    const { artifact } = await run(createArtifact(ctx, { kind: "LANDING_PAGE", format: "HTML", title: "Wedding cakes", content }, "ASSISTANT"))
     const bind = () => run(bindCampaignArtifact(ctx, { campaignId: campaign.campaignId, campaignRevision: campaign.revision, taskId: campaign.tasks[0]!.id, artifactId: artifact.id, artifactVersion: artifact.version }))
     const binding = await bind()
     const publication = await run(prepareCampaignPublication(ctx, { bindingId: binding.bindingId, ctaLabel: "Ask about wedding cakes", privacyNotice: "The bakery uses your email to respond to this inquiry. Details are retained for 30 days." }))
@@ -106,6 +108,19 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     expect(await run(Effect.flip(prepareCampaignPublication(f.ctx, { bindingId: f.binding.bindingId, ctaLabel: "Publish", privacyNotice: "Reply to inquiries" })))).toMatchObject({ reason: "StaleBinding" })
     expect((await pool.query("SELECT count(*) FROM campaign_publications WHERE business_id=$1", [f.ctx.businessId])).rows[0].count).toBe(before)
     await expect(pool.query("UPDATE campaign_artifact_bindings SET content_digest=$2 WHERE id=$1", [f.binding.bindingId, "0".repeat(64)])).rejects.toThrow(/append-only/)
+  })
+  it("blocks approval when the pre-launch checks find a form that cannot submit, and shows warnings", async () => {
+    const f = await fixture(PAGE)
+    const decisions = await run(pendingCampaignPublications(f.ctx.accountId, f.ctx.businessId))
+    const mine = decisions.find(d => d["id"] === f.publication.publicationId)!
+    expect(mine["blocking"]).toBe(1)
+    expect(JSON.stringify(mine["checks"])).toContain("FORM_CANNOT_SUBMIT")
+    expect(JSON.stringify(mine["checks"])).toContain("SCRIPT_WILL_NOT_RUN")
+    const t = await f.test(); await f.submit(t.ticket)
+    const refused = await f.call("POST", `${f.base}/approve`, f.approval)
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ reason: "ChecksBlocking" })
+    expect((await run(campaignDeliveryProgress(f.ctx, f.campaign.campaignId))).deliverables[0]).toMatchObject({ state: "NEEDS_FIXES" })
   })
   it("hands an email deliverable to the owner instead of offering it as a hosted page", async () => {
     const f = await fixture()
