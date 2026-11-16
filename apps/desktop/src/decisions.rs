@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 /// What approving or declining a decision calls.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Act {
-    Publication { version: i64, digest: String, destination: String, tested: bool, stale: bool },
+    Publication { version: i64, digest: String, destination: String, tested: bool, stale: bool, blocking: u64 },
     /// A proposed initiative (`/api/growth/clients/:id/opportunities/:id/approve|cancel`).
     Growth { status: String, revision: i64 },
     /// A prepared WordPress change: approving publishes it.
@@ -64,6 +64,7 @@ impl Decision {
     pub fn blocked(&self, model: Option<&str>) -> Option<&'static str> {
         match &self.act {
             Act::Publication { stale: true, .. } => Some("The campaign or artifact changed. Ask the agent to prepare the current revision."),
+            Act::Publication { blocking, .. } if *blocking > 0 => Some("The pre-launch checks found problems that must be fixed first. Ask the agent to fix them in a new version."),
             Act::Publication { tested: false, .. } => Some("Open the prelaunch test and submit a test inquiry, then refresh this decision."),
             Act::Acquisition { cost: None, .. } => Some("Approval is blocked until a measurement cost bound is configured and a new proposal is prepared."),
             Act::Acquisition { blocked: true, .. } => Some("The measurement plan is missing something it needs, so it can't run yet."),
@@ -156,6 +157,8 @@ pub fn refusal(body: &str) -> Option<&'static str> {
     Some(match reason {
         "StaleBinding" => "The campaign or artifact changed. Prepare the current revision before publishing.",
         "TrackingNotTested" => "Submit a prelaunch test inquiry before publishing.",
+        "ChecksBlocking" => "The pre-launch checks found problems that must be fixed in a new version first.",
+        "ChecksMissing" => "This page wasn't checked before launch. Ask the agent to prepare it again.",
         "NotAWebsiteDeliverable" => "Only a website deliverable can become a campaign page. Send or post this one yourself.",
         "PublishingNotConfigured" => "Campaign publishing needs a public server address and encrypted inquiry storage. Ask the workspace administrator to enable it.",
         "ChangedSincePrepared" => "This changed after it was prepared, so it wasn't overwritten. Ask the agent to prepare it again.",
@@ -262,9 +265,16 @@ pub fn parse(v: &Value) -> Option<Decision> {
             d.artifact = opt(p, "artifactId");
             let version = p["artifactVersion"].as_i64().unwrap_or_default();
             d.sections = vec![sec("Destination", s(p, "destination")), sec("Artifact revision", format!("Version {version}")), sec("Inquiry button", s(p, "ctaLabel")), sec("Privacy notice", s(p, "privacyNotice"))];
+            let findings = p["checks"].as_array().cloned().unwrap_or_default();
+            let lines = |severity: &str| findings.iter().filter(|f| f["severity"].as_str() == Some(severity)).filter_map(|f| f["message"].as_str().map(|m| format!("- {m}"))).collect::<Vec<_>>().join("\n");
+            let blocking = lines("BLOCKING");
+            if !blocking.is_empty() { d.sections.push(sec("Must fix before publishing", blocking)); }
+            let warnings = lines("WARNING");
+            if !warnings.is_empty() { d.sections.push(sec("Check before approving", warnings)); }
+            if findings.is_empty() && p["checked"].as_bool() == Some(true) { d.sections.push(sec("Pre-launch checks", "Links, placeholders, headings and claims checked. Nothing found.".into())); }
             d.note = Some("Approval makes this exact revision public. Inquiries appear in this campaign; no email notification is sent. Test inquiries do not count as results.".into());
             d.approve = "Approve and publish".into();
-            d.act = Act::Publication { version, digest: s(p, "contentDigest"), destination: s(p, "destination"), tested: p["trackingTested"].as_bool().unwrap_or(false), stale: p["stale"].as_bool().unwrap_or(true) };
+            d.act = Act::Publication { version, digest: s(p, "contentDigest"), destination: s(p, "destination"), tested: p["trackingTested"].as_bool().unwrap_or(false), stale: p["stale"].as_bool().unwrap_or(true), blocking: p["blocking"].as_u64().unwrap_or(0) };
             d.feedback_kind = "CAMPAIGN_PUBLICATION";
             d.feedback_title = d.title.clone();
         }
