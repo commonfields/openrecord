@@ -27,8 +27,12 @@ export const followupPolicyApi = (withSession: WithSession) => {
         yield* sql.withTransaction(Effect.gen(function*() {
           const policies = yield* sql`UPDATE growth_investigation_wake_policies SET enabled = false, grant_id = ${randomUUID()}, updated_at = now()
             WHERE account_id = ${session.accountId} AND user_id = ${session.userId} AND business_id = ${businessId} RETURNING id`
-          for (const p of policies) yield* sql`UPDATE growth_investigation_wakes SET status = 'CANCELLED', finished_at = now()
-            WHERE policy_id = ${p["id"]} AND status = 'RUNNING'`
+          for (const p of policies) {
+            yield* sql`UPDATE growth_investigation_wakes SET status = 'CANCELLED', finished_at = now()
+              WHERE policy_id = ${p["id"]} AND status = 'RUNNING'`
+            yield* sql`UPDATE campaign_wakes SET status = 'CANCELLED', finished_at = now()
+              WHERE policy_id = ${p["id"]} AND status = 'RUNNING'`
+          }
         }))
       } else {
         const conversations = yield* sql`SELECT id FROM agent_conversations WHERE id = ${input.conversationId}

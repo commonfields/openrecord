@@ -9,6 +9,7 @@ import { AGENT_TOOL_SPECS, dispatchToolSpec } from "./agent-registry.js"
 import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
 import { loadResumeContext } from "./agent-resume.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
+import { runDueCampaignFollowups } from "./campaign-followups.js"
 
 // Explicit allowlist: no network fetches, new measurements, proposals, memory
 // writes or delegation. Adding a registered tool does not add background powers.
@@ -51,6 +52,7 @@ export const claimFollowup = Effect.gen(function*() {
         AND (n.resume_after <= now() OR (a.status IS NOT NULL AND a.status::text <> 'PROPOSED'))
         AND NOT EXISTS (SELECT 1 FROM growth_investigation_wakes WHERE policy_id=p.id AND note_id=n.id)
         AND NOT EXISTS (SELECT 1 FROM growth_investigation_wakes WHERE policy_id=p.id AND (status='RUNNING' OR started_at > now()-interval '24 hours'))
+        AND NOT EXISTS (SELECT 1 FROM campaign_wakes WHERE policy_id=p.id AND (status='RUNNING' OR started_at > now()-interval '24 hours'))
       ORDER BY n.sequence LIMIT 1 FOR UPDATE OF p SKIP LOCKED`
     const row = due[0]
     if (!row) return null
@@ -115,9 +117,11 @@ export const deliverFollowup = (wake: FollowupWake, respond: Responder<AgentTool
     WHERE id=${wake.id} AND status='RUNNING'`
 })
 
+/** One wake per pass: an investigation's waiting note first, else a campaign milestone. Both share the person's daily budget. */
 export const runDueFollowups = Effect.gen(function*() {
   const wake = yield* claimFollowup
-  if (wake) yield* deliverFollowup(wake)
+  if (wake) return yield* deliverFollowup(wake)
+  yield* runDueCampaignFollowups
 })
 export const followupScheduler = runDueFollowups.pipe(
   // No raw provider/database errors, prompts, notes or credential-bearing URLs.
