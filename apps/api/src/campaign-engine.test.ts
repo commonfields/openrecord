@@ -6,7 +6,9 @@ const brief: CampaignBrief = { title: "Campaign", goal: "More demos", audience: 
 const receipt = (status: string, observed: boolean | null = null): CampaignDelivery[] => [{ task_id: brief.tasks[0]!.id, wordpress_change_id: "change", status, live_check: { observed } }]
 describe("campaign preparation state machine", () => {
   it("does not trust human task completion, approval or publication as live delivery", () => {
-    expect(campaignRunReport(brief, 1, 1, []).status).toBe("WAITING_FOR_REVIEW")
+    // A task note is not a deliverable: only a linked artifact revision makes it ready for review.
+    expect(campaignRunReport(brief, 1, 1, []).status).toBe("BLOCKED")
+    expect(campaignRunReport(brief, 1, 1, [], new Set([brief.tasks[0]!.id])).status).toBe("WAITING_FOR_REVIEW")
     expect(campaignRunReport(brief, 1, 1, receipt("PROPOSED")).status).toBe("WAITING_FOR_APPROVAL")
     expect(campaignRunReport(brief, 1, 1, receipt("PUBLISHED")).status).toBe("VERIFYING")
     expect(campaignRunReport(brief, 1, 1, receipt("PUBLISHED", false)).status).toBe("VERIFYING")
@@ -17,8 +19,9 @@ describe("campaign preparation state machine", () => {
     expect(campaignRunReport(brief, 2, 1, receipt("PUBLISHED", true)).status).toBe("STALE")
   })
   it("requires concrete drafts and names unsupported channels as handoffs", () => {
-    expect(campaignRunReport({ ...brief, tasks: [{ ...brief.tasks[0]!, note: "" }] }, 1, 1, []).tasks[0]!.state).toBe("NEEDS_DRAFT")
-    const report = campaignRunReport({ ...brief, tasks: [{ ...brief.tasks[0]!, channel: "EMAIL" }] }, 1, 1, [])
+    expect(campaignRunReport({ ...brief, tasks: [{ ...brief.tasks[0]!, note: "" }] }, 1, 1, []).tasks[0]!.state).toBe("NEEDS_ARTIFACT")
+    expect(campaignRunReport(brief, 1, 1, []).tasks[0]!.state).toBe("NEEDS_ARTIFACT")
+    const report = campaignRunReport({ ...brief, tasks: [{ ...brief.tasks[0]!, channel: "EMAIL" }] }, 1, 1, [], new Set([brief.tasks[0]!.id]))
     expect(report.status).toBe("BLOCKED")
     expect(report.tasks[0]!.state).toBe("HUMAN_HANDOFF")
     expect(report.limits.externalCalls).toBe(0)

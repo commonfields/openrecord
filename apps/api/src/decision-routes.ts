@@ -1,3 +1,4 @@
+import { pendingCampaignPublications } from "./campaign-publication.js"
 // One feed of everything waiting on a person: proposals the agent saved
 // (re-checks, drafts, measurement plans) and growth initiatives proposed for
 // approval, across every business the session can reach. Reading it decides
@@ -14,6 +15,7 @@ import { listWebflowChanges, type WebflowChange } from "./webflow.js"
 import { listActions, type AccountAction } from "./account-actions.js"
 
 export type DecisionItem =
+  | { readonly type: "CAMPAIGN_PUBLICATION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly publication: Record<string, unknown> }
   | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly proposal: AgentProposal }
   | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly opportunity: GrowthOpportunity }
   | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly change: WordPressChange }
@@ -31,8 +33,10 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
     const initiatives = yield* growth.list(accountId, b.id).pipe(Effect.catchIf(e => e instanceof GrowthRefused, () => Effect.succeed([])))
     const changes = yield* listChanges(accountId, b.id, "PROPOSED")
     const webflow = yield* listWebflowChanges(accountId, b.id, "PROPOSED")
+    const publications = yield* pendingCampaignPublications(accountId, b.id)
     const actions = yield* listActions(accountId, b.id, "PROPOSED")
     return [
+      ...publications.map((publication): DecisionItem => ({ type: "CAMPAIGN_PUBLICATION", business, createdAt: new Date(String(publication["createdAt"])).toISOString(), publication })),
       ...open.map((proposal): DecisionItem => ({ type: "AGENT_PROPOSAL", business, createdAt: proposal.createdAt, proposal })),
       ...initiatives.filter(o => o.status === "PROPOSED").map((opportunity): DecisionItem => ({ type: "GROWTH_OPPORTUNITY", business, createdAt: opportunity.createdAt, opportunity })),
       ...changes.map((change): DecisionItem => ({ type: "WORDPRESS_CHANGE", business, createdAt: change.createdAt, change })),
@@ -52,7 +56,8 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       AND c.user_id=${userId} AND c.expires_at>now() AND e.type='TOOL_COMPLETED'
       AND e.payload ? 'receipt' ORDER BY e.created_at DESC`
   return items.map(item => {
-    const [key, id] = item.type === "AGENT_PROPOSAL" ? ["proposalId", item.proposal.id]
+    const [key, id] = item.type === "CAMPAIGN_PUBLICATION" ? ["publicationId", item.publication["id"]]
+      : item.type === "AGENT_PROPOSAL" ? ["proposalId", item.proposal.id]
       : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id]
       : item.type === "ACCOUNT_ACTION" ? ["accountActionId", item.action.id]
       : item.type === "WEBFLOW_CHANGE" ? ["webflowChangeId", item.change.id] : ["wordpressChangeId", item.change.id]

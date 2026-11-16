@@ -40,19 +40,20 @@ export const draftMarketingCampaign = (ctx: ToolContext, raw: unknown) => Effect
   const saved = yield* sql.withTransaction(Effect.gen(function*() {
     // One lock per business also makes concurrent duplicate requests replay-safe.
     yield* sql`SELECT id FROM businesses WHERE id=${ctx.businessId} AND account_id=${ctx.accountId} FOR UPDATE`
-    const existing = yield* sql`SELECT id,revision,brief->>'status' AS status FROM marketing_campaigns WHERE business_id=${ctx.businessId} AND draft_key=${key}`
+    const existing = yield* sql`SELECT id,revision,brief,brief->>'status' AS status FROM marketing_campaigns WHERE business_id=${ctx.businessId} AND draft_key=${key}`
     if (existing[0]) return { row: existing[0], reused: true }
     // Lineage is written by the server in the creating statement, never from model input.
     const rows = yield* sql`INSERT INTO marketing_campaigns(business_id,created_by_user_id,created_by_actor,draft_key,brief,objective_goal_id)
       VALUES (${ctx.businessId},${ctx.userId},'ASSISTANT',${key},${JSON.stringify(brief)}::jsonb,
-        (SELECT primary_goal_id FROM growth_profiles WHERE business_id=${ctx.businessId})) RETURNING id,revision,brief->>'status' AS status`
+        (SELECT primary_goal_id FROM growth_profiles WHERE business_id=${ctx.businessId})) RETURNING id,revision,brief,brief->>'status' AS status`
     const row = rows[0]!
     yield* sql`INSERT INTO marketing_campaign_revisions(campaign_id,revision,actor_user_id,actor,brief)
       VALUES (${row["id"]},1,${ctx.userId},'ASSISTANT',${JSON.stringify(brief)}::jsonb)`
     return { row, reused: false }
   }))
+  const savedBrief = yield* Schema.decodeUnknown(CampaignBrief)(saved.row["brief"])
   return { summary: saved.reused ? "Existing campaign draft reused; nothing launched" : "Campaign and deliverable drafts saved; nothing launched", citations: [],
-    data: { campaignId: saved.row["id"], revision: saved.row["revision"], status: saved.row["status"], actor: "ASSISTANT", reused: saved.reused,
+    data: { campaignId: saved.row["id"], revision: saved.row["revision"], tasks: savedBrief.tasks.map(t => ({ id: t.id, title: t.title, channel: t.channel })), status: saved.row["status"], actor: "ASSISTANT", reused: saved.reused,
       url: `/businesses/${ctx.businessId}/campaigns?campaign=${saved.row["id"]}`, executed: false,
       note: "A private planning draft only. Unknown fields remain empty. Review the brief and use supported proposal tools for external actions; approval and independent verification remain required." } }
 })

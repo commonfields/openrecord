@@ -16,13 +16,13 @@ export interface CampaignDelivery {
 }
 
 /** Status comes from adapter records, not model-provided success flags. */
-export function campaignRunReport(snapshot: CampaignBrief, currentRevision: number, runRevision: number, deliveries: readonly CampaignDelivery[]) {
+export function campaignRunReport(snapshot: CampaignBrief, currentRevision: number, runRevision: number, deliveries: readonly CampaignDelivery[], artifacts: ReadonlySet<string> = new Set()) {
   const stale = currentRevision !== runRevision
   const missing = (["goal", "audience", "offer", "message", "hypothesis", "metric", "baseline", "target", "owner", "launchDate", "reviewDate"] as const)
     .filter(key => !snapshot[key].trim())
   const tasks = snapshot.tasks.map(task => {
     const receipt = deliveries.find(d => d.task_id === task.id)
-    const state = !task.note.trim() ? "NEEDS_DRAFT"
+    const state = !receipt && !artifacts.has(task.id) ? "NEEDS_ARTIFACT"
       : !receipt ? task.channel === "WEBSITE" ? "DRAFT_READY" : "HUMAN_HANDOFF"
       : receipt.status === "PROPOSED" ? "WAITING_FOR_APPROVAL"
       : receipt.status === "PUBLISHING" ? "VERIFYING"
@@ -32,14 +32,14 @@ export function campaignRunReport(snapshot: CampaignBrief, currentRevision: numb
       wordpressChangeId: receipt?.wordpress_change_id ?? null,
       nextMove: state === "DRAFT_READY" ? "Read connected targets and prepare an exact change for human approval. Draft readiness is not content-quality approval."
         : state === "HUMAN_HANDOFF" ? "No automated delivery adapter in this playbook. Give the owner the draft and channel handoff."
-        : state === "NEEDS_DRAFT" ? "Prepare concrete draft content, then save an updated campaign."
+        : state === "NEEDS_ARTIFACT" ? "Create a finished artifact and bind its exact revision to this deliverable; a note is not a draft."
         : state === "WAITING_FOR_APPROVAL" ? "The operator must review the exact linked WordPress change."
         : state === "VERIFYING" ? "Read the WordPress adapter result; publication alone does not prove the public page changed."
         : state === "DELIVERY_OBSERVED" ? "The adapter observed this linked change live; campaign impact remains unmeasured."
         : "The linked change failed, was rejected or undone. Investigate; do not replay automatically.",
     }
   })
-  const status = stale ? "STALE" : missing.length || !tasks.length || tasks.some(t => ["NEEDS_DRAFT", "HUMAN_HANDOFF", "BLOCKED"].includes(t.state)) ? "BLOCKED"
+  const status = stale ? "STALE" : missing.length || !tasks.length || tasks.some(t => ["NEEDS_ARTIFACT", "HUMAN_HANDOFF", "BLOCKED"].includes(t.state)) ? "BLOCKED"
     : tasks.every(t => t.state === "DELIVERY_OBSERVED") ? "DELIVERY_OBSERVED"
     : tasks.some(t => t.state === "WAITING_FOR_APPROVAL") ? "WAITING_FOR_APPROVAL"
     : tasks.some(t => t.state === "VERIFYING") ? "VERIFYING" : "WAITING_FOR_REVIEW"
@@ -64,7 +64,9 @@ export const readCampaignRuns = (ctx: CampaignScope, campaignId: string, limit: 
     const deliveries = yield* sql<CampaignDelivery>`SELECT d.task_id,d.wordpress_change_id,w.status,w.live_check
       FROM marketing_campaign_deliveries d JOIN wordpress_changes w ON w.id=d.wordpress_change_id AND w.business_id=d.business_id
       WHERE d.business_id=${ctx.businessId} AND d.run_id=${run["id"]}`
-    const report = campaignRunReport(brief, Number(campaigns[0]["revision"]), Number(run["campaign_revision"]), deliveries)
+    const bound = yield* sql`SELECT b.task_id FROM campaign_artifact_bindings b JOIN agent_artifacts a ON a.id=b.artifact_id
+      WHERE b.campaign_id=${campaignId} AND b.campaign_revision=${run["campaign_revision"]} AND a.version=b.artifact_version AND a.archived_at IS NULL`
+    const report = campaignRunReport(brief, Number(campaigns[0]["revision"]), Number(run["campaign_revision"]), deliveries, new Set(bound.map(b => String(b["task_id"]))))
     reports.push({ id: run["id"], campaignRevision: run["campaign_revision"], playbookVersion: run["playbook_version"], createdAt: run["created_at"],
       ...report, status: run["cancelled_at"] ? "CANCELLED" : report.status })
   }

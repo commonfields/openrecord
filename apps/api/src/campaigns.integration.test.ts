@@ -133,7 +133,9 @@ suite("campaign API isolation, concurrency and audit", () => {
     const [first, second] = await Promise.all([run("record_campaign_run", { campaignId: id }), run("record_campaign_run", { campaignId: id })])
     const runId = String(first.data.runs[0]!.id)
     expect(second.data.runs[0]!.id).toBe(runId)
-    expect(first.data.runs[0]!.status).toBe("WAITING_FOR_REVIEW")
+    // The task has only a note, no linked artifact revision: the run is blocked on a real draft.
+    expect(first.data.runs[0]!.status).toBe("BLOCKED")
+    expect(first.data.runs[0]!.tasks[0]!.state).toBe("NEEDS_ARTIFACT")
     const foreignBusiness = (await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST other business') RETURNING id", [foreignAccountId])).rows[0].id
     const change = async (business: string, account: string) => (await pool.query(`INSERT INTO wordpress_changes(business_id,account_id,kind,post_type,post_id,target_title,before_values,after_values,rationale,status,proposed_by,created_by_user_id,request_key)
       VALUES($1,$2,'UPDATE_COPY','pages',1,'Landing page','{}','{"content":"Draft landing page copy"}','TEST campaign delivery','PROPOSED','ASSISTANT',$3,$4) RETURNING id`, [business, account, userId, randomUUID().replaceAll("-", "").repeat(2)])).rows[0].id

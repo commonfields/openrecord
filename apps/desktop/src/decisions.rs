@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 /// What approving or declining a decision calls.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Act {
+    Publication { version: i64, digest: String, destination: String, tested: bool, stale: bool },
     /// A proposed initiative (`/api/growth/clients/:id/opportunities/:id/approve|cancel`).
     Growth { status: String, revision: i64 },
     /// A prepared WordPress change: approving publishes it.
@@ -47,6 +48,7 @@ pub struct Decision {
     pub sections: Vec<Section>,
     /// A long draft or plan, shown in a scrolling block.
     pub body: Option<String>,
+    pub artifact: Option<String>,
     /// What approving does, in a sentence.
     pub note: Option<String>,
     pub act: Act,
@@ -61,6 +63,8 @@ impl Decision {
     /// Why approving is not possible here, if it isn't.
     pub fn blocked(&self, model: Option<&str>) -> Option<&'static str> {
         match &self.act {
+            Act::Publication { stale: true, .. } => Some("The campaign or artifact changed. Ask the agent to prepare the current revision."),
+            Act::Publication { tested: false, .. } => Some("Open the prelaunch test and submit a test inquiry, then refresh this decision."),
             Act::Acquisition { cost: None, .. } => Some("Approval is blocked until a measurement cost bound is configured and a new proposal is prepared."),
             Act::Acquisition { blocked: true, .. } => Some("The measurement plan is missing something it needs, so it can't run yet."),
             Act::Check if model.is_none() => Some("Choose the measurement model the re-check runs on."),
@@ -73,6 +77,7 @@ impl Decision {
         let b = crate::api::enc(&self.business_id);
         let id = crate::api::enc(&self.id);
         match &self.act {
+            Act::Publication { version, digest, destination, .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/approve"), json!({ "artifactVersion": version, "contentDigest": digest, "destination": destination })),
             Act::Growth { status, revision } => (
                 format!("/api/growth/clients/{b}/opportunities/{id}/approve"),
                 json!({ "expectedStatus": status, "expectedRevision": revision, "idempotencyKey": crate::api::uuid(), "reason": "Approved in OpenRecord" }),
@@ -96,6 +101,7 @@ impl Decision {
         let b = crate::api::enc(&self.business_id);
         let id = crate::api::enc(&self.id);
         match &self.act {
+            Act::Publication { .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/reject"), json!({})),
             Act::Growth { status, revision } => {
                 let why = match reason {
                     Some(r) => format!("Declined: {r}").chars().take(500).collect(),
@@ -130,6 +136,7 @@ impl Decision {
     /// The sentence shown after a successful decision.
     pub fn done(&self, approved: bool) -> &'static str {
         match (&self.act, approved) {
+            (Act::Publication { .. }, true) => "Published the approved campaign page.",
             (Act::WordPress, true) => "Published to WordPress.",
             (Act::Account, true) if self.approve.contains("post") => "Reply posted.",
             (Act::Account, true) => "Change made in Google Ads.",
@@ -147,6 +154,9 @@ pub fn refusal(body: &str) -> Option<&'static str> {
     let v: Value = serde_json::from_str(body).ok()?;
     let reason = v.get("reason").and_then(Value::as_str)?;
     Some(match reason {
+        "StaleBinding" => "The campaign or artifact changed. Prepare the current revision before publishing.",
+        "TrackingNotTested" => "Submit a prelaunch test inquiry before publishing.",
+        "PublishingNotConfigured" => "Campaign publishing needs a public server address and encrypted inquiry storage. Ask the workspace administrator to enable it.",
         "ChangedSincePrepared" => "This changed after it was prepared, so it wasn't overwritten. Ask the agent to prepare it again.",
         "NotStoredAsApproved" => "The change wasn't stored exactly as approved, so it isn't counted as done.",
         "SeoNotWritable" => "The site's SEO plugin didn't accept the new title or description through WordPress's API. Set it in WordPress, or allow API writes in the plugin.",
@@ -232,6 +242,7 @@ pub fn parse(v: &Value) -> Option<Decision> {
         summary: String::new(),
         sections: Vec::new(),
         body: None,
+        artifact: None,
         note: None,
         act: Act::Draft,
         approve: "Approve".into(),
@@ -241,6 +252,22 @@ pub fn parse(v: &Value) -> Option<Decision> {
     };
     let sec = |label: &str, text: String| Section { label: label.into(), before: None, text };
     match kind.as_str() {
+        "CAMPAIGN_PUBLICATION" => {
+            let p = v.get("publication")?;
+            d.id = s(p, "id");
+            d.label = "Campaign publication".into();
+            d.title = s(p, "title");
+            d.summary = "Publish this exact saved artifact as an OpenRecord-hosted campaign page with an inquiry form.".into();
+            d.artifact = opt(p, "artifactId");
+            let version = p["artifactVersion"].as_i64().unwrap_or_default();
+            d.sections = vec![sec("Destination", s(p, "destination")), sec("Artifact revision", format!("Version {version}")), sec("Inquiry button", s(p, "ctaLabel")), sec("Privacy notice", s(p, "privacyNotice"))];
+            d.note = Some("Approval makes this exact revision public. Inquiries appear in this campaign; no email notification is sent. Test inquiries do not count as results.".into());
+            d.approve = "Approve and publish".into();
+            d.act = Act::Publication { version, digest: s(p, "contentDigest"), destination: s(p, "destination"), tested: p["trackingTested"].as_bool().unwrap_or(false), stale: p["stale"].as_bool().unwrap_or(true) };
+            d.feedback_kind = "CAMPAIGN_PUBLICATION";
+            d.feedback_title = d.title.clone();
+        }
+
         "GROWTH_OPPORTUNITY" => {
             let o = v.get("opportunity")?;
             d.id = s(o, "id");

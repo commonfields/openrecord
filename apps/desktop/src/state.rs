@@ -391,6 +391,8 @@ pub struct App {
     /// The Campaigns page's campaign open, by id.
     pub campaign_open: Option<String>,
     pub campaign_editor: Option<crate::campaign_edit::Editor>,
+    pub campaign_withdraw_confirm: Option<String>,
+    pub campaign_contacts: Option<(String, String)>,
     pub campaign_run_id: Option<String>,
     pub campaign_runs: Load<Vec<crate::api::CampaignRun>>,
     /// The account pages: usage and its period, the businesses and clients
@@ -622,6 +624,8 @@ impl App {
             campaign_filter: String::new(),
             campaign_open: None,
             campaign_editor: None,
+            campaign_withdraw_confirm: None,
+            campaign_contacts: None,
             campaign_run_id: None,
             campaign_runs: Load::Idle,
             usage: Load::Idle,
@@ -941,6 +945,8 @@ impl App {
         self.channels = Load::Idle;
         self.close_channel();
         self.campaigns = Load::Idle;
+        self.campaign_withdraw_confirm = None;
+        self.campaign_contacts = None;
         self.campaign_run_id = None;
         self.campaign_runs = Load::Idle;
         self.answer = None;
@@ -2382,6 +2388,15 @@ impl App {
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
             Reply::CampaignRuns(b, id, r) if here(self, &b) && self.campaign_run_id.as_deref() == Some(id.as_str()) => self.campaign_runs = to_load(self.failed(r)),
+            Reply::CampaignPublication(b, id, result) if here(self, &b) => {
+                match self.failed(result) {
+                    Ok(crate::net::PublicationResult::Test(url)) => self.browser_open_page(&url),
+                    Ok(crate::net::PublicationResult::Inquiries(text)) => self.campaign_contacts = Some((id, text)),
+                    Ok(crate::net::PublicationResult::Withdrawn) => { self.notice = Some("The campaign page is withdrawn.".into()); self.refresh(); }
+                    Err(e) if !e.is_empty() => self.notice = Some(e),
+                    Err(_) => {}
+                }
+            }
             Reply::CampaignSaved { business, id, result } => {
                 if matches!(result, Err(ApiError::Unauthorized)) {
                     self.signed_out(Some(ApiError::Unauthorized.message()));
@@ -2915,6 +2930,7 @@ impl App {
             | Reply::Issues(..)
             | Reply::Channels(..)
             | Reply::Campaigns(..)
+            | Reply::CampaignPublication(..)
             | Reply::CampaignRuns(..)
             | Reply::Conversation(..)
             | Reply::Branched(..)

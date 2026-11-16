@@ -69,7 +69,7 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
   },
   write: {
     match: /\b(write|draft|create|build|design|make|landing page|page copy|article|blog|post|email|newsletter|ad copy|headline|tagline|brief|one-pager|faq|copy)\b/,
-    tools: ["create_artifact", "edit_artifact", "read_artifact", "list_artifacts", "record_campaign_draft", "record_campaign_revision",
+    tools: ["bind_campaign_artifact", "prepare_campaign_publication", "read_campaign_delivery", "open_campaign_prelaunch_test", "create_artifact", "edit_artifact", "read_artifact", "list_artifacts", "record_campaign_draft", "record_campaign_revision",
       "read_marketing_campaigns", "read_competitors", "read_wordpress_content"],
     expand: ["create_artifact", "edit_artifact"],
     prefetch: ["read_business_truth", "read_growth_goal", "read_competitors"],
@@ -83,7 +83,7 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
   },
   campaign: {
     match: /\b(campaigns?|launch|run|deliverables?|plan|initiative|opportunit\w+|investigat\w+|next (step|move)s?|what should we|priorit\w+|focus|backlog|blocked|work)\b/,
-    tools: ["record_campaign_draft", "record_campaign_revision", "record_campaign_run", "read_campaign_runs", "record_campaign_delivery",
+    tools: ["bind_campaign_artifact", "prepare_campaign_publication", "read_campaign_delivery", "open_campaign_prelaunch_test", "create_artifact", "read_artifact", "record_campaign_draft", "record_campaign_revision", "record_campaign_run", "read_campaign_runs", "record_campaign_delivery",
       "record_campaign_measurement", "read_campaign_outcome", "read_marketing_campaigns", "read_marketing_work", "propose_growth_opportunity",
       "read_growth_opportunities", "open_investigation", "record_investigation_note", "read_investigation", "wait_for_investigation"],
     prefetch: ["read_results", "read_search_performance", "read_objective_investigations", "read_business_truth", "read_revenue", "read_marketing_work"],
