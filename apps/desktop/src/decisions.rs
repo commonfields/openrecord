@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Act {
     Publication { version: i64, digest: String, destination: String, tested: bool, stale: bool, blocking: u64 },
+    /// A proposed campaign review: approving records the verdict and the next experiment.
+    Review,
     /// A proposed initiative (`/api/growth/clients/:id/opportunities/:id/approve|cancel`).
     Growth { status: String, revision: i64 },
     /// A prepared WordPress change: approving publishes it.
@@ -79,6 +81,7 @@ impl Decision {
         let id = crate::api::enc(&self.id);
         match &self.act {
             Act::Publication { version, digest, destination, .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/approve"), json!({ "artifactVersion": version, "contentDigest": digest, "destination": destination })),
+            Act::Review => (format!("/api/businesses/{b}/campaign-reviews/{id}/approve"), json!({})),
             Act::Growth { status, revision } => (
                 format!("/api/growth/clients/{b}/opportunities/{id}/approve"),
                 json!({ "expectedStatus": status, "expectedRevision": revision, "idempotencyKey": crate::api::uuid(), "reason": "Approved in OpenRecord" }),
@@ -103,6 +106,7 @@ impl Decision {
         let id = crate::api::enc(&self.id);
         match &self.act {
             Act::Publication { .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/reject"), json!({})),
+            Act::Review => (format!("/api/businesses/{b}/campaign-reviews/{id}/reject"), json!({})),
             Act::Growth { status, revision } => {
                 let why = match reason {
                     Some(r) => format!("Declined: {r}").chars().take(500).collect(),
@@ -138,6 +142,7 @@ impl Decision {
     pub fn done(&self, approved: bool) -> &'static str {
         match (&self.act, approved) {
             (Act::Publication { .. }, true) => "Published the approved campaign page.",
+            (Act::Review, true) => "Recorded the campaign review.",
             (Act::WordPress, true) => "Published to WordPress.",
             (Act::Account, true) if self.approve.contains("post") => "Reply posted.",
             (Act::Account, true) => "Change made in Google Ads.",
@@ -256,6 +261,29 @@ pub fn parse(v: &Value) -> Option<Decision> {
     };
     let sec = |label: &str, text: String| Section { label: label.into(), before: None, text };
     match kind.as_str() {
+        "CAMPAIGN_REVIEW" => {
+            let r = v.get("review")?;
+            d.id = s(r, "id");
+            d.label = "Campaign review".into();
+            d.title = s(r, "campaignTitle");
+            let verdict = match s(r, "verdict").as_str() { "KEEP" => "Keep it running", "CHANGE" => "Change it", "STOP" => "Stop it", _ => "Too early to judge" };
+            d.summary = format!("Proposed verdict: {verdict}.");
+            let e = &r["evidence"];
+            let totals = &e["totals"];
+            let mut evidence = format!("{} views and {} recorded inquiries on the live pages.", totals["views"].as_u64().unwrap_or(0), totals["inquiries"].as_u64().unwrap_or(0));
+            if let Some(reasons) = e["sufficiency"]["reasons"].as_array() {
+                for reason in reasons.iter().filter_map(Value::as_str) { evidence.push_str(&format!("\n{reason}")); }
+            }
+            d.sections = vec![sec("What the agent found", s(r, "summary")), sec("Recorded evidence", evidence)];
+            let hypothesis = s(r, "nextHypothesis");
+            let change = s(r, "nextChange");
+            if !hypothesis.is_empty() || !change.is_empty() { d.sections.push(sec("Next experiment", [hypothesis, change].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n"))); }
+            d.note = Some("Approving records this verdict and the next experiment. Nothing is published, changed or spent. Inquiries are recorded submissions, not qualified leads.".into());
+            d.approve = "Record review".into();
+            d.act = Act::Review;
+            d.feedback_kind = "CAMPAIGN_REVIEW";
+            d.feedback_title = d.title.clone();
+        }
         "CAMPAIGN_PUBLICATION" => {
             let p = v.get("publication")?;
             d.id = s(p, "id");

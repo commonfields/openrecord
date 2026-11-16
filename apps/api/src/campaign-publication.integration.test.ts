@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { HttpApp } from "@effect/platform"
+import { HttpApp, HttpRouter } from "@effect/platform"
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Layer, Redacted, Schema } from "effect"
 import pg from "pg"
@@ -9,6 +9,7 @@ import { campaignPublicationApi, bindCampaignArtifact, prepareCampaignPublicatio
 import { createArtifact, dispatchArtifact, reviseArtifact } from "./artifacts.js"
 import { draftMarketingCampaign } from "./campaign-agent.js"
 import { requireSession } from "./router.js"
+import { campaignResults, campaignResultsApi, dispatchCampaignResults, pendingCampaignReviews } from "./campaign-results.js"
 import { runConversation } from "./agent.js"
 import { memoryJournal } from "./agent-run.js"
 
@@ -19,7 +20,8 @@ const PAGE = '<!doctype html><html><head><style>h1{color:navy}</style></head><bo
 const CLEAN = PAGE.replace('<form action="https://evil.test">Bad form</form>', "")
 suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and live inquiry", () => {
   const layer = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
-  const web = HttpApp.toWebHandlerLayer(campaignPublicationApi(run => Effect.flatMap(requireSession, ({ session }) => run(session))), layer)
+  const withSession = <A, E, R>(run: (s: import("@openrecord/db").Session) => Effect.Effect<A, E, R>) => Effect.flatMap(requireSession, ({ session }) => run(session))
+  const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(campaignPublicationApi(withSession), campaignResultsApi(withSession)), layer)
   let pool: pg.Pool
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
   afterAll(async () => { await web.dispose(); await pool.end() })
@@ -121,6 +123,51 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     expect(refused.status).toBe(409)
     expect(await refused.json()).toMatchObject({ reason: "ChecksBlocking" })
     expect((await run(campaignDeliveryProgress(f.ctx, f.campaign.campaignId))).deliverables[0]).toMatchObject({ state: "NEEDS_FIXES" })
+  })
+  it("reads live results honestly and only lets a review judge once the evidence is enough", async () => {
+    const f = await fixture()
+    const t = await f.test(); await f.submit(t.ticket)
+    expect((await f.call("POST", `${f.base}/approve`, f.approval)).status).toBe(200)
+    // Test views never count; live views do.
+    await web.handler(new Request(`http://localhost/p/${f.row.page_token}?test=${t.ticket}`))
+    for (let i = 0; i < 3; i++) await web.handler(new Request(`http://localhost/p/${f.row.page_token}`))
+    const live = await (await web.handler(new Request(`http://localhost/p/${f.row.page_token}`))).text()
+    await f.submit(live.match(/name="ticket" value="([^"]+)"/)![1]!, "lead@example.test")
+    const early = await run(campaignResults(f.ctx, f.campaign.campaignId))
+    expect(early.totals).toEqual({ views: 4, inquiries: 1 })
+    expect(early.pages[0]).toMatchObject({ daysLive: 1, inquiryRate: 0.25, last7: { views: 4, inquiries: 1 } })
+    expect(early.sufficiency.sufficient).toBe(false)
+    expect(JSON.stringify(early)).not.toContain("lead@example.test")
+    const review = (verdict: string) => run(Effect.either(dispatchCampaignResults(f.ctx, "propose_campaign_review", { campaignId: f.campaign.campaignId, verdict, summary: "One inquiry in a day.", nextExperiment: { hypothesis: "A shorter page converts more visitors", change: "Cut the comparison table" } })))
+    const tooSoon = await review("KEEP")
+    expect(tooSoon._tag === "Left" && (tooSoon.left as { reason?: string }).reason).toBe("EvidenceInsufficient")
+    const honest = await review("INCONCLUSIVE")
+    expect(honest._tag).toBe("Right")
+    const waiting = await run(pendingCampaignReviews(f.ctx.accountId, f.ctx.businessId))
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0]).toMatchObject({ verdict: "INCONCLUSIVE", evidenceSufficient: false })
+    // The stored evidence is the server's reading, not the agent's summary.
+    expect((waiting[0]!["evidence"] as { totals: unknown }).totals).toEqual({ views: 4, inquiries: 1 })
+    const second = await review("INCONCLUSIVE")
+    expect(second._tag === "Right" && (second.right.data as { reused: boolean }).reused).toBe(true)
+    const id = String(waiting[0]!["id"])
+    expect((await f.call("POST", `/api/businesses/${f.ctx.businessId}/campaign-reviews/${id}/approve`, {}, { origin: "https://evil.test" })).status).toBe(403)
+    expect((await (await fixture()).call("POST", `/api/businesses/${f.ctx.businessId}/campaign-reviews/${id}/approve`, {})).status).toBe(404)
+    expect((await f.call("POST", `/api/businesses/${f.ctx.businessId}/campaign-reviews/${id}/approve`, {})).status).toBe(200)
+    expect((await f.call("POST", `/api/businesses/${f.ctx.businessId}/campaign-reviews/${id}/approve`, {})).status).toBe(409)
+    // A week later with real traffic, a verdict can be proposed; the campaign's live page is not made stale by a review.
+    // Published pages are immutable by trigger; backdate this one on a single connection with triggers off.
+    const client = await pool.connect()
+    try {
+      await client.query("SET session_replication_role = replica")
+      await client.query("UPDATE campaign_publications SET published_at=now()-interval '9 days' WHERE id=$1", [f.publication.publicationId])
+    } finally { await client.query("RESET session_replication_role"); client.release() }
+    await pool.query("INSERT INTO campaign_page_days(publication_id,day,views) VALUES($1,current_date-5,200)", [f.publication.publicationId])
+    const later = await run(campaignResults(f.ctx, f.campaign.campaignId))
+    expect(later.sufficiency.sufficient).toBe(true)
+    expect(later.latestReview).toMatchObject({ verdict: "INCONCLUSIVE", status: "APPROVED" })
+    expect((await review("CHANGE"))._tag).toBe("Right")
+    expect((await run(campaignDeliveryProgress(f.ctx, f.campaign.campaignId))).deliverables[0]?.state).toBe("LIVE")
   })
   it("hands an email deliverable to the owner instead of offering it as a hosted page", async () => {
     const f = await fixture()

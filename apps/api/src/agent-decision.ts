@@ -83,7 +83,7 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
   },
   campaign: {
     match: /\b(campaigns?|launch|run|deliverables?|plan|initiative|opportunit\w+|investigat\w+|next (step|move)s?|what should we|priorit\w+|focus|backlog|blocked|work)\b/,
-    tools: ["bind_campaign_artifact", "prepare_campaign_publication", "read_campaign_delivery", "open_campaign_prelaunch_test", "create_artifact", "read_artifact", "record_campaign_draft", "record_campaign_revision", "record_campaign_run", "read_campaign_runs", "record_campaign_delivery",
+    tools: ["bind_campaign_artifact", "prepare_campaign_publication", "read_campaign_delivery", "open_campaign_prelaunch_test", "read_campaign_results", "propose_campaign_review", "create_artifact", "read_artifact", "record_campaign_draft", "record_campaign_revision", "record_campaign_run", "read_campaign_runs", "record_campaign_delivery",
       "record_campaign_measurement", "read_campaign_outcome", "read_marketing_campaigns", "read_marketing_work", "propose_growth_opportunity",
       "read_growth_opportunities", "open_investigation", "record_investigation_note", "read_investigation", "wait_for_investigation"],
     prefetch: ["read_results", "read_search_performance", "read_objective_investigations", "read_business_truth", "read_revenue", "read_marketing_work"],

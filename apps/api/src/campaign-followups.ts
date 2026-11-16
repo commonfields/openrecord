@@ -23,7 +23,7 @@ import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
 
 /** Read-only, stored evidence only: no fetches, writes, proposals or delegation. */
-const READS = new Set(["read_marketing_campaigns", "read_campaign_delivery", "read_campaign_runs", "read_campaign_outcome",
+const READS = new Set(["read_marketing_campaigns", "read_campaign_delivery", "read_campaign_results", "read_campaign_runs", "read_campaign_outcome",
   "read_business_truth", "read_growth_goal", "read_results", "read_proposals"])
 export const campaignFollowupToolSpecs = () => AGENT_TOOL_SPECS.filter(spec => spec.effect === "read" && spec.scope === "general" && READS.has(spec.declaration.name))
 
@@ -43,7 +43,7 @@ export const milestoneMessage = (w: Pick<CampaignWake, "milestone" | "campaign_i
     : `its review date (${w.milestone_key}) was reached`
   const ask = w.milestone === "PAGE_LIVE" ? "Say what is live, which deliverables are still the owner's to send or post, and the next step to get the page in front of the audience."
     : w.milestone === "FIRST_INQUIRY" ? "Say how many inquiries are recorded (counts only; contact details are not available to you) and what the owner should do next. One inquiry is not a result."
-    : "Review the campaign against its goal, metric and target using stored records only. Say what was delivered, what is recorded, what is unknown, and whether the evidence is enough to judge it."
+    : "Read read_campaign_results and review the campaign against its goal, metric and target using stored records only. Say what was delivered, what is recorded, what is unknown, and whether the evidence is enough to judge it. Suggest the verdict (keep, change, stop or inconclusive) and the next experiment; the owner can ask you to propose it for a decision."
   return `OpenRecord campaign follow-up: campaign "${w.campaign_title}" (${w.campaign_id}): ${what}. Read the campaign and its delivery first. ${ask} Report only; do not prepare, publish or approve anything.`
 }
 

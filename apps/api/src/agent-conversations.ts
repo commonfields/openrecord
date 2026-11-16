@@ -228,7 +228,7 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
     readonly reply: string; readonly citations: ReadonlyArray<unknown>; readonly toolCalls: ReadonlyArray<unknown>; readonly usage: ReadonlyArray<unknown>
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
-    readonly decisions?: ReadonlyArray<{ readonly type: "CAMPAIGN_PUBLICATION" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }> | undefined
+    readonly decisions?: ReadonlyArray<{ readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
     readonly artifacts?: ReadonlyArray<import("./artifacts.js").ArtifactRef> | undefined
     readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
