@@ -92,7 +92,8 @@ const checkBinding = (ctx: Pick<ToolContext, "accountId" | "businessId">, bindin
     JOIN agent_artifacts a ON a.id=b.artifact_id WHERE b.id=${bindingId} AND b.business_id=${ctx.businessId}`)[0]
   if (!row) return yield* refuse("NotFound")
   const facts = (yield* sql`SELECT predicate,value_text FROM authoritative_facts WHERE business_id=${ctx.businessId} AND status='ACTIVE' LIMIT 500`).map(f => `${f["predicate"]}: ${f["value_text"]}`)
-  const findings = (yield* checkDeliverable(row["format"] === "HTML" ? "HTML" : "MARKDOWN", String(row["content"]), facts, true)).slice(0, 60)
+  const avoid = (yield* sql`SELECT avoid_phrases FROM marketing_strategy_versions WHERE business_id=${ctx.businessId} AND status='APPROVED'`)[0]?.["avoid_phrases"] as string[] | undefined
+  const findings = (yield* checkDeliverable(row["format"] === "HTML" ? "HTML" : "MARKDOWN", String(row["content"]), facts, true, avoid ?? [])).slice(0, 60)
   yield* sql`INSERT INTO campaign_deliverable_checks(binding_id,business_id,content_digest,findings,blocking)
     VALUES (${bindingId},${ctx.businessId},${String(row["content_digest"])},${JSON.stringify(findings)}::jsonb,${blockingCount(findings)}) ON CONFLICT (binding_id) DO NOTHING`
   return findings

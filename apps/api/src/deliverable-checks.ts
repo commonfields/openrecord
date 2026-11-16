@@ -48,9 +48,12 @@ export const claimsOf = (plain: string, facts: ReadonlyArray<string>) => {
 }
 
 /** Checks that need nothing but the content. `hosted` is true for an OpenRecord-hosted campaign page. */
-export const staticFindings = (format: "HTML" | "MARKDOWN", content: string, facts: ReadonlyArray<string>, hosted: boolean): Finding[] => {
+export const staticFindings = (format: "HTML" | "MARKDOWN", content: string, facts: ReadonlyArray<string>, hosted: boolean, avoid: ReadonlyArray<string> = []): Finding[] => {
   const findings: Finding[] = []
   const plain = format === "HTML" ? text(content) : content
+  const lower = plain.toLowerCase()
+  for (const phrase of avoid.filter(p => p.trim() && lower.includes(p.trim().toLowerCase())).slice(0, 10))
+    findings.push({ code: "AVOIDED_PHRASE", severity: "WARNING", message: `Uses "${quote(phrase.trim())}", which the approved strategy says to avoid.` })
   const placeholder = plain.match(PLACEHOLDER)
   if (placeholder) findings.push({ code: "PLACEHOLDER", severity: "BLOCKING", message: `Leftover placeholder text: "${quote(placeholder[0])}".` })
   if (format === "HTML") {
@@ -82,8 +85,8 @@ export const brokenLinkFindings = (links: ReadonlyArray<string>) => Effect.gen(f
 })
 
 /** Every check for one revision. */
-export const checkDeliverable = (format: "HTML" | "MARKDOWN", content: string, facts: ReadonlyArray<string>, hosted: boolean) => Effect.gen(function*() {
+export const checkDeliverable = (format: "HTML" | "MARKDOWN", content: string, facts: ReadonlyArray<string>, hosted: boolean, avoid: ReadonlyArray<string> = []) => Effect.gen(function*() {
   const broken = yield* brokenLinkFindings(linksOf(format, content))
-  return [...staticFindings(format, content, facts, hosted), ...broken]
+  return [...staticFindings(format, content, facts, hosted, avoid), ...broken]
 })
 export const blockingCount = (findings: ReadonlyArray<Finding>) => findings.filter(f => f.severity === "BLOCKING").length

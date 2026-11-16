@@ -14,8 +14,13 @@
 import type { ToolDeclaration } from "./agent-registry.js"
 import { CAPABILITY_MANIFESTS } from "./capabilities/catalog.js"
 
-/** Input schemas larger than this are sent only once a tool is expanded. */
+/** Input schemas larger than this are sent only once a tool is expanded. A tool that saves or prepares
+ * defers from a smaller size than one that only reads, so a read can always be called straight away. */
 export const LAZY_SCHEMA_BYTES = 900
+const LAZY_WRITE_SCHEMA_BYTES = 600
+/** Tools nearly every chat needs keep their real schema on the card, whatever its size. */
+const ALWAYS_INLINE = new Set(["leave_blank", "read_artifact"])
+const READS = new Set(CAPABILITY_MANIFESTS.filter(m => m.sideEffect === "none").map(m => m.id))
 const CARD_SENTENCE_CHARS = 240
 const MAX_DETAILS = 6
 
@@ -56,7 +61,8 @@ const withoutSchemaIds = (schema: unknown) => {
 /** Registered tools have a card; session and extension tools are always declared whole. */
 export const hasCard = (tool: ToolDeclaration) => NEAR_MISS.has(tool.name)
 
-export const hasLazySchema = (tool: ToolDeclaration) => NEAR_MISS.has(tool.name) && bytes(tool.parametersJsonSchema) > LAZY_SCHEMA_BYTES
+export const hasLazySchema = (tool: ToolDeclaration) => NEAR_MISS.has(tool.name) && !ALWAYS_INLINE.has(tool.name)
+  && bytes(tool.parametersJsonSchema) > (READS.has(tool.name) ? LAZY_SCHEMA_BYTES : LAZY_WRITE_SCHEMA_BYTES)
 
 /** The card for one tool. Tools without catalog metadata (session and extension tools) are declared whole. */
 export const toolCard = (tool: ToolDeclaration): ToolDeclaration => {

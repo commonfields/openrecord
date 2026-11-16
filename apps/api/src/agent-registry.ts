@@ -11,6 +11,7 @@ import { Effect, Schema } from "effect"
 import { blankDeclaration, leaveBlank } from "./agent-blanks.js"
 import { campaignPublicationDeclarations, dispatchCampaignPublication } from "./campaign-publication.js"
 import { campaignResultsDeclarations, dispatchCampaignResults } from "./campaign-results.js"
+import { dispatchStrategy, strategyDeclarations } from "./marketing-strategy.js"
 import { AgentProposalRepository } from "@openrecord/db"
 import { dispatchGrowthProposal, growthProposalDeclarations } from "./agent-growth-tools.js"
 import { acquisitionProposalDeclarations, dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
@@ -68,6 +69,11 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
   ...campaignPublicationDeclarations.map((declaration): AgentToolSpec => {
     const effect = declaration.name === "read_campaign_delivery" ? "read" : declaration.name === "prepare_campaign_publication" ? "propose" : "record"
     return { declaration, effect, replay: effect === "read" ? "safe" : "deduplicated", scope: "general", run: (ctx, args) => dispatchCampaignPublication(ctx, declaration.name, args) }
+  }),
+  // The shared marketing strategy: read the approved version, propose the next for the owner.
+  ...strategyDeclarations.map((declaration): AgentToolSpec => {
+    const effect = declaration.name === "read_marketing_strategy" ? "read" : "propose"
+    return { declaration, effect, replay: effect === "read" ? "safe" : "deduplicated", scope: "general", run: (ctx, args) => dispatchStrategy(ctx, declaration.name, args) }
   }),
   // Campaign results and a proposed review with the next experiment, for the owner to decide.
   ...campaignResultsDeclarations.map((declaration): AgentToolSpec => {
@@ -182,6 +188,7 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
   if (tag === "CampaignRevisionRefused") return { ...toolFailure("REFUSED"), guidance: "Read the current campaign. Edits require its current revision, DRAFT stage, unfinished tasks and no linked delivery proposals. Do not overwrite stale content or retry unchanged inputs. Explain the blocker or offer a separately named alternative." }
+  if (tag === "StrategyRefused") return { ...toolFailure("REFUSED"), guidance: `Strategy refused: ${(e as { reason?: string }).reason ?? "unknown"}. StaleStrategy means another version was approved: read read_marketing_strategy and write against it. StrategyAlreadyWaiting means the owner has not decided the last proposal. Do not retry unchanged inputs.` }
   if (tag === "CampaignReviewRefused") return { ...toolFailure("REFUSED"), guidance: `Review refused: ${(e as { reason?: string }).reason ?? "unknown"}. EvidenceInsufficient means only INCONCLUSIVE fits the recorded evidence; ReviewAlreadyWaiting means the owner has not decided the last one. Read read_campaign_results; do not retry unchanged inputs.` }
   if (tag === "PublicationRefused") return { ...toolFailure("REFUSED"), guidance: `Publication refused: ${(e as { reason?: string }).reason ?? "unknown"}. Read current campaign delivery and artifact revisions. Do not retry unchanged inputs or bypass prelaunch testing or operator approval.` }
   if (tag === "CampaignMeasurementRefused") return { ...toolFailure("REFUSED"), guidance: `Refused: ${(e as { reason?: string }).reason ?? "unknown"}${(e as { bindingId?: string }).bindingId ? ` (existing binding ${(e as { bindingId?: string }).bindingId})` : ""}. Read read_campaign_outcome and the opportunity's plan. A bound deliverable is never rebound silently; only an operator can dissolve a binding. Do not retry unchanged inputs.` }
@@ -268,10 +275,11 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
+export interface DecisionRef { readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "MARKETING_STRATEGY" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
   ...(typeof receipt["publicationId"] === "string" && UUID.test(receipt["publicationId"]) ? [{ type: "CAMPAIGN_PUBLICATION" as const, id: receipt["publicationId"] }] : []),
+  ...(typeof receipt["marketingStrategyId"] === "string" && UUID.test(receipt["marketingStrategyId"]) ? [{ type: "MARKETING_STRATEGY" as const, id: receipt["marketingStrategyId"] }] : []),
   ...(typeof receipt["campaignReviewId"] === "string" && UUID.test(receipt["campaignReviewId"]) ? [{ type: "CAMPAIGN_REVIEW" as const, id: receipt["campaignReviewId"] }] : []),
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
