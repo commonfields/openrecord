@@ -199,8 +199,11 @@ pub fn layers(s: &App, t: &Theme, layer: &mut Vec<El>) {
             &mut f.query
         })
         .on_submit(|s: &mut App, tx| run_selected(s, tx));
+    let field_hovered = s.row_hover.as_deref() == Some("find:search");
     let field = shadows(
-        row().w_full().h(44.0).px(12.0).gap(10.0).radius(8.0).center_y().fill(t.sidebar).border(1.0, t.border)
+        crate::ui::widgets::highlight(t, row().key("find-field").w_full().h(44.0).px(12.0).gap(10.0).radius(10.0).center_y().border(1.0, t.border)
+            .on_hover_change(crate::ui::widgets::track_hover("find:search".into())), field_hovered, false)
+            .fill(if field_hovered { t.accent } else { t.popover })
             .child(ico(&icons::SEARCH, 16.0, t.muted_foreground))
             .child(col().grow(1.0).min_w(0.0).child(input))
             .child(kbd(t, "Esc")),
@@ -268,7 +271,7 @@ pub fn layers(s: &App, t: &Theme, layer: &mut Vec<El>) {
         .child(el().grow(1.0))
         .child(row().gap(4.0).center_y().child(kbd(t, "F")).child(label("or", type_::XS11, t.muted_foreground)).child(kbd(t, "⌘K")).child(label("anywhere", type_::XS11, t.muted_foreground)));
     let menu = shadows(
-        col().w_full().radius(8.0).fill(t.sidebar).border(1.0, t.border).clip_rounded(8.0)
+        col().w_full().radius(10.0).fill(t.popover).border(1.0, t.border).clip_rounded(10.0)
             .child(col().key("find-scroll").w_full().max_h(448.0).child(body).scroll(ScrollSpec { stick_bottom: false }))
             .child(footer),
         &t.float_shadow,

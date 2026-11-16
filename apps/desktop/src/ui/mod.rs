@@ -6,6 +6,7 @@ mod artifacts;
 pub use agent::ROLL_EVERY;
 mod answer;
 mod campaigns;
+mod campaign_brief;
 mod channels;
 mod channel_setup;
 mod charts;
@@ -32,7 +33,7 @@ pub mod widgets;
 
 pub(crate) use shell::web_url;
 
-use rune::{Cursor, Cx, El, ScrollSpec, Transition, col, row};
+use rune::{Cursor, Cx, El, ScrollSpec, Transition, col, el, row};
 use rune_kit::{Kit, PaletteSeed};
 
 use crate::state::{App, Screen, View};
@@ -81,7 +82,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if s.chat_shown() && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }
+        let before = layers.len();
         layers.extend(notices::layer(s, &t));
+        let notice_count = layers.len() - before;
         find::layers(s, &t, &mut layers);
         if let Some(a) = &s.add_business {
             account_pages::add_business_dialog(s, &t, &k, a, &mut layers);
@@ -91,6 +94,13 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         }
         if let Some(page) = s.settings {
             layers.extend(settings::view(s, &t, &k, page));
+        }
+        // Any menu or dialog softens what is behind it with a slight blur.
+        // Notices are not menus, and the "/" menu leaves its composer sharp.
+        let floating = layers.len() - notice_count - usize::from(s.chat_shown() && s.settings.is_none() && agent::command_menu_open(s));
+        if floating > 0 {
+            layers.insert(0, el().key("menu-backdrop").role("none").a11y_hidden().absolute(0.0, 0.0).w_full().h_full()
+                .backdrop_blur(MENU_BLUR).token_motion(k.motion.overlay));
         }
     }
     // Every hover eases in and out over 150 milliseconds on the web's curve
@@ -119,6 +129,9 @@ fn zoomed(s: &App, root: El, z: f32) -> El {
         .on_layout(|s: &mut App, r: [f32; 4]| s.window = (r[2], r[3]))
         .child(root.w(iw).h(ih).absolute((w - iw) / 2.0, (h - ih) / 2.0).scale(z))
 }
+
+/// How much an open menu or dialog blurs the window behind it, in points.
+const MENU_BLUR: f32 = 4.0;
 
 /// The chat narrowing for a card beside it, and the card arriving: unhurried and with no bounce.
 const SPLIT: rune::Spring = rune::Spring::new(0.38, 0.0);
@@ -224,21 +237,11 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .children((!wide).then(|| agent::side_edge("side"))),
         );
     }
-    // The agent beside a workspace page: its own card left of the page, where
-    // the sidebar was, as the web's `AgentPane` sits.
-    let main = row()
-        .key("pane-split")
-        .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .on_layout(|s: &mut App, r: [f32; 4]| s.pane_row_w = r[2])
-        .children(s.pane_shown().then(|| agent::pane(s, t, k)))
-        .child(split);
     let mut ws = row().key("workspace").w_full().h_full();
     if s.sidebar_open {
         ws = ws.child(shell::sidebar(s, t));
     }
-    ws = ws.child(main);
+    ws = ws.child(split);
     // Over the page panel, so it draws on top of the header beside the traffic lights.
     if !s.sidebar_open {
         ws = ws.child(shell::collapsed_toggle(s, t, titlebar_inset));

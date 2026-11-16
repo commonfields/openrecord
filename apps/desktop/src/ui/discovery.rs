@@ -123,11 +123,11 @@ impl Metric {
 
 /// A segmented control in the web's `TabsList` style.
 pub fn tabs(t: &Theme, key: &str, items: Vec<(String, bool, Box<dyn Fn(&mut App)>)>) -> El {
-    let mut r = row().key(key).h(32.0).padding(3.0).gap(2.0).radius(8.0).fill(t.accent).role("tablist");
+    let mut r = row().key(key).w_full().min_h(32.0).flex_wrap().padding(3.0).gap(2.0).radius(8.0).fill(t.accent).role("tablist");
     for (i, (name, on, act)) in items.into_iter().enumerate() {
         let mut chip = row()
             .key(format!("{key}-{i}"))
-            .h_full()
+            .h(26.0)
             .px(10.0)
             .radius(6.0)
             .center()
@@ -321,14 +321,7 @@ fn small_multiples(s: &App, t: &Theme, st: &Stats) -> El {
             .child(charts::area_trend(s, t, Trend::new(&key, &x.label, dates, &values, x.color(t)).height(110.0).width_hint(380.0)));
         tiles.push(tile);
     }
-    // Two to a row, as the web's `sm:grid-cols-2`.
-    let mut grid = col().w_full().gap(12.0);
-    let mut it = tiles.into_iter();
-    while let Some(a) = it.next() {
-        let b = it.next().unwrap_or_else(|| el().grow(1.0).min_w(0.0));
-        grid = grid.child(row().w_full().gap(12.0).child(a).child(b));
-    }
-    let mut c = col().w_full().gap(12.0).child(grid);
+    let mut c = col().w_full().gap(12.0).child(super::kit::responsive_cols(s, tiles));
     if count > 4 {
         let text_ = if s.all_models { "Show fewer providers".to_string() } else { format!("Show all {count} providers") };
         c = c.child(
@@ -413,7 +406,7 @@ fn header(t: &Theme, cells: &[(&str, Option<f32>)]) -> El {
     for (i, (name, w)) in cells.iter().enumerate() {
         let l = label(name.to_string(), type_::XS11, t.muted_foreground);
         r = r.child(match w {
-            Some(w) => row().w(*w).child(if i > 0 { el().grow(1.0) } else { el() }).child(l),
+            Some(w) => row().w(*w).shrink().child(if i > 0 { el().grow(1.0) } else { el() }).child(l),
             None => row().grow(1.0).min_w(0.0).child(l),
         });
     }
@@ -500,15 +493,15 @@ pub fn accuracy_by_model(t: &Theme, a: &Analytics, st: &Stats) -> El {
                 .hover(t.hover_tint)
                 .child(
                     row()
-                        .w(128.0)
+                        .w(128.0).shrink()
                         .gap(8.0)
                         .center_y()
                         .child(brands::series_logo(t, &m.series, 16.0))
                         .child(label(m.series.label.clone(), type_::XS_MEDIUM, t.foreground).truncate()),
                 )
                 .child(col().grow(1.0).min_w(0.0).child(charts::verdict_bar_fill(t, &m.v)))
-                .child(row().w(48.0).child(el().grow(1.0)).child(label(m.v.accuracy().map(pct).unwrap_or_else(|| "—".into()), type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)))
-                .child(row().w(56.0).child(el().grow(1.0)).child(label(m.v.wrong.to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground))),
+                .child(row().w(48.0).shrink().child(el().grow(1.0)).child(label(m.v.accuracy().map(pct).unwrap_or_else(|| "—".into()), type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)))
+                .child(row().w(56.0).shrink().child(el().grow(1.0)).child(label(m.v.wrong.to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground))),
         );
     }
     p.child(header(t, &[("Assistant", Some(128.0)), ("Ratings", None), ("Correct", Some(48.0)), ("Wrong", Some(56.0))])).child(list)

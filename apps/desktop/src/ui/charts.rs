@@ -204,7 +204,8 @@ fn hovered(s: &App, key: &str) -> Option<usize> {
     s.chart_hover.as_ref().filter(|(k, _)| k == key).map(|(_, i)| *i)
 }
 
-pub fn area_trend(s: &App, t: &Theme, tr: Trend<'_>) -> El {
+pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
+    tr.width_hint = tr.width_hint.min((super::kit::analytics_width(s) - 92.0).max(80.0));
     let n = tr.values.len();
     let hover = hovered(s, tr.key);
     let all: Vec<f64> = tr.values.iter().chain(tr.compare.iter().flat_map(|c| c.0.iter())).flatten().copied().collect();

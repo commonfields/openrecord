@@ -12,11 +12,13 @@ mod native_preview;
 mod api;
 mod brand_marks;
 mod brands;
+mod brief_schedule;
 mod changes;
 mod channel_marks;
 mod channel_status;
 mod channel_setup;
 mod chat;
+mod campaign_edit;
 mod decisions;
 mod dictation;
 mod drafts;
@@ -34,6 +36,7 @@ mod side;
 mod state;
 mod surface;
 mod theme;
+mod timeline;
 mod ui;
 mod update;
 mod visual;
@@ -89,11 +92,6 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     // Escape leaves the browser's address bar, keeping the page.
     if s.side.browser.editing && ev.key == rune::Key::Escape {
         s.side.browser.editing = false;
-        return true;
-    }
-    // Then the agent pane beside a page, unless the composer's "/" menu takes the key.
-    if s.settings.is_none() && s.pane_shown() && ev.key == rune::Key::Escape && s.menu.is_none() && s.menu_entries().is_empty() {
-        s.close_pane();
         return true;
     }
     if s.settings.is_some() {
@@ -160,6 +158,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),
     ("agent-empty", fixtures::agent_empty),
+    ("agent-session", fixtures::agent_session),
     ("notices-open", fixtures::notices_open),
     ("agent-log", fixtures::agent_open_log),
     ("agent-chart", fixtures::agent_chart),
@@ -176,6 +175,10 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("agent-save-playbook", fixtures::agent_save_playbook),
     ("agent-share", fixtures::agent_share),
     ("agent-followups", fixtures::agent_followups),
+    ("agent-scheduled", fixtures::agent_scheduled),
+    ("agent-schedule-elsewhere", fixtures::agent_schedule_elsewhere),
+    ("agent-schedule-off", fixtures::agent_schedule_off),
+    ("agent-timeline", fixtures::agent_timeline),
     ("agent-reasoning", fixtures::agent_reasoning),
     ("agent-failed", fixtures::agent_failed),
     ("new-chat", fixtures::new_chat),
@@ -207,6 +210,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
     ("campaign", fixtures::campaign_open),
+    ("campaign-brief", fixtures::campaign_brief),
     ("ai-answers", fixtures::ai_answers),
     ("ai-answer", fixtures::ai_answer),
     ("ai-answer-review", fixtures::ai_answer_review),

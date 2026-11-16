@@ -14,7 +14,7 @@ pub struct Drafts {
 
 impl Drafts {
     pub fn load() -> Drafts {
-        if rune::tooling::headless_run().is_some() {
+        if cfg!(test) || rune::tooling::headless_run().is_some() {
             return Drafts::default();
         }
         let map: BTreeMap<String, (u64, String)> = path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -46,7 +46,7 @@ impl Drafts {
     }
 
     fn save(&self) {
-        if rune::tooling::headless_run().is_some() {
+        if cfg!(test) || rune::tooling::headless_run().is_some() {
             return;
         }
         if let (Some(p), Ok(json)) = (path(), serde_json::to_string(&self.map)) {

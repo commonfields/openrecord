@@ -349,6 +349,8 @@ pub struct Channel {
 pub struct Campaign {
     pub id: String,
     pub revision: i64,
+    /// Preserve the complete server brief when editing, including optional fields.
+    pub brief: Value,
     pub title: String,
     /// DRAFT, ACTIVE, REVIEW or CLOSED.
     pub status: String,
@@ -383,6 +385,22 @@ pub struct Campaign {
     pub updated_at: Option<String>,
     /// Who drafted it: OPERATOR or ASSISTANT.
     pub created_by: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CampaignRun {
+    pub campaign_revision: i64,
+    pub status: String,
+    pub stale: bool,
+    pub tasks: Vec<CampaignRunTask>,
+}
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct CampaignRunTask {
+    pub title: String,
+    pub state: String,
+    #[serde(rename = "nextMove")]
+    pub next: String,
 }
 
 /// One deliverable of a campaign.
@@ -808,6 +826,20 @@ impl Client {
         Ok(self.get::<R>(&format!("/api/businesses/{}/channels", enc(business)))?.inventory.channels)
     }
 
+    pub fn campaign_runs(&self, business: &str, campaign: &str) -> ApiResult<Vec<CampaignRun>> {
+        #[derive(Deserialize)]
+        struct Response { runs: Vec<CampaignRun> }
+        let v: Response = self.get(&format!("/api/businesses/{}/campaigns/{}/runs", enc(business), enc(campaign)))?;
+        Ok(v.runs)
+    }
+
+    pub fn save_campaign(&self, business: &str, id: &str, revision: i64, brief: Value) -> ApiResult<Campaign> {
+        let v: Value = self.post(&format!("/api/businesses/{}/campaigns", enc(business)), json!({ "id": id, "revision": revision, "brief": brief }))?;
+        let saved = v.get("campaign").filter(|v| v.get("id").and_then(Value::as_str) == Some(id) && v.get("revision").and_then(Value::as_i64).is_some_and(|r| r > revision) && v.get("brief").is_some_and(Value::is_object))
+            .ok_or_else(|| ApiError::Decode("missing saved campaign".into()))?;
+        Ok(campaign(saved))
+    }
+
     pub fn campaigns(&self, business: &str) -> ApiResult<Vec<Campaign>> {
         let v: Value = self.get(&format!("/api/businesses/{}/campaigns", enc(business)))?;
         let list = v.get("campaigns").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -881,6 +913,7 @@ fn campaign(v: &Value) -> Campaign {
     Campaign {
         id: first(v, &[&["id"]]),
         revision: v.get("revision").and_then(Value::as_i64).unwrap_or(0),
+        brief: b.clone(),
         title: first(b, &[&["title"], &["name"], &["plan", "title"]]),
         status: first(b, &[&["status"], &["stage"]]),
         goal: first(b, &[&["goal"], &["objective"], &["plan", "goal"]]),
@@ -1027,6 +1060,67 @@ pub fn uuid() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_campaign_save_sends_scope_and_expected_revision_and_handles_conflicts() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        for conflict in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut bytes = Vec::new();
+                let header_end = loop {
+                    let mut b = [0; 1024]; let n = socket.read(&mut b).unwrap();
+                    assert!(n > 0); bytes.extend_from_slice(&b[..n]);
+                    if let Some(i) = bytes.windows(4).position(|b| b == b"\r\n\r\n") { break i+4; }
+                };
+                let headers = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+                assert!(headers.starts_with("POST /api/businesses/business-1/campaigns HTTP/1.1"));
+                let len: usize = headers.lines().find_map(|line| line.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap();
+                while bytes.len() < header_end+len { let mut b=[0;1024]; let n=socket.read(&mut b).unwrap(); assert!(n>0); bytes.extend_from_slice(&b[..n]); }
+                let body: Value=serde_json::from_slice(&bytes[header_end..header_end+len]).unwrap();
+                assert_eq!(body["id"],"campaign-1"); assert_eq!(body["revision"],3); assert_eq!(body["brief"]["title"],"Audit campaign");
+                let payload = if conflict { json!({"_tag":"CampaignRevisionConflict"}) } else { json!({"campaign":{"id":"campaign-1","revision":4,"brief":body["brief"]}}) }.to_string();
+                write!(socket,"HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",if conflict {"409 Conflict"} else {"200 OK"},payload.len(),payload).unwrap();
+            });
+            let client=Client { base:format!("http://{address}"),agent:ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build(),session:std::sync::Arc::new(std::sync::Mutex::new(None)) };
+            let result=client.save_campaign("business-1","campaign-1",3,json!({"title":"Audit campaign"}));
+            server.join().unwrap();
+            if conflict { assert!(matches!(result,Err(ApiError::Status(409,_)))); }
+            else { let saved=result.unwrap(); assert_eq!(saved.revision,4); assert_eq!(saved.title,"Audit campaign"); }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the local API and demo seed; run with OPENRECORD_NO_SESSION=1"]
+    fn live_api_campaign_briefs_and_runs_decode() {
+        assert!(std::env::var_os("OPENRECORD_NO_SESSION").is_some(), "isolate the test session");
+        let c = Client::new(std::env::var("OPENRECORD_API_URL").unwrap_or_else(|_| "http://localhost:3001".into()));
+        c.signin("demo@northstar.test", "password123").expect("demo sign-in");
+        let businesses = c.businesses().expect("businesses");
+        assert!(!businesses.is_empty());
+        let mut count = 0;
+        for b in businesses.iter().take(5) {
+            for campaign in c.campaigns(&b.id).expect("campaign briefs") {
+                assert!(campaign.brief.is_object());
+                assert_eq!(campaign.brief["title"].as_str(), Some(campaign.title.as_str()));
+                c.campaign_runs(&b.id, &campaign.id).expect("campaign runs");
+                count += 1;
+            }
+        }
+        c.signout().expect("sign-out");
+        eprintln!("Live campaign reads completed: {count} briefs and their run lists");
+    }
+
+    #[test]
+    fn reads_adapter_run_status_and_next_move() {
+        let run: CampaignRun = serde_json::from_value(json!({"campaignRevision":3,"status":"WAITING_FOR_APPROVAL","stale":false,"tasks":[{"title":"Landing page","state":"WAITING_FOR_APPROVAL","nextMove":"Review the exact change"}]})).unwrap();
+        assert_eq!(run.tasks[0].next,"Review the exact change");
+        assert_eq!(run.status,"WAITING_FOR_APPROVAL");
+    }
 
     #[test]
     fn reads_a_campaign_brief_as_the_list_nests_it() {

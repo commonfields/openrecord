@@ -6,7 +6,7 @@
 use rune::{TextEdit, Tx};
 
 use crate::native_preview::{self, BrowserCommand};
-use crate::state::{App, Screen, View};
+use crate::state::{App, Page, Screen, View};
 
 /// One of the panel's tabs. The browser's tabs come first once a page has
 /// been opened; the rest follow in the order they were opened. A panel with
@@ -20,6 +20,8 @@ pub enum SideTab {
     Artifact(String),
     Helper(String),
     Analytics,
+    CampaignBrief,
+    Page(Page),
     Files,
     Changes,
 }
@@ -31,10 +33,11 @@ pub enum Launch {
     Changes,
     Files,
     Analytics,
+    Campaigns,
 }
 
 impl Launch {
-    pub const ALL: [Launch; 4] = [Launch::Browser, Launch::Changes, Launch::Files, Launch::Analytics];
+    pub const ALL: [Launch; 5] = [Launch::Browser, Launch::Changes, Launch::Files, Launch::Analytics, Launch::Campaigns];
 }
 
 /// One chat's panel while another chat is on screen.
@@ -140,7 +143,7 @@ const RECENTS: usize = 8;
 impl App {
     /// The chat's artifacts and helpers can show: they belong to the chat on screen.
     fn side_items_here(&self) -> bool {
-        self.view == View::Agent && (self.active.is_some() || self.general)
+        (self.view == View::Agent || self.campaign_editor.is_some()) && (self.active.is_some() || self.general)
     }
 
     /// The tabs after the browser, when they can show.
@@ -248,6 +251,19 @@ impl App {
                 }
                 return;
             }
+            Launch::Campaigns => {
+                let Some(business) = self.active.clone().filter(|_| !self.general) else { return };
+                if matches!(self.campaigns, crate::state::Load::Idle | crate::state::Load::Failed(_)) {
+                    self.campaigns = crate::state::Load::Loading;
+                    self.net.campaigns(business);
+                }
+                if !self.side.items.contains(&SideTab::Page(Page::Campaigns)) {
+                    self.campaign_open = None;
+                }
+                self.show_view(View::Agent);
+                self.open_page_tab(Page::Campaigns);
+                return;
+            }
             Launch::Changes => SideTab::Changes,
             Launch::Files => SideTab::Files,
             Launch::Analytics => {
@@ -329,6 +345,7 @@ impl App {
     }
 
     pub fn show_tab(&mut self, tab: SideTab) {
+        if let SideTab::Page(page) = &tab { self.page = *page; }
         self.side.front = tab;
     }
 
@@ -339,6 +356,39 @@ impl App {
             self.side.for_item = true;
         }
         self.side.front = tab;
+    }
+
+    /// Keeps the originating workspace page beside the new main chat.
+    pub fn open_page_tab(&mut self, page: Page) {
+        let tab = SideTab::Page(page);
+        if !self.side.items.contains(&tab) { self.side.items.push(tab.clone()); }
+        self.page = page;
+        self.side.wide = false;
+        self.show_side_item(tab);
+    }
+
+    pub fn open_campaign_document(&mut self) {
+        let tab = SideTab::CampaignBrief;
+        if !self.side.items.contains(&tab) { self.side.items.push(tab.clone()); }
+        self.side.wide = false;
+        self.show_side_item(tab);
+    }
+
+    pub fn open_channel_connections(&mut self) {
+        self.chat_actions = false;
+        self.open_page_tab(Page::Channels);
+        if !self.general {
+            if let Some(business) = self.active.clone() {
+                if !matches!(self.channel_status, crate::state::Load::Ready(_) | crate::state::Load::Loading) {
+                    self.channel_status = crate::state::Load::Loading;
+                    self.net.channel_status(business.clone());
+                }
+                if !matches!(self.channels, crate::state::Load::Ready(_) | crate::state::Load::Loading) {
+                    self.channels = crate::state::Load::Loading;
+                    self.net.channels(business);
+                }
+            }
+        }
     }
 
     /// Adds an artifact's tab (or brings it forward when it is already open).
@@ -371,6 +421,17 @@ impl App {
     /// Closes one tab; the one before it comes forward. A panel opened only
     /// for the chat's tabs folds away with the last of them.
     pub fn close_tab(&mut self, tab: &SideTab) {
+        if *tab == SideTab::CampaignBrief {
+            if let Some(editor) = &mut self.campaign_editor {
+                if editor.busy || editor.dirty() {
+                    editor.error = Some("Save or discard this brief before closing it.".into());
+                    self.side.open = true;
+                    self.side.front = SideTab::CampaignBrief;
+                    return;
+                }
+            }
+            self.campaign_editor = None;
+        }
         if *tab == SideTab::Launcher {
             // Back to what was in front before; with nothing else, the panel folds.
             self.side.front = self.side.items.last().cloned().unwrap_or(SideTab::Browser);
@@ -750,8 +811,185 @@ mod tests {
     use super::SideTab;
     use crate::state::{App, Load};
 
+    #[test]
+    fn connecting_channels_opens_one_tab_without_replacing_the_chat_or_draft() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        let chat = s.chat_id.clone();
+        s.composer.replace_text("Keep this draft");
+        s.chat_actions = true;
+        s.open_channel_connections();
+        s.open_channel_connections();
+        assert!(!s.chat_actions);
+        assert_eq!(s.chat_id, chat);
+        assert_eq!(s.composer.text, "Keep this draft");
+        assert_eq!(s.view, crate::state::View::Agent);
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Channels));
+        assert_eq!(s.side_items().len(), 1);
+        assert!(s.side_shown());
+    }
+
     fn pane(id: &str) -> crate::artifacts::Pane {
         crate::artifacts::Pane { business: "b1".into(), id: id.into(), requested: None, loaded: Load::Loading, source: false }
+    }
+
+    #[test]
+    fn asking_from_a_page_starts_a_fresh_main_chat_and_keeps_the_page_in_a_tab() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.chat_id = Some("existing-chat".into());
+        s.adopt_side();
+        s.add_helper_tab("existing-helper", Load::Loading);
+        s.view = crate::state::View::Workspace;
+        s.page = crate::state::Page::Campaigns;
+        s.campaign_open = Some("campaign-123".into());
+        let sidebar_was_open = s.sidebar_open;
+        s.sync_draft();
+        let old_draft = s.draft_key.clone();
+        s.composer.replace_text("Unsent text for the previous chat");
+        s.ask_agent("Prepare this campaign brief");
+        assert_eq!(s.view, crate::state::View::Agent);
+        assert!(s.chat_id.is_none());
+        assert!(matches!(s.conversation, Load::Idle));
+        assert!(matches!(s.turn, crate::state::Turn::Idle));
+        s.sync_draft();
+        assert_eq!(s.composer.text, "Prepare this campaign brief");
+        assert_eq!(s.drafts.get(&old_draft), "Unsent text for the previous chat");
+        assert_eq!(s.campaign_open.as_deref(), Some("campaign-123"));
+        assert_eq!(s.sidebar_open, sidebar_was_open);
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+        assert!(s.side_shown());
+        assert!(!s.side.wide);
+        // Assigning the server's new session id must keep its page tab.
+        s.chat_id = Some("created-chat".into());
+        s.adopt_side();
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+        // The previous chat keeps its own tabs.
+        s.chat_id = Some("existing-chat".into());
+        s.switch_side();
+        assert_eq!(s.side_tab(), SideTab::Helper("existing-helper".into()));
+        s.chat_id = Some("created-chat".into());
+        s.switch_side();
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+        s.close_tab(&s.side_tab());
+        assert!(!s.side_shown());
+        assert_eq!(s.view, crate::state::View::Agent);
+    }
+
+    #[test]
+    fn asking_from_a_page_already_in_the_panel_keeps_it_with_the_new_chat() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.chat_id = Some("current-chat".into());
+        s.adopt_side();
+        s.open_page_tab(crate::state::Page::Campaigns);
+        s.ask_agent("Review this campaign");
+        s.sync_draft();
+        assert!(s.chat_id.is_none());
+        assert_eq!(s.view, crate::state::View::Agent);
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+        assert_eq!(s.composer.text, "Review this campaign");
+    }
+
+    #[test]
+    fn analytics_navigation_in_the_source_tab_keeps_the_main_chat_visible() {
+        let mut s = App::new();
+        crate::fixtures::overview(&mut s);
+        s.ask_agent("Plan the next step");
+        s.show_section(crate::insights::Section::Revenue);
+        assert_eq!(s.view, crate::state::View::Agent);
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Overview));
+        assert_eq!(s.section, crate::insights::Section::Revenue);
+    }
+
+    #[test]
+    fn launching_campaigns_keeps_the_current_chat_and_reuses_its_tab() {
+        let mut s = App::new();
+        crate::fixtures::campaigns(&mut s);
+        s.chat_id = Some("current-chat".into());
+        s.launch(super::Launch::Campaigns);
+        assert_eq!(s.view, crate::state::View::Agent);
+        assert_eq!(s.chat_id.as_deref(), Some("current-chat"));
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+        assert!(s.side_shown());
+        s.campaign_open = Some("cp1".into());
+        s.launch(super::Launch::Campaigns);
+        assert_eq!(s.side.items.len(), 1);
+        assert_eq!(s.campaign_open.as_deref(), Some("cp1"));
+    }
+
+    #[test]
+    fn launching_campaigns_requires_a_business_chat() {
+        let mut s = App::new();
+        s.launch(super::Launch::Campaigns);
+        assert!(s.side.items.is_empty());
+        crate::fixtures::agent(&mut s);
+        s.general = true;
+        s.launch(super::Launch::Campaigns);
+        assert!(s.side.items.is_empty());
+    }
+
+    #[test]
+    fn only_home_and_startup_enable_the_animated_starters() {
+        let mut s = App::new();
+        assert!(s.home);
+        crate::fixtures::agent_empty(&mut s);
+        s.new_chat();
+        assert!(!s.home);
+        s.go_home();
+        assert!(s.home);
+        s.start_chat(s.active.clone());
+        assert!(!s.home);
+        s.go_home();
+        s.view = crate::state::View::Workspace;
+        s.page = crate::state::Page::Campaigns;
+        s.ask_agent("Plan this campaign");
+        assert!(!s.home);
+    }
+
+    #[test]
+    fn the_only_browser_tab_can_close_and_preserve_other_panel_tabs() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.launch(super::Launch::Browser);
+        let id = s.side.browser.id;
+        s.close_web_tab(id);
+        assert!(!s.side.browser.shown);
+        assert!(!s.side_shown());
+        s.launch(super::Launch::Campaigns);
+        s.launch(super::Launch::Browser);
+        let id = s.side.browser.id;
+        s.close_web_tab(id);
+        assert!(!s.side.browser.shown);
+        assert!(s.side_shown());
+        assert_eq!(s.side_tab(), SideTab::Page(crate::state::Page::Campaigns));
+    }
+
+    #[test]
+    fn composer_menu_commands_prepare_the_current_draft_without_sending() {
+        let mut s = App::new();
+        crate::fixtures::agent(&mut s);
+        s.composer.replace_text("Improve qualified demo requests");
+        let chat = s.chat_id.clone();
+        s.prepare_composer_command("plan");
+        assert_eq!(s.composer.text, "/plan Improve qualified demo requests");
+        assert_eq!(s.chat_id, chat);
+        assert!(matches!(s.turn, crate::state::Turn::Idle));
+        assert!(s.queued.is_empty());
+    }
+
+    #[test]
+    fn composer_menu_commands_use_the_composer_that_opened_the_menu() {
+        let mut s = App::new();
+        s.composer.replace_text("Keep this main draft");
+        s.side.composer.replace_text("Refine this landing page");
+        s.composer_slot = crate::state::ComposerSlot::Side;
+        s.prepare_composer_command("campaign");
+        assert_eq!(s.side.composer.text, "/campaign Refine this landing page");
+        assert_eq!(s.composer.text, "Keep this main draft");
+        let draft = s.side.composer.text.clone();
+        s.prepare_composer_command("unsupported-command");
+        assert_eq!(s.side.composer.text, draft);
     }
 
     #[test]

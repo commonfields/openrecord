@@ -86,7 +86,7 @@ pub fn search(s: &App, t: &Theme, key: &str, queries: &[SearchRow], pages: &[Sea
             ))
         }));
     row2.push(kit::panel(t, &format!("{key}-spread-card"), "Where you rank", Some("Views of your top queries by their average position".into()), None, 0.0, mix));
-    c = c.child(kit::cols(row2));
+    c = c.child(kit::responsive_cols(s, row2));
 
     // What to work on: queries a few places from the top, and ones seen but rarely clicked.
     let mut close: Vec<&SearchRow> = queries.iter().filter(|q| q.position.is_some_and(|p| (4.0..=20.0).contains(&p)) && q.impressions >= 200.0).collect();
@@ -139,18 +139,18 @@ fn ratio_change(a: Option<f64>, b: Option<f64>) -> Option<f64> {
     a.zip(b).and_then(|(a, b)| kit::change(a, b))
 }
 
-pub fn ads(t: &Theme, key: &str, d: &AdDetail) -> El {
+pub fn ads(s: &App, t: &Theme, key: &str, d: &AdDetail) -> El {
     let m = |x: f64| money(x, &d.currency);
     let (n, b) = (&d.now, &d.before);
     let conv_rate = |x: &AdTotals| (x.clicks > 0.0).then(|| x.conversions / x.clicks);
-    let strip = kit::rows_of(vec![
+    let strip = kit::responsive_cols(s, vec![
         kit::tile(t, &format!("{key}-impr"), "Impressions", int(n.impressions), kit::change(n.impressions, b.impressions).map(|c| (c, true)), Some(format!("{} the period before", int(b.impressions)))),
         kit::tile(t, &format!("{key}-ctr"), "Click-through rate", n.ctr.map(pct1).unwrap_or_else(|| "—".into()), ratio_change(n.ctr, b.ctr).map(|c| (c, true)), Some("Clicks for every view".into())),
         kit::tile(t, &format!("{key}-cpc"), "Cost per click", n.cpc.map(m).unwrap_or_else(|| "—".into()), ratio_change(n.cpc, b.cpc).map(|c| (c, false)), Some(format!("{} the period before", b.cpc.map(m).unwrap_or_else(|| "—".into())))),
         kit::tile(t, &format!("{key}-cvr"), "Conversion rate", conv_rate(n).map(pct1).unwrap_or_else(|| "—".into()), ratio_change(conv_rate(n), conv_rate(b)).map(|c| (c, true)), Some("Conversions for every click".into())),
         kit::tile(t, &format!("{key}-value"), "Conversion value", m(n.value), kit::change(n.value, b.value).map(|c| (c, true)), Some("As the platform values them".into())),
         kit::tile(t, &format!("{key}-roas"), "Return on ad spend", n.roas.map(|r| format!("{r:.2}x")).unwrap_or_else(|| "—".into()), ratio_change(n.roas, b.roas).map(|c| (c, true)), Some("Conversion value for every 1 spent".into())),
-    ], 3);
+    ]);
     let mut c = col().w_full().gap(16.0).child(strip);
     if d.campaigns.is_empty() {
         return c;
@@ -213,7 +213,7 @@ pub fn ads(t: &Theme, key: &str, d: &AdDetail) -> El {
             None,
         ));
     }
-    c.child(kit::cols(vec![
+    c.child(kit::responsive_cols(s, vec![
         kit::panel(
             t,
             &format!("{key}-mix"),
@@ -229,10 +229,10 @@ pub fn ads(t: &Theme, key: &str, d: &AdDetail) -> El {
 
 // ---- Google Business Profile ----------------------------------------------------
 
-pub fn local(t: &Theme, key: &str, d: &LocalDetail) -> El {
+pub fn local(s: &App, t: &Theme, key: &str, d: &LocalDetail) -> El {
     let (n, b) = (&d.now, &d.before);
     let tile = |k: &str, name: &str, now: f64, before: f64| kit::tile(t, &format!("{key}-{k}"), name, int(now), kit::change(now, before).map(|c| (c, true)), Some(format!("{} the period before", int(before))));
-    let strip = kit::cols(vec![
+    let strip = kit::responsive_cols(s, vec![
         tile("calls", "Calls", n.calls, b.calls),
         tile("web", "Website clicks", n.website, b.website),
         tile("dir", "Directions", n.directions, b.directions),
@@ -267,7 +267,7 @@ pub fn local(t: &Theme, key: &str, d: &LocalDetail) -> El {
         }
         _ => kit::panel(t, &format!("{key}-terms"), "What people searched", None, None, 0.0, kit::note(t, "Google has not reported search terms for this profile yet.")),
     };
-    let mut c = col().w_full().gap(16.0).child(strip).child(kit::cols(vec![seen, terms]));
+    let mut c = col().w_full().gap(16.0).child(strip).child(kit::responsive_cols(s, vec![seen, terms]));
     if let Some(r) = &d.reviews {
         let mut list = col().w_full().gap(12.0);
         for (k, (rating, text, at, replied)) in r.recent.iter().take(4).enumerate() {
@@ -290,7 +290,7 @@ pub fn local(t: &Theme, key: &str, d: &LocalDetail) -> El {
                     .child(label(text.clone(), type_::SM_13, t.foreground).wrap().max_lines(3)),
             );
         }
-        let summary = kit::cols(vec![
+        let summary = kit::responsive_cols(s, vec![
             kit::tile(t, &format!("{key}-avg"), "Average rating", r.average.map(|x| format!("{x:.1}")).unwrap_or_else(|| "—".into()), None, Some(format!("{} reviews in all", int(r.total)))),
             kit::tile(t, &format!("{key}-new"), "New this period", int(r.in_window), None, None),
             kit::tile(t, &format!("{key}-open"), "Waiting for a reply", int(r.unanswered), None, Some(if r.unanswered > 0.0 { "Replies help ranking and trust".into() } else { "All answered".into() })),
@@ -333,7 +333,7 @@ pub fn revenue(s: &App, t: &Theme, i: &Insights, r: &RevenueData) -> El {
     let rr = (refund((r.refunded.0, r.gross.0)), refund((r.refunded.1, r.gross.1)));
     let days = r.daily.len().max(1) as f64;
     let with_sales = r.daily.iter().filter(|d| d.1 > 0.0).count();
-    let strip = kit::cols(vec![
+    let strip = kit::responsive_cols(s, vec![
         kit::tile(t, "rev-per-customer", "Per paying customer", rpc.0.map(m).unwrap_or_else(|| "—".into()), rpc.0.zip(rpc.1).and_then(|(a, b)| kit::change(a, b)).map(|c| (c, true)), Some(format!("{} the period before", rpc.1.map(m).unwrap_or_else(|| "—".into())))),
         kit::tile(t, "rev-orders-per", "Orders per customer", opc.0.map(|x| format!("{x:.2}")).unwrap_or_else(|| "—".into()), opc.0.zip(opc.1).and_then(|(a, b)| kit::change(a, b)).map(|c| (c, true)), Some("Times each customer paid".into())),
         kit::tile(t, "rev-per-day", "Average per day", m(r.net.0 / days), kit::change(r.net.0, r.net.1).map(|c| (c, true)), Some(format!("Sales on {with_sales} of {} days", r.daily.len()))),
@@ -373,7 +373,7 @@ pub fn revenue(s: &App, t: &Theme, i: &Insights, r: &RevenueData) -> El {
             0.0,
             kit::columns(t, "rev-weekday-cols", &items, 180.0, best),
         );
-        c = c.child(kit::cols(vec![pace_card, week_card]));
+        c = c.child(kit::responsive_cols(s, vec![pace_card, week_card]));
     }
 
     // The best days, and each currency.
@@ -404,7 +404,7 @@ pub fn revenue(s: &App, t: &Theme, i: &Insights, r: &RevenueData) -> El {
         0.0,
         if cur_rows.is_empty() { kit::note(t, "No currency breakdown reported.") } else { kit::table(t, "rev-cur-table", &CUR_COLS, cur_rows) },
     );
-    c = c.child(kit::cols(vec![best_days, currencies]));
+    c = c.child(kit::responsive_cols(s, vec![best_days, currencies]));
 
     // Revenue against ad spend, when an ad account in the same currency is connected.
     let efficiency = match first_ads(i) {
@@ -423,7 +423,7 @@ pub fn revenue(s: &App, t: &Theme, i: &Insights, r: &RevenueData) -> El {
                 col()
                     .w_full()
                     .gap(14.0)
-                    .child(kit::cols(vec![
+                    .child(kit::responsive_cols(s, vec![
                         kit::tile(t, "rev-mer", "Revenue for every 1 spent", format!("{:.2}", mer.0), mer.1.and_then(|b| kit::change(mer.0, b)).map(|c| (c, true)), Some("Net revenue divided by ad spend".into())),
                         kit::tile(t, "rev-cac", "Ad spend per paying customer", cac.0.map(m).unwrap_or_else(|| "—".into()), cac.0.zip(cac.1).and_then(|(x, y)| kit::change(x, y)).map(|c| (c, false)), Some(format!("{} the period before", cac.1.map(m).unwrap_or_else(|| "—".into())))),
                         kit::tile(t, "rev-ncac", "Ad spend per new customer", ncac.map(m).unwrap_or_else(|| "—".into()), None, Some(rpc.0.zip(ncac).map(|(v, k)| format!("Against {} revenue per customer", m(v)).to_string() + if v >= k { "" } else { ", more than they bring" }).unwrap_or_default())),
@@ -558,7 +558,7 @@ pub fn funnel(s: &App, t: &Theme, i: &Insights, steps: &[Step<'_>]) -> El {
         0.0,
         if pages.is_empty() { kit::note(t, "Connect Google Search Console to see the pages people arrive on.") } else { kit::bars(t, "funnel-entry-bars", &pages, Some(t.chart.primary)) },
     );
-    c = c.child(kit::cols(vec![cost, entry]));
+    c = c.child(kit::responsive_cols(s, vec![cost, entry]));
 
     // AI assistants as a way in, kept separate from the steps above.
     if let Ok(Some(d)) = &i.discovery {
@@ -583,7 +583,7 @@ pub fn funnel(s: &App, t: &Theme, i: &Insights, steps: &[Step<'_>]) -> El {
             Some("Being named and linked in answers, then the visits and sign-ups that followed. Measured separately from the steps above.".into()),
             None,
             0.0,
-            kit::cols(tiles),
+            kit::responsive_cols(s, tiles),
         ));
     }
     c
@@ -609,7 +609,7 @@ pub fn events(s: &App, t: &Theme, i: &Insights, g: &Goal, chart: El) -> El {
     let last7: f64 = cur.iter().rev().take(7).map(|p| p.1).sum();
     let prev7: f64 = cur.iter().rev().skip(7).take(7).map(|p| p.1).sum();
     let fmt = |x: f64| charts::format_count((x * 10.0).round() / 10.0);
-    let strip = kit::cols(vec![
+    let strip = kit::responsive_cols(s, vec![
         kit::tile(t, "ev-total", &g.label, fmt(total), kit::change(total, total_before).map(|c| (c, true)), Some(format!("{} the period before", fmt(total_before)))),
         kit::tile(t, "ev-avg", "Per day", avg.map(fmt).unwrap_or_else(|| "—".into()), avg.zip(avg_before).and_then(|(a, b)| kit::change(a, b)).map(|c| (c, true)), Some("On days with a value".into())),
         kit::tile(t, "ev-week", "Last 7 days", fmt(last7), kit::change(last7, prev7).map(|c| (c, true)), Some(format!("{} the 7 days before", fmt(prev7)))),
@@ -656,7 +656,7 @@ pub fn events(s: &App, t: &Theme, i: &Insights, g: &Goal, chart: El) -> El {
         })
         .collect();
     let weekly = kit::panel(t, "ev-weeks", "Week by week", Some("Newest first; a partial week is not compared".into()), None, 0.0, kit::table(t, "ev-week-table", &WCOLS, wrows));
-    c = c.child(kit::cols(vec![weekday, weekly]));
+    c = c.child(kit::responsive_cols(s, vec![weekday, weekly]));
 
     // The pace against the period before, and the event's definition.
     let dates: Vec<String> = cur.iter().map(|p| p.0.clone()).collect();
@@ -687,7 +687,7 @@ pub fn events(s: &App, t: &Theme, i: &Insights, g: &Goal, chart: El) -> El {
         "ev-definition",
         "How it is counted",
         None,
-        Some(button(t, "events-accounts", "Manage accounts", Variant::Outline).on_press(|s: &mut App| s.show_page(crate::state::Page::Channels))),
+        None,
         0.0,
         col()
             .w_full()
@@ -704,7 +704,7 @@ pub fn events(s: &App, t: &Theme, i: &Insights, g: &Goal, chart: El) -> El {
                 },
             )),
     );
-    c.child(kit::cols(vec![pace, definition]))
+    c.child(kit::responsive_cols(s, vec![pace, definition.child(button(t, "events-accounts", "Manage accounts", Variant::Outline).on_press(|s: &mut App| s.show_page(crate::state::Page::Channels)))]))
 }
 
 /// Every other action a connected account counts: ad conversions, profile

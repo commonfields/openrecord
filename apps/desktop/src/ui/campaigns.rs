@@ -1,6 +1,7 @@
 //! Campaigns: the portfolio at a glance, each campaign's progress and
 //! readiness, and one campaign's brief, measurement plan, deliverables and
-//! results. Read from `/api/businesses/:id/campaigns` (the saved briefs).
+//! results. Saved briefs and adapter-derived preparation runs come from the API.
+//! Manual editing uses the same revision-checked save route as the web client.
 //! Readiness is a planning check, not proof that anything was published.
 
 use rune::{Color, Cursor, El, col, el, row};
@@ -11,7 +12,12 @@ use crate::icons;
 use crate::state::{App, Load};
 use crate::theme::{Theme, type_};
 use crate::ui::kit::{self, Column, column};
-use crate::ui::widgets::{CONTROL, Variant, button, empty_state, failure, label, page_header, skeleton, status_chip};
+use crate::ui::widgets::{CONTROL, Variant, button as widget_button, empty_state, failure, label, page_header, skeleton, status_chip};
+
+/// Campaign actions keep their content width even when placed in a full-width column.
+pub(super) fn campaign_button(t: &Theme, key: &str, title: &str, variant: Variant) -> El {
+    widget_button(t, key, title, variant).self_start()
+}
 
 fn ask(request: String) -> impl Fn(&mut App) + 'static {
     move |s: &mut App| {
@@ -31,7 +37,7 @@ fn days_between(a: &str, b: &str) -> Option<i64> {
 
 fn status_name(s: &str) -> &'static str {
     match s {
-        "ACTIVE" => "Live",
+        "ACTIVE" => "Active",
         "REVIEW" => "In review",
         "CLOSED" => "Closed",
         _ => "Draft",
@@ -87,7 +93,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         _ => return col().w_full().gap(24.0).child(header(t)).child(skeleton(t, 3)),
     };
     if let Some(cp) = s.campaign_open.as_ref().and_then(|id| list.iter().find(|c| &c.id == id)) {
-        return detail(t, cp);
+        return detail(s, t, cp);
     }
     if list.is_empty() {
         return col().w_full().gap(24.0).child(header(t)).child(empty_state(
@@ -95,10 +101,8 @@ pub fn view(s: &App, t: &Theme) -> El {
             "campaigns-empty",
             &icons::BRIEFCASE,
             "No campaigns yet",
-            "Plan one from an approved idea. The agent drafts it and asks before anything is published, sent or spent.",
-            Some(button(t, "plan-campaign", "Plan a campaign with the agent", Variant::Outline).on_press(ask(
-                "/campaign Plan a campaign for our most promising approved idea. Do not publish, send or spend without approval.".into(),
-            ))),
+            "Start with a brief: define the goal, audience, offer and decision window. Then prepare, distribute, monitor and learn.",
+            Some(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Primary).self_center().on_press(|s: &mut App| s.edit_campaign(None))),
         ));
     }
     let today = today();
@@ -112,8 +116,8 @@ pub fn view(s: &App, t: &Theme) -> El {
         .flat_map(|c| c.tasks.iter())
         .filter(|x| x.status != "DONE" && x.status != "BLOCKED" && !x.due.is_empty() && x.due.as_str() < today.as_str())
         .count();
-    let strip = kit::cols(vec![
-        kit::tile(t, "cp-live", "Live", count("ACTIVE").to_string(), None, Some(format!("{} in review, {} {}", count("REVIEW"), count("DRAFT"), if count("DRAFT") == 1 { "draft" } else { "drafts" }))),
+    let strip = kit::responsive_cols(s, vec![
+        kit::tile(t, "cp-live", "Active", count("ACTIVE").to_string(), None, Some(format!("{} in review, {} {}", count("REVIEW"), count("DRAFT"), if count("DRAFT") == 1 { "draft" } else { "drafts" }))),
         kit::tile(t, "cp-deliverables", "Deliverables done", if total > 0 { format!("{:.0}%", done as f64 / total as f64 * 100.0) } else { "—".into() }, None, Some(format!("{done} of {total} across open campaigns"))),
         kit::tile(t, "cp-reviews", "Reviews due", due.to_string(), None, Some(if due > 0 { "Results and a decision to record".into() } else { "Nothing waiting on a review".into() })),
         kit::tile(t, "cp-blocked", "Blocked or late", (blocked + overdue_tasks).to_string(), None, Some(format!("{blocked} blocked, {overdue_tasks} past their due date"))),
@@ -127,7 +131,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         "cp-filter",
         vec![
             tab(format!("All {}", list.len()), ""),
-            tab(format!("Live {}", count("ACTIVE")), "ACTIVE"),
+            tab(format!("Active {}", count("ACTIVE")), "ACTIVE"),
             tab(format!("In review {}", count("REVIEW")), "REVIEW"),
             tab(format!("Drafts {}", count("DRAFT")), "DRAFT"),
             tab(format!("Closed {}", count("CLOSED")), "CLOSED"),
@@ -144,7 +148,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         let readiness = if c.status == "CLOSED" {
             label(decision_name(&c.decision), type_::XS_MEDIUM, t.muted_foreground)
         } else if blockers == 0 {
-            label("Ready", type_::XS_MEDIUM, t.supported)
+            label("Brief ready", type_::XS_MEDIUM, t.supported)
         } else {
             label(format!("{blockers} to do"), type_::XS_MEDIUM, if c.status == "ACTIVE" { t.partial } else { t.muted_foreground })
         };
@@ -183,7 +187,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                 .label(title.clone())
                 .focusable(true)
                 .cursor(Cursor::Pointer)
-                .on_press(move |s: &mut App| s.campaign_open = Some(id.clone()))
+                .on_press(move |s: &mut App| s.open_campaign(&id))
                 .child(label(title, type_::SM_MEDIUM, t.foreground).truncate())
                 .child(label(
                     if c.goal.is_empty() { format!("Updated {}", format::relative(c.updated_at.as_deref(), now)) } else { c.goal.clone() },
@@ -198,8 +202,30 @@ pub fn view(s: &App, t: &Theme) -> El {
             readiness,
         ]);
     }
-    let table = if rows.is_empty() { kit::note(t, "No campaigns with this status.") } else { kit::table(t, "cp-table", &COLS, rows) };
-    let portfolio = kit::panel(t, "cp-portfolio", "Portfolio", Some("Open a campaign for its brief, deliverables and results".into()), Some(tabs), 0.0, table);
+    let narrow = kit::analytics_width(s) < 600.0;
+    let table = if rows.is_empty() {
+        kit::note(t, "No campaigns with this status.")
+    } else if narrow {
+        let mut cards = col().key("cp-list").w_full().gap(16.0);
+        for cells in rows {
+            let mut card = col().w_full().gap(10.0).pb(12.0);
+            for (index, content) in cells.into_iter().enumerate() {
+                card = if index == 0 { card.child(content) } else {
+                    card.child(col().w_full().gap(2.0).child(label(COLS[index].name, type_::XS, t.muted_foreground)).child(content))
+                };
+            }
+            cards = cards.child(card);
+        }
+        cards
+    } else {
+        kit::table(t, "cp-table", &COLS, rows)
+    };
+    let portfolio = if narrow {
+        kit::panel(t, "cp-portfolio", "Portfolio", Some("Open a campaign for its brief, deliverables and results".into()), None, 0.0,
+            col().w_full().gap(16.0).child(row().key("cp-filter-scroll").w_full().min_w(0.0).child(tabs).scroll_x()).child(table))
+    } else {
+        kit::panel(t, "cp-portfolio", "Portfolio", Some("Open a campaign for its brief, deliverables and results".into()), Some(tabs), 0.0, table)
+    };
 
     // Where the portfolio sits: by funnel stage, by channel, and what needs a look.
     let open: Vec<&Campaign> = list.iter().filter(|c| c.status != "CLOSED").collect();
@@ -265,7 +291,7 @@ pub fn view(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(move |s: &mut App| s.campaign_open = Some(id.clone()))
+            .on_press(move |s: &mut App| s.open_campaign(&id))
             .child(el().size(6.0, 6.0).radius(3.0).fill(tone))
             .child(col().grow(1.0).min_w(0.0).child(label(what, type_::SM_13, t.foreground).truncate()).child(label(title, type_::XS11, t.muted_foreground).truncate()));
         q = q.child(r);
@@ -274,7 +300,7 @@ pub fn view(s: &App, t: &Theme) -> El {
 
     // What closed campaigns taught.
     let learned: Vec<&Campaign> = list.iter().filter(|c| c.status == "CLOSED" && !c.learning.trim().is_empty()).take(4).collect();
-    let mut c = col().w_full().gap(16.0).child(row().w_full().gap(16.0).items_start().child(col().grow(1.0).min_w(0.0).child(header(t))).child(plan_button(t))).child(strip).child(portfolio).child(kit::cols(vec![stage_card, channel_card, queue_card]));
+    let mut c = col().w_full().gap(16.0).child(row().w_full().gap(16.0).items_start().flex_wrap().child(col().grow(1.0).min_w(200.0_f32.min(kit::analytics_width(s))).child(header(t))).child(plan_button(t))).child(strip).child(portfolio).child(kit::responsive_cols(s, vec![stage_card, channel_card, queue_card]));
     if !learned.is_empty() {
         let mut l = col().w_full().gap(14.0);
         for (k, cp) in learned.iter().enumerate() {
@@ -294,11 +320,17 @@ pub fn view(s: &App, t: &Theme) -> El {
 }
 
 fn header(t: &Theme) -> El {
-    page_header(t, "Campaigns", "Plans the agent drafted with you, how far along each one is, and what was measured against it.")
+    page_header(t, "Campaigns", "A goal, an audience, an offer. Prepare the work, reach people, measure and decide.")
 }
 
 fn plan_button(t: &Theme) -> El {
-    button(t, "plan-campaign", "Plan a campaign", Variant::Outline).on_press(ask("/campaign Plan a campaign for our most promising approved idea. Do not publish, send or spend without approval.".into()))
+    row().key("campaign-actions").gap(8.0).center_y().min_w(0.0).shrink().flex_wrap()
+        .child(campaign_button(t, "plan-campaign", "Draft with the agent", Variant::Primary).h(32.0).on_press(|s: &mut App| {
+            if s.campaign_editor.is_some() { s.open_campaign_document(); return; }
+            s.ask_agent("/campaign Read our business goal and current campaigns. Prepare a campaign brief covering the problem, measurable goal and baseline, audience and fit, offer and CTA, message and proof, concrete assets, channel rationale, tracking checks, owners, launch and review dates, proposed budget, and a decision rule. Ask about unknowns and label suggestions. Save a draft; do not publish, send or spend without approval.");
+            s.edit_campaign(None);
+        }))
+        .child(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Outline).h(32.0).on_press(|s: &mut App| s.edit_campaign(None)))
 }
 
 /// One labelled field of the brief; an empty one says so.
@@ -310,7 +342,7 @@ fn field(t: &Theme, name: &str, value: &str) -> El {
         .child(if value.trim().is_empty() { label("Not set", type_::SM_13, t.muted_foreground.alpha(0.7)) } else { label(value.to_string(), type_::SM_13, t.foreground).wrap() })
 }
 
-fn detail(t: &Theme, c: &Campaign) -> El {
+fn detail(s: &App, t: &Theme, c: &Campaign) -> El {
     let today = today();
     let (ink, soft) = status_tone(t, &c.status);
     let (done, total) = c.done();
@@ -330,20 +362,29 @@ fn detail(t: &Theme, c: &Campaign) -> El {
         .on_press(|s: &mut App| s.campaign_open = None)
         .child(label("← All campaigns", type_::XS_MEDIUM, t.muted_foreground));
     let title = if c.title.is_empty() { "Untitled campaign".to_string() } else { c.title.clone() };
-    let review_req = format!("Review the campaign \"{title}\": read its brief, deliverables and the goal metric since launch, then propose results, a decision (keep, change, stop or inconclusive), the learning and the next move for me to approve.");
+    let (action, phase) = match c.status.as_str() {
+        "DRAFT" if !blockers.is_empty() => ("Complete the brief", 0),
+        "DRAFT" => ("Prepare distribution", 3),
+        "ACTIVE" if !c.review_due(&today) => ("Check early signals", 4),
+        "CLOSED" => ("Review learning", 5),
+        _ => ("Review and decide", 5),
+    };
+    let review_req = campaign_request(c, phase);
+    let saved = c.clone();
     let head = row()
         .w_full()
         .gap(16.0)
         .items_start()
+        .flex_wrap()
         .child(
             col()
-                .grow(1.0)
-                .min_w(0.0)
+                .w(0.0).grow(1.0)
+                .min_w(200.0_f32.min(kit::analytics_width(s)))
                 .gap(6.0)
-                .child(row().gap(10.0).center_y().child(label(title.clone(), type_::TITLE, t.foreground).role("heading").truncate()).child(status_chip(t, status_name(&c.status), ink, soft)))
+                .child(row().w_full().min_w(0.0).gap(10.0).center_y().child(label(title.clone(), type_::TITLE, t.foreground).role("heading").wrap().min_w(0.0).shrink()).child(status_chip(t, status_name(&c.status), ink, soft)))
                 .child(label(if c.goal.is_empty() { "No goal written yet.".to_string() } else { c.goal.clone() }, type_::SM, t.muted_foreground).wrap()),
         )
-        .child(button(t, "cp-review", if c.status == "CLOSED" { "Plan the next move" } else { "Review with the agent" }, Variant::Outline).on_press(ask(review_req)));
+        .child(row().gap(8.0).center_y().flex_wrap().min_w(0.0).shrink().child(campaign_button(t, "cp-edit", "Edit brief", Variant::Outline).h(32.0).on_press(move |s: &mut App| s.edit_campaign(Some(saved.clone())))).child(campaign_button(t, "cp-review", action, Variant::Outline).h(32.0).on_press(ask(review_req))));
 
     let since = days_between(&c.launch_date, &today).filter(|d| *d >= 0);
     let until = days_between(&today, &c.review_date);
@@ -353,11 +394,11 @@ fn detail(t: &Theme, c: &Campaign) -> El {
         (Some(s), _) => (format!("Day {s}"), format!("Since launch on {}", short(&c.launch_date))),
         _ => ("—".into(), "Not scheduled".into()),
     };
-    let strip = kit::tiles(vec![
+    let strip = kit::responsive_cols(s, vec![
         kit::tile(t, "cpd-progress", "Deliverables done", format!("{done} of {total}"), None, Some(if total > 0 { format!("{:.0}% complete", done as f64 / total as f64 * 100.0) } else { "No deliverables yet".into() })),
         kit::tile(t, "cpd-timing", "Timeline", timing.0, None, Some(timing.1)),
-        kit::tile(t, "cpd-ready", "Readiness", if blockers.is_empty() { "Ready".into() } else { format!("{} to do", blockers.len()) }, None, Some(if blockers.is_empty() { "Every field and deliverable is in place".into() } else { "Before it counts as launched".into() })),
-        kit::tile(t, "cpd-budget", "Budget", if c.budget.is_empty() { "—".into() } else { c.budget.clone() }, None, Some("For planning, not approval to spend".into())),
+        kit::tile(t, "cpd-ready", "Brief readiness", if blockers.is_empty() { "Complete".into() } else { format!("{} to do", blockers.len()) }, None, Some(if blockers.is_empty() { "Required brief fields and tasks are complete".into() } else { "Required brief fields and tasks".into() })),
+        kit::panel(t, "cpd-budget", "Budget", None, None, 0.0, col().w_full().gap(8.0).child(label(if c.budget.is_empty() { "Not set" } else { &c.budget }, type_::SM_13, t.foreground).wrap()).child(label("For planning, not approval to spend", type_::XS, t.muted_foreground).wrap())),
     ]);
 
     let brief = kit::panel(
@@ -367,7 +408,7 @@ fn detail(t: &Theme, c: &Campaign) -> El {
         Some("Who it is for and what it says".into()),
         None,
         0.0,
-        col().w_full().gap(12.0).child(field(t, "Audience", &c.audience)).child(field(t, "Offer", &c.offer)).child(field(t, "Message", &c.message)).child(field(t, "Hypothesis", &c.hypothesis)).child(field(t, "Owner", &c.owner)),
+        col().w_full().gap(12.0).child(field(t, "Audience", &c.audience)).child(field(t, "Offer", &c.offer)).child(field(t, "Message", &c.message)).child(field(t, "Hypothesis", &c.hypothesis)).child(field(t, "Owner", &c.owner)).child(field(t, "Launch date", &c.launch_date)).child(field(t, "Review / decision date", &c.review_date)),
     );
     let measure = kit::panel(
         t,
@@ -382,6 +423,8 @@ fn detail(t: &Theme, c: &Campaign) -> El {
             .child(row().w_full().gap(16.0).child(field(t, "Success metric", &c.metric).w(0.0).grow(1.0)).child(field(t, "Conversion event", &c.conversion_event).w(0.0).grow(1.0)))
             .child(row().w_full().gap(16.0).child(field(t, "Baseline", &c.baseline).w(0.0).grow(1.0)).child(field(t, "Target", &c.target).w(0.0).grow(1.0)))
             .child(field(t, "Tracking plan", &c.tracking_plan))
+            .child(field(t, "Channel rationale", &c.rationale))
+            .child(field(t, "Destination", &c.destination))
             .child(row().w_full().gap(16.0).child(field(t, "Channel", &c.channel).w(0.0).grow(1.0)).child(field(t, "Funnel stage", &stage_name(&c.funnel_stage)).w(0.0).grow(1.0)))
             .child(row().w_full().gap(16.0).child(field(t, "Motion", &stage_name(&c.motion)).w(0.0).grow(1.0)).child(field(t, "Cadence", &c.cadence).w(0.0).grow(1.0))),
     );
@@ -394,7 +437,7 @@ fn detail(t: &Theme, c: &Campaign) -> El {
             let (name, ink, soft) = task_tone(t, &x.status);
             let late = x.status != "DONE" && !x.due.is_empty() && x.due.as_str() < today.as_str();
             vec![
-                kit::text(t, x.title.clone()),
+                col().w_full().gap(4.0).child(kit::text(t, x.title.clone())).children((!x.note.trim().is_empty()).then(|| label(x.note.clone(), type_::XS, t.muted_foreground).wrap())),
                 kit::faint(t, words(&x.channel)),
                 kit::faint(t, if x.owner.is_empty() { "Unassigned".to_string() } else { x.owner.clone() }),
                 label(short(&x.due), type_::SM_13.features("'tnum' 1"), if late { t.wrong } else { t.muted_foreground }),
@@ -414,7 +457,7 @@ fn detail(t: &Theme, c: &Campaign) -> El {
 
     let mut checklist = col().w_full().gap(8.0);
     if blockers.is_empty() {
-        checklist = checklist.child(kit::note(t, "Nothing missing. The plan is complete."));
+        checklist = checklist.child(kit::note(t, "Required fields and deliverables are complete. Confirm tracking, approvals and delivery evidence before launch."));
     }
     for (k, b) in blockers.iter().take(12).enumerate() {
         checklist = checklist.child(row().key(format!("cpd-block-{k}")).w_full().gap(10.0).center_y().child(el().size(12.0, 12.0).radius(3.0).border(1.0, t.muted_foreground.alpha(0.6))).child(label(b.clone(), type_::SM_13, t.foreground).truncate().grow(1.0).min_w(0.0)));
@@ -422,7 +465,7 @@ fn detail(t: &Theme, c: &Campaign) -> El {
     if blockers.len() > 12 {
         checklist = checklist.child(label(format!("And {} more", blockers.len() - 12), type_::XS, t.muted_foreground));
     }
-    let ready = kit::panel(t, "cpd-ready-list", "Launch readiness", Some("What the plan still needs before it counts as live".into()), None, 0.0, checklist);
+    let ready = kit::panel(t, "cpd-ready-list", "Launch readiness", Some("Required brief fields and deliverables; separate from approval and delivery".into()), None, 0.0, checklist);
     let results = kit::panel(
         t,
         "cpd-results",
@@ -439,9 +482,11 @@ fn detail(t: &Theme, c: &Campaign) -> El {
         .child(row().child(back))
         .child(head)
         .child(strip)
-        .child(kit::cols(vec![brief, measure]))
+        .child(campaign_loop(s, t, c))
+        .child(kit::responsive_cols(s, vec![brief, measure]))
+        .child(delivery(s, t, c))
         .child(tasks)
-        .child(kit::cols(vec![ready, results]))
+        .child(kit::responsive_cols(s, vec![ready, results]))
         .child(label(
             format!(
                 "Revision {}{}. Results are recorded by your team, not measured by OpenRecord.",
@@ -455,4 +500,62 @@ fn detail(t: &Theme, c: &Campaign) -> El {
             type_::XS,
             t.muted_foreground,
         ))
+}
+
+
+fn campaign_request(c: &Campaign, phase: usize) -> String {
+    let work = match phase {
+        0 => "Refine the problem, goal, audience fit, baseline, success metric, target and decision window. Ask about unknowns; label suggestions.",
+        1 => "Refine the offer, CTA, message, proof points and hypothesis against the selected audience. Do not invent supporting evidence.",
+        2 => "Prepare concrete draft assets from the current brief: landing page, creative, emails, forms and follow-up where relevant. Save reviewable artifacts. Record owners, due dates, dependencies and draft references in deliverable notes.",
+        3 => "Read current preparation runs and exact linked changes. Identify missing drafts, tracking checks and channel connections. Prepare only supported changes for exact operator approval; explain manual handoffs for unsupported channels. Never treat a task marked done as delivery evidence.",
+        4 => "Inspect available early signals, tracking quality and delivery receipts against the baseline and target. Explain unavailable evidence. Recommend creative, offer, channel or budget adjustments for approval; do not change spend automatically.",
+        _ => "Review available results for the campaign period against the baseline and target. Separate sourced observations, operator records and measurement gaps. Propose a keep, change, stop or inconclusive decision, learning and next move. Ask before recording a final decision or closing.",
+    };
+    format!("For campaign ID {} (displayed revision {}), first read the current campaign brief and read_marketing_work scoped to this campaign ID. {} Use the current revision for any proposed edit. Do not publish, send, spend or approve anything without the exact operator approval required by the existing workflow.", c.id, c.revision, work)
+}
+
+fn campaign_loop(s: &App, t: &Theme, c: &Campaign) -> El {
+    let phases = [
+        ("1  Define", "Problem, goal, audience and success criteria", "Refine the goal"),
+        ("2  Shape the offer", "Offer, message, proof and call to action", "Refine the message"),
+        ("3  Prepare", "Assets, channels, owners and tracking", "Prepare assets"),
+        ("4  Launch & distribute", "Exact approvals, delivery and handoffs", "Prepare distribution"),
+        ("5  Monitor & adjust", "Early signals, tracking and proposed changes", "Check early signals"),
+        ("6  Measure & decide", "Results, learning and the next experiment", "Review and decide"),
+    ];
+    let mut content = col().w_full().gap(12.0);
+    for (offset, chunk) in phases.chunks(2).enumerate() {
+        let mut cards = Vec::new();
+        for (i,(title, description, action)) in chunk.iter().enumerate() {
+            let index = offset*2+i;
+            cards.push(kit::panel(t, &format!("cp-phase-{index}"), title, Some(description.to_string()), None, 0.0,
+                row().w_full().child(campaign_button(t, &format!("cp-phase-action-{index}"), action, Variant::Outline).h(32.0).on_press(ask(campaign_request(c,index))))));
+        }
+        content=content.child(kit::responsive_cols(s, cards));
+    }
+    kit::panel(t, "cp-loop", "Campaign work loop", Some("Revisit any phase as you learn. Actions start a new main chat with this campaign in a right-panel tab; you review and send the request.".into()), None, 0.0, content)
+}
+
+fn delivery(s: &App, t: &Theme, c: &Campaign) -> El {
+    let body = if s.campaign_run_id.as_deref() != Some(c.id.as_str()) {
+        kit::note(t, "Open this campaign again to load its delivery evidence.")
+    } else { match &s.campaign_runs {
+        Load::Ready(runs) if runs.is_empty() => kit::note(t, "No preparation runs recorded. Prepare distribution with the agent to inspect readiness and supported delivery paths."),
+        Load::Ready(runs) => {
+            let mut list = col().w_full().gap(12.0);
+            for run in runs {
+                let mut r = col().w_full().gap(6.0).child(label(format!("Revision {} · {}{}",run.campaign_revision,words(&run.status),if run.stale { " · earlier campaign revision" } else { "" }),type_::SM_MEDIUM,t.foreground));
+                for task in &run.tasks {
+                    r = r.child(label(format!("{} · {}",task.title,words(&task.state)),type_::SM_13,t.foreground).wrap())
+                        .child(label(task.next.clone(),type_::XS,t.muted_foreground).wrap());
+                }
+                list=list.child(r);
+            }
+            list
+        },
+        Load::Failed(e) => failure(t,"cp-runs-failed",e,|s: &mut App| s.refresh()),
+        _ => skeleton(t,2),
+    }};
+    kit::panel(t,"cp-delivery","Approvals and delivery",Some("Adapter-derived preparation status. Delivery receipts do not establish campaign impact.".into()),Some(campaign_button(t,"cp-open-approvals","Open Inbox",Variant::Outline).on_press(|s: &mut App| s.show_page(crate::state::Page::Inbox))),0.0,body)
 }

@@ -25,6 +25,29 @@ pub fn cols(cards: Vec<El>) -> El {
     r
 }
 
+/// Available Analytics content width in layout points, including the current panel split.
+pub fn analytics_width(s: &App) -> f32 {
+    // The split is measured in layout points, so zoom and dragging use the same units.
+    let width = if s.side_shown() && matches!(s.side_tab(), crate::side::SideTab::Analytics | crate::side::SideTab::Page(_)) {
+        if s.side.wide { s.split_w } else { s.split_w * s.prefs.helper() / 100.0 }
+    } else { s.split_w };
+    if width > 0.0 { (width - 64.0).max(80.0) } else { 280.0 }
+}
+
+/// Stack cards in a narrow Analytics panel; retain a grid when expanded.
+pub fn responsive_cols(s: &App, cards: Vec<El>) -> El {
+    if analytics_width(s) < 600.0 {
+        let mut stack = col().w_full().gap(16.0);
+        for c in cards { stack = stack.child(row().w_full().child(c.w_full().min_w(0.0))); }
+        return stack;
+    }
+    let mut r = row().w_full().gap(16.0).items_stretch().flex_wrap();
+    for c in cards {
+        r = r.child(col().w(0.0).grow(1.0).min_w(280.0_f32.min(analytics_width(s))).child(c.w_full().min_w(0.0).grow(1.0)));
+    }
+    r
+}
+
 /// A card with a title, an optional line under it and an optional action on
 /// the right. `height` > 0 fixes its height and scrolls the body inside.
 pub fn panel(t: &Theme, key: &str, title: &str, sub: Option<String>, action: Option<El>, height: f32, body: El) -> El {
@@ -110,20 +133,6 @@ pub fn tiles(list: Vec<El>) -> El {
     r
 }
 
-/// Tiles in rows of `n`, each row at equal widths.
-pub fn rows_of(list: Vec<El>, n: usize) -> El {
-    let mut c = col().w_full().gap(16.0);
-    let mut it = list.into_iter().peekable();
-    while it.peek().is_some() {
-        let mut chunk: Vec<El> = it.by_ref().take(n).collect();
-        while chunk.len() < n {
-            chunk.push(el());
-        }
-        c = c.child(cols(chunk));
-    }
-    c
-}
-
 /// A table column: its header, width (0 grows to fill) and whether it aligns right.
 pub struct Column {
     pub name: &'static str,
@@ -144,9 +153,9 @@ fn cell(c: &Column, content: El) -> El {
 /// A table: a muted header, then rows with no lines between them; a row shows
 /// only under the pointer, as the web's lists do.
 pub fn table(t: &Theme, key: &str, columns: &[Column], rows: Vec<Vec<El>>) -> El {
-    let mut head = row().w_full().gap(12.0).pb(8.0).px(8.0);
+    let mut head = row().key(format!("{key}-header")).role("row").w_full().gap(12.0).py(8.0).px(8.0);
     for c in columns {
-        head = head.child(cell(c, label(c.name, type_::XS11, t.muted_foreground)));
+        head = head.child(cell(c, label(c.name, type_::XS_MEDIUM, t.foreground).truncate().min_w(0.0).role("columnheader")));
     }
     let mut out = col().key(key.to_string()).w_full().child(head);
     for (k, r) in rows.into_iter().enumerate() {

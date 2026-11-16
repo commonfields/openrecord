@@ -28,6 +28,13 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
         SideTab::Browser => browser(s, t),
         SideTab::Launcher => launcher(s, t),
         SideTab::Analytics => scrolled("side-analytics", col().w_full().px(24.0).pt(16.0).pb(24.0).child(super::overview::view(s, t))),
+        SideTab::CampaignBrief => match s.campaign_editor {
+            Some(_) => super::campaign_brief::view(s, t),
+            None => empty(t, "campaign-document-closed", "This brief has been closed."),
+        },
+        SideTab::Page(crate::state::Page::Inbox) => super::pages::inbox_panel(s, t),
+        SideTab::Page(crate::state::Page::Channels) => scrolled("side-connections", col().w_full().padding(20.0).child(super::channels::connections(s, t))),
+        SideTab::Page(page) => scrolled("side-workspace-page", col().w_full().px(24.0).pt(16.0).pb(24.0).child(super::pages::view_page(s, t, *page))),
         SideTab::Files => files(s, t),
         SideTab::Changes => changes(s, t),
     };
@@ -89,6 +96,9 @@ fn tab_face(s: &App, item: &SideTab) -> (&'static rune::Icon, String) {
             (&icons::USERS, info.and_then(|i| i.title).unwrap_or_else(|| format!("{role} helper")))
         }
         SideTab::Analytics => (&icons::NAV_ANALYTICS, "Analytics".into()),
+        SideTab::CampaignBrief => (&icons::BRIEFCASE, "Campaign brief".into()),
+        SideTab::Page(crate::state::Page::Campaigns) => (&icons::NAV_CAMPAIGNS, "Campaigns".into()),
+        SideTab::Page(page) => (&icons::PANEL_RIGHT, page.label().into()),
         SideTab::Files => (&icons::FOLDER, "Files".into()),
         SideTab::Changes => (&icons::GIT_COMPARE, "Changes".into()),
         SideTab::Launcher => (&icons::PLUS, "New tab".into()),
@@ -126,10 +136,9 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
             .on_press(move |s: &mut App| act(s))
             .child(ico(&icons::X, 12.0, t.muted_foreground))
     };
-    let several = web.len() > 1 || !s.side_items().is_empty();
     for (id, name, current) in web {
         let on = *front == SideTab::Browser && current;
-        let close = (several && on).then(|| close_button(format!("side-web-close-{id}"), Box::new(move |s: &mut App| s.close_web_tab(id))));
+        let close = on.then(|| close_button(format!("side-web-close-{id}"), Box::new(move |s: &mut App| s.close_web_tab(id))));
         tabs = tabs.child(tab_button(t, &format!("side-tab-browser-{id}"), &icons::GLOBE, &name, on, close, compact).on_press(move |s: &mut App| s.select_web_tab(id)));
     }
     for (i, item) in s.side_items().iter().enumerate() {
@@ -208,25 +217,25 @@ fn scrolled(key: &str, body: El) -> El {
     col().key(key).w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: false })
 }
 
-/// What can open beside the chat: a list in the middle of the tab, as the
-/// browser's start list is.
+/// Keep the opening list level with the main chat's starter cards.
 fn launcher(s: &App, t: &Theme) -> El {
-    // As wide as its longest line, so a row's hover sits around its words.
-    let mut list = col().max_w(420.0).gap(2.0).child(label("Open beside this chat", type_::XS_MEDIUM, t.muted_foreground).px(10.0).pb(6.0));
+    let mut list = col().key("side-launch-list").w_full().max_w(420.0).gap(2.0);
     for what in Launch::ALL {
         let (icon, name, about): (&'static rune::Icon, &str, &str) = match what {
             Launch::Browser => (&icons::GLOBE, "Browser", "Websites and the chat's landing pages"),
             Launch::Changes => (&icons::GIT_COMPARE, "Changes", "What the agent changed, version by version"),
             Launch::Files => (&icons::FOLDER, "Files", "Pages, drafts and documents from this chat"),
             Launch::Analytics => (&icons::NAV_ANALYTICS, "Analytics", "The business's numbers beside the chat"),
+            Launch::Campaigns => (&icons::NAV_CAMPAIGNS, "Campaigns", "Briefs, deliverables and results beside the chat"),
         };
         let hover_key = format!("launch:{}", name.to_lowercase());
         // Hovered, its icon takes the periwinkle Home's starters draw theirs in.
         let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
-        list = list.child(
+        list = list.child(super::widgets::highlight(t,
             row()
                 .key(format!("side-launch-{}", name.to_lowercase()))
                 .w_full()
+                .max_w(360.0)
                 .h(44.0)
                 .pl(10.0)
                 .pr(14.0)
@@ -236,15 +245,20 @@ fn launcher(s: &App, t: &Theme) -> El {
                 .center_y()
                 .role("button")
                 .label(name.to_string())
+                .help(format!("{name}: {about}"))
+                .disabled(what == Launch::Campaigns && (s.active.is_none() || s.general))
+                .opacity(if what == Launch::Campaigns && (s.active.is_none() || s.general) { 0.4 } else { 1.0 })
                 .focusable(true)
                 .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
                 .on_press(move |s: &mut App| s.launch(what))
                 .child(ico(icon, 16.0, if hovered { t.primary_ink } else { t.foreground }))
-                .child(col().child(label(name.to_string(), type_::XS_MEDIUM, t.foreground)).child(label(about.to_string(), type_::XS, t.muted_foreground))),
-        );
+                .child(label(name.to_string(), type_::XS_MEDIUM, t.foreground).grow(1.0).min_w(0.0).truncate()),
+            hovered, false));
     }
-    col().key("side-launcher").w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)
+    col().key("side-launcher").w_full().grow(1.0).min_h(0.0)
+        .child(col().w_full().px(24.0).pt(super::agent::home_stack_top(s)).pb(32.0)
+            .child(row().w_full().h(super::agent::ROLL_H).center().child(list)))
+        .scroll(ScrollSpec { stick_bottom: false })
 }
 
 fn empty(t: &Theme, key: &str, text: &str) -> El {
@@ -526,7 +540,9 @@ fn start(s: &App, t: &Theme) -> El {
     let mut list = col().w_full().max_w(520.0).gap(2.0).child(label("Recents", type_::XS_MEDIUM, t.muted_foreground).px(10.0).pb(6.0));
     for (i, (name, url)) in items.into_iter().enumerate() {
         let go = url.clone();
-        list = list.child(
+        let hover_key = format!("browser-recent-{i}");
+        let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
+        list = list.child(super::widgets::highlight(t,
             row()
                 .key(format!("browser-recent-{i}"))
                 .w_full()
@@ -539,12 +555,12 @@ fn start(s: &App, t: &Theme) -> El {
                 .label(name.clone())
                 .focusable(true)
                 .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
+                .on_hover_change(super::widgets::track_hover(hover_key))
                 .on_press(move |s: &mut App| s.browser_go(&go))
                 .child(ico(&icons::GLOBE, 14.0, t.muted_foreground))
                 .child(label(name, type_::XS_MEDIUM, t.foreground).truncate().min_w(0.0))
                 .child(label(url, type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0)),
-        );
+            hovered, false));
     }
     // In the middle of the tab, across and down.
     col().w_full().grow(1.0).min_h(0.0).center().px(24.0).py(24.0).child(list)

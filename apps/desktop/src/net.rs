@@ -24,6 +24,8 @@ pub enum Reply {
     Facts(String, ApiResult<Vec<crate::api::Fact>>),
     Channels(String, ApiResult<Vec<Channel>>),
     Campaigns(String, ApiResult<Vec<Campaign>>),
+    CampaignRuns(String, String, ApiResult<Vec<crate::api::CampaignRun>>),
+    CampaignSaved { business: String, id: String, result: ApiResult<Campaign> },
     Conversation(String, ApiResult<Option<Conversation>>),
     /// A turn was accepted: the conversation it belongs to (new or existing).
     TurnQueued { business: String, conversation: String, request: String },
@@ -78,6 +80,8 @@ pub enum Reply {
     Diff { business: String, id: String, result: ApiResult<(u32, u32, Vec<crate::changes::Line>)> },
     /// A business's follow-up policy (read, or as a change left it).
     Followups { business: String, changed: bool, result: ApiResult<crate::followups::Followups> },
+    BriefSchedule { business: String, generation: u64, changed: bool, result: ApiResult<Option<crate::brief_schedule::Schedule>> },
+    BriefScheduleControl { business: String, generation: u64, origin: Option<String>, result: ApiResult<crate::brief_schedule::Control> },
     /// The Overview's data for a business over a number of days.
     Insights(String, u32, ApiResult<crate::insights::Insights>),
     /// The newest desktop release past this build, if any.
@@ -114,6 +118,29 @@ pub struct Net {
 }
 
 impl Net {
+    pub fn brief_schedule_control(&self, business: String, generation: u64, origin: Option<String>, enabled: bool, selection: Option<serde_json::Value>) {
+        self.spawn(move |client, send| {
+            let result = (|| {
+                let conversation = match origin.as_deref() {
+                    Some(id) => client.conversation(&business, Some(id))?.ok_or(crate::api::ApiError::Decode("Conversation missing".into()))?,
+                    None => client.new_conversation(&business, &crate::api::uuid())?,
+                };
+                client.change_brief_schedule(&business, enabled, conversation, selection)
+            })();
+            let following = result.as_ref().ok().map(|control| (control.request.clone(), control.conversation.id.clone()));
+            send(Reply::BriefScheduleControl { business: business.clone(), generation, origin, result });
+            if let Some((request, conversation)) = following {
+                let result = follow(client, &request, &send);
+                send(Reply::TurnDone { business, conversation, request: Some(request), result });
+            }
+        });
+    }
+    pub fn brief_schedule(&self, business: String, generation: u64, enabled: Option<bool>) {
+        self.spawn(move |client, send| {
+            let result = client.brief_schedule(&business, enabled);
+            send(Reply::BriefSchedule { business, generation, changed: enabled.is_some(), result });
+        });
+    }
     /// A worker against `base`. `None` makes a worker that never sends,
     /// for headless scenes drawn from fixture data.
     pub fn new(base: Option<String>) -> Net {
@@ -391,6 +418,20 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.channels(&business);
             send(Reply::Channels(business, r));
+        });
+    }
+
+    pub fn save_campaign(&self, business: String, id: String, revision: i64, brief: serde_json::Value) {
+        self.spawn(move |c, send| {
+            let result = c.save_campaign(&business, &id, revision, brief);
+            send(Reply::CampaignSaved { business, id, result });
+        });
+    }
+
+    pub fn campaign_runs(&self, business: String, campaign: String) {
+        self.spawn(move |c, send| {
+            let result = c.campaign_runs(&business, &campaign);
+            send(Reply::CampaignRuns(business, campaign, result));
         });
     }
 

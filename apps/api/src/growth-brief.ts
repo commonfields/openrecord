@@ -9,7 +9,8 @@ import { HttpRouter, HttpServerResponse } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
 import { Cause, Effect, Schedule, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
-import { decodeRouteId, type HarnessSelection } from "@openrecord/contracts"
+import { decodeRouteId, HarnessSelection } from "@openrecord/contracts"
+import { enqueueAgentRequest } from "./agent-request-queue.js"
 import { sendSessionTurn } from "./agent-sessions.js"
 import { businessWebsite } from "./agent-web-tools.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
@@ -123,8 +124,8 @@ const ensureSchedule = (scope: Scope) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* sql`INSERT INTO growth_brief_schedules(business_id, account_id, user_id, next_run_at)
     VALUES (${scope.businessId}, ${scope.accountId}, ${scope.userId}, now()) ON CONFLICT (business_id) DO NOTHING`
-  const row = (yield* sql`SELECT enabled, next_run_at FROM growth_brief_schedules WHERE business_id = ${scope.businessId}`)[0]!
-  return { enabled: row["enabled"] === true, nextRunAt: new Date(row["next_run_at"] as string).toISOString() }
+  const row = (yield* sql`SELECT enabled, next_run_at, conversation_id FROM growth_brief_schedules WHERE business_id = ${scope.businessId}`)[0]!
+  return { enabled: row["enabled"] === true, nextRunAt: new Date(row["next_run_at"] as string).toISOString(), conversationId: row["conversation_id"] ?? null }
 })
 
 /**
@@ -153,7 +154,9 @@ export const briefScheduler = runDueBriefs().pipe(
   Effect.repeat(Schedule.spaced("5 minutes")),
 )
 
-const ScheduleInput = Schema.Struct({ enabled: Schema.Boolean })
+const ScheduleInput = Schema.Struct({ enabled: Schema.Boolean, notify: Schema.optional(Schema.Struct({
+  conversationId: Schema.UUID, requestId: Schema.UUID, revision: Schema.Int.pipe(Schema.nonNegative()), selection: Schema.optional(HarnessSelection),
+})) })
 
 export const briefApi = (withSession: WithSession) => {
   const operator = operatorSessionFor(withSession)
@@ -164,9 +167,23 @@ export const briefApi = (withSession: WithSession) => {
       if (decodeRouteId(businessId)._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE)
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "BusinessNotFound" }, PRIVATE)
       return yield* run({ accountId: session.accountId, userId: session.userId, businessId })
-    })).pipe(Effect.catchAll(e => typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated"
-      ? json(401, { _tag: "NotAuthenticated" }, PRIVATE) : json(500, { _tag: "BriefRequestFailed" }, PRIVATE)))
+    })).pipe(Effect.catchAll((e: unknown) => typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated"
+      ? json(401, { _tag: "NotAuthenticated" }, PRIVATE)
+      : typeof e === "object" && e !== null && "_tag" in e && e._tag === "AgentRequestRefused"
+        ? json("reason" in e && e.reason === "NOT_FOUND" ? 404 : 409, { _tag: "BriefScheduleRefused" }, PRIVATE)
+        : json(500, { _tag: "BriefRequestFailed" }, PRIVATE)))
   return HttpRouter.empty.pipe(
+    HttpRouter.get("/api/businesses/:id/brief/schedule", business(scope => Effect.gen(function*() {
+      const sql = yield* SqlClient.SqlClient
+      const rows = yield* sql`SELECT enabled, next_run_at, conversation_id FROM growth_brief_schedules
+        WHERE business_id = ${scope.businessId} AND account_id = ${scope.accountId}`
+      const row = rows[0]
+      return yield* json(200, { schedule: row ? {
+        enabled: row["enabled"] === true,
+        nextRunAt: new Date(String(row["next_run_at"])).toISOString(),
+        conversationId: row["conversation_id"] ?? null,
+      } : null }, PRIVATE)
+    }))),
     HttpRouter.get("/api/businesses/:id/brief", business(scope => Effect.gen(function*() {
       const schedule = { ...(yield* ensureSchedule(scope)) }
       const sql = yield* SqlClient.SqlClient
@@ -191,12 +208,28 @@ export const briefApi = (withSession: WithSession) => {
     HttpRouter.post("/api/businesses/:id/brief/schedule", business(scope => Effect.gen(function*() {
       const input = decode(ScheduleInput, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE)
-      yield* ensureSchedule(scope)
       const sql = yield* SqlClient.SqlClient
-      yield* sql`UPDATE growth_brief_schedules SET enabled = ${input.enabled}, updated_at = now(),
-        next_run_at = CASE WHEN ${input.enabled} AND next_run_at < now() THEN now() + make_interval(days => ${BRIEF_INTERVAL_DAYS}) ELSE next_run_at END
-        WHERE business_id = ${scope.businessId}`
-      return yield* json(200, { schedule: yield* ensureSchedule(scope) }, PRIVATE)
+      const receipt = input.enabled
+        ? "Turn on weekly briefs for this session. OpenRecord has saved the weekly brief schedule as on. Please acknowledge this setting; do not run a brief or change other settings."
+        : "Turn off weekly briefs for this session. OpenRecord has saved the weekly brief schedule as off. Please acknowledge this setting; do not run a brief or change other settings."
+      const request = yield* sql.withTransaction(Effect.gen(function*() {
+        let request: Effect.Effect.Success<ReturnType<typeof enqueueAgentRequest>> | null = null
+        let replay = false
+        if (input.notify) {
+          yield* sql`SELECT account_id FROM account_users WHERE account_id=${scope.accountId} AND user_id=${scope.userId} FOR UPDATE`
+          replay = (yield* sql`SELECT request_id FROM agent_request_jobs WHERE request_id=${input.notify.requestId} AND account_id=${scope.accountId} AND user_id=${scope.userId}`).length > 0
+          request = yield* enqueueAgentRequest(scope, { ...input.notify, message: receipt })
+        }
+        if (!replay) yield* sql`INSERT INTO growth_brief_schedules(business_id, account_id, user_id, enabled, next_run_at, conversation_id)
+        VALUES (${scope.businessId}, ${scope.accountId}, ${scope.userId}, ${input.enabled}, now() + make_interval(days => ${BRIEF_INTERVAL_DAYS}), ${input.notify?.conversationId ?? null})
+        ON CONFLICT (business_id) DO UPDATE SET enabled = ${input.enabled}, updated_at = now(),
+          user_id = CASE WHEN ${input.enabled && input.notify !== undefined} THEN ${scope.userId} ELSE growth_brief_schedules.user_id END,
+          conversation_id = CASE WHEN ${input.enabled} THEN COALESCE(EXCLUDED.conversation_id, growth_brief_schedules.conversation_id) ELSE growth_brief_schedules.conversation_id END,
+          next_run_at = CASE WHEN ${input.enabled} AND growth_brief_schedules.next_run_at < now()
+            THEN now() + make_interval(days => ${BRIEF_INTERVAL_DAYS}) ELSE growth_brief_schedules.next_run_at END`
+        return request
+      }))
+      return yield* json(200, { schedule: yield* ensureSchedule(scope), request, message: input.notify ? receipt : null }, PRIVATE)
     }))),
   )
 }
