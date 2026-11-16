@@ -157,6 +157,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("side-tabs", fixtures::side_tabs),
     ("channels-wordpress", fixtures::channels_wordpress),
     ("channels-google", fixtures::channels_google),
+    ("channels-github", fixtures::channels_github),
     ("agent-empty", fixtures::agent_empty),
     ("agent-session", fixtures::agent_session),
     ("notices-open", fixtures::notices_open),

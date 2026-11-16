@@ -46,7 +46,7 @@ const channelsFor = (accountId: string, businessId: string, setup: SetupRow | nu
     discovery: setup?.discovery ?? null,
     siteTargets: Number(counts[0]?.["site_targets"] ?? 0),
     ga4: { configured: ga4Configured, connections: connections.map(c => ({ status: c.status, statusReason: c.statusReason, googleEmail: c.googleEmail })), boundToBusiness: bindings.some(b => b.active) },
-    github: { configured: Option.isSome(github) && github.value.transport !== null, targets: Number(counts[0]?.["execution_targets"] ?? 0) },
+    github: { configured: Option.isSome(github) && (github.value.transport !== null || github.value.appConfigured === true), targets: Number(counts[0]?.["execution_targets"] ?? 0) },
     searchConsole: { scopeGranted: connections.some(c => c.status === "ACTIVE" && hasSearchConsoleScope(c.grantedScopes)), site: searchConsoleSite?.siteUrl ?? null },
     answerProviders: catalog.providers.filter(p => p.id !== "mock" && p.enabled).map(p => p.id),
     lastAnswerAt: counts[0]?.["last_answer_at"] ? new Date(counts[0]["last_answer_at"] as string | Date).toISOString() : null,

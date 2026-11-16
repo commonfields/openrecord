@@ -27,7 +27,7 @@ import { EXECUTION_MERGE_WINDOW_DAYS, executionEdit, executionPathAllowed, execu
 import { safeFetch, type HttpTransport } from "@openrecord/representation"
 import { isInScope } from "@openrecord/discovery"
 import {
-  GitHubError, GitHubExecution, executionHeadBranch, executionPullRequestText, githubEffect, githubOutcomeUncertain, inspectPage, pageEditLabel, pageEditObserved, sha256Text, type GitHubExecutionConfig, type GitHubPullRequest,
+  GitHubError, GitHubExecution, resolveGitHubTransport, executionHeadBranch, executionPullRequestText, githubEffect, githubOutcomeUncertain, inspectPage, pageEditLabel, pageEditObserved, sha256Text, type GitHubExecutionConfig, type GitHubPullRequest,
 } from "@openrecord/site-operator"
 
 export class ExecutionRunner extends Context.Tag("ExecutionRunner")<
@@ -87,13 +87,19 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
       if (op.state === "AWAITING_MERGE" || op.state === "RECONCILING" || op.state === "UNKNOWN") yield* repo.ensureJob(op.id, op.businessId, "RECONCILE", 0)
       return DONE
     }
-    const transport = config.transport
     // Re-prove authority now, not when the job was queued.
     if (work.initiativeStatus !== "APPROVED") { yield* stop(op, "BLOCKED", "INITIATIVE_NOT_APPROVED", "The initiative is no longer approved"); return DONE }
     if (work.authorizedPatchSha256 !== op.patchSha256 || !work.authorizationExpiresAt) { yield* stop(op, "BLOCKED", "AUTHORIZATION_EXPIRED", "The authorization does not match the change"); return DONE }
     if (Date.parse(work.authorizationExpiresAt) <= now()) { yield* stop(op, "BLOCKED", "AUTHORIZATION_EXPIRED", "The authorization expired before dispatch"); return DONE }
-    if (executionRepositoryDenied(op.owner, op.repository) || !config.allowed(op.owner, op.repository, work.accountId)) { yield* stop(op, "BLOCKED", "REPOSITORY_NOT_PERMITTED", "The repository is not permitted for this account"); return DONE }
+    if (executionRepositoryDenied(op.owner, op.repository) || (!config.resolve && !config.allowed(op.owner, op.repository, work.accountId))) { yield* stop(op, "BLOCKED", "REPOSITORY_NOT_PERMITTED", "The repository is not permitted for this account"); return DONE }
     if (!executionPathAllowed(op.filePath, work.allowedPaths)) { yield* stop(op, "BLOCKED", "PATH_NOT_PERMITTED", "The page is outside the connected paths"); return DONE }
+    const access = yield* resolveGitHubTransport(config, op.owner, op.repository, work.accountId).pipe(Effect.either)
+    if (access._tag === "Left") {
+      if (access.left.kind === "AUTH" || access.left.kind === "NOT_FOUND") { yield* stop(op, "BLOCKED", "PROVIDER_AUTH", "The provider refused repository access"); return DONE }
+      if (job.attemptCount >= maxAttempts) { yield* stop(op, "FAILED", "RETRIES_EXHAUSTED", "Repository access stayed unavailable"); return DONE }
+      return { retry: executionBackoffSeconds(job.attemptCount, access.left), code: access.left.kind }
+    }
+    const transport = access.right
     if (!transport) { yield* stop(op, "BLOCKED", "NOT_CONFIGURED", "Provider access is not configured"); return DONE }
     const { owner, repository } = op
     const branch = executionHeadBranch(op.id)
@@ -180,8 +186,15 @@ export const makeExecutionRunnerLive = (opts: ExecutionRunnerOptions = {}) => La
   // --------------------------------------------------------------- reconcile
   const reconcile = (job: ExecutionJob, work: ExecutionWork): Effect.Effect<Outcome, SqlError | RowDecodeError | GrowthExecutionRefused> => Effect.gen(function*() {
     let op = work.operation
-    const transport = config.transport
     if (op.state === "VERIFIED" || op.state === "FAILED" || op.state === "BLOCKED" || op.state === "CANCELLED") return DONE
+    if (executionRepositoryDenied(op.owner, op.repository) || (!config.resolve && !config.allowed(op.owner, op.repository, work.accountId))) { yield* stop(op, "BLOCKED", "REPOSITORY_NOT_PERMITTED", "The repository is not permitted for this account"); return DONE }
+    const access = yield* resolveGitHubTransport(config, op.owner, op.repository, work.accountId).pipe(Effect.either)
+    if (access._tag === "Left") {
+      if (access.left.kind === "AUTH" || access.left.kind === "NOT_FOUND") { yield* stop(op, "BLOCKED", "PROVIDER_AUTH", "The provider refused repository access"); return DONE }
+      if (job.attemptCount >= maxAttempts) { yield* stop(op, "FAILED", "RETRIES_EXHAUSTED", "Repository access stayed unavailable"); return DONE }
+      return { retry: executionBackoffSeconds(job.attemptCount, access.left), code: access.left.kind }
+    }
+    const transport = access.right
     if (!transport) { yield* stop(op, "BLOCKED", "NOT_CONFIGURED", "Provider access is not configured"); return DONE }
     const { owner, repository } = op
     const branch = executionHeadBranch(op.id)

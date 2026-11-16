@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Google,
+    GitHub,
     GoogleAds,
     GoogleBusiness,
     Meta,
@@ -18,6 +19,7 @@ impl Kind {
     pub fn from_key(key: &str) -> Option<Self> {
         Some(match key {
             "google" => Self::Google,
+            "github" => Self::GitHub,
             "google_ads" => Self::GoogleAds,
             "google_business" => Self::GoogleBusiness,
             "meta" => Self::Meta,
@@ -29,6 +31,7 @@ impl Kind {
     pub fn key(self) -> &'static str {
         match self {
             Self::Google => "google",
+            Self::GitHub => "github",
             Self::GoogleAds => "google_ads",
             Self::GoogleBusiness => "google_business",
             Self::Meta => "meta",
@@ -39,6 +42,7 @@ impl Kind {
     pub fn path(self, business: &str) -> String {
         let b = enc(business);
         match self {
+            Self::GitHub => format!("/api/businesses/{b}/connections"),
             Self::Google => format!("/api/growth/clients/{b}/search-console"),
             Self::Stripe => format!("/api/revenue/clients/{b}"),
             Self::WordPress => format!("/api/businesses/{b}/wordpress"),
@@ -104,6 +108,26 @@ impl Client {
     pub fn channel_detail(&self, business: &str, kind: Kind) -> ApiResult<Detail> {
         let path = kind.path(business);
         let status: Value = self.get(&path)?;
+        if kind == Kind::GitHub {
+            let connector = items(&status, "connectors").iter().find(|c| c["id"] == "github");
+            let installed: Value = self.get("/api/github/installations")?;
+            let mut choices: Vec<Choice> = Vec::new();
+            for repository in items(&installed, "repositories") {
+                let installation = text(repository, "installationId");
+                let name = text(repository, "fullName");
+                if let Some(choice) = choices.iter_mut().find(|c| c.connection == installation) {
+                    choice.title.push_str(&format!(", {name}"));
+                } else {
+                    choices.push(Choice { connection: installation.clone(), id: installation, title: name, bound: true });
+                }
+            }
+            return Ok(Detail {
+                configured: connector.is_some_and(|c| c["state"] != "UNAVAILABLE" && c["method"] == "SIGN_IN"),
+                connected: connector.is_some_and(|c| c["state"] == "READY"),
+                choices,
+                warning: connector.map(|c| text(c, "detail")),
+            });
+        }
         let configured = if kind.keyed() || kind == Kind::Google {
             status["configured"].as_bool().unwrap_or(false)
         } else {
@@ -234,6 +258,9 @@ impl Client {
         let base = kind.path(business);
         let response: Value = match action {
             Action::Authorize => {
+                if kind == Kind::GitHub {
+                    return self.desktop_authorization(&format!("/api/businesses/{}/github/connect", enc(business)), json!({})).map(Some);
+                }
                 let (path, body) = if kind == Kind::Google {
                     (
                         "/api/growth/ga4/connect",
@@ -273,6 +300,7 @@ impl Client {
                     json!({ "connectionId": c.connection, "externalId": c.id })
                 },
             )?,
+            Action::Unbind(c) if kind == Kind::GitHub => self.post(&format!("/api/github/installations/{}/disconnect", enc(&c.connection)), json!({}))?,
             Action::Unbind(c) => self.post(
                 &if kind == Kind::Google {
                     format!("{base}/binding/end")

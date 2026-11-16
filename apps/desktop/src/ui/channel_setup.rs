@@ -26,6 +26,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                     Kind::WordPress => "WordPress",
                     Kind::Stripe => "Stripe",
                     Kind::Google => "Google Search Console",
+                    Kind::GitHub => "Website repository",
                     Kind::GoogleAds => "Google Ads",
                     Kind::GoogleBusiness => "Google Business Profile",
                     Kind::Meta => "Meta Ads",
@@ -78,6 +79,25 @@ pub fn view(s: &App, t: &Theme) -> El {
     }
     if let Some(w) = &detail.warning {
         body = body.child(label(w.clone(), type_::XS, t.partial).wrap());
+    }
+    if p.kind == Kind::GitHub {
+        body = body.child(label("Install OpenRecord on GitHub and select the repositories it may use. Each page change still needs your approval. After installing, the repository must be connected to this business’s website, branch and allowed page paths before the agent can prepare changes.", type_::SM, t.foreground).wrap());
+        for (i, choice) in detail.choices.iter().enumerate() {
+            let c = choice.clone();
+            let confirming = p.confirming_disconnect;
+            body = body.child(row().w_full().gap(12.0).center_y()
+                .child(label(choice.title.clone(), type_::SM, t.foreground).grow(1.0).wrap())
+                .child(button(t, &format!("github-disconnect-{i}"), if confirming { "Confirm disconnect" } else { "Disconnect" }, Variant::Outline)
+                    .on_press(move |s: &mut App| {
+                        if confirming { s.channel_action(Action::Unbind(c.clone())); }
+                        else if let Some(p) = &mut s.channel_setup { p.confirming_disconnect = true; }
+                    })));
+        }
+        if p.confirming_disconnect {
+            body = body.child(label("Disconnecting an installation removes access for every business in this workspace that uses it. Work already running may finish. You can also uninstall OpenRecord in GitHub settings.", type_::XS, t.wrong).wrap())
+                .child(button(t, "github-disconnect-cancel", "Keep connected", Variant::Ghost).on_press(|s: &mut App| { if let Some(p) = &mut s.channel_setup { p.confirming_disconnect = false; } }));
+        }
+        return body.child(button(t, "github-install", "Install on GitHub", Variant::Primary).on_press(|s: &mut App| s.channel_action(Action::Authorize)));
     }
     if p.kind.keyed() {
         if detail.connected {

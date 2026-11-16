@@ -15,13 +15,13 @@ import {
   ReobservationIntentRepositoryLive, ReobservationRepositoryLive, RecordRepositoryLive,
   AcquisitionRepositoryLive, GrowthMeasurementRepositoryLive,
 } from "@openrecord/db"
-import { GitHubExecutionLive } from "@openrecord/site-operator"
+import { GitHubInstallationExecutionLive } from "@openrecord/site-operator"
 import { Ga4ProviderLive } from "@openrecord/ga4"
 import { AdsProviderLive } from "@openrecord/ads"
 
 /** Shared dependencies only: importing this module starts no HTTP server or queues. */
 export const Repos = Layer.mergeAll(
-  GitHubExecutionLive, Ga4ProviderLive, AdsProviderLive,
+  GitHubInstallationExecutionLive, Ga4ProviderLive, AdsProviderLive,
   GrowthRepositoriesLive, SetupRepositoryLive, GrowthMeasurementRepositoryLive,
   AgentProposalRepositoryLive, RecordRepositoryLive, AcquisitionRepositoryLive,
   AssayRepositoryLive, AssayReviewRepositoryLive, AuthRepositoryLive,

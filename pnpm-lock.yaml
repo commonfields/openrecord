@@ -538,6 +538,9 @@ importers:
 
   packages/site-operator:
     dependencies:
+      '@effect/sql':
+        specifier: 0.52.1
+        version: 0.52.1(@effect/experimental@0.61.1(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2)
       '@openrecord/fs-containment':
         specifier: workspace:*
         version: link:../fs-containment

@@ -1330,3 +1330,16 @@ pub fn agent_timeline(s: &mut App) {
         }
     }
 }
+
+/// GitHub installation management, without provider or network calls.
+pub fn channels_github(s: &mut App) {
+    channels_google(s);
+    if let Some(setup) = &mut s.channel_setup {
+        setup.kind = crate::channel_setup::Kind::GitHub;
+        setup.loaded = Load::Ready(crate::channel_setup::Detail {
+            configured: true, connected: false,
+            warning: Some("Signed in as Northstar. Connect a repository to this business's website before preparing page changes.".into()),
+            choices: vec![crate::channel_setup::Choice { connection: "101".into(), id: "101".into(), title: "northstar/website, northstar/blog".into(), bound: true }],
+        });
+    }
+}

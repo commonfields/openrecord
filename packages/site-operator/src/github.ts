@@ -2,7 +2,7 @@
 // OpenRecord performs: read a branch head, one file and one pull request,
 // create one branch, commit one file, open one pull request. There is no
 // merge, no workflow dispatch and no other write path: the repository's own
-// maintainer merges. Credentials come from server configuration only and never
+// maintainer merges. Credentials come from server configuration or verified installations and never
 // appear in an error message, a log line or a response.
 //
 // Ported from the preserved W2 transport (commit ee80b91), extended with pull
@@ -349,6 +349,8 @@ export const fixtureGitHub = (seed: { owner: string; repo: string; branch: strin
 // ---- configuration service ----
 
 export interface GitHubExecutionConfig {
+  readonly appConfigured?: boolean
+  readonly resolve?: (owner: string, repository: string, accountId: string) => Effect.Effect<GitHubTransport | null, GitHubError>
   /** Null when no token is configured: execution is refused, never simulated. */
   readonly transport: GitHubTransport | null
   /** Per-account repository allowlist. The caller also applies the OpenRecord-repository denial. */
@@ -377,3 +379,6 @@ export const githubEffect = <A>(f: () => Promise<A>) => Effect.tryPromise({
   try: f,
   catch: e => e instanceof GitHubError ? e : new GitHubError("UNAVAILABLE", "GitHub request failed"),
 })
+
+export const resolveGitHubTransport = (config: GitHubExecutionConfig, owner: string, repository: string, accountId: string) =>
+  config.resolve ? config.resolve(owner, repository, accountId) : Effect.succeed(config.allowed(owner, repository, accountId) ? config.transport : null)

@@ -4,12 +4,12 @@ import { Config, Effect, Layer } from "effect"
 import { NodeRuntime } from "@effect/platform-node"
 import { PgClient } from "@effect/sql-pg"
 import { GrowthExecutionRepositoryLive } from "@openrecord/db"
-import { GitHubExecution, GitHubExecutionLive, parseRepositoryAllowlist } from "@openrecord/site-operator"
+import { GitHubExecution, GitHubInstallationExecutionLive, parseRepositoryAllowlist } from "@openrecord/site-operator"
 import { ExecutionRunner, ExecutionRunnerLive } from "./execution-runner.js"
 
 const main = Effect.gen(function*() {
   const github = yield* GitHubExecution
-  if (!github.transport || parseRepositoryAllowlist(process.env["GITHUB_EXECUTION_REPOSITORIES"]).size === 0) {
+  if (!github.appConfigured && (!github.transport || parseRepositoryAllowlist(process.env["GITHUB_EXECUTION_REPOSITORIES"]).size === 0)) {
     return yield* Effect.fail(new Error("Execution worker requires a valid GitHub execution token, endpoint, and repository allowlist; no jobs were claimed."))
   }
   const runner = yield* ExecutionRunner
@@ -23,7 +23,7 @@ const main = Effect.gen(function*() {
 
 const program = Effect.flatMap(Config.redacted("DATABASE_URL"), url => {
   const pg = PgClient.layer({ url })
-  const github = GitHubExecutionLive
+  const github = GitHubInstallationExecutionLive.pipe(Layer.provide(pg))
   const runner = ExecutionRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthExecutionRepositoryLive, github)), Layer.provide(pg))
   return main.pipe(Effect.provide(Layer.mergeAll(runner, github)), Effect.scoped)
 })

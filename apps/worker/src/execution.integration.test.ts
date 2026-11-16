@@ -13,7 +13,7 @@ import {
   RecordRepository, RecordRepositoryLive, type PreparedExecution, type Session,
 } from "@openrecord/db"
 import {
-  GitHubExecution, executionPatchSha256, fixtureGitHub, fixtureGitHubLayer, gitBlobSha, inspectPage, removeNoindexFromHtml, sha256Text,
+  GitHubError, GitHubExecution, executionPatchSha256, fixtureGitHub, fixtureGitHubLayer, gitBlobSha, inspectPage, removeNoindexFromHtml, sha256Text,
 } from "@openrecord/site-operator"
 import { diffLines, unifiedDiff } from "@openrecord/contracts"
 import type { HttpTransport } from "@openrecord/representation"
@@ -94,12 +94,20 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     const op = await exec(r => r.dispatch(f.session, f.businessId, a.op.id, { expectedRevision: a.op.revision, idempotencyKey: randomUUID() }))
     return { oid: a.oid, op }
   }
-  const runnerFor = async (f: F, ids: string[], opts: { live?: HttpTransport; maxAttempts?: number; workerId?: string; allowed?: boolean; now?: () => number } = {}) => {
+  const runnerFor = async (f: F, ids: string[], opts: { access?: "ready" | "refused" | "outage" | "disconnected"; live?: HttpTransport; maxAttempts?: number; workerId?: string; allowed?: boolean; now?: () => number } = {}) => {
     const allowed = opts.allowed ?? true
     const live = makeExecutionRunnerLive({ ...(opts.live ? { transport: opts.live } : {}), operationIds: ids, workerId: opts.workerId ?? `w-${randomUUID().slice(0, 6)}`, maxAttempts: opts.maxAttempts ?? 3,
       reconcilePollSeconds: 0, liveCheckDelaySeconds: 0, leaseSeconds: 60, ...(opts.now ? { now: opts.now } : {}) })
     const execRepo = (await Effect.runPromise(Effect.provide(GrowthExecutionRepository, ctx)))
-    const built = await Effect.runPromise(Layer.buildWithScope(live.pipe(Layer.provide(Layer.mergeAll(Layer.succeed(GrowthExecutionRepository, execRepo), fixtureGitHubLayer(f.gh, (o, r, a) => allowed && o === f.owner && r === f.repo && a === f.accountId)))), scope))
+    const provider = opts.access ? Layer.succeed(GitHubExecution, {
+      transport: null, allowed: () => false,
+      resolve: (owner: string, repository: string, accountId: string) => {
+        if (owner !== f.owner || repository !== f.repo || accountId !== f.accountId || opts.access === "disconnected") return Effect.succeed(null);
+        if (opts.access === "refused" || opts.access === "outage") return Effect.fail(new GitHubError(opts.access === "refused" ? "AUTH" : "UNAVAILABLE", "fixture access failure"));
+        return Effect.succeed(f.gh.transport);
+      },
+    }) : fixtureGitHubLayer(f.gh, (o, r, a) => allowed && o === f.owner && r === f.repo && a === f.accountId)
+    const built = await Effect.runPromise(Layer.buildWithScope(live.pipe(Layer.provide(Layer.mergeAll(Layer.succeed(GrowthExecutionRepository, execRepo), provider))), scope))
     const runner = Context.get(built, ExecutionRunner)
     return { once: () => Effect.runPromise(runner.runOnce()), steps: async (n: number) => { for (let i = 0; i < n; i++) await Effect.runPromise(runner.runOnce()) } }
   }
@@ -110,6 +118,17 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     return cur
   }
   const receipts = async (op: ExecutionOperation) => Number((await pool.query("SELECT count(*) FROM interventions WHERE verification_id=$1", [op.id])).rows[0].count)
+
+  it("uses installation access for approved work and stops revoked or unavailable installations without writes", async () => {
+    for (const access of ["ready", "refused", "outage", "disconnected"] as const) {
+      const f = await fixture(), { op } = await dispatched(f)
+      const runner = await runnerFor(f, [op.id], { access, maxAttempts: 1 })
+      await runner.once()
+      const result = await get(f, op)
+      expect(result.state).toBe(access === "ready" ? "AWAITING_MERGE" : access === "outage" ? "FAILED" : "BLOCKED")
+      expect(f.gh.writes.length > 0).toBe(access === "ready")
+    }
+  })
 
   it("delivers approved Markdown bytes once and keeps rendered deployment inconclusive without fetching", async () => {
     const f = await fixture(), filePath = "content/offer.mdx", before = "# Before\n\nOne offer.\n", after = "# Better\n\nOne offer.\n"
