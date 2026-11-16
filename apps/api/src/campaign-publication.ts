@@ -70,10 +70,13 @@ export const campaignDeliveryProgress = (ctx: Pick<ToolContext, "accountId" | "b
     JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
     LEFT JOIN campaign_publications p ON p.binding_id=b.id
     WHERE b.business_id=${ctx.businessId} AND b.campaign_id=${campaignId} ORDER BY b.task_id,b.created_at DESC,b.id DESC`
+  const channels = new Map(((campaigns[0]["brief"] as { tasks?: ReadonlyArray<{ id: string; channel: string }> } | null)?.tasks ?? []).map(t => [t.id, t.channel]))
   const deliverables = rows.map(r => {
+    // Only a website deliverable can become a hosted page; an email or a post is handed to the owner to send.
+    const web = (channels.get(String(r["taskId"])) ?? "WEBSITE") === "WEBSITE"
     const stale = Number(r["campaignRevision"]) !== Number(campaigns[0]!["revision"]) || Number(r["artifactVersion"]) !== Number(r["currentArtifactVersion"]) || r["archivedAt"] !== null
     const state = stale ? "NEEDS_REVISION" : r["status"] === "PUBLISHED" ? "LIVE" : r["status"] === "REJECTED" || r["status"] === "WITHDRAWN" ? r["status"] : !r["publicationId"] ? "DRAFT_READY" : r["trackingTested"] === true ? "AWAITING_APPROVAL" : "NEEDS_TRACKING_TEST"
-    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : "Prepare the linked artifact for publication" }
+    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : web ? "Prepare the linked artifact for publication" : "Ready for the owner to send or post; OpenRecord does not deliver this channel", channel: channels.get(String(r["taskId"])) ?? "WEBSITE" }
   })
   return { campaignId, revision: Number(campaigns[0]["revision"]), deliverables, note: "Inquiries are recorded submissions, not qualified leads, revenue or causal lift. Test submissions are excluded. Existing published versions remain live when a draft changes, until withdrawn or separately replaced." }
 })
@@ -89,6 +92,7 @@ export const prepareCampaignPublication = (ctx: ToolContext, raw: unknown) => Ef
   const progress = yield* campaignDeliveryProgress(ctx, String(binding["campaign_id"]))
   const current = progress.deliverables.find(d => d["bindingId"] === input.bindingId)
   if (!current || current.stale) return yield* refuse("StaleBinding")
+  if (current.channel !== "WEBSITE") return yield* refuse("NotAWebsiteDeliverable")
   const page = token(), destination = `${origin}/p/${page}`
   const rows = yield* sql`INSERT INTO campaign_publications(business_id,binding_id,page_token,destination,cta_label,privacy_notice,prepared_by_user_id)
     VALUES (${ctx.businessId},${input.bindingId},${page},${destination},${input.ctaLabel.trim()},${input.privacyNotice.trim()},${ctx.userId})

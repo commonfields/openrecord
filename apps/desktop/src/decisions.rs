@@ -156,6 +156,7 @@ pub fn refusal(body: &str) -> Option<&'static str> {
     Some(match reason {
         "StaleBinding" => "The campaign or artifact changed. Prepare the current revision before publishing.",
         "TrackingNotTested" => "Submit a prelaunch test inquiry before publishing.",
+        "NotAWebsiteDeliverable" => "Only a website deliverable can become a campaign page. Send or post this one yourself.",
         "PublishingNotConfigured" => "Campaign publishing needs a public server address and encrypted inquiry storage. Ask the workspace administrator to enable it.",
         "ChangedSincePrepared" => "This changed after it was prepared, so it wasn't overwritten. Ask the agent to prepare it again.",
         "NotStoredAsApproved" => "The change wasn't stored exactly as approved, so it isn't counted as done.",

@@ -107,6 +107,15 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     expect((await pool.query("SELECT count(*) FROM campaign_publications WHERE business_id=$1", [f.ctx.businessId])).rows[0].count).toBe(before)
     await expect(pool.query("UPDATE campaign_artifact_bindings SET content_digest=$2 WHERE id=$1", [f.binding.bindingId, "0".repeat(64)])).rejects.toThrow(/append-only/)
   })
+  it("hands an email deliverable to the owner instead of offering it as a hosted page", async () => {
+    const f = await fixture()
+    const draft = await run(draftMarketingCampaign(f.ctx, { title: "Wedding email", goal: "More wedding cake inquiries", deliverables: [{ title: "Email to past couples", channel: "EMAIL", content: "Draft pending" }] }))
+    const campaign = Schema.decodeUnknownSync(Schema.Struct({ campaignId: Schema.UUID, revision: Schema.Number, tasks: Schema.Array(Schema.Struct({ id: Schema.UUID })) }))(draft.data)
+    const { artifact } = await run(createArtifact(f.ctx, { kind: "EMAIL", format: "MARKDOWN", title: "Past couples email", content: "Hello again. Planning another celebration?" }, "ASSISTANT"))
+    const binding = await run(bindCampaignArtifact(f.ctx, { campaignId: campaign.campaignId, campaignRevision: campaign.revision, taskId: campaign.tasks[0]!.id, artifactId: artifact.id, artifactVersion: artifact.version }))
+    expect((await run(campaignDeliveryProgress(f.ctx, campaign.campaignId))).deliverables[0]).toMatchObject({ state: "DRAFT_READY", channel: "EMAIL", nextAction: "Ready for the owner to send or post; OpenRecord does not deliver this channel" })
+    expect(await run(Effect.flip(prepareCampaignPublication(f.ctx, { bindingId: binding.bindingId, ctaLabel: "Reply", privacyNotice: "Used to reply" })))).toMatchObject({ reason: "NotAWebsiteDeliverable" })
+  })
   it("a normal conversation saves usable campaign work and binds the artifact without a repository", async () => {
     const f = await fixture()
     let step = 0
@@ -142,7 +151,7 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     expect(reply.reply).toContain("nothing is published")
     expect(campaign).toBeDefined()
     const progress = await run(campaignDeliveryProgress(f.ctx, campaign!.campaignId))
-    expect(progress.deliverables[0]).toMatchObject({ state: "DRAFT_READY", artifactId: artifact!.artifactId })
+    expect(progress.deliverables[0]).toMatchObject({ state: "DRAFT_READY", artifactId: artifact!.artifactId, channel: "WEBSITE", nextAction: "Prepare the linked artifact for publication" })
     expect((await pool.query("SELECT count(*) FROM campaign_publications WHERE business_id=$1 AND status='PUBLISHED'", [f.ctx.businessId])).rows[0].count).toBe("0")
   })
 })
