@@ -12,7 +12,7 @@ use crate::api::{
 
 #[derive(Clone, Copy)]
 pub enum PublicationAction { Test, Inquiries, Withdraw }
-pub enum PublicationResult { Test(String), Inquiries(String), Withdrawn }
+pub enum PublicationResult { Test(String), Inquiries(String), Withdrawn, Reported }
 
 pub enum Reply {
     Restored(ApiResult<()>),
@@ -232,6 +232,14 @@ impl Net {
         self.spawn(|c, send| send(Reply::Chats(c.chats())));
     }
 
+    /// The owner's own report that an email or post went out; OpenRecord did not send it.
+    pub fn campaign_handoff(&self, business: String, campaign: String, task: String, status: &'static str) {
+        self.spawn(move |client, send| {
+            let result = client.post::<serde_json::Value>(&format!("/api/businesses/{}/campaign-handoffs", crate::api::enc(&business)), serde_json::json!({ "campaignId": campaign, "taskId": task, "status": status }))
+                .map(|_| PublicationResult::Reported);
+            send(Reply::CampaignPublication(business, String::new(), result));
+        });
+    }
     pub fn campaign_publication(&self, business: String, publication: String, action: PublicationAction) {
         self.spawn(move |client, send| {
             let path = format!("/api/businesses/{}/campaign-publications/{}", crate::api::enc(&business), crate::api::enc(&publication));

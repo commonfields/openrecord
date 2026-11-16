@@ -39,7 +39,9 @@ const ReviewInput = Schema.Struct({
   }),
 })
 
+export interface SourceReading { readonly label: string; readonly views: number; readonly inquiries: number }
 export interface PageReading {
+  readonly sources: ReadonlyArray<SourceReading>
   readonly publicationId: string; readonly title: string; readonly liveUrl: string; readonly liveSince: string; readonly daysLive: number
   readonly views: number; readonly inquiries: number; readonly inquiryRate: number | null
   readonly last7: { readonly views: number; readonly inquiries: number }; readonly previous7: { readonly views: number; readonly inquiries: number }
@@ -92,9 +94,16 @@ export const campaignResults = (ctx: Pick<ToolContext, "accountId" | "businessId
     FROM campaign_publications p JOIN campaign_artifact_bindings b ON b.id=p.binding_id
     JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
     WHERE b.campaign_id=${campaignId} AND p.business_id=${ctx.businessId} AND p.status='PUBLISHED' ORDER BY p.published_at`
+  const ids = rows.map(r => String(r["id"]))
+  const sourceRows = ids.length ? yield* sql`SELECT l.publication_id, l.label, COALESCE((SELECT sum(views) FROM campaign_link_days d WHERE d.link_id=l.id),0)::int AS views,
+      (SELECT count(*) FROM campaign_inquiries i WHERE i.link_id=l.id AND i.purpose='PRODUCTION')::int AS inquiries
+    FROM campaign_links l WHERE l.publication_id IN (SELECT unnest(${`{${ids.join(",")}}`}::uuid[])) ORDER BY l.created_at` : []
   const pages: PageReading[] = rows.map(r => {
     const views = Number(r["views"]), inquiries = Number(r["inquiries"])
-    return { publicationId: String(r["id"]), title: String(r["title"]), liveUrl: String(r["destination"]), liveSince: new Date(r["published_at"] as string).toISOString(),
+    const tracked = sourceRows.filter(x => String(x["publication_id"]) === String(r["id"])).map((x): SourceReading => ({ label: String(x["label"]), views: Number(x["views"]), inquiries: Number(x["inquiries"]) }))
+    // Everything not through a tracked link: shared directly, typed in, or from a source without its own link.
+    const direct = { label: "Other visits (no tracked link)", views: Math.max(0, views - tracked.reduce((n, x) => n + x.views, 0)), inquiries: Math.max(0, inquiries - tracked.reduce((n, x) => n + x.inquiries, 0)) }
+    return { sources: [...tracked, direct], publicationId: String(r["id"]), title: String(r["title"]), liveUrl: String(r["destination"]), liveSince: new Date(r["published_at"] as string).toISOString(),
       daysLive: Number(r["days_live"]), views, inquiries, inquiryRate: views > 0 ? Math.round(inquiries / views * 10000) / 10000 : null,
       last7: { views: Number(r["views_last7"]), inquiries: Number(r["inquiries_last7"]) }, previous7: { views: Number(r["views_prev7"]), inquiries: Number(r["inquiries_prev7"]) } }
   })

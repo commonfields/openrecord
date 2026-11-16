@@ -10,6 +10,7 @@ import { createArtifact, dispatchArtifact, reviseArtifact } from "./artifacts.js
 import { draftMarketingCampaign } from "./campaign-agent.js"
 import { requireSession } from "./router.js"
 import { campaignResults, campaignResultsApi, dispatchCampaignResults, pendingCampaignReviews } from "./campaign-results.js"
+import { channelsApi, createCampaignLink } from "./campaign-channels.js"
 import { runConversation } from "./agent.js"
 import { memoryJournal } from "./agent-run.js"
 
@@ -18,10 +19,11 @@ const suite = url ? describe : describe.skip
 const PAGE = '<!doctype html><html><head><style>h1{color:navy}</style></head><body><h1>Wedding cakes in Bandung</h1><p>Tell us about your wedding.</p><script>fetch("/api/auth/me")</script><form action="https://evil.test">Bad form</form></body></html>'
 // The same page without its own form: scripts are only a warning, so this one can be approved.
 const CLEAN = PAGE.replace('<form action="https://evil.test">Bad form</form>', "")
+const EMAIL_TASK = "7d9b6a3e-5c1f-4a2b-9e8d-1f2a3b4c5d6e"
 suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and live inquiry", () => {
   const layer = Layer.mergeAll(AuthRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const withSession = <A, E, R>(run: (s: import("@openrecord/db").Session) => Effect.Effect<A, E, R>) => Effect.flatMap(requireSession, ({ session }) => run(session))
-  const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(campaignPublicationApi(withSession), campaignResultsApi(withSession)), layer)
+  const web = HttpApp.toWebHandlerLayer(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), channelsApi(withSession))), layer)
   let pool: pg.Pool
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
   afterAll(async () => { await web.dispose(); await pool.end() })
@@ -169,13 +171,45 @@ suite("marketing P0: exact campaign artifact, prelaunch conversion, approval and
     expect((await review("CHANGE"))._tag).toBe("Right")
     expect((await run(campaignDeliveryProgress(f.ctx, f.campaign.campaignId))).deliverables[0]?.state).toBe("LIVE")
   })
+  it("traces an email the owner sends to the page's views and inquiries, and records the owner's report", async () => {
+    const f = await fixture()
+    // The same campaign gets an email deliverable next to its page.
+    await pool.query(`UPDATE marketing_campaigns SET brief=jsonb_set(brief,'{tasks}', brief->'tasks' || jsonb_build_array(jsonb_build_object('id',$2::text,'title','Outreach email','channel','EMAIL','owner','','due','','status','TODO','note',''))) WHERE id=$1`, [f.campaign.campaignId, EMAIL_TASK])
+    expect(await run(Effect.flip(createCampaignLink(f.ctx, { publicationId: f.publication.publicationId, taskId: f.campaign.tasks[0]!.id })))).toMatchObject({ reason: "NotASendableDeliverable" })
+    const link = await run(createCampaignLink(f.ctx, { publicationId: f.publication.publicationId, taskId: EMAIL_TASK }))
+    expect(link.url).toMatch(/\?s=[A-Za-z0-9]{10}$/)
+    expect((await run(createCampaignLink(f.ctx, { publicationId: f.publication.publicationId, taskId: EMAIL_TASK }))).url).toBe(link.url)
+    const t = await f.test(); await f.submit(t.ticket)
+    expect((await f.call("POST", `${f.base}/approve`, f.approval)).status).toBe(200)
+    const path = new URL(link.url).pathname + new URL(link.url).search
+    await web.handler(new Request(`http://localhost${path}`))
+    const viaEmail = await (await web.handler(new Request(`http://localhost${path}`))).text()
+    await f.submit(viaEmail.match(/name="ticket" value="([^"]+)"/)![1]!, "from-email@example.test")
+    const direct = await (await web.handler(new Request(`http://localhost/p/${f.row.page_token}`))).text()
+    await f.submit(direct.match(/name="ticket" value="([^"]+)"/)![1]!, "direct@example.test")
+    // A made-up source code counts as an ordinary visit.
+    await web.handler(new Request(`http://localhost/p/${f.row.page_token}?s=AAAAAAAAAA`))
+    const results = await run(campaignResults(f.ctx, f.campaign.campaignId))
+    expect(results.pages[0]!.sources).toEqual([
+      { label: "Outreach email", views: 2, inquiries: 1 },
+      { label: "Other visits (no tracked link)", views: 2, inquiries: 1 },
+    ])
+    // The owner reports it sent; the agent has no tool for that.
+    const report = await f.call("POST", `/api/businesses/${f.ctx.businessId}/campaign-handoffs`, { campaignId: f.campaign.campaignId, taskId: EMAIL_TASK, status: "SENT" })
+    expect(report.status).toBe(200)
+    expect((await report.json() as { handoff: { reportedBy: string } }).handoff.reportedBy).toBe("OWNER")
+    expect((await f.call("POST", `/api/businesses/${f.ctx.businessId}/campaign-handoffs`, { campaignId: f.campaign.campaignId, taskId: f.campaign.tasks[0]!.id, status: "SENT" })).status).toBe(409)
+    expect((await (await fixture()).call("POST", `/api/businesses/${f.ctx.businessId}/campaign-handoffs`, { campaignId: f.campaign.campaignId, taskId: EMAIL_TASK, status: "SENT" })).status).toBe(404)
+    const { AGENT_TOOL_SPECS } = await import("./agent-registry.js")
+    expect(AGENT_TOOL_SPECS.map(x => x.declaration.name).filter(n => /handoff|mark_sent|send_/.test(n))).toEqual([])
+  })
   it("hands an email deliverable to the owner instead of offering it as a hosted page", async () => {
     const f = await fixture()
     const draft = await run(draftMarketingCampaign(f.ctx, { title: "Wedding email", goal: "More wedding cake inquiries", deliverables: [{ title: "Email to past couples", channel: "EMAIL", content: "Draft pending" }] }))
     const campaign = Schema.decodeUnknownSync(Schema.Struct({ campaignId: Schema.UUID, revision: Schema.Number, tasks: Schema.Array(Schema.Struct({ id: Schema.UUID })) }))(draft.data)
     const { artifact } = await run(createArtifact(f.ctx, { kind: "EMAIL", format: "MARKDOWN", title: "Past couples email", content: "Hello again. Planning another celebration?" }, "ASSISTANT"))
     const binding = await run(bindCampaignArtifact(f.ctx, { campaignId: campaign.campaignId, campaignRevision: campaign.revision, taskId: campaign.tasks[0]!.id, artifactId: artifact.id, artifactVersion: artifact.version }))
-    expect((await run(campaignDeliveryProgress(f.ctx, campaign.campaignId))).deliverables[0]).toMatchObject({ state: "DRAFT_READY", channel: "EMAIL", nextAction: "Ready for the owner to send or post; OpenRecord does not deliver this channel" })
+    expect((await run(campaignDeliveryProgress(f.ctx, campaign.campaignId))).deliverables[0]).toMatchObject({ state: "DRAFT_READY", channel: "EMAIL", nextAction: "Ready for the owner to send or post; give it a tracked link to the campaign page first (create_campaign_link)" })
     expect(await run(Effect.flip(prepareCampaignPublication(f.ctx, { bindingId: binding.bindingId, ctaLabel: "Reply", privacyNotice: "Used to reply" })))).toMatchObject({ reason: "NotAWebsiteDeliverable" })
   })
   it("a normal conversation saves usable campaign work and binds the artifact without a repository", async () => {
