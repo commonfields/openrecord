@@ -29,11 +29,28 @@ const firstSentence = (text: string) => {
   return sentence.length > CARD_SENTENCE_CHARS ? `${sentence.slice(0, CARD_SENTENCE_CHARS - 1)}…` : sentence
 }
 
-/** `$schema` and `$id` name the dialect and the document, which the model does not use. */
+// Effect writes a title and a description for every refinement ("maxLength(300)",
+// "a string at most 300 character(s) long") beside the keyword that already
+// says it (maxLength: 300). The model reads the keyword; the pair only costs bytes.
+const GENERATED_TITLE = /^(int|positive|negative|nonNegative|unknown|[a-zA-Z]+\(.*\))$/
+const GENERATED_DESCRIPTION = /^(an? (string|number|integer|array|positive|non-negative|negative)\b.*)?$/
+const withoutGenerated = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withoutGenerated)
+  if (value === null || typeof value !== "object") return value
+  const o = value as Record<string, unknown>
+  const generated = typeof o["title"] === "string" && GENERATED_TITLE.test(o["title"])
+  return Object.fromEntries(Object.entries(o)
+    .filter(([k, v]) => !(generated && (k === "title" || (k === "description" && typeof v === "string" && GENERATED_DESCRIPTION.test(v)))))
+    .map(([k, v]) => [k, k === "properties" || k === "patternProperties" || k === "$defs" || k === "definitions"
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([p, s]) => [p, withoutGenerated(s)]))
+      : withoutGenerated(v)]))
+}
+
+/** `$schema` and `$id` name the dialect and the document, which the model does not use; generated refinement labels repeat the keywords. */
 const withoutSchemaIds = (schema: unknown) => {
   if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return schema
   const { $schema: _dialect, $id: _id, ...rest } = schema as Record<string, unknown>
-  return rest
+  return withoutGenerated(rest)
 }
 
 /** Registered tools have a card; session and extension tools are always declared whole. */

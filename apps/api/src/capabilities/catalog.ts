@@ -52,6 +52,8 @@ const META: Readonly<Record<string, Meta>> = {
   call_connected_tool: { ns: "research", title: "Call a read-only connected tool", not: "Not for any write; connected tools are read-only here.", evidence: ["observation"] },
   read_wordpress_content: { ns: "web", title: "Read WordPress posts and pages", not: "Not for public pages of other sites (read_web_page).", evidence: ["none"] },
   prepare_wordpress_change: { ns: "web", title: "Prepare an exact WordPress change for approval", not: "Not for repositories (prepare_page_change) or facts not in approved business truth.", evidence: ["proposal"] },
+  read_webflow_content: { ns: "web", title: "Read Webflow pages and CMS items", not: "Not for WordPress or other sites.", evidence: ["none"] },
+  prepare_webflow_change: { ns: "web", title: "Prepare an exact Webflow change for approval", not: "Not for WordPress or repositories.", evidence: ["proposal"] },
   read_reviews: { ns: "web", title: "Read Google Business Profile reviews", not: "Not for app store reviews (run_research).", evidence: ["none"] },
   read_ad_campaigns: { ns: "media", title: "Read Google Ads campaigns", not: "Not for performance numbers (read_ad_performance).", evidence: ["none"] },
   prepare_account_action: { ns: "media", title: "Prepare an ad or review-reply action for approval", not: "Not for website changes (prepare_wordpress_change, prepare_page_change).", evidence: ["proposal"] },

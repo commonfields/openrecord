@@ -47,7 +47,7 @@ export interface FetchInit {
   connectIp: string
   servername: string
   /** GET unless set: server-side API reads that take a JSON body, and authenticated writes to a connected site, use the same pinned connection. */
-  method?: "GET" | "POST" | "DELETE"
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
   body?: string
 }
 
