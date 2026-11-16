@@ -22,6 +22,9 @@ export const stripeKeyKind = (key: string): { readonly ok: true; readonly livemo
 const get = (c: StripeConfig, key: string, path: string, params: Record<string, string> = {}) =>
   send(c.fetch, `${c.endpoint}${path}${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ""}`, { method: "GET", headers: { authorization: `Bearer ${key}`, accept: "application/json" } })
 
+/** The cheapest read revenue needs (one charge): it fails when the key is revoked or can no longer read charges. */
+export const stripeProbe = async (c: StripeConfig, key: string): Promise<void> => { await get(c, key, "/charges", { limit: "1" }) }
+
 /** The account's name and ID when the key may read them; a key without that permission still works for revenue. */
 export const stripeAccount = async (c: StripeConfig, key: string): Promise<{ readonly id: string | null; readonly name: string | null }> => {
   try {

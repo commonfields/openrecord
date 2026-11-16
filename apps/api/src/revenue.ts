@@ -9,7 +9,7 @@ import { SqlClient } from "@effect/sql"
 import { Effect } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import { AD_PERFORMANCE_DAYS, ConnectStripe, adWindows, decodeRouteId, type AdPerformanceDays, type RevenueConnection, type RevenuePerformance } from "@openrecord/contracts"
-import { stripeAccount, stripeKeyKind, stripeRevenue } from "@openrecord/ads"
+import { stripeAccount, stripeKeyKind, stripeProbe, stripeRevenue } from "@openrecord/ads"
 import { AdsRefused, adsConfig, call } from "./ads.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 import { demoRevenue, isDemoBusiness } from "./demo-data.js"
@@ -51,6 +51,24 @@ export const revenuePerformance = (accountId: string, businessId: string, days: 
   const [current, previous] = read.right
   return { provider: "stripe", accountName: c.displayName, livemode: c.livemode, days, current: { ...windows.current, totals: current },
     previous: { ...windows.previous, totals: previous }, collectedAt: new Date().toISOString() } satisfies RevenuePerformance
+})
+
+/** A health check of the business's Stripe key; a refused key is marked so the person reconnects. */
+export const checkStripe = (accountId: string, businessId: string) => Effect.gen(function*() {
+  const c = yield* active(accountId, businessId)
+  if (!c) return yield* refuse("RevenueNotConnected")
+  if (c.status !== "ACTIVE" || !c.ciphertext) return yield* refuse("RevenueKeyRefused")
+  const { stripe, cipher } = yield* stripeOf
+  const key = cipher.decrypt(c.ciphertext, `revenue:${c.id}:key`)
+  if (!key) return yield* refuse("RevenueKeyRefused")
+  const probe = yield* call(() => stripeProbe(stripe, key)).pipe(Effect.either)
+  if (probe._tag === "Right") return
+  if (probe.left.kind === "AUTH" || probe.left.kind === "FORBIDDEN") {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`UPDATE revenue_connections SET status = 'REVOKED' WHERE id = ${c.id} AND status = 'ACTIVE'`
+    return yield* refuse("RevenueKeyRefused")
+  }
+  return yield* refuse(probe.left.kind === "QUOTA" ? "ProviderQuota" : "ProviderUnavailable")
 })
 
 const STATUS: Readonly<Record<string, number>> = { InvalidRequest: 422, RevenueNotConfigured: 503, ProviderUnavailable: 503, ProviderQuota: 503 }

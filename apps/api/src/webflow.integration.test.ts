@@ -180,5 +180,5 @@ suite("Webflow connector (in-memory Webflow, no network)", () => {
   })
 
   const run = <A>(effect: Effect.Effect<A, unknown, import("@effect/sql").SqlClient.SqlClient>) =>
-    Effect.runPromise(effect.pipe(Effect.provide(PgClient.layer({ url: Redacted.make(url) }))))
+    Effect.runPromise(effect.pipe(Effect.provide(Layer.mergeAll(PgClient.layer({ url: Redacted.make(url) }), Layer.succeed(AdsProvider, config)))))
 })

@@ -48,12 +48,12 @@ const providerReason = (e: Ga4Error): string =>
   e.kind === "QUOTA" ? "ProviderQuota" : e.kind === "FORBIDDEN" || e.kind === "NOT_FOUND" ? "PropertyNotAccessible" : e.kind === "INVALID" ? "ProviderRejected" : "ProviderUnavailable"
 
 /** A usable access token for an ACTIVE connection: cached while valid, else refreshed. A refused refresh suspends the connection. */
-const accessTokenFor = (config: Configured, accountId: string, connectionId: string) => Effect.gen(function*() {
+const accessTokenFor = (config: Configured, accountId: string, connectionId: string, force = false) => Effect.gen(function*() {
   const repo = yield* GrowthGa4Repository
   const connection = yield* repo.connection(accountId, connectionId)
   if (connection.status !== "ACTIVE") return yield* refuse("Ga4ReauthorizationRequired")
   const creds = yield* repo.credentials(connectionId)
-  if (creds.accessCiphertext && creds.accessExpiresAt !== null && creds.accessExpiresAt - 60_000 > Date.now()) {
+  if (!force && creds.accessCiphertext && creds.accessExpiresAt !== null && creds.accessExpiresAt - 60_000 > Date.now()) {
     const cached = config.cipher.decrypt(creds.accessCiphertext, `${connectionId}:access`)
     if (cached) return cached
   }
@@ -67,6 +67,9 @@ const accessTokenFor = (config: Configured, accountId: string, connectionId: str
   yield* repo.storeAccessToken(connectionId, config.cipher.encrypt(refreshed.right.accessToken, `${connectionId}:access`), refreshed.right.accessTokenExpiresAt)
   return refreshed.right.accessToken
 })
+/** A health check of one Google sign-in: its grant is refreshed, and a revoked grant suspends it. */
+export const checkGoogleConnection = (accountId: string, connectionId: string) =>
+  Effect.flatMap(configured, config => Effect.asVoid(accessTokenFor(config, accountId, connectionId, true)))
 /** Runs a read with the connection's token; a 401 suspends the connection. Shared by every Google read (Analytics and Search Console). */
 export const read = <A>(config: Configured, accountId: string, connectionId: string, f: (token: string) => Promise<A>) => Effect.gen(function*() {
   const token = yield* accessTokenFor(config, accountId, connectionId)

@@ -20,11 +20,11 @@
 //
 // Nothing here grants anything: dispatch checks every call as before, and a
 // request no rule recognises keeps every tool, as a turn did before.
-import { SqlClient } from "@effect/sql"
 import { Effect } from "effect"
 import { toolEffect, type ToolDeclaration } from "./agent-registry.js"
 import { CAPABILITY_MANIFESTS } from "./capabilities/catalog.js"
 import { makeRouter } from "./capabilities/router.js"
+import { connectorStatuses, gapsOf } from "./connections.js"
 
 export const DECISION_VERSION = "rules-v1"
 
@@ -178,33 +178,11 @@ export const otherToolsNote = (declared: ReadonlyArray<string>, available: Reado
     : ""
 }
 
-/** What a tool needs connected for the business before it can do anything but refuse. */
-const NEEDS: ReadonlyArray<{ readonly connection: "wordpress" | "webflow" | "google_ads" | "ads_or_profile"; readonly name: string; readonly tools: ReadonlyArray<string> }> = [
-  { connection: "wordpress", name: "WordPress", tools: ["read_wordpress_content", "prepare_wordpress_change"] },
-  { connection: "webflow", name: "Webflow", tools: ["read_webflow_content", "prepare_webflow_change"] },
-  { connection: "google_ads", name: "Google Ads", tools: ["read_ad_campaigns"] },
-  { connection: "ads_or_profile", name: "Google Ads or Google Business Profile", tools: ["prepare_account_action"] },
-]
-
 /**
  * The tools a business cannot use right now because what they work on is not
- * connected, and a sentence for the instructions saying so. In the dev runs
+ * ready (not connected, not chosen for the business, or refused by the
+ * provider), and a sentence for the instructions saying so. In the dev runs
  * these were called and refused (WordPress 13 times in five days).
  */
-export const connectionGaps = (accountId: string, businessId: string) => Effect.gen(function*() {
-  const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT
-    EXISTS(SELECT 1 FROM wordpress_connections WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED') AS wordpress,
-    EXISTS(SELECT 1 FROM webflow_connections WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED') AS webflow,
-    EXISTS(SELECT 1 FROM ad_account_bindings b JOIN ad_connections c ON c.id = b.connection_id WHERE b.account_id = ${accountId} AND b.business_id = ${businessId}
-      AND b.ended_at IS NULL AND c.status <> 'DISCONNECTED' AND b.provider = 'google_ads') AS google_ads,
-    EXISTS(SELECT 1 FROM ad_account_bindings b JOIN ad_connections c ON c.id = b.connection_id WHERE b.account_id = ${accountId} AND b.business_id = ${businessId}
-      AND b.ended_at IS NULL AND c.status <> 'DISCONNECTED' AND b.provider = 'google_business') AS google_business`
-  const r = rows[0] ?? {}
-  const has = { wordpress: r["wordpress"] === true, webflow: r["webflow"] === true, google_ads: r["google_ads"] === true, ads_or_profile: r["google_ads"] === true || r["google_business"] === true }
-  const missing = NEEDS.filter(n => !has[n.connection])
-  return {
-    withheld: new Set(missing.flatMap(n => n.tools)),
-    note: missing.length ? `\n\nNot connected for this business: ${missing.map(n => n.name).join("; ")}. Tools that need them are not offered this turn; if the request needs one, say it is not connected and that the person can connect it on the Channels page.` : "",
-  }
-}).pipe(Effect.orElseSucceed(() => ({ withheld: new Set<string>(), note: "" })))
+export const connectionGaps = (accountId: string, businessId: string) =>
+  Effect.map(connectorStatuses(accountId, businessId), gapsOf).pipe(Effect.orElseSucceed(() => ({ withheld: new Set<string>(), note: "" })))
