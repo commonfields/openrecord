@@ -377,8 +377,5 @@ fn model_picker(s: &App, t: &Theme) -> El {
 }
 
 fn ai_answers(s: &App, t: &Theme) -> El {
-    if let Some(a) = &s.answer {
-        return crate::ui::answer::view(s, t, a);
-    }
     crate::ui::issues::view(s, t)
 }

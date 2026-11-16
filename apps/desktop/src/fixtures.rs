@@ -1007,6 +1007,11 @@ pub fn ai_answer(s: &mut App) {
         supersedes_id: None,
     }];
     let mut a = crate::state::AnswerView::fixture(issue.claim_id.clone());
+    // As the app prefills it when the answer loads: the saved rating, facts and note.
+    a.reviewing = true;
+    a.verdict = Some("CONTRADICTED");
+    a.facts.insert("f2".into());
+    a.notes = rune::TextEdit::new(issue.notes.clone().unwrap_or_default());
     a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions });
     s.answer = Some(a);
 }

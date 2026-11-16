@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use rune::{Align, Color, Cursor, El, Side, col, el, row, text_input};
+use rune::{Align, Color, Cursor, El, ScrollSpec, Side, col, el, row, text_input};
 
 use crate::api::Issue;
 use crate::brands;
@@ -26,16 +26,18 @@ pub fn tone(t: &Theme, state: &str) -> (Color, Color, &'static str) {
         "WRONG" => (t.wrong, t.wrong_soft, "Wrong"),
         "PARTIAL" => (t.partial, t.partial_soft, "Partly right"),
         "UNKNOWN" => (t.unknown, t.unknown_soft, "Can't tell"),
+        "RESOLVED" => (t.supported, t.supported_soft, "Correct"),
         _ => (t.review, t.review_soft, "Not rated yet"),
     }
 }
 
-fn badge(t: &Theme, state: &str) -> El {
+pub(crate) fn badge(t: &Theme, state: &str) -> El {
     let (ink, soft, name) = tone(t, state);
     let icon = match state {
         "WRONG" => &icons::CIRCLE_X,
         "PARTIAL" => &icons::CIRCLE_ALERT,
         "UNKNOWN" => &icons::CIRCLE_HELP,
+        "RESOLVED" => &icons::CHECK,
         _ => &icons::CIRCLE_DASHED,
     };
     crate::ui::widgets::badge(t, name, ink, soft, Some(icon))
@@ -185,7 +187,7 @@ fn when(i: &Issue) -> String {
 }
 
 /// A provider's logo with its name and the model that answered (`ProviderChip`).
-fn provider_chip(t: &Theme, provider: &str, model: Option<&str>) -> El {
+pub(crate) fn provider_chip(t: &Theme, provider: &str, model: Option<&str>) -> El {
     let (name, _) = brands::brand(provider);
     row()
         .gap(6.0)
@@ -225,9 +227,9 @@ pub fn view(s: &App, t: &Theme) -> El {
         .w_full()
         .gap(16.0)
         .items_start()
-        .child(col().grow(1.0).min_w(0.0).child(page_header(t, "AI answers", "What AI assistants said about you that still needs a look. The numbers below are measured separately.")))
+        .child(col().grow(1.0).min_w(0.0).child(page_header(t, "AI answers", "Review what AI assistants say about your business and compare it with your approved facts.")))
         .child(export);
-    let mut page = col().w_full().gap(16.0).child(head).child(discovery(s, t));
+    let mut page = col().w_full().grow(1.0).min_h(0.0).gap(16.0).child(head).child(discovery(s, t));
     let issues = match &s.issues {
         Load::Ready(l) => l,
         Load::Failed(e) => return page.child(failure(t, "issues-failed", &format!("Issues could not load. {e}"), |s: &mut App| s.refresh())),
@@ -289,10 +291,10 @@ pub fn view(s: &App, t: &Theme) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(6.0)
-                        .child(label(format!("{} {} still need a rating.", queue.len(), if queue.len() == 1 { "answer" } else { "answers" }), type_::XS_MEDIUM, t.foreground))
-                        .child(label("Unreviewed claims are not counted as wrong until someone judges them.", type_::XS, t.muted_foreground).truncate().min_w(0.0)),
+                        .child(label(format!("{} {} still {} a rating.", queue.len(), if queue.len() == 1 { "answer" } else { "answers" }, if queue.len() == 1 { "needs" } else { "need" }), type_::XS_MEDIUM, t.foreground))
+                        .child(label("Unrated answers are not counted as wrong.", type_::XS, t.muted_foreground).truncate().min_w(0.0)),
                 )
-                .child(button(t, "issue-start-review", "Start reviewing →", Variant::Outline).on_press(move |s: &mut App| s.open_answer(&id))),
+                .child(button(t, "issue-start-review", "Start reviewing", Variant::Outline).on_press(move |s: &mut App| s.open_answer(&id))),
         );
     }
 
@@ -301,18 +303,18 @@ pub fn view(s: &App, t: &Theme) -> El {
     let groups = group(&visible, &sort);
     let mut answers: Vec<&Issue> = visible.clone();
     answers.sort_by(|a, b| if sort == "oldest" { time(a).cmp(&time(b)) } else { time(b).cmp(&time(a)) });
-    let mut panel = shadows(col().key("issue-panel").w_full().radius(12.0).fill(t.card).clip_rounded(12.0), &t.card_shadow).child(toolbar(s, t, issues, groups.len(), visible.len()));
+    let mut panel = shadows(col().key("issue-panel").w_full().grow(1.0).min_h(0.0).radius(12.0).fill(t.card).clip_rounded(12.0), &t.card_shadow).child(toolbar(s, t, issues, groups.len(), visible.len()));
     let filtered = !q.q.text.is_empty() || q.provider != "all" || q.fact != "all" || q.state != "ALL";
-    panel = panel.child(if issues.is_empty() {
+    let list_body = if issues.is_empty() {
         col().w_full().padding(16.0).child(empty_state(t, "issues-empty", &icons::INBOX, "No answers to review", "When answers are collected and need review, they will appear here.", None))
     } else if visible.is_empty() {
-        let title = if q.state != "ALL" && q.q.text.is_empty() && q.provider == "all" && q.fact == "all" { format!("No issues marked {}", tone(t, &q.state).2.to_lowercase()) } else { "No issues match these filters".into() };
+        let title = if q.state != "ALL" && q.q.text.is_empty() && q.provider == "all" && q.fact == "all" { format!("No answers rated {}", tone(t, &q.state).2.to_lowercase()) } else { "No answers match these filters".into() };
         col().w_full().padding(16.0).child(empty_state(
             t,
             "issues-none",
             &icons::SEARCH,
             &title,
-            "Loosen a filter or clear them all to see the rest of the inbox.",
+            "Loosen a filter or clear them all to see the other answers.",
             Some(button(t, "issues-clear", "Clear filters", Variant::Outline).on_press(|s: &mut App| s.clear_issue_filters())),
         ))
     } else if q.answers {
@@ -325,7 +327,9 @@ pub fn view(s: &App, t: &Theme) -> El {
             list = list.child(claim_row(s, t, g, from, to, single));
         }
         list
-    });
+    };
+    panel = panel.child(col().key("issue-list-scroll").w_full().grow(1.0).min_h(0.0)
+        .child(list_body).scroll(ScrollSpec { stick_bottom: false }));
     if filtered && !visible.is_empty() {
         panel = panel.child(
             row()
@@ -439,7 +443,7 @@ fn toolbar(s: &App, t: &Theme, issues: &[Issue], groups: usize, answers: usize) 
     let input = text_input(&q.q, type_::XS)
         .key("issue-search")
         .placeholder("Search claims and questions", t.muted_foreground)
-        .label("Search issues")
+        .label("Search AI answers")
         .w_full()
         .color(t.foreground)
         .on_edit(|s: &mut App| {
@@ -650,38 +654,13 @@ fn claim_row(s: &App, t: &Theme, g: &Group<'_>, from: i64, to: i64, single: bool
         .help(format!("Seen {} times, first {}, last {}", g.occurrences.len(), format::date(&format::iso_date(g.first)), relative(g.last)))
         .child(sparkline(&trend(&g.occurrences, from, to), ink))
         .child(col().w(72.0).items_end().child(label(format!("{}×", g.occurrences.len()), XS_SEMIBOLD.features("'tnum' 1"), t.foreground)).child(label(when(g.occurrences[0]), type_::XS11, t.muted_foreground)));
-    let mut actions = row().w(128.0).gap(4.0).center_y().child(el().grow(1.0));
-    if let Some(first) = to_review.first() {
-        let id = first.claim_id.clone();
+    let mut actions = row().w(112.0).center_y();
+    if let Some(answer) = to_review.first().copied().or(reviewed) {
+        let id = answer.claim_id.clone();
         actions = actions.child(
-            shadows(
-                row()
-                    .key(format!("issue-review-{}", g.key.len()))
-                    .h(28.0)
-                    .px(8.0)
-                    .gap(4.0)
-                    .radius(6.0)
-                    .center_y()
-                    .fill(t.primary)
-                    .role("button")
-                    .label(format!("Rate this answer, {} waiting", to_review.len()))
-                    .help(format!("Rate this answer: {} {} waiting", to_review.len(), if to_review.len() == 1 { "answer" } else { "answers" }))
-                    .cursor(Cursor::Pointer)
-                    .on_press(move |s: &mut App| s.open_answer(&id))
-                    .child(ico(&icons::PEN_LINE, 14.0, t.primary_foreground))
-                    .child(label("Review", type_::XS_MEDIUM, t.primary_foreground))
-                    .child(label(to_review.len().to_string(), type_::XS.features("'tnum' 1"), t.primary_foreground.alpha(0.8))),
-                &t.control_shadow,
-            ),
+            button(t, &format!("issue-open-{id}"), "View answer", Variant::Outline).w(112.0)
+                .on_press(move |s: &mut App| s.open_answer(&id)),
         );
-    }
-    if let Some(r) = reviewed {
-        let id = r.claim_id.clone();
-        actions = actions.child(if to_review.is_empty() {
-            button(t, &format!("issue-view-{}", r.claim_id), "View issue ›", Variant::Outline).on_press(move |s: &mut App| s.open_answer(&id))
-        } else {
-            row().key(format!("issue-view-{}", r.claim_id)).size(28.0, 28.0).radius(6.0).center().role("button").label("View issue").help("View issue").cursor(Cursor::Pointer).hover(t.hover_tint).on_press(move |s: &mut App| s.open_answer(&id)).child(ico(&icons::CHEVRON_RIGHT, 16.0, t.muted_foreground))
-        });
     }
     let mut c = col()
         .key(format!("claim-{}", g.key))

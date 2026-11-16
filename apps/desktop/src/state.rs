@@ -2708,8 +2708,14 @@ impl App {
                     match r {
                         Ok((d, complete)) => {
                             a.partial = !complete;
-                            if d.issue.verdict.is_none() && !a.reviewing {
+                            // The popup is always the rating form, starting from what was saved.
+                            if a.detail.ready().is_none() {
                                 a.reviewing = true;
+                                a.verdict = d.issue.verdict.as_deref().and_then(|v| VERDICTS.iter().find(|x| x.0 == v)).map(|x| x.0);
+                                a.facts = d.issue.facts.iter().map(|f| f.id.clone()).collect();
+                                if a.notes.text.is_empty() {
+                                    a.notes = TextEdit::new(d.issue.notes.clone().unwrap_or_default());
+                                }
                             }
                             a.detail = Load::Ready(d);
                         }
@@ -2724,10 +2730,12 @@ impl App {
             Reply::Judged { claim, verdict, result } => {
                 let r = self.failed(result);
                 let business = self.active.clone();
+                let mut saved = false;
                 if let Some(a) = self.answer.as_mut().filter(|a| a.claim == claim) {
                     a.judging = false;
                     match r {
                         Ok(()) => {
+                            saved = true;
                             a.reviewing = false;
                             a.verdict = None;
                             a.facts.clear();
@@ -2736,14 +2744,20 @@ impl App {
                                 self.net.answer(b, claim);
                             }
                             self.notice = Some(if verdict == "SUPPORTED" {
-                                "Verdict recorded. Supported claims leave the AI answers list.".into()
+                                "Rating saved. Answers marked correct leave the review list.".into()
                             } else {
-                                "Verdict recorded. The claim stays in AI answers until it is fixed.".into()
+                                "Rating saved. This answer stays in the review list until it is corrected.".into()
                             });
                         }
                         Err(e) if e.is_empty() => {}
-                        Err(e) => a.error = Some(format!("Couldn't record the verdict. {e}")),
+                        Err(e) => a.error = Some(format!("Couldn't save the rating. {e}")),
                     }
+                }
+                // Saved: the popup closes onto the list, which reloads with the new rating.
+                if saved {
+                    let notice = self.notice.take();
+                    self.close_answer();
+                    self.notice = notice;
                 }
             }
             Reply::ActionRecorded { claim, result } => {
