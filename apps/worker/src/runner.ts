@@ -41,7 +41,7 @@ import { ExecutionRunner, ExecutionRunnerLive } from "./execution-runner.js"
 import { Ga4SyncRunner, Ga4SyncRunnerLive } from "./ga4-sync-runner.js"
 import { SetupRunner, SetupRunnerLive } from "./setup-runner.js"
 import { Ga4ProviderLive } from "@openrecord/ga4"
-import { GitHubExecutionLive } from "@openrecord/site-operator"
+import { GitHubInstallationExecutionLive } from "@openrecord/site-operator"
 import { GeminiSettingsLive, NineRouterSettingsLive } from "@openrecord/config"
 import { GeminiProviderLive, MockProviderLive, NineRouterProviderLive, ProviderRegistryLive } from "@openrecord/providers"
 import { NodeHttpClient } from "@effect/platform-node"
@@ -93,8 +93,8 @@ const buildRunnerLive = (databaseUrl: Redacted.Redacted<string>) => {
     Layer.provide(PgLive),
   )
   const AssayLive = AssayRunnerLive.pipe(Layer.provide(AssayRepositoryLive), Layer.provide(PgLive))
-  // W7: durable connected-execution jobs. Provider credentials come from server configuration only.
-  const ExecutionLive = ExecutionRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthExecutionRepositoryLive, GitHubExecutionLive)), Layer.provide(PgLive))
+  // W7: durable connected-execution jobs. Provider access is resolved for the operation’s account and repository.
+  const ExecutionLive = ExecutionRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthExecutionRepositoryLive, GitHubInstallationExecutionLive)), Layer.provide(PgLive))
   // W8: GA4 measurement sync. OAuth client, redirect URI and encryption keys come from server configuration only.
   const Ga4Live = Ga4SyncRunnerLive.pipe(Layer.provide(Layer.mergeAll(GrowthGa4RepositoryLive.pipe(Layer.provide(GrowthMeasurementRepositoryLive)), Ga4ProviderLive)), Layer.provide(PgLive))
   const SetupLive = SetupRunnerLive.pipe(Layer.provide(SetupRepositoryLive), Layer.provide(PgLive))

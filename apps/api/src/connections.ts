@@ -55,7 +55,7 @@ export interface ConnectorSpec {
 /** Every connection OpenRecord offers, in the order a person sees them. */
 export const CONNECTORS: ReadonlyArray<ConnectorSpec> = [
   { id: "google", label: "Google Search Console and Analytics", method: "SIGN_IN", enables: "Search clicks, queries and signups, to measure what a change did.", gates: [] },
-  { id: "github", label: "Website repository", method: "TEAM", enables: "Opens pull requests with approved page changes on a site built from code.", gates: ["prepare_page_change"] },
+  { id: "github", label: "Website repository", method: "SIGN_IN", enables: "Opens pull requests with approved page changes on a site built from code.", gates: ["prepare_page_change"] },
   { id: "wordpress", label: "WordPress", method: "PASTE_KEY", enables: "Reads posts and pages, and publishes approved changes with an undo.", gates: ["read_wordpress_content", "prepare_wordpress_change"] },
   { id: "webflow", label: "Webflow", method: "PASTE_KEY", enables: "Reads pages and CMS items, and publishes approved changes with an undo.", gates: ["read_webflow_content", "prepare_webflow_change"] },
   { id: "google_ads", label: "Google Ads", method: "SIGN_IN", enables: "Reads campaigns and spend, and prepares changes for approval.", gates: ["read_ad_campaigns", "prepare_account_action"] },
@@ -106,7 +106,7 @@ const detailOf = (spec: ConnectorSpec, state: ConnectorState, accounts: Readonly
   switch (state) {
     case "UNAVAILABLE": return `${spec.label} is not set up on this OpenRecord server yet, so it cannot be connected.`
     case "NOT_CONNECTED": return spec.method === "TEAM" ? `No ${spec.label.toLowerCase()} is connected. The OpenRecord team connects it.` : `${spec.label} is not connected.`
-    case "NEEDS_SETUP": return `Signed in as ${serving?.name ?? "an account"}. Choose which ${spec.id === "google" ? "site or property" : "account"} belongs to this business.`
+    case "NEEDS_SETUP": return spec.id === "github" ? `Installed as ${serving?.name ?? "a GitHub account"}. Connect a repository to this business’s website, branch and allowed page paths.` : `Signed in as ${serving?.name ?? "an account"}. Choose which ${spec.id === "google" ? "site or property" : "account"} belongs to this business.`
     case "NEEDS_RECONNECT": return `${spec.label} stopped accepting the saved ${spec.method === "PASTE_KEY" ? "key" : "sign-in"} for ${serving?.name ?? "this business"}. Connect it again.`
     case "READY": {
       const check = serving?.check
@@ -163,13 +163,19 @@ export const connectorStatuses = (accountId: string, businessId: string) => Effe
     WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED'`, r => String(r["site_name"] || r["site_url"]), r => String(r["business_id"]))
   const webflow = one("webflow", yield* sql`SELECT business_id, site_name, site_url, status, connected_at FROM webflow_connections
     WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED'`, r => String(r["site_name"] || r["site_url"]), r => String(r["business_id"]))
-  const repositories = (yield* sql`SELECT t.id, t.owner, t.repository, t.created_at FROM growth_execution_targets t JOIN businesses b ON b.id = t.business_id
+  const repositories = (yield* sql`SELECT t.id, t.owner, t.repository, t.created_at,
+      EXISTS(SELECT 1 FROM github_installation_repositories r JOIN github_installations i USING (installation_id, account_id)
+        WHERE r.account_id = ${accountId} AND lower(r.full_name) = lower(t.owner || '/' || t.repository) AND i.disconnected_at IS NULL) AS installed FROM growth_execution_targets t JOIN businesses b ON b.id = t.business_id
     WHERE t.business_id = ${businessId} AND b.account_id = ${accountId} ORDER BY t.created_at`).map((r): ConnectedAccount => ({
-      id: String(r["id"]), name: `${r["owner"]}/${r["repository"]}`, status: "ACTIVE", connectedAt: iso(r["created_at"]), forBusiness: true, check: null }))
+      id: String(r["id"]), name: `${r["owner"]}/${r["repository"]}`, status: r["installed"] === true || (Option.isSome(github) && github.value.allowed(String(r["owner"]), String(r["repository"]), accountId)) ? "ACTIVE" : "NEEDS_RECONNECT", connectedAt: iso(r["created_at"]), forBusiness: true, check: null }))
+
+  const installations = yield* sql`SELECT i.installation_id, i.login, i.connected_at FROM github_installations i
+    WHERE i.account_id = ${accountId} AND i.disconnected_at IS NULL`
+  if (!repositories.length) for (const i of installations) repositories.push({ id: String(i["installation_id"]), name: String(i["login"]), status: "ACTIVE", connectedAt: iso(i["connected_at"]), forBusiness: false, check: null })
 
   const of: Record<ConnectorId, { readonly configured: boolean; readonly accounts: ReadonlyArray<ConnectedAccount> }> = {
     google: { configured: googleConfigured, accounts: google },
-    github: { configured: Option.isSome(github) && github.value.transport !== null, accounts: repositories },
+    github: { configured: Option.isSome(github) && (github.value.transport !== null || (github.value.appConfigured === true && ads.cipher !== null)), accounts: repositories },
     wordpress: { configured: ads.cipher !== null, accounts: wordpress },
     webflow: { configured: ads.cipher !== null, accounts: webflow },
     google_ads: { configured: ads.googleAds.configured, accounts: adAccounts("google_ads") },
@@ -180,7 +186,9 @@ export const connectorStatuses = (accountId: string, businessId: string) => Effe
   return CONNECTORS.map((spec): ConnectorStatus => {
     const { configured, accounts } = of[spec.id]
     const state = stateOf(configured, accounts)
-    return { ...spec, state, detail: detailOf(spec, state, accounts), accounts }
+    const method: ConnectMethod = spec.id === "github" && !(Option.isSome(github) && github.value.appConfigured) ? "TEAM" : spec.method
+    const current = { ...spec, method }
+    return { ...current, state, detail: detailOf(current, state, accounts), accounts }
   })
 })
 

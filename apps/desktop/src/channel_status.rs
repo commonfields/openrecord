@@ -160,6 +160,18 @@ impl Client {
             }
             None => unknown("wordpress", "wordpress", "WordPress", "Improve pages and publish posts, with your approval for each change."),
         });
+        let connections = quiet(self.get(&format!("/api/businesses/{id}/connections")))?;
+        let github = connections.as_ref().and_then(|v| list(v, "connectors").iter().find(|c| s(c, "id") == "github"));
+        st.website.push(Row {
+            key: "github", mark: "github", title: "Website repository",
+            purpose: "Open pull requests for page changes you approve.",
+            identity: github.map(|c| s(c, "detail")),
+            state: github.map(|c| match s(c, "state").as_str() {
+                "READY" => State::Connected, "NEEDS_SETUP" => State::Choose,
+                "NEEDS_RECONNECT" => State::Reconnect, "UNAVAILABLE" => State::Unavailable,
+                _ => State::Available,
+            }),
+        });
         Ok(st)
     }
 }

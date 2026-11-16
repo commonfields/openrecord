@@ -15,7 +15,8 @@
     "@openrecord/fs-containment": "workspace:*",
     "@openrecord/representation": "workspace:*",
     "cheerio": "1.0.0",
-    "effect": "3.22.2"
+    "effect": "3.22.2",
+    "@effect/sql": "0.52.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

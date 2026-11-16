@@ -79,5 +79,5 @@ export const desktopOAuthCallback = <E, R>(callback: Effect.Effect<HttpServerRes
   if (result._tag === "Left") return finish(false)
   const location = result.right.headers["location"] ?? ""
   const status = new URL(location, "http://localhost").searchParams
-  return finish(["connected", "reconnected"].includes(status.get("google") ?? status.get("ga4") ?? status.get("ads") ?? ""))
+  return finish(["connected", "reconnected"].includes(status.get("github") ?? status.get("google") ?? status.get("ga4") ?? status.get("ads") ?? ""))
 })

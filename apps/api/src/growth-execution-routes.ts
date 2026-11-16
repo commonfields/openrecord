@@ -2,7 +2,7 @@
 // every growth route; every response is no-store. An agent or an unauthenticated
 // request can reach none of them: only a signed-in account member can connect a
 // repository, review an exact change, authorize it and dispatch it. Provider
-// credentials come from server configuration and never leave the process.
+// credentials come from server configuration or verified installations and never leave the process.
 import { HttpRouter } from "@effect/platform"
 import { Effect, Option } from "effect"
 import {
@@ -13,7 +13,7 @@ import {
   applyContentEdits, decodeRouteId, diffLines, executionEdit, executionKindMatchesPath, executionPathAllowed, executionRepositoryDenied, unifiedDiff,
 } from "@openrecord/contracts"
 import {
-  GitHubError, GitHubExecution, applyPageEdit, executionPatchSha256, gitBlobSha, githubEffect, sha256Text,
+  GitHubError, GitHubExecution, resolveGitHubTransport, type GitHubExecutionConfig, applyPageEdit, executionPatchSha256, gitBlobSha, githubEffect, sha256Text,
 } from "@openrecord/site-operator"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
@@ -29,7 +29,8 @@ const failure = (e: unknown) => {
   return json(500, { _tag: "GrowthRequestFailed", ...(detail ? { detail } : {}) }, PRIVATE_HEADERS)
 }
 /** Execution is refused, never simulated, when no provider layer is configured. */
-const gitHubConfig = Effect.map(Effect.serviceOption(GitHubExecution), o => Option.getOrElse(o, () => ({ transport: null, allowed: () => false })))
+const unconfiguredGitHub: GitHubExecutionConfig = { transport: null, allowed: () => false }
+const gitHubConfig = Effect.map(Effect.serviceOption(GitHubExecution), o => Option.getOrElse(o, () => unconfiguredGitHub))
 const refuse = (reason: string) => Effect.fail(new GrowthExecutionRefused({ reason }))
 /** A provider failure becomes a stable reason; no provider text, token or URL reaches the client. */
 const providerRefusal = (e: unknown) => {
@@ -59,9 +60,9 @@ export const prepareConnectedExecution = (session: Session, businessId: string, 
     if (!edit || !executionKindMatchesPath(input.actionKind, input.filePath)) return yield* refuse("InvalidRequest")
     const target = (yield* repo.targets(session.accountId, businessId)).find(t => t.id === input.targetId)
     if (!target) return yield* refuse("ExecutionTargetNotFound")
-    if (!executionRepositoryPermitted(gh.allowed, target.owner, target.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
+    if ((!gh.resolve && !executionRepositoryPermitted(gh.allowed, target.owner, target.repository, session.accountId)) || executionRepositoryDenied(target.owner, target.repository)) return yield* refuse("RepositoryNotPermitted")
     if (!executionPathAllowed(input.filePath, target.allowedPaths)) return yield* refuse("PathNotPermitted")
-    const transport = gh.transport
+    const transport = yield* resolveGitHubTransport(gh, target.owner, target.repository, session.accountId).pipe(Effect.mapError(providerRefusal))
     if (!transport) return yield* refuse("ExecutionNotConfigured")
     const mapped = <A>(f: () => Promise<A>) => githubEffect(f).pipe(Effect.mapError(providerRefusal))
     const info = yield* mapped(() => transport.repository(target.owner, target.repository))
@@ -109,8 +110,8 @@ export const growthExecutionApi = (withSession: WithSession) => {
       const gh = yield* gitHubConfig
       // Scope first: another account's business is "not found" before anything about the destination is discussed.
       yield* (yield* GrowthExecutionRepository).targets(session.accountId, businessId)
-      // A repository must be on the server allowlist for this account before it can even be connected.
-      if (!executionRepositoryPermitted(gh.allowed, input.owner, input.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
+      // A repository needs account-scoped server or installation access before it can be connected.
+      if (executionRepositoryDenied(input.owner, input.repository) || !(yield* resolveGitHubTransport(gh, input.owner, input.repository, session.accountId).pipe(Effect.mapError(providerRefusal)))) return yield* refuse("RepositoryNotPermitted")
       return yield* json(200, { target: yield* (yield* GrowthExecutionRepository).connectTarget(session, businessId, input) }, PRIVATE_HEADERS)
     }))),
     HttpRouter.get(`${base}/opportunities/:opportunityId/connected-executions`, scoped("opportunityId", (session, businessId, opportunityId) => Effect.gen(function*() {
@@ -136,8 +137,7 @@ export const growthExecutionApi = (withSession: WithSession) => {
       // Re-check the destination now: the allowlist may have changed since preparation.
       const current = yield* repo.get(session.accountId, businessId, operationId)
       const gh = yield* gitHubConfig
-      if (!executionRepositoryPermitted(gh.allowed, current.owner, current.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
-      if (!gh.transport) return yield* refuse("ExecutionNotConfigured")
+      if (executionRepositoryDenied(current.owner, current.repository) || !(yield* resolveGitHubTransport(gh, current.owner, current.repository, session.accountId).pipe(Effect.mapError(providerRefusal)))) return yield* refuse("RepositoryNotPermitted")
       return yield* json(200, { operation: yield* repo.dispatch(session, businessId, operationId, input) }, PRIVATE_HEADERS)
     }))),
     HttpRouter.post(`${base}/connected-executions/:operationId/cancel`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
