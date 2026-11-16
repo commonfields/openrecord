@@ -23,6 +23,7 @@ import { dispatchExecutionTool, executionDeclarations } from "./agent-execution-
 import { dispatchMemory, memoryDeclarations } from "./business-memory.js"
 import { RESEARCH_SAVES, dispatchResearch, researchDeclarations } from "./research/tools.js"
 import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
+import { dispatchWebflow, webflowDeclarations } from "./webflow.js"
 import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
 import { decisionFeedbackDeclarations, dispatchDecisionFeedback } from "./decision-feedback.js"
 import { campaignDraftDeclarations, draftMarketingCampaign } from "./campaign-agent.js"
@@ -103,6 +104,10 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     effect: declaration.name === "prepare_wordpress_change" ? "propose" : "read",
     replay: declaration.name === "prepare_wordpress_change" ? "deduplicated" : "safe", scope: "general",
     run: (ctx, args) => dispatchWordPress(ctx, declaration.name, args) })),
+  ...webflowDeclarations.map((declaration): AgentToolSpec => ({ declaration,
+    effect: declaration.name === "prepare_webflow_change" ? "propose" : "read",
+    replay: declaration.name === "prepare_webflow_change" ? "deduplicated" : "safe", scope: "general",
+    run: (ctx, args) => dispatchWebflow(ctx, declaration.name, args) })),
   ...accountActionDeclarations.map((declaration): AgentToolSpec => ({ declaration,
     effect: declaration.name === "prepare_account_action" ? "propose" : "read",
     replay: declaration.name === "prepare_account_action" ? "deduplicated" : "safe", scope: "general",
@@ -192,6 +197,23 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
     }
     return { ...toolFailure("REFUSED"), guidance: guidance[reason] ?? "The WordPress site refused or could not answer. Say so plainly; do not retry blindly." }
   }
+  if (tag === "WebflowRefused") {
+    const reason = (e as { readonly reason?: string }).reason ?? ""
+    const guidance: Readonly<Record<string, string>> = {
+      WebflowNotConnected: "No Webflow site is connected. Ask the person to connect it on the Channels page; offer the change as a draft meanwhile.",
+      WebflowCredentialRefused: "Webflow no longer accepts the connected site token. Ask the person to reconnect it on the Channels page.",
+      WebflowNotConfigured: "Webflow connections are not switched on for this server.",
+      NothingToChange: "That is already what the page or item says. Read it again before preparing a different change.",
+      WebflowNOT_FOUND: "That page, collection or item was not found. Read the site and use an ID from the result.",
+      ItemNotLive: "That item is a draft or not published, so it cannot be updated live. Say so; the person publishes it in Webflow first.",
+      ItemHasUnpublishedEdits: "That item has edits in Webflow that are not live yet; publishing would push them out too. Ask the person to publish or discard them in Webflow first.",
+      FieldNotWritable: "Only text fields can be written. Read the collection and use the slugs of writable fields.",
+      SlugChange: "An item's address (slug) is never changed: links to it would break. Change other fields only.",
+      MissingFields: "Required values are missing. Read the collection's fields and give name and every required text field.",
+      CollectionNeedsOtherFields: "This collection requires a non-text field (an image, a reference or an option), so the item must be created in Webflow.",
+    }
+    return { ...toolFailure("REFUSED"), guidance: guidance[reason] ?? "The Webflow site refused or could not answer. Say so plainly; do not retry blindly." }
+  }
   if (tag === "AccountActionRefused" || tag === "AdsRefused") {
     const reason = (e as { readonly reason?: string }).reason ?? ""
     const guidance: Readonly<Record<string, string>> = {
@@ -232,12 +254,13 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
+export interface DecisionRef { readonly type: "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
   ...(typeof receipt["proposalId"] === "string" && UUID.test(receipt["proposalId"]) ? [{ type: "AGENT_PROPOSAL" as const, id: receipt["proposalId"] }] : []),
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
   ...(typeof receipt["wordpressChangeId"] === "string" && UUID.test(receipt["wordpressChangeId"]) ? [{ type: "WORDPRESS_CHANGE" as const, id: receipt["wordpressChangeId"] }] : []),
+  ...(typeof receipt["webflowChangeId"] === "string" && UUID.test(receipt["webflowChangeId"]) ? [{ type: "WEBFLOW_CHANGE" as const, id: receipt["webflowChangeId"] }] : []),
   ...(typeof receipt["accountActionId"] === "string" && UUID.test(receipt["accountActionId"]) ? [{ type: "ACCOUNT_ACTION" as const, id: receipt["accountActionId"] }] : []),
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */

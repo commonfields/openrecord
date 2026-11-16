@@ -75,9 +75,9 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
     prefetch: ["read_business_truth", "read_growth_goal", "read_competitors"],
   },
   site: {
-    match: /\b(website|site|seo|audit|homepage|web pages?|pricing page|index\w*|crawl\w*|robots|sitemap|schema|structured data|meta|titles?|canonicals?|speed|core web vitals|wordpress|publish|deploy|repository|repo)\b/,
+    match: /\b(website|site|seo|audit|homepage|web pages?|pricing page|index\w*|crawl\w*|robots|sitemap|schema|structured data|meta|titles?|canonicals?|speed|core web vitals|wordpress|webflow|publish|deploy|repository|repo)\b/,
     tools: ["audit_website", "map_website", "assess_web_page", "measure_web_performance", "read_search_performance", "read_wordpress_content",
-      "prepare_wordpress_change", "read_connected_execution_targets", "prepare_page_change", "read_connected_executions", "read_open_issues",
+      "prepare_wordpress_change", "read_webflow_content", "prepare_webflow_change", "read_connected_execution_targets", "prepare_page_change", "read_connected_executions", "read_open_issues",
       "read_issue", "propose_growth_opportunity", "read_growth_opportunities"],
     prefetch: ["read_business_truth", "read_search_performance", "read_connected_execution_targets", "read_growth_goal", "read_growth_opportunities"],
   },
@@ -179,8 +179,9 @@ export const otherToolsNote = (declared: ReadonlyArray<string>, available: Reado
 }
 
 /** What a tool needs connected for the business before it can do anything but refuse. */
-const NEEDS: ReadonlyArray<{ readonly connection: "wordpress" | "google_ads" | "ads_or_profile"; readonly name: string; readonly tools: ReadonlyArray<string> }> = [
+const NEEDS: ReadonlyArray<{ readonly connection: "wordpress" | "webflow" | "google_ads" | "ads_or_profile"; readonly name: string; readonly tools: ReadonlyArray<string> }> = [
   { connection: "wordpress", name: "WordPress", tools: ["read_wordpress_content", "prepare_wordpress_change"] },
+  { connection: "webflow", name: "Webflow", tools: ["read_webflow_content", "prepare_webflow_change"] },
   { connection: "google_ads", name: "Google Ads", tools: ["read_ad_campaigns"] },
   { connection: "ads_or_profile", name: "Google Ads or Google Business Profile", tools: ["prepare_account_action"] },
 ]
@@ -194,12 +195,13 @@ export const connectionGaps = (accountId: string, businessId: string) => Effect.
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT
     EXISTS(SELECT 1 FROM wordpress_connections WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED') AS wordpress,
+    EXISTS(SELECT 1 FROM webflow_connections WHERE account_id = ${accountId} AND business_id = ${businessId} AND status <> 'DISCONNECTED') AS webflow,
     EXISTS(SELECT 1 FROM ad_account_bindings b JOIN ad_connections c ON c.id = b.connection_id WHERE b.account_id = ${accountId} AND b.business_id = ${businessId}
       AND b.ended_at IS NULL AND c.status <> 'DISCONNECTED' AND b.provider = 'google_ads') AS google_ads,
     EXISTS(SELECT 1 FROM ad_account_bindings b JOIN ad_connections c ON c.id = b.connection_id WHERE b.account_id = ${accountId} AND b.business_id = ${businessId}
       AND b.ended_at IS NULL AND c.status <> 'DISCONNECTED' AND b.provider = 'google_business') AS google_business`
   const r = rows[0] ?? {}
-  const has = { wordpress: r["wordpress"] === true, google_ads: r["google_ads"] === true, ads_or_profile: r["google_ads"] === true || r["google_business"] === true }
+  const has = { wordpress: r["wordpress"] === true, webflow: r["webflow"] === true, google_ads: r["google_ads"] === true, ads_or_profile: r["google_ads"] === true || r["google_business"] === true }
   const missing = NEEDS.filter(n => !has[n.connection])
   return {
     withheld: new Set(missing.flatMap(n => n.tools)),
