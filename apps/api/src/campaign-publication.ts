@@ -67,8 +67,12 @@ export const campaignDeliveryProgress = (ctx: Pick<ToolContext, "accountId" | "b
       p.id AS "publicationId",p.status,p.destination,p.cta_label AS "ctaLabel",p.privacy_notice AS "privacyNotice",p.published_at AS "publishedAt",
       EXISTS(SELECT 1 FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='TEST') AS "trackingTested",
       (SELECT count(*)::int FROM campaign_inquiries i WHERE i.publication_id=p.id AND i.purpose='PRODUCTION') AS "inquiries",
-      k.findings AS "checks", COALESCE(k.blocking,0) AS "blocking"
-    FROM campaign_artifact_bindings b LEFT JOIN campaign_deliverable_checks k ON k.binding_id=b.id JOIN agent_artifacts a ON a.id=b.artifact_id
+      k.findings AS "checks", COALESCE(k.blocking,0) AS "blocking",
+      (SELECT pp.destination || '?s=' || l.code FROM campaign_links l JOIN campaign_publications pp ON pp.id=l.publication_id
+        WHERE l.task_id=b.task_id AND pp.status IN ('PREPARED','PUBLISHED') ORDER BY l.created_at DESC LIMIT 1) AS "trackedLink",
+      h.status AS "handoffStatus", h.public_url AS "handoffUrl", h.reported_at AS "handoffAt"
+    FROM campaign_artifact_bindings b LEFT JOIN campaign_deliverable_checks k ON k.binding_id=b.id
+    LEFT JOIN campaign_handoffs h ON h.campaign_id=b.campaign_id AND h.task_id=b.task_id JOIN agent_artifacts a ON a.id=b.artifact_id
     JOIN agent_artifact_versions v ON v.artifact_id=b.artifact_id AND v.version=b.artifact_version
     LEFT JOIN campaign_publications p ON p.binding_id=b.id
     WHERE b.business_id=${ctx.businessId} AND b.campaign_id=${campaignId} ORDER BY b.task_id,b.created_at DESC,b.id DESC`
@@ -77,8 +81,10 @@ export const campaignDeliveryProgress = (ctx: Pick<ToolContext, "accountId" | "b
     // Only a website deliverable can become a hosted page; an email or a post is handed to the owner to send.
     const web = (channels.get(String(r["taskId"])) ?? "WEBSITE") === "WEBSITE"
     const stale = Number(r["campaignRevision"]) !== Number(campaigns[0]!["revision"]) || Number(r["artifactVersion"]) !== Number(r["currentArtifactVersion"]) || r["archivedAt"] !== null
-    const state = stale ? "NEEDS_REVISION" : r["status"] === "PUBLISHED" ? "LIVE" : r["status"] === "REJECTED" || r["status"] === "WITHDRAWN" ? r["status"] : !r["publicationId"] ? "DRAFT_READY" : Number(r["blocking"] ?? 0) > 0 ? "NEEDS_FIXES" : r["trackingTested"] === true ? "AWAITING_APPROVAL" : "NEEDS_TRACKING_TEST"
-    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_FIXES" ? "Fix the blocking checks in a new revision, link it and prepare it again" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : web ? "Prepare the linked artifact for publication" : "Ready for the owner to send or post; OpenRecord does not deliver this channel", channel: channels.get(String(r["taskId"])) ?? "WEBSITE" }
+    const state = stale ? "NEEDS_REVISION" : r["status"] === "PUBLISHED" ? "LIVE" : r["status"] === "REJECTED" || r["status"] === "WITHDRAWN" ? r["status"] : !r["publicationId"] ? (r["handoffStatus"] ? "OWNER_REPORTED_SENT" : "DRAFT_READY") : Number(r["blocking"] ?? 0) > 0 ? "NEEDS_FIXES" : r["trackingTested"] === true ? "AWAITING_APPROVAL" : "NEEDS_TRACKING_TEST"
+    return { ...r, bindingId: String(r["bindingId"]), taskId: String(r["taskId"]), title: String(r["title"]), artifactId: String(r["artifactId"]), artifactVersion: Number(r["artifactVersion"]), publicationId: r["publicationId"] ? String(r["publicationId"]) : null, trackingTested: r["trackingTested"] === true, state, stale, liveUrl: r["status"] === "PUBLISHED" ? r["destination"] : null, inquiries: Number(r["inquiries"] ?? 0), nextAction: stale ? "Review the edited draft and prepare a new publication" : state === "LIVE" ? "Share the page and review recorded inquiries" : state === "NEEDS_FIXES" ? "Fix the blocking checks in a new revision, link it and prepare it again" : state === "NEEDS_TRACKING_TEST" ? "Submit the prelaunch inquiry test" : state === "AWAITING_APPROVAL" ? "Review and approve publication in Needs you" : web ? "Prepare the linked artifact for publication" : r["handoffStatus"] ? `The owner reported it ${String(r["handoffStatus"]).toLowerCase()}; read its source in the campaign results` : r["trackedLink"] ? "Ready for the owner to send or post with its tracked link, then mark it sent" : "Ready for the owner to send or post; give it a tracked link to the campaign page first (create_campaign_link)",
+      channel: channels.get(String(r["taskId"])) ?? "WEBSITE", trackedLink: (r["trackedLink"] as string | null) ?? null,
+      handoff: r["handoffStatus"] ? { status: String(r["handoffStatus"]), publicUrl: (r["handoffUrl"] as string | null) ?? null, reportedAt: new Date(r["handoffAt"] as string).toISOString(), reportedBy: "OWNER" } : null }
   })
   return { campaignId, revision: Number(campaigns[0]["revision"]), deliverables, note: "Inquiries are recorded submissions, not qualified leads, revenue or causal lift. Test submissions are excluded. Existing published versions remain live when a draft changes, until withdrawn or separately replaced." }
 })
@@ -167,7 +173,7 @@ export const approveCampaignPublication = (session: Session, businessId: string,
 
 const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 const html = (body: string, extra: Record<string, string> = {}) => HttpServerResponse.text(body, { headers: { ...PRIVATE, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...extra } })
-const ticket = (publicationId: string, purpose: "TEST" | "PRODUCTION") => Effect.gen(function*() {
+const ticket = (publicationId: string, purpose: "TEST" | "PRODUCTION", linkId: string | null = null) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const value = token()
   yield* sql`DELETE FROM campaign_form_tickets WHERE expires_at<now() AND consumed_at IS NULL`
@@ -175,7 +181,7 @@ const ticket = (publicationId: string, purpose: "TEST" | "PRODUCTION") => Effect
     yield* sql`SELECT id FROM campaign_publications WHERE id=${publicationId} FOR UPDATE`
     const recent = yield* sql`SELECT count(*)::int AS n FROM campaign_form_tickets WHERE publication_id=${publicationId} AND created_at>now()-interval '1 minute'`
     if (Number(recent[0]!["n"]) >= 60) return yield* refuse("RateLimited")
-    yield* sql`INSERT INTO campaign_form_tickets(token_digest,publication_id,purpose) VALUES (${digest(value)},${publicationId},${purpose})`
+    yield* sql`INSERT INTO campaign_form_tickets(token_digest,publication_id,purpose,link_id) VALUES (${digest(value)},${publicationId},${purpose},${linkId})`
   }))
   return value
 })
@@ -256,9 +262,15 @@ export const campaignPublicationApi = (withSession: WithSession) => {
       if (!allowed.length) return yield* refuse("NotFound")
     } else if (p["status"] !== "PUBLISHED") return yield* refuse("NotFound")
     if (content) return HttpServerResponse.text(artifactDocument({ format: p["format"] === "HTML" ? "HTML" : "MARKDOWN", title: String(p["title"]), content: String(p["content"]) }), { headers: PREVIEW_HEADERS })
+    // A visit through an email's or post's own link is counted for that source too, and its inquiry carries the source.
+    const source = new URL(request.url, "http://localhost").searchParams.get("s")
+    const link = test === null && source && /^[A-Za-z0-9]{10}$/.test(source)
+      ? (yield* sql`SELECT id FROM campaign_links WHERE code=${source} AND publication_id=${id}`)[0]?.["id"] as string | undefined : undefined
     if (test === null) yield* sql`INSERT INTO campaign_page_days(publication_id, day, views) VALUES (${id}, current_date, 1)
       ON CONFLICT (publication_id, day) DO UPDATE SET views = campaign_page_days.views + 1`
-    const t = test ?? (yield* ticket(id, "PRODUCTION"))
+    if (link) yield* sql`INSERT INTO campaign_link_days(link_id, day, views) VALUES (${link}, current_date, 1)
+      ON CONFLICT (link_id, day) DO UPDATE SET views = campaign_link_days.views + 1`
+    const t = test ?? (yield* ticket(id, "PRODUCTION", link ?? null))
     const iframe = `/p/${page}/content${test ? `?test=${test}` : ""}`
     return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(String(p["title"]))}</title><style>body{margin:0;font:17px/1.6 system-ui;color:#202020;background:#fff}iframe{display:block;width:100%;height:75vh;min-height:500px;border:0}section{max-width:680px;margin:32px auto;padding:24px}label,input,textarea{display:block;width:100%;box-sizing:border-box}input,textarea,button{font:inherit;padding:12px;margin:8px 0 20px}button{cursor:pointer}small{display:block}.consent{display:flex;gap:12px}.consent input{width:auto}h1{font-size:26px}</style></head><body>${test ? '<section role="status">Prelaunch test. Nothing is published. Test inquiries are excluded from results.</section>' : ""}<iframe sandbox title="Campaign content" src="${iframe}"></iframe><section><h1>${escape(String(p["cta_label"]))}</h1><form method="post" action="/p/${page}/inquiries"><input type="hidden" name="ticket" value="${t}"><label>Email<input type="email" name="email" maxlength="254" required autocomplete="email"></label><label>Your inquiry<textarea name="message" maxlength="2000" required></textarea></label><label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${escape(String(p["privacy_notice"]))}</span></label><button type="submit">${escape(String(p["cta_label"]))}</button><small>This form records an inquiry for the business. Do not include sensitive information.</small></form></section></body></html>`, { "x-robots-tag": test ? "noindex, nofollow" : "index, follow" })
   }).pipe(Effect.catchAll(publicationFailure))
@@ -313,7 +325,7 @@ export const campaignPublicationApi = (withSession: WithSession) => {
         const p = (yield* sql`SELECT id,status FROM campaign_publications WHERE page_token=${page} FOR UPDATE`)[0]
         if (!p || !["PREPARED", "PUBLISHED"].includes(String(p["status"]))) return yield* refuse("NotFound")
         const id = String(p["id"]), td = digest(t)
-        const tickets = yield* sql`SELECT purpose,consumed_at FROM campaign_form_tickets WHERE token_digest=${td} AND publication_id=${id} AND expires_at>now()`
+        const tickets = yield* sql`SELECT purpose,consumed_at,link_id FROM campaign_form_tickets WHERE token_digest=${td} AND publication_id=${id} AND expires_at>now()`
         const current = tickets[0]
         if (!current) return yield* refuse("InvalidSubmission")
         if (current["purpose"] === "PRODUCTION" && p["status"] !== "PUBLISHED") return yield* refuse("NotFound")
@@ -323,8 +335,8 @@ export const campaignPublicationApi = (withSession: WithSession) => {
         const c = cipher()
         if (!c) return yield* refuse("PublishingNotConfigured")
         const test = current["purpose"] === "TEST"
-        yield* sql`INSERT INTO campaign_inquiries(publication_id,ticket_digest,purpose,contact_ciphertext)
-          VALUES (${id},${td},${test ? "TEST" : "PRODUCTION"},${test ? null : c.encrypt(JSON.stringify(contact), `campaign-inquiry:${id}:${td}`)})`
+        yield* sql`INSERT INTO campaign_inquiries(publication_id,ticket_digest,purpose,contact_ciphertext,link_id)
+          VALUES (${id},${td},${test ? "TEST" : "PRODUCTION"},${test ? null : c.encrypt(JSON.stringify(contact), `campaign-inquiry:${id}:${td}`)},${test ? null : (current["link_id"] as string | null) ?? null})`
         yield* sql`UPDATE campaign_form_tickets SET consumed_at=now() WHERE token_digest=${td}`
         return { test, reused: false }
       }))

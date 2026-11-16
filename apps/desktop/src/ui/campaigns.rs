@@ -8,11 +8,10 @@ use rune::{Color, Cursor, El, col, el, row};
 
 use crate::api::Campaign;
 use crate::format;
-use crate::icons;
 use crate::state::{App, Load};
 use crate::theme::{Theme, type_};
 use crate::ui::kit::{self, Column, column};
-use crate::ui::widgets::{CONTROL, Variant, button as widget_button, empty_state, failure, label, page_header, skeleton, status_chip};
+use crate::ui::widgets::{CONTROL, Variant, button as widget_button, empty_state_plain, failure, label, page_header, skeleton, status_chip};
 
 /// Campaign actions keep their content width even when placed in a full-width column.
 pub(super) fn campaign_button(t: &Theme, key: &str, title: &str, variant: Variant) -> El {
@@ -96,14 +95,27 @@ pub fn view(s: &App, t: &Theme) -> El {
         return detail(s, t, cp);
     }
     if list.is_empty() {
-        return col().w_full().gap(24.0).child(header(t)).child(empty_state(
-            t,
-            "campaigns-empty",
-            &icons::BRIEFCASE,
-            "No campaigns yet",
-            "Start with a brief: define the goal, audience, offer and decision window. Then prepare, distribute, monitor and learn.",
-            Some(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Primary).self_center().on_press(|s: &mut App| s.edit_campaign(None))),
-        ));
+        let room = (s.window.1 / s.zoom() - 220.0).max(360.0);
+        return col()
+            .key("campaigns-page-empty")
+            .w_full()
+            .gap(24.0)
+            .child(header(t))
+            .child(
+                col()
+                    .key("campaigns-empty-shell")
+                    .w_full()
+                    .h(room)
+                    .justify_center()
+                    .items_start()
+                    .child(empty_state_plain(
+                        t,
+                        "campaigns-empty",
+                        "No campaigns yet",
+                        "Start with a brief: define the goal, audience, offer and decision window. Then prepare, distribute, monitor and learn.",
+                        Some(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Primary).on_press(|s: &mut App| s.edit_campaign(None))),
+                    )),
+            );
     }
     let today = today();
     let count = |st: &str| list.iter().filter(|c| c.status == st).count();
@@ -553,6 +565,18 @@ fn delivery(s: &App, t: &Theme, c: &Campaign) -> El {
                     if let Some(artifact) = &task.artifact_id {
                         let id = artifact.clone();
                         actions = actions.child(campaign_button(t, &format!("delivery-artifact-{id}"), "Review artifact", Variant::Outline).on_press(move |s: &mut App| s.open_artifact(&id)));
+                    }
+                    // An email or post the owner sends: its tracked link, and a way to report it went out.
+                    if !task.web {
+                        if let Some(link) = &task.tracked_link {
+                            r = r.child(label(format!("Tracked link: {link}"), type_::XS, t.muted_foreground).wrap().selectable(true));
+                        }
+                        if let (Some(task_id), None) = (&task.task_id, &task.handoff) {
+                            let (campaign, task_id) = (c.id.clone(), task_id.clone());
+                            actions = actions.child(campaign_button(t, &format!("delivery-sent-{task_id}"), "Mark as sent", Variant::Outline).on_press(move |s: &mut App| {
+                                if let Some(b) = s.active.clone() { s.net.campaign_handoff(b, campaign.clone(), task_id.clone(), "SENT"); }
+                            }));
+                        }
                     }
                     if let Some(publication) = &task.publication_id {
                         let id = publication.clone();

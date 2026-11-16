@@ -397,6 +397,17 @@ pub struct CampaignRun {
 }
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct CampaignRunTask {
+    /// The deliverable's task, so the owner can report it sent.
+    #[serde(default, rename = "taskId")]
+    pub task_id: Option<String>,
+    /// For an email or post: its own link to the campaign page.
+    #[serde(default, rename = "trackedLink")]
+    pub tracked_link: Option<String>,
+    /// For an email or post: SENT or POSTED, as the owner reported it.
+    #[serde(default, rename = "handoffStatus")]
+    pub handoff: Option<String>,
+    #[serde(default)]
+    pub web: bool,
     #[serde(default, rename = "artifactId")]
     pub artifact_id: Option<String>,
     #[serde(default, rename = "publicationId")]
@@ -842,14 +853,19 @@ impl Client {
         struct Progress { revision: i64, deliverables: Vec<PublicationProgress> }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct PublicationProgress { title: String, state: String, stale: bool, next_action: String, artifact_id: String, publication_id: Option<String>, live_url: Option<String>, inquiries: u64 }
+        struct Handoff { status: String }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PublicationProgress { title: String, state: String, stale: bool, next_action: String, artifact_id: String, publication_id: Option<String>, live_url: Option<String>, inquiries: u64,
+            task_id: String, #[serde(default)] channel: Option<String>, #[serde(default)] tracked_link: Option<String>, #[serde(default)] handoff: Option<Handoff> }
         let progress: Progress = self.get(&format!("/api/businesses/{}/campaign-publications/campaigns/{}", enc(business), enc(campaign)))?;
         let mut runs = v.runs;
         if !progress.deliverables.is_empty() {
             let stale = progress.deliverables.iter().any(|d| d.stale);
             let status = if progress.deliverables.iter().all(|d| d.state == "LIVE") { "LIVE" } else { "IN_PROGRESS" };
             runs.insert(0, CampaignRun { campaign_revision: progress.revision, status: status.into(), stale,
-                tasks: progress.deliverables.into_iter().map(|d| CampaignRunTask { title: d.title, state: d.state, next: d.next_action, artifact_id: Some(d.artifact_id), publication_id: d.publication_id, live_url: d.live_url, inquiries: d.inquiries }).collect() });
+                tasks: progress.deliverables.into_iter().map(|d| CampaignRunTask { title: d.title, state: d.state, next: d.next_action, artifact_id: Some(d.artifact_id), publication_id: d.publication_id, live_url: d.live_url, inquiries: d.inquiries,
+                    web: d.channel.as_deref().unwrap_or("WEBSITE") == "WEBSITE", task_id: Some(d.task_id), tracked_link: d.tracked_link, handoff: d.handoff.map(|h| h.status) }).collect() });
         }
         Ok(runs)
     }

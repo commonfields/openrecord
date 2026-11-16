@@ -12,6 +12,7 @@ import { blankDeclaration, leaveBlank } from "./agent-blanks.js"
 import { campaignPublicationDeclarations, dispatchCampaignPublication } from "./campaign-publication.js"
 import { campaignResultsDeclarations, dispatchCampaignResults } from "./campaign-results.js"
 import { dispatchStrategy, strategyDeclarations } from "./marketing-strategy.js"
+import { channelDeclarations, dispatchChannel } from "./campaign-channels.js"
 import { AgentProposalRepository } from "@openrecord/db"
 import { dispatchGrowthProposal, growthProposalDeclarations } from "./agent-growth-tools.js"
 import { acquisitionProposalDeclarations, dispatchAcquisitionProposal } from "./agent-acquisition-proposals.js"
@@ -70,6 +71,8 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     const effect = declaration.name === "read_campaign_delivery" ? "read" : declaration.name === "prepare_campaign_publication" ? "propose" : "record"
     return { declaration, effect, replay: effect === "read" ? "safe" : "deduplicated", scope: "general", run: (ctx, args) => dispatchCampaignPublication(ctx, declaration.name, args) }
   }),
+  // A tracked link to the campaign page for an email or post the owner sends; nothing is sent.
+  ...channelDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general", run: (ctx, args) => dispatchChannel(ctx, declaration.name, args) })),
   // The shared marketing strategy: read the approved version, propose the next for the owner.
   ...strategyDeclarations.map((declaration): AgentToolSpec => {
     const effect = declaration.name === "read_marketing_strategy" ? "read" : "propose"
@@ -188,6 +191,7 @@ export const classifyToolFailure = (e: unknown): ToolFailure => {
   if (e instanceof AgentInvalidInput || tag === "ParseError") return toolFailure("INVALID_INPUT")
   if (e instanceof AgentNotInScope) return toolFailure("NOT_FOUND")
   if (tag === "CampaignRevisionRefused") return { ...toolFailure("REFUSED"), guidance: "Read the current campaign. Edits require its current revision, DRAFT stage, unfinished tasks and no linked delivery proposals. Do not overwrite stale content or retry unchanged inputs. Explain the blocker or offer a separately named alternative." }
+  if (tag === "ChannelRefused") return { ...toolFailure("REFUSED"), guidance: `Link refused: ${(e as { reason?: string }).reason ?? "unknown"}. A tracked link is for an email or post deliverable of the same campaign as a prepared or live page. Read read_campaign_delivery; do not retry unchanged inputs.` }
   if (tag === "StrategyRefused") return { ...toolFailure("REFUSED"), guidance: `Strategy refused: ${(e as { reason?: string }).reason ?? "unknown"}. StaleStrategy means another version was approved: read read_marketing_strategy and write against it. StrategyAlreadyWaiting means the owner has not decided the last proposal. Do not retry unchanged inputs.` }
   if (tag === "CampaignReviewRefused") return { ...toolFailure("REFUSED"), guidance: `Review refused: ${(e as { reason?: string }).reason ?? "unknown"}. EvidenceInsufficient means only INCONCLUSIVE fits the recorded evidence; ReviewAlreadyWaiting means the owner has not decided the last one. Read read_campaign_results; do not retry unchanged inputs.` }
   if (tag === "PublicationRefused") return { ...toolFailure("REFUSED"), guidance: `Publication refused: ${(e as { reason?: string }).reason ?? "unknown"}. Read current campaign delivery and artifact revisions. Do not retry unchanged inputs or bypass prelaunch testing or operator approval.` }
