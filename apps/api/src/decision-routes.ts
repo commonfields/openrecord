@@ -1,5 +1,6 @@
 import { pendingCampaignPublications } from "./campaign-publication.js"
 import { pendingCampaignReviews } from "./campaign-results.js"
+import { pendingStrategies } from "./marketing-strategy.js"
 // One feed of everything waiting on a person: proposals the agent saved
 // (re-checks, drafts, measurement plans) and growth initiatives proposed for
 // approval, across every business the session can reach. Reading it decides
@@ -16,6 +17,7 @@ import { listWebflowChanges, type WebflowChange } from "./webflow.js"
 import { listActions, type AccountAction } from "./account-actions.js"
 
 export type DecisionItem =
+  | { readonly type: "MARKETING_STRATEGY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly strategy: Record<string, unknown> }
   | { readonly type: "CAMPAIGN_REVIEW"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly review: Record<string, unknown> }
   | { readonly type: "CAMPAIGN_PUBLICATION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly publication: Record<string, unknown> }
   | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly proposal: AgentProposal }
@@ -37,8 +39,10 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
     const webflow = yield* listWebflowChanges(accountId, b.id, "PROPOSED")
     const publications = yield* pendingCampaignPublications(accountId, b.id)
     const reviews = yield* pendingCampaignReviews(accountId, b.id)
+    const strategies = yield* pendingStrategies(accountId, b.id)
     const actions = yield* listActions(accountId, b.id, "PROPOSED")
     return [
+      ...strategies.map((strategy): DecisionItem => ({ type: "MARKETING_STRATEGY", business, createdAt: strategy.createdAt, strategy: strategy as unknown as Record<string, unknown> })),
       ...reviews.map((review): DecisionItem => ({ type: "CAMPAIGN_REVIEW", business, createdAt: new Date(String(review["createdAt"])).toISOString(), review })),
       ...publications.map((publication): DecisionItem => ({ type: "CAMPAIGN_PUBLICATION", business, createdAt: new Date(String(publication["createdAt"])).toISOString(), publication })),
       ...open.map((proposal): DecisionItem => ({ type: "AGENT_PROPOSAL", business, createdAt: proposal.createdAt, proposal })),
@@ -60,7 +64,8 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       AND c.user_id=${userId} AND c.expires_at>now() AND e.type='TOOL_COMPLETED'
       AND e.payload ? 'receipt' ORDER BY e.created_at DESC`
   return items.map(item => {
-    const [key, id] = item.type === "CAMPAIGN_REVIEW" ? ["campaignReviewId", item.review["id"]]
+    const [key, id] = item.type === "MARKETING_STRATEGY" ? ["marketingStrategyId", item.strategy["id"]]
+      : item.type === "CAMPAIGN_REVIEW" ? ["campaignReviewId", item.review["id"]]
       : item.type === "CAMPAIGN_PUBLICATION" ? ["publicationId", item.publication["id"]]
       : item.type === "AGENT_PROPOSAL" ? ["proposalId", item.proposal.id]
       : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id]

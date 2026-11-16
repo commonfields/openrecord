@@ -11,6 +11,8 @@ pub enum Act {
     Publication { version: i64, digest: String, destination: String, tested: bool, stale: bool, blocking: u64 },
     /// A proposed campaign review: approving records the verdict and the next experiment.
     Review,
+    /// A proposed marketing strategy version: approving makes it the one every campaign follows.
+    Strategy,
     /// A proposed initiative (`/api/growth/clients/:id/opportunities/:id/approve|cancel`).
     Growth { status: String, revision: i64 },
     /// A prepared WordPress change: approving publishes it.
@@ -82,6 +84,7 @@ impl Decision {
         match &self.act {
             Act::Publication { version, digest, destination, .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/approve"), json!({ "artifactVersion": version, "contentDigest": digest, "destination": destination })),
             Act::Review => (format!("/api/businesses/{b}/campaign-reviews/{id}/approve"), json!({})),
+            Act::Strategy => (format!("/api/businesses/{b}/marketing-strategy/{id}/approve"), json!({})),
             Act::Growth { status, revision } => (
                 format!("/api/growth/clients/{b}/opportunities/{id}/approve"),
                 json!({ "expectedStatus": status, "expectedRevision": revision, "idempotencyKey": crate::api::uuid(), "reason": "Approved in OpenRecord" }),
@@ -107,6 +110,7 @@ impl Decision {
         match &self.act {
             Act::Publication { .. } => (format!("/api/businesses/{b}/campaign-publications/{id}/reject"), json!({})),
             Act::Review => (format!("/api/businesses/{b}/campaign-reviews/{id}/reject"), json!({})),
+            Act::Strategy => (format!("/api/businesses/{b}/marketing-strategy/{id}/reject"), json!({})),
             Act::Growth { status, revision } => {
                 let why = match reason {
                     Some(r) => format!("Declined: {r}").chars().take(500).collect(),
@@ -143,6 +147,7 @@ impl Decision {
         match (&self.act, approved) {
             (Act::Publication { .. }, true) => "Published the approved campaign page.",
             (Act::Review, true) => "Recorded the campaign review.",
+            (Act::Strategy, true) => "This is now the strategy every campaign follows.",
             (Act::WordPress, true) => "Published to WordPress.",
             (Act::Account, true) if self.approve.contains("post") => "Reply posted.",
             (Act::Account, true) => "Change made in Google Ads.",
@@ -261,6 +266,30 @@ pub fn parse(v: &Value) -> Option<Decision> {
     };
     let sec = |label: &str, text: String| Section { label: label.into(), before: None, text };
     match kind.as_str() {
+        "MARKETING_STRATEGY" => {
+            let r = v.get("strategy")?;
+            d.id = s(r, "id");
+            d.label = "Marketing strategy".into();
+            d.title = format!("Strategy version {}", r["version"].as_i64().unwrap_or(0));
+            d.summary = s(r, "rationale");
+            let list = |key: &str| r[key].as_array().map(|xs| xs.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+            let before = |key: &str| r["replaces"].get(key).and_then(Value::as_str).map(str::to_string);
+            let mut sections = Vec::new();
+            for (label, key) in [("Audience", "audience"), ("Positioning", "positioning"), ("Offer", "offer"), ("Voice", "voice"), ("Budget limit", "budgetLimit")] {
+                let text = s(r, key);
+                if !text.is_empty() { sections.push(Section { label: label.into(), before: before(key).filter(|b| b != &text), text }); }
+            }
+            let bets = list("priorityBets");
+            if !bets.is_empty() { sections.push(sec("Priority bets", bets)); }
+            let avoid = list("avoidPhrases");
+            if !avoid.is_empty() { sections.push(sec("Phrases to avoid", avoid)); }
+            d.sections = sections;
+            d.note = Some("Approving makes this the strategy every campaign and draft follows. The budget limit is for planning and never approves spending.".into());
+            d.approve = "Approve strategy".into();
+            d.act = Act::Strategy;
+            d.feedback_kind = "MARKETING_STRATEGY";
+            d.feedback_title = d.title.clone();
+        }
         "CAMPAIGN_REVIEW" => {
             let r = v.get("review")?;
             d.id = s(r, "id");

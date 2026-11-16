@@ -22,6 +22,8 @@ const META: Readonly<Record<string, Meta>> = {
   record_campaign_revision: { ns: "work", title: "Edit an existing draft campaign", not: "Not for a new campaign (record_campaign_draft) or for marking work done or launched.", evidence: ["draft"] },
   record_campaign_run: { ns: "work", title: "Start or resume a campaign run", not: "Not for editing the brief, approving, publishing or spending.", evidence: ["receipt"] },
   read_campaign_runs: { ns: "work", title: "Read campaign runs and delivery state", not: "Not for the campaign brief itself (read_marketing_campaigns).", evidence: ["none"] },
+  read_marketing_strategy: { ns: "strategy", title: "Read the approved marketing strategy", not: "Not for approved facts (read_business_truth).", evidence: ["none"] },
+  propose_marketing_strategy: { ns: "strategy", title: "Propose a marketing strategy version", not: "Not for one campaign's plan (record_campaign_draft).", evidence: ["proposal"] },
   read_campaign_results: { ns: "measurement", title: "Read live campaign page views and inquiries", not: "Not for analytics outcomes (read_campaign_outcome).", evidence: ["observation"] },
   propose_campaign_review: { ns: "strategy", title: "Propose a campaign verdict and next experiment", not: "Not for editing the plan (record_campaign_revision).", evidence: ["proposal"] },
   bind_campaign_artifact: { ns: "work", title: "Link an artifact revision to a deliverable", not: "Not for writing it (create_artifact).", evidence: ["receipt"] },
