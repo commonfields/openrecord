@@ -72,6 +72,10 @@ const markRefused = (businessId: string) => Effect.flatMap(SqlClient.SqlClient, 
 const guarded = <A, E, R>(businessId: string, effect: Effect.Effect<A, E, R>) => effect.pipe(
   Effect.tapError(e => e instanceof WordPressRefused && e.reason === "SiteAUTH" ? markRefused(businessId).pipe(Effect.ignore) : Effect.void))
 
+/** A health check of the business's WordPress password: who it signs in as. A refused one is marked so the person reconnects. */
+export const checkWordPress = (accountId: string, businessId: string) =>
+  guarded(businessId, Effect.flatMap(siteFor(accountId, businessId), ({ site }) => Effect.asVoid(request(site, "GET", "/wp/v2/users/me"))))
+
 const Connect = Schema.Struct({ siteUrl: Schema.String.pipe(Schema.maxLength(300)), username: Schema.String.pipe(Schema.maxLength(100)), appPassword: Schema.String.pipe(Schema.maxLength(200)) })
 const connect = (session: Session, businessId: string, input: typeof Connect.Type) => Effect.gen(function*() {
   const siteUrl = normalizeSiteUrl(input.siteUrl)

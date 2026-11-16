@@ -91,10 +91,10 @@ const scopedBusiness = (session: Session, businessId: string) => Effect.gen(func
 // ---- tokens ----------------------------------------------------------------
 
 /** A usable access token: Meta's long-lived token until it expires, Google's refreshed when stale. */
-const accessToken = (config: AdsConfig, c: ConnectionRow) => Effect.gen(function*() {
+const accessToken = (config: AdsConfig, c: ConnectionRow, force = false) => Effect.gen(function*() {
   if (c.status !== "ACTIVE") return yield* refuse("AdsReauthorizationRequired")
   const cipher = yield* cipherOf(config)
-  const cached = c.access && (c.accessExpiresAt === null || c.accessExpiresAt - 60_000 > Date.now()) ? cipher.decrypt(c.access, `ads:${c.id}:access`) : null
+  const cached = c.access && (c.accessExpiresAt === null || c.accessExpiresAt - 60_000 > Date.now()) && !(force && c.provider !== "meta") ? cipher.decrypt(c.access, `ads:${c.id}:access`) : null
   if (cached) return cached
   if (c.provider === "meta" || !c.refresh) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
   const oauth = yield* googleClientOf(config, c.provider)
@@ -135,6 +135,19 @@ const withToken = <A>(config: AdsConfig, c: ConnectionRow, f: (token: string) =>
   if (result._tag === "Right") return result.right
   if (result.left.kind === "AUTH") { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
   return yield* refuse(reasonOf(result.left))
+})
+
+/**
+ * A health check of one sign-in: Google's grant is refreshed (a revoked grant
+ * fails there), Meta's token is used to read who it belongs to. A refused
+ * sign-in is marked for a new one, exactly as a failed read would.
+ */
+export const checkAdConnection = (accountId: string, connectionId: string) => Effect.gen(function*() {
+  const config = yield* adsConfig
+  const c = yield* connection(accountId, connectionId)
+  if (c.provider !== "meta") return yield* Effect.asVoid(accessToken(config, c, true))
+  const meta = yield* metaOf(config)
+  yield* withToken(config, c, t => metaIdentity(meta, t))
 })
 
 /** The bindings of one provider for a business, the provider's config, and a

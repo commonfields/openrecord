@@ -80,6 +80,10 @@ const markRefused = (businessId: string) => Effect.flatMap(SqlClient.SqlClient, 
 const guarded = <A, E, R>(businessId: string, effect: Effect.Effect<A, E, R>) => effect.pipe(
   Effect.tapError(e => e instanceof WebflowRefused && e.reason === "WebflowAUTH" ? markRefused(businessId).pipe(Effect.ignore) : Effect.void))
 
+/** A health check of the business's Webflow token: it must still read the connected site. A refused one is marked so the person reconnects. */
+export const checkWebflow = (accountId: string, businessId: string) =>
+  guarded(businessId, Effect.flatMap(siteFor(accountId, businessId), ({ connection, token }) => Effect.asVoid(request(token, "GET", `/sites/${connection.siteId}`))))
+
 const Connect = Schema.Struct({ token: Schema.String.pipe(Schema.maxLength(300)), siteId: Schema.optional(Schema.String.pipe(Schema.pattern(WF_ID))) })
 /** Connects the site the token is for. A token for several sites needs the site named: the choices come back, nothing is stored. */
 const connect = (session: Session, businessId: string, input: typeof Connect.Type) => Effect.gen(function*() {
