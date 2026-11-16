@@ -206,6 +206,57 @@ fn mark_bare(t: &Theme, key: &str) -> El {
     }
 }
 
+/// The same accounts and setup flow as Channels, in a compact side-panel list.
+pub fn connections(s: &App, t: &Theme) -> El {
+    let list = col().key("channel-connections").w_full().max_w(420.0).gap(2.0);
+    if s.general || s.active.is_none() {
+        return list.child(label("Start a business chat to connect its channels.", type_::SM, t.muted_foreground).wrap());
+    }
+    if s.channel_setup.is_some() { return super::channel_setup::view(s, t); }
+    let mut list = list;
+    match &s.channel_status {
+        Load::Ready(status) => for r in status.rows() {
+            let unavailable = r.state == Some(State::Unavailable);
+            let key = r.key;
+            let hover_key = format!("connection-{key}");
+            let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
+            let action = match r.state {
+                Some(State::Connected) => "Manage",
+                Some(State::Choose) => "Set up",
+                Some(State::Reconnect) => "Reconnect",
+                Some(State::Unavailable) => "Unavailable",
+                None => "Retry",
+                Some(State::Available) => "Connect",
+            };
+            let act = button(t, &format!("connection-act-{key}"), action, Variant::Ghost)
+                .disabled(unavailable).on_press(move |s: &mut App| {
+                    if unavailable { return; }
+                    if let Some(row) = s.channel_status.ready().and_then(|status| status.rows().find(|r| r.key == key)) {
+                        if row.state.is_none() { s.refresh(); } else { s.open_channel(key); }
+                    }
+                });
+            let card = row().key(hover_key.clone()).w_full().h(44.0).px(10.0).gap(12.0).radius(6.0).center_y()
+                .on_hover_change(super::widgets::track_hover(hover_key))
+                .child(mark_bare(t, r.mark))
+                .child(label(r.title, type_::XS_MEDIUM, t.foreground).grow(1.0).min_w(0.0).truncate())
+                .child(act);
+            list = list.child(super::widgets::highlight(t, card, hovered, false));
+        },
+        Load::Failed(e) => list = list.child(label(e, type_::XS, t.wrong).wrap()),
+        _ => list = list.child(skeleton(t, 3)),
+    }
+    let hovered = s.row_hover.as_deref() == Some("connections-refresh");
+    let refresh = row().key("connections-refresh").w_full().h(44.0).px(10.0).gap(12.0).radius(6.0).center_y()
+        .role("button").label("Check again").focusable(true).cursor(Cursor::Pointer)
+        .on_hover_change(super::widgets::track_hover("connections-refresh".into()))
+        .on_press(|s: &mut App| s.refresh())
+        .child(ico(&icons::REFRESH_CW, 14.0, t.foreground))
+        .child(label("Check again", type_::XS_MEDIUM, t.foreground));
+    col().w_full().items_center().pt(super::agent::home_stack_top(s))
+        .child(list.child(super::widgets::highlight(t, refresh, hovered, false)))
+
+}
+
 /// One account: its mark and name, whether it is connected and to what, what
 /// the agent gets from it, and the one action its state calls for.
 fn channel_row(t: &Theme, _business: &str, r: &Row) -> El {

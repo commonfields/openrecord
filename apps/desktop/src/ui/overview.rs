@@ -41,12 +41,12 @@ pub fn view(s: &App, t: &Theme) -> El {
 
 /// The sections as a segmented control: the chosen one raised on the track.
 fn section_tabs(s: &App, t: &Theme) -> El {
-    let mut track = row().key("section-tabs").h(32.0).padding(2.0).gap(2.0).radius(8.0).fill(t.sidebar).role("tablist").label("Analytics section");
+    let mut track = row().key("section-tabs").w_full().min_w(0.0).flex_wrap().min_h(32.0).padding(2.0).gap(2.0).radius(8.0).fill(t.sidebar).role("tablist").label("Analytics section");
     for sec in Section::ALL {
         let on = s.section == sec;
         let mut tab = row()
             .key(format!("section-{}", sec.key()))
-            .h_full()
+            .h(28.0)
             .px(12.0)
             .radius(6.0)
             .center()
@@ -74,12 +74,12 @@ fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
 /// The 7, 30 and 90 day switch.
 fn periods(s: &App, t: &Theme) -> El {
     // Kobbe's text tabs: plain labels, the chosen one on a soft pill.
-    let mut r = row().h(28.0).gap(2.0).role("radiogroup").label("Time range");
+    let mut r = row().w_full().min_h(28.0).flex_wrap().gap(2.0).role("radiogroup").label("Time range");
     for d in PERIODS {
         let on = s.days == d;
         let mut chip = row()
             .key(format!("period-{d}"))
-            .h_full()
+            .h(28.0)
             .px(10.0)
             .radius(6.0)
             .center()
@@ -126,7 +126,7 @@ fn kpi(t: &Theme, key: &str, name: &str, value: String, hint: Option<String>, de
         .key(key)
         .w(0.0)
         .grow(1.0)
-        .min_w(150.0)
+        .min_w(128.0)
         .px(16.0)
         .py(12.0)
         .gap(4.0)
@@ -205,12 +205,8 @@ fn board(t: &Theme, key: &str, title: &str, sub: Option<String>, height: f32, bo
 }
 
 /// Cards side by side at equal widths, wrapping on narrow windows.
-fn grid(cards: Vec<El>) -> El {
-    let mut r = row().w_full().gap(16.0).items_stretch().flex_wrap();
-    for c in cards {
-        r = r.child(c);
-    }
-    r
+fn grid(s: &App, cards: Vec<El>) -> El {
+    kit::responsive_cols(s, cards)
 }
 
 /// A number from a formatted value ("1,284", "3%", "$1,204.50").
@@ -232,7 +228,7 @@ fn stat_tile(t: &Theme, key: &str, name: &str, value: &str, change: Option<f64>,
         .key(key.to_string())
         .w(0.0)
         .grow(1.0)
-        .min_w(170.0)
+        .min_w(150.0)
         .h(128.0)
         .px(18.0)
         .py(16.0)
@@ -287,7 +283,7 @@ fn summary(s: &App, t: &Theme, i: &Insights) -> El {
         boards.push(questions(t, a, i.days, 340.0));
     }
     if !boards.is_empty() {
-        c = c.child(grid(boards));
+        c = c.child(grid(s, boards));
     }
     if let Ok(a) = &i.analytics {
         let st = discovery::stats(a);
@@ -510,9 +506,9 @@ fn answers(s: &App, t: &Theme, i: &Insights) -> El {
                             .child(label("AI answer details", type_::SM_MEDIUM, t.foreground).role("heading"))
                             .child(label(format!("Which providers answered, what buyers asked, and the sources they cited, last {} days", i.days), type_::XS, t.muted_foreground)),
                     )
-                    .child(kit::cols(vec![discovery::answer_collection(t, &st, i.days), discovery::accuracy_by_model(t, a, &st)]))
-                    .child(kit::cols(vec![questions(t, a, i.days, 0.0), discovery::citations(s, t, a, i.days)]))
-                    .child(kit::cols(vec![ratings(t, a, i.days), facts(t, a)])),
+                    .child(kit::responsive_cols(s, vec![discovery::answer_collection(t, &st, i.days), discovery::accuracy_by_model(t, a, &st)]))
+                    .child(kit::responsive_cols(s, vec![questions(t, a, i.days, 0.0), discovery::citations(s, t, a, i.days)]))
+                    .child(kit::responsive_cols(s, vec![ratings(t, a, i.days), facts(t, a)])),
             );
         }
         Err(e) => c = c.child(panel(t, "answers-failed", "Answer analytics could not load", Some(e.clone()))),
@@ -632,6 +628,7 @@ fn metric_board(s: &App, t: &Theme, key: &str, metrics: &[crate::insights::Metri
         let board = key.to_string();
         strip = strip.child(
             kpi(t, &format!("{key}-kpi-{k}"), &m.label, m.value.clone(), None, d, Some(t.chart.tone(k)), k == picked, None)
+                .min_w((kit::analytics_width(s) - 48.0).clamp(40.0, 128.0))
                 .role("tab")
                 .label(m.label.clone())
                 .checked(k == picked)
@@ -665,7 +662,7 @@ fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
     use crate::insights::Detail;
     let charted = r.metrics.iter().any(|m| m.days.is_some());
     let mut c = col().key(key.to_string()).w_full().gap(16.0)
-        .child(row().w_full().gap(10.0).center_y()
+        .child(row().w_full().gap(10.0).center_y().flex_wrap()
             .child(el().size(8.0, 8.0).radius(4.0).fill(t.supported))
             .child(label(r.title.clone(), type_::BASE_MEDIUM, t.foreground).role("heading"))
             .child(label(r.subtitle.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
@@ -676,12 +673,12 @@ fn report(s: &App, t: &Theme, key: &str, r: &Report) -> El {
         c = c.child(metric_board(s, t, key, &r.metrics[..r.metrics.len().min(4)]));
     } else if !matches!(r.detail, Detail::Local(_)) {
         let tiles: Vec<El> = r.metrics.iter().take(4).enumerate().map(|(k, m)| stat_tile(t, &format!("{key}-metric-{k}"), &m.label, &m.value, m.delta, !m.lower_better)).collect();
-        c = c.child(kit::cols(tiles));
+        c = c.child(kit::responsive_cols(s, tiles));
     }
     match &r.detail {
         Detail::Search { queries, pages } => c = c.child(crate::ui::sources::search(s, t, key, queries, pages)),
-        Detail::Ads(d) => c = c.child(crate::ui::sources::ads(t, key, d)),
-        Detail::Local(d) => c = c.child(crate::ui::sources::local(t, key, d)),
+        Detail::Ads(d) => c = c.child(crate::ui::sources::ads(s, t, key, d)),
+        Detail::Local(d) => c = c.child(crate::ui::sources::local(s, t, key, d)),
         Detail::None => {
             if let Some((head, rows)) = &r.table {
                 let mut ranked: Vec<(String, f64, String)> = rows.iter().filter_map(|row_| {
@@ -779,7 +776,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .key("revenue-hero")
         .w(0.0)
         .grow(2.0)
-        .min_w(420.0)
+        .min_w(420.0_f32.min(kit::analytics_width(s)))
         .h(432.0)
         .px(24.0)
         .py(20.0)
@@ -787,12 +784,12 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .child(row().w_full().gap(8.0).center_y()
             .child(label("Net revenue", type_::SM_MEDIUM, t.muted_foreground))
             .child(el().grow(1.0))
-            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(4.0).fill(t.supported)).child(label(format!("Stripe, {}", r.account), type_::XS, t.muted_foreground))))
+            .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(4.0).fill(t.supported)).child(label(format!("Stripe, {}", r.account), type_::XS, t.muted_foreground).truncate().min_w(0.0))))
         .child(label(money(r.net.0), rune::TextStyle::new(34.0, 600.0).lh(42.0).features("'tnum' 1"), t.figure))
         .child(pill)
         .child(el().h(10.0))
         .child(charts::area_trend(s, t, charts::Trend::new("revenue-daily", "Net revenue", &dates, &values, t.chart.tone(1)).compare(&before, "Period before".into()).height(220.0).width_hint(760.0)))
-        .child(row().gap(16.0).pt(4.0)
+        .child(row().w_full().gap(16.0).pt(4.0).flex_wrap()
             .child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(t.chart.tone(1))).child(label("Each day", type_::XS11, t.muted_foreground)))
             .child(charts::dotted_label(t, "Same day, period before")));
 
@@ -806,7 +803,7 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
         .key("revenue-split")
         .w(0.0)
         .grow(1.0)
-        .min_w(300.0)
+        .min_w(300.0_f32.min(kit::analytics_width(s)))
         .h(432.0)
         .px(24.0)
         .py(20.0)
@@ -825,11 +822,12 @@ fn revenue(s: &App, t: &Theme, i: &Insights) -> El {
             .child(label(if r.gross.0 > 0.0 { format!("{:.1}%", r.refunded.0 / r.gross.0 * 100.0) } else { "—".into() }, rune::TextStyle::new(22.0, 600.0).lh(28.0).features("'tnum' 1"), t.figure)));
 
     let opt = |x: Option<f64>| x.unwrap_or(0.0);
-    let tiles = row().w_full().gap(16.0).flex_wrap()
-        .child(stat_tile(t, "rev-orders", "Orders", &crate::insights::int(r.orders.0), change(r.orders.0, r.orders.1), true))
-        .child(stat_tile(t, "rev-average", "Average order", &r.average.0.map(money).unwrap_or_else(|| "—".into()), r.average.0.zip(r.average.1).and_then(|(a, b)| change(a, b)), true))
-        .child(stat_tile(t, "rev-paying", "Paying customers", &crate::insights::int(r.paying.0), change(r.paying.0, r.paying.1), true))
-        .child(stat_tile(t, "rev-new", "New customers", &r.new_customers.0.map(crate::insights::int).unwrap_or_else(|| "—".into()), change(opt(r.new_customers.0), opt(r.new_customers.1)), true));
+    let tiles = kit::responsive_cols(s, vec![
+        stat_tile(t, "rev-orders", "Orders", &crate::insights::int(r.orders.0), change(r.orders.0, r.orders.1), true),
+        stat_tile(t, "rev-average", "Average order", &r.average.0.map(money).unwrap_or_else(|| "—".into()), r.average.0.zip(r.average.1).and_then(|(a, b)| change(a, b)), true),
+        stat_tile(t, "rev-paying", "Paying customers", &crate::insights::int(r.paying.0), change(r.paying.0, r.paying.1), true),
+        stat_tile(t, "rev-new", "New customers", &r.new_customers.0.map(crate::insights::int).unwrap_or_else(|| "—".into()), change(opt(r.new_customers.0), opt(r.new_customers.1)), true),
+    ]);
     let mut c = col().w_full().gap(16.0).child(row().w_full().gap(16.0).items_stretch().flex_wrap().child(hero).child(split)).child(tiles);
     if let Some(n) = &r.note {
         c = c.child(label(n.clone(), type_::XS, t.muted_foreground).wrap());
@@ -912,7 +910,8 @@ fn funnel(s: &App, t: &Theme, i: &Insights) -> El {
     col().w_full().gap(16.0)
         .child(card(t).key("funnel").w_full().px(28.0).py(28.0).gap(20.0)
             .child(col().gap(2.0).child(label(format!("The last {} days", i.days), type_::SM_MEDIUM, t.foreground).role("heading")).child(label("From being seen to paying, step by step", type_::XS, t.muted_foreground)))
-            .child(row().w_full().gap(20.0).items_start().justify_center().child(labels.child(el())).child(shape).child(values)))
+            .child(row().key("funnel-diagram-scroll").w_full().min_w(0.0).scroll_x()
+                .child(row().key("funnel-diagram").min_w(860.0).grow(1.0).gap(20.0).items_start().justify_center().child(labels.child(el())).child(shape).child(values))))
         .child(label("Each step comes from its own source and counts in its own way, so the steps are not the same people followed through. Read the rates as a guide, not an exact conversion rate.", type_::XS, t.muted_foreground).wrap())
         .child(crate::ui::sources::funnel(s, t, i, &steps))
 }
@@ -992,7 +991,7 @@ fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
                         .child(label("Online visitors", type_::SM_MEDIUM, t.foreground).role("heading"))
                         .child(label(format!("{} online now, last 30 minutes, {located} {}", crate::insights::int(r.active), if located == 1 { "location" } else { "locations" }), type_::XS, t.muted_foreground)),
                 )
-                .child(label("Pinch or ⌘ and scroll to zoom, drag to move", type_::XS11, t.muted_foreground)),
+                .child(label("Pinch or ⌘ and scroll to zoom, drag to move", type_::XS11, t.muted_foreground).wrap().min_w(0.0)),
         )
         .child(crate::ui::world::view(s, t, 520.0, &r.countries));
 
@@ -1045,5 +1044,5 @@ fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
     }
     let minutes_card = kit::panel(t, "rt-minutes", "Each minute", Some("Active people, the last 30 minutes, newest on the right".into()), None, 0.0,
         col().w_full().gap(8.0).child(minutes).child(row().w_full().child(label("30 min ago", type_::AXIS, t.chart.axis)).child(el().grow(1.0)).child(label("now", type_::AXIS, t.chart.axis))));
-    col().w_full().gap(16.0).child(strip).child(map).child(kit::cols(vec![activity, countries])).child(minutes_card)
+    col().w_full().gap(16.0).child(strip).child(map).child(kit::responsive_cols(s, vec![activity, countries])).child(minutes_card)
 }

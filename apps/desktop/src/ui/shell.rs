@@ -215,8 +215,8 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resize {
     Sidebar,
+    Inbox,
     Helper,
-    AgentPane,
 }
 
 /// The sidebar's right edge: drag to resize between the web's 224 and 448
@@ -308,7 +308,7 @@ fn workspace_links(s: &App, t: &Theme) -> El {
     if !s.sidebar_full() {
         links = links.items_center();
     }
-    let home = s.view == View::Agent && s.chat_id.is_none() && !s.general;
+    let home = s.home && s.view == View::Agent && s.chat_id.is_none() && !s.general;
     links = links.child(nav_link(s, t, "home", &icons::NAV_HOME, "Home", home, 0).on_press(|s: &mut App| s.go_home()));
     if s.active.is_none() {
         return links;
@@ -532,7 +532,8 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
         let chat_title = s.chat_id.as_ref().and_then(|id| s.chats.iter().find(|c| &c.id == id)).and_then(|c| c.title.clone()).filter(|x| !x.is_empty());
         let here = match s.view {
             View::Agent if s.general => "General chat",
-            View::Agent if s.chat_id.is_none() => "Home",
+            View::Agent if s.chat_id.is_none() && s.home => "Home",
+            View::Agent if s.chat_id.is_none() => "New chat",
             View::Agent => chat_title.as_deref().unwrap_or("Chat"),
             View::Workspace => s.page.label(),
         };

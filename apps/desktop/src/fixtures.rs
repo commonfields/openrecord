@@ -331,6 +331,7 @@ pub fn agent_commands(s: &mut App) {
     agent(s);
     s.playbooks = playbooks();
     s.composer.replace_text("/");
+    s.adopt_draft();
     s.command_index = 5;
 }
 
@@ -338,6 +339,7 @@ pub fn agent_commands(s: &mut App) {
 pub fn agent_actions(s: &mut App) {
     agent(s);
     s.composer.replace_text("Write a weekly summary of Northstar Analytics's sign-ups.");
+    s.adopt_draft();
     s.chat_actions = true;
 }
 
@@ -377,6 +379,12 @@ pub fn agent_followups(s: &mut App) {
         .expect("fixture follow-ups"),
     );
     s.followups_open = true;
+}
+
+/// A newly opened business session, without Home's animated starters.
+pub fn agent_session(s: &mut App) {
+    agent_empty(s);
+    s.new_chat();
 }
 
 /// A turn that failed: its note and Retry.
@@ -518,7 +526,7 @@ pub fn overview_agent(s: &mut App) {
     s.catalog = Load::Ready(models());
     s.agent_model = Some("i1:claude-sonnet-5-5".into());
     s.conversation = Load::Ready(Conversation { id: "c1".into(), title: Some("Next step for the pricing page".into()), revision: 2, messages: chat_messages(), session: None });
-    s.open_pane(Some("Why did visits from AI assistants dip last week?"));
+    s.ask_agent("Why did visits from AI assistants dip last week?");
 }
 
 fn section(s: &mut App, sec: Section) {
@@ -914,11 +922,35 @@ pub fn campaigns(s: &mut App) {
             ..Default::default()
         },
     ]);
+    if let Load::Ready(list) = &mut s.campaigns {
+        for c in list {
+            c.brief = json!({
+                "title":c.title,"goal":c.goal,"audience":c.audience,"offer":c.offer,"message":c.message,"hypothesis":c.hypothesis,
+                "metric":c.metric,"baseline":c.baseline,"target":c.target,"owner":c.owner,"launchDate":c.launch_date,"reviewDate":c.review_date,
+                "status":c.status,"result":c.result,"decision":c.decision,"learning":c.learning,"nextMove":c.next_move,
+                "tasks":c.tasks.iter().map(|x| json!({"id":x.id,"title":x.title,"owner":x.owner,"due":x.due,"channel":x.channel,"status":x.status,"note":x.note})).collect::<Vec<_>>(),
+                "distribution":{"primaryChannel":c.channel,"rationale":c.rationale,"destination":c.destination,"motion":c.motion,"funnelStage":c.funnel_stage,
+                    "budget":c.budget,"cadence":c.cadence,"conversionEvent":c.conversion_event,"trackingPlan":c.tracking_plan}
+            });
+        }
+    }
 }
 
 pub fn campaign_open(s: &mut App) {
     campaigns(s);
+    if let Load::Ready(list) = &mut s.campaigns {
+        if let Some(c) = list.first_mut() {
+            c.budget = "Suggested paid media budget: $0; staff time is allocated to the landing page, email sequence and follow-up. Confirm owners before launch.".into();
+            c.brief["budget"] = json!(c.budget);
+        }
+    }
     s.campaign_open = s.campaigns.ready().and_then(|l| l.first().map(|c| c.id.clone()));
+    s.campaign_run_id = s.campaign_open.clone();
+    s.campaign_runs = Load::Ready(vec![crate::api::CampaignRun {
+        campaign_revision: 4, status: "WAITING_FOR_APPROVAL".into(), stale: false,
+        tasks: vec![crate::api::CampaignRunTask { title: "Pricing guide".into(), state: "WAITING_FOR_APPROVAL".into(), next: "Review the exact linked WordPress change before publication.".into() },
+            crate::api::CampaignRunTask { title: "Email the trial list".into(), state: "HUMAN_HANDOFF".into(), next: "Give the owner the draft and channel handoff.".into() }],
+    }]);
 }
 
 pub fn ai_answers(s: &mut App) {
@@ -1252,4 +1284,44 @@ pub fn agent_feedforward(s: &mut App) {
     s.draft_key = format!("{}:{}", s.chat_scope().unwrap_or_default(), s.chat_id.clone().unwrap_or_default());
     s.drafts.set(&s.draft_key.clone(), text);
     s.composer_seen = (text.into(), std::time::Instant::now() - std::time::Duration::from_secs(2));
+}
+
+
+pub fn campaign_brief(s: &mut App) {
+    campaigns(s);
+    s.edit_campaign(None);
+    let e = s.campaign_editor.as_mut().unwrap();
+    for (i,text) in ["Mid-market process audit", "Generate qualified demo requests from operations teams in four weeks", "Operations leaders at 50–500 person companies with manual handoffs", "Qualified demos recorded in the CRM", "18 qualified demos in the previous four weeks", "40 qualified demos in four weeks"].iter().enumerate() { e.fields[i].replace_text(*text); }
+}
+
+/// A confirmed weekly schedule and a saved edit, for composer controls.
+pub fn agent_scheduled(s: &mut App) {
+    agent(s);
+    s.brief_schedule.value = Load::Ready(Some(crate::brief_schedule::Schedule { enabled: true, next_run_at: "2026-11-23T09:00:00Z".into(), conversation_id: Some("c1".into()) }));
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.last_mut().unwrap().artifacts.push(crate::chat::ArtifactRef { id: "fixture-edit".into(), title: "Landing page".into(), kind: "LANDING_PAGE".into(), format: "HTML".into(), version: 2 });
+    }
+}
+
+pub fn agent_schedule_elsewhere(s: &mut App) {
+    agent_scheduled(s);
+    if let Load::Ready(Some(schedule)) = &mut s.brief_schedule.value { schedule.conversation_id = Some("another-session".into()); }
+}
+
+pub fn agent_schedule_off(s: &mut App) {
+    agent_scheduled(s);
+    if let Load::Ready(Some(schedule)) = &mut s.brief_schedule.value { schedule.enabled = false; }
+}
+
+pub fn agent_timeline(s: &mut App) {
+    agent(s);
+    if let Load::Ready(c) = &mut s.conversation {
+        c.messages.clear();
+        for i in 1..=16 {
+            c.messages.push(Message::user(format!("Review campaign step {i} and explain what to do next.")));
+            let mut reply = Message::user(format!("## Step {i}\n\n{}", "Read the saved campaign criteria, check the evidence, and prepare the next deliverable for review.\n\n".repeat(4)));
+            reply.role = "agent".into();
+            c.messages.push(reply);
+        }
+    }
 }

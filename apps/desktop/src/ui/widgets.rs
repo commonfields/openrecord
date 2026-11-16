@@ -82,6 +82,7 @@ pub enum Variant {
 
 /// The web's `Button` (`components/ui/button.tsx`): 28 points tall, 6-point
 /// corners, 13-point medium text, 12 points either side.
+/// Lift the label one point so its visible letters sit at the optical center.
 pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
     let (fill, hover, ink) = match variant {
         Variant::Primary => (t.primary, t.primary.alpha(0.9), t.primary_foreground),
@@ -103,7 +104,7 @@ pub fn button(t: &Theme, key: &str, text_: &str, variant: Variant) -> El {
         .hover(hover)
         .press(hover)
         .motion(HOVER)
-        .child(label(text_, rune::TextStyle::new(13.0, 500.0).lh(18.0), ink));
+        .child(label(text_, rune::TextStyle::new(13.0, 500.0).lh(18.0), ink).offset(0.0, -1.0));
     match variant {
         Variant::Primary => shadows(b, &t.primary_shadow),
         Variant::Outline => shadows(b, &t.control_shadow),

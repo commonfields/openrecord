@@ -355,6 +355,7 @@ pub struct App {
     pub signin_error: Option<String>,
     pub signing_in: bool,
     /// Home's rolling starters: the one in focus, when it took the focus, and whether the pointer holds them.
+    pub home: bool,
     pub starter: usize,
     pub starter_at: std::time::Instant,
     pub starter_hover: bool,
@@ -389,6 +390,9 @@ pub struct App {
     pub campaign_filter: String,
     /// The Campaigns page's campaign open, by id.
     pub campaign_open: Option<String>,
+    pub campaign_editor: Option<crate::campaign_edit::Editor>,
+    pub campaign_run_id: Option<String>,
+    pub campaign_runs: Load<Vec<crate::api::CampaignRun>>,
     /// The account pages: usage and its period, the businesses and clients
     /// lists, and the search and order those lists are in.
     pub usage: Load<crate::account::Usage>,
@@ -436,14 +440,17 @@ pub struct App {
     /// The "/" menu: the playbooks it offers and the highlighted entry.
     pub playbooks: Vec<crate::chat::Playbook>,
     pub command_index: usize,
+    pub timeline: crate::timeline::State,
     /// The composer's "+" menu and the dialogs it opens.
     pub chat_actions: bool,
     /// The chat box whose "+", model or reasoning menu is open, to anchor it there.
     pub composer_slot: ComposerSlot,
+    pub composer_widths: [f32; 2],
     pub save_playbook: Option<SavePlaybook>,
     pub share: Option<ShareChat>,
     /// Automatic follow-ups for the business on screen, and their dialog.
     pub followups: Load<crate::followups::Followups>,
+    pub brief_schedule: crate::brief_schedule::State,
     pub followups_open: bool,
     /// The model the confirmation would allow, while it asks.
     pub followup_confirm: Option<crate::followups::Model>,
@@ -455,14 +462,6 @@ pub struct App {
     pub settle_next: bool,
     /// A background look at the open chat is out (a pending turn, or a newer revision).
     pub syncing: bool,
-    /// The agent open in its pane beside a workspace page (`WorkspaceAgentProvider`).
-    pub pane: bool,
-    /// The pane's share of the space beside the sidebar, 30 to 70 percent.
-    pub pane_split: f32,
-    /// That space's width, measured.
-    pub pane_row_w: f32,
-    /// The pane folded the sidebar away when it opened, and gives it back on close.
-    pub pane_folded_sidebar: bool,
     /// When the open chat was last looked at in the background.
     pub synced_at: std::time::Instant,
     /// The business's agent proposals, for the chat's work pane.
@@ -596,6 +595,7 @@ impl App {
             password: TextEdit::new("").secure(),
             signin_error: None,
             signing_in: false,
+            home: true,
             starter: 0,
             starter_at: std::time::Instant::now(),
             starter_hover: false,
@@ -621,6 +621,9 @@ impl App {
             campaigns: Load::Idle,
             campaign_filter: String::new(),
             campaign_open: None,
+            campaign_editor: None,
+            campaign_run_id: None,
+            campaign_runs: Load::Idle,
             usage: Load::Idle,
             usage_days: 30,
             portfolio: Load::Idle,
@@ -665,10 +668,6 @@ impl App {
             preview_rect: None,
             settle_next: false,
             syncing: false,
-            pane: false,
-            pane_split: PANE_DEFAULT,
-            pane_row_w: 0.0,
-            pane_folded_sidebar: false,
             synced_at: std::time::Instant::now(),
             new_chat: None,
             find: None,
@@ -676,13 +675,16 @@ impl App {
             row_hover: None,
             playbooks: Vec::new(),
             followups: Load::Idle,
+            brief_schedule: crate::brief_schedule::State::default(),
             followups_open: false,
             followup_confirm: None,
             followup_saving: false,
             followup_error: None,
             command_index: 0,
+            timeline: crate::timeline::State::default(),
             chat_actions: false,
             composer_slot: ComposerSlot::Main,
+            composer_widths: [0.0; 2],
             save_playbook: None,
             share: None,
             open_logs: Default::default(),
@@ -771,6 +773,24 @@ impl App {
     }
 
     // ---- Actions --------------------------------------------------------
+
+    fn inbox_read_scope(&self) -> String {
+        serde_json::to_string(&(api_base(), &self.account_email)).expect("Inbox account scope")
+    }
+
+    pub fn decision_opened(&self, d: &Decision) -> bool {
+        self.prefs.inbox_opened(&self.inbox_read_scope(), &d.business_id, &d.key)
+    }
+
+    /// Called only once the message has actually been laid out in the Inbox.
+    pub fn mark_decision_opened(&mut self, key: &str) {
+        let Some(d) = self.open_decision().filter(|d| d.key == key) else { return };
+        let (business, key) = (d.business_id.clone(), d.key.clone());
+        let scope = self.inbox_read_scope();
+        if self.prefs.open_inbox_item(&scope, &business, &key) {
+            self.prefs.save();
+        }
+    }
 
     pub fn select_decision(&mut self, key: &str) {
         if self.decision.as_deref() != Some(key) {
@@ -907,14 +927,22 @@ impl App {
         if self.active.as_deref() == Some(id) {
             return;
         }
+        if self.campaign_editor.as_ref().is_some_and(|e| e.busy || e.dirty()) {
+            if let Some(e) = &mut self.campaign_editor { e.error = Some("Save or discard your campaign brief before switching businesses.".into()); }
+            self.open_campaign_document();
+            self.page = Page::Campaigns;
+            self.view = View::Workspace;
+            return;
+        }
+        self.campaign_editor = None;
         self.active = Some(id.to_string());
-        // Another business closes the pane: it belongs to the business it opened on.
-        self.close_pane();
         self.overview = Load::Idle;
         self.issues = Load::Idle;
         self.channels = Load::Idle;
         self.close_channel();
         self.campaigns = Load::Idle;
+        self.campaign_run_id = None;
+        self.campaign_runs = Load::Idle;
         self.answer = None;
         self.campaign_open = None;
         self.insights = Load::Idle;
@@ -930,6 +958,10 @@ impl App {
         self.net.proposals(id.to_string());
         self.followups = Load::Loading;
         self.net.followups(id.to_string());
+        self.brief_schedule.value = Load::Idle;
+        self.brief_schedule.saving = false;
+        self.brief_schedule.error = None;
+        self.refresh_brief_schedule();
         self.load_business();
     }
 
@@ -942,9 +974,6 @@ impl App {
 
     pub fn show_view(&mut self, view: View) {
         if view == View::Agent { self.close_channel(); }
-        if view == View::Agent {
-            self.close_pane();
-        }
         self.view = view;
         if view == View::Workspace {
             self.load_page();
@@ -953,7 +982,7 @@ impl App {
 
     pub fn show_section(&mut self, section: Section) {
         self.section = section;
-        if self.page != Page::Overview || self.view != View::Workspace {
+        if (self.page != Page::Overview || self.view != View::Workspace) && !(self.view == View::Agent && matches!(self.side_tab(), crate::side::SideTab::Analytics | crate::side::SideTab::Page(Page::Overview))) {
             self.show_page(Page::Overview);
         }
     }
@@ -1102,7 +1131,7 @@ impl App {
     /// Fetches what the page on screen shows, every time it opens, as the
     /// web pages do on mount.
     fn load_page(&mut self) {
-        if self.view != View::Workspace {
+        if self.view != View::Workspace && !matches!(self.side_tab(), crate::side::SideTab::Page(_)) {
             return;
         }
         // The account pages need no business.
@@ -1139,7 +1168,12 @@ impl App {
             }
             Page::Campaigns => {
                 self.campaigns = keep_or_load(&self.campaigns);
-                self.net.campaigns(id);
+                self.net.campaigns(id.clone());
+                if let Some(campaign) = self.campaign_open.clone() {
+                    self.campaign_run_id = Some(campaign.clone());
+                    self.campaign_runs = Load::Loading;
+                    self.net.campaign_runs(id, campaign);
+                }
             }
             Page::AiAnswers => {
                 self.issues = keep_or_load(&self.issues);
@@ -1266,6 +1300,7 @@ impl App {
     /// Fetches everything on screen again: the account's lists, the business's
     /// counts, the page and the open chat.
     pub fn refresh(&mut self) {
+        self.refresh_brief_schedule();
         self.net.workspace();
         if let Some(b) = self.active.clone() {
             self.net.overview(b.clone());
@@ -1350,46 +1385,37 @@ impl App {
         }
     }
 
-    /// Hands the agent a request, as the web's "Ask the agent" links do: the
-    /// business's current conversation opens with it typed in, never sent until
-    /// the person sends it. On a workspace page it opens in the pane beside the
-    /// page; elsewhere in the Agent view.
+    /// Opens a saved campaign and reloads its scoped delivery evidence.
+    pub fn open_campaign(&mut self, id: &str) {
+        self.campaign_open = Some(id.into());
+        self.campaign_run_id = Some(id.into());
+        self.campaign_runs = Load::Loading;
+        if let Some(b) = self.active.clone() { self.net.campaign_runs(b, id.into()); }
+    }
+
+    /// Starts a fresh main chat with a request ready to send. The originating
+    /// business page stays open as a tab beside it; no request is sent here.
     pub fn ask_agent(&mut self, request: &str) {
-        self.close_channel();
-        if self.pane_allowed() {
-            self.open_pane(Some(request));
-            return;
-        }
-        self.business_chat();
-        self.enter_agent();
+        let origin = if self.view == View::Workspace {
+            Some(self.page)
+        } else if self.side_shown() {
+            match self.side_tab() {
+                crate::side::SideTab::Page(page) => Some(page),
+                crate::side::SideTab::Analytics => Some(Page::Overview),
+                _ => None,
+            }
+        } else { None }.filter(|page| self.active.is_some() && !page.account());
+        self.sync_draft();
+        self.new_chat();
+        self.sync_draft();
         self.composer.replace_text(request);
-    }
-
-    /// A general chat or a helper session on screen gives way to a new chat
-    /// about the business; the business's own chat stays.
-    fn business_chat(&mut self) {
-        let helper = self.conversation.ready().is_some_and(|c| c.session.as_ref().is_some_and(|i| i.parent_session_id.is_some()));
-        if self.general || helper || self.active.is_none() {
-            let view = self.view;
-            self.new_chat();
-            self.view = view;
+        if let Some(page) = origin {
+            self.open_page_tab(page);
         }
     }
 
-    /// Whether the page on screen is one the agent pane can open beside: a
-    /// business's workspace page, not an account page.
-    pub fn pane_allowed(&self) -> bool {
-        self.view == View::Workspace && self.active.is_some() && !self.page.account() && self.settings.is_none()
-    }
-
-    /// Whether the agent pane is on screen.
-    pub fn pane_shown(&self) -> bool {
-        self.pane && self.pane_allowed()
-    }
-
-    /// Whether a conversation is on screen, full or in the pane.
     pub fn chat_shown(&self) -> bool {
-        (self.view == View::Agent && (self.active.is_some() || self.general)) || self.pane_shown()
+        self.view == View::Agent && (self.active.is_some() || self.general)
     }
 
     /// How large the interface draws: everything inside the window is laid out in
@@ -1419,44 +1445,7 @@ impl App {
         self.sidebar_peek = false;
     }
 
-    /// Opens the agent beside the page, with a request typed in when there is
-    /// one. The sidebar folds away so the page keeps its room.
-    pub fn open_pane(&mut self, request: Option<&str>) {
-        self.menu = None;
-        self.business_chat();
-        if !self.pane {
-            self.pane = true;
-            if self.sidebar_open {
-                self.sidebar_open = false;
-                self.pane_folded_sidebar = true;
-            }
-        }
-        if let Some(r) = request {
-            self.composer.replace_text(r);
-        }
-        if let (Some(scope), Some(id)) = (self.chat_scope(), self.chat_id.clone()) {
-            if self.conversation.ready().is_none_or(|c| c.id != id) && !matches!(self.conversation, Load::Loading) {
-                self.conversation = Load::Loading;
-                self.syncing = true;
-                self.net.sync(scope, id);
-            }
-        }
-    }
-
-    /// Closes the pane and gives the sidebar back if the pane folded it.
-    pub fn close_pane(&mut self) {
-        if !self.pane {
-            return;
-        }
-        self.pane = false;
-        if std::mem::take(&mut self.pane_folded_sidebar) {
-            self.sidebar_open = true;
-        }
-    }
-
-    /// Goes to the full Agent view; the pane gives way to it.
     fn enter_agent(&mut self) {
-        self.close_pane();
         self.view = View::Agent;
     }
 
@@ -1473,10 +1462,12 @@ impl App {
     pub fn go_home(&mut self) {
         self.menu = None;
         self.new_chat();
+        self.home = true;
         self.net.decisions();
     }
 
     pub fn new_chat(&mut self) {
+        self.home = false;
         self.enter_agent();
         self.general = false;
         self.chat_id = None;
@@ -1883,8 +1874,14 @@ impl App {
         let n = entries.len();
         let at = self.command_index.min(n - 1);
         match ev.key {
-            rune::Key::Down => self.command_index = (at + 1) % n,
-            rune::Key::Up => self.command_index = (at + n - 1) % n,
+            rune::Key::Down => {
+                self.command_index = (at + 1) % n;
+                tx.scroll_into_view(format!("command-{}", entries[self.command_index].id()));
+            }
+            rune::Key::Up => {
+                self.command_index = (at + n - 1) % n;
+                tx.scroll_into_view(format!("command-{}", entries[self.command_index].id()));
+            }
             rune::Key::Tab => {
                 self.composer.replace_text(&format!("/{}", entries[at].name()));
                 self.command_index = 0;
@@ -1960,11 +1957,20 @@ impl App {
         self.net.configure_followups(b, None);
     }
 
+    /// Prepare a supported command without sending or losing the current draft.
+    pub fn prepare_composer_command(&mut self, command: &str) {
+        if !crate::chat::COMMANDS.iter().any(|(name, _)| *name == command) { return; }
+        self.chat_actions = false;
+        let draft = match self.composer_slot { ComposerSlot::Main => &mut self.composer, ComposerSlot::Side => &mut self.side.composer };
+        let request = format!("/{command} {}", draft.text.trim());
+        draft.replace_text(&request);
+    }
+
     pub fn open_save_playbook(&mut self, tx: &mut Tx) {
         self.chat_actions = false;
         // A playbook is for every business: this business's name becomes {business}.
-        let mut prompt = self.composer.text.trim().to_string();
-        if let Some(b) = self.active_business().map(|b| b.name.clone()).filter(|b| !b.is_empty()) {
+        let mut prompt = match self.composer_slot { ComposerSlot::Main => &self.composer, ComposerSlot::Side => &self.side.composer }.text.trim().to_string();
+        if let Some(b) = self.active_business().filter(|_| !self.general).map(|b| b.name.clone()).filter(|b| !b.is_empty()) {
             prompt = prompt.replace(&b, "{business}");
         }
         self.save_playbook = Some(SavePlaybook { title: TextEdit::new(""), name: TextEdit::new(""), prompt: TextEdit::new(&prompt), busy: false, error: None });
@@ -1972,7 +1978,7 @@ impl App {
     }
 
     pub fn submit_playbook(&mut self) {
-        let business = self.active.clone();
+        let business = if self.general { None } else { self.active.clone() };
         let Some(f) = &mut self.save_playbook else { return };
         let name = f.command();
         let prompt = f.prompt.text.trim().to_string();
@@ -2065,6 +2071,14 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// Makes the composer's current text the open chat's draft, so the next
+    /// sync keeps it rather than restoring an older one.
+    pub fn adopt_draft(&mut self) {
+        self.draft_key = format!("{}:{}", self.chat_scope().unwrap_or_else(|| "general".into()), self.chat_id.clone().unwrap_or_else(|| "new".into()));
+        let (k, text) = (self.draft_key.clone(), self.composer.text.clone());
+        self.drafts.set(&k, &text);
     }
 
     /// Keeps the composer's text as the draft of the chat it belongs to: on a
@@ -2206,7 +2220,7 @@ impl App {
             changed = true;
         }
         // Home's starters turn one step each interval while nothing holds them.
-        let home = self.screen == Screen::Workspace && self.view == View::Agent && self.chat_id.is_none() && !self.general && self.active.is_some() && matches!(self.turn, Turn::Idle);
+        let home = self.home && self.screen == Screen::Workspace && self.view == View::Agent && self.chat_id.is_none() && !self.general && self.active.is_some() && matches!(self.turn, Turn::Idle);
         if home && !self.starter_hover && !self.prefs.reduce_motion && self.settings.is_none() && rune::tooling::headless_run().is_none() {
             let held = self.starter_at.elapsed();
             if held >= crate::ui::ROLL_EVERY {
@@ -2367,6 +2381,29 @@ impl App {
             Reply::Facts(..) => {}
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
+            Reply::CampaignRuns(b, id, r) if here(self, &b) && self.campaign_run_id.as_deref() == Some(id.as_str()) => self.campaign_runs = to_load(self.failed(r)),
+            Reply::CampaignSaved { business, id, result } => {
+                if matches!(result, Err(ApiError::Unauthorized)) {
+                    self.signed_out(Some(ApiError::Unauthorized.message()));
+                } else if here(self, &business) && self.campaign_editor.as_ref().is_some_and(|e| e.id == id && e.business == business) {
+                    match result {
+                        Ok(saved) => {
+                            if let Load::Ready(list) = &mut self.campaigns {
+                                if let Some(c) = list.iter_mut().find(|c| c.id == id) { *c = saved; }
+                                else { list.insert(0, saved); }
+                            }
+                            self.open_campaign(&id);
+                            self.campaign_editor = None;
+                            self.close_tab(&crate::side::SideTab::CampaignBrief);
+                            self.net.campaigns(business);
+                        }
+                        Err(e) => if let Some(editor) = &mut self.campaign_editor {
+                            editor.busy = false;
+                            editor.error = Some(crate::campaign_edit::save_error(&e));
+                        },
+                    }
+                }
+            }
             Reply::Usage(days, r) if days == self.usage_days => self.usage = to_load(self.failed(r)),
             Reply::Usage(..) => {}
             Reply::SetupStarted(r) => match r {
@@ -2804,6 +2841,35 @@ impl App {
                 }
             }
             Reply::Followups { .. } => {}
+            Reply::BriefSchedule { business, generation, changed, result } => {
+                if here(self, &business) && generation == self.brief_schedule.generation {
+                    let result = self.failed(result);
+                    self.brief_schedule_loaded(&business, generation, changed, result);
+                }
+            }
+            Reply::BriefScheduleControl { business, generation, origin, result } => {
+                if !here(self, &business) || generation != self.brief_schedule.generation { return; }
+                match self.failed(result) {
+                    Ok(control) => {
+                        self.brief_schedule_loaded(&business, generation, true, Ok(Some(control.schedule)));
+                        if !self.general && self.chat_id == origin && matches!(self.turn, Turn::Idle) {
+                            let new = self.chat_id.is_none();
+                            self.chat_id = Some(control.conversation.id.clone());
+                            if new { self.adopt_side(); }
+                            self.home = false;
+                            self.conversation = Load::Ready(control.conversation);
+                            self.turn = Turn::Working { message: control.message, request: Some(control.request), progress: Default::default(), started: std::time::Instant::now(), stopping: false };
+                            tx.scroll_to_bottom("transcript");
+                        }
+                        self.net.chats();
+                    }
+                    Err(error) if !error.is_empty() => {
+                        self.notice = Some(format!("Could not confirm the weekly brief change: {error}"));
+                        self.brief_schedule_loaded(&business, generation, true, Err(error));
+                    }
+                    Err(_) => {}
+                }
+            }
             Reply::Shares { conversation, created, list } => {
                 let list = self.failed(list);
                 let created = created.map(|r| self.failed(r));
@@ -2849,6 +2915,7 @@ impl App {
             | Reply::Issues(..)
             | Reply::Channels(..)
             | Reply::Campaigns(..)
+            | Reply::CampaignRuns(..)
             | Reply::Conversation(..)
             | Reply::Branched(..)
             | Reply::TurnQueued { .. } => {}
@@ -2875,9 +2942,6 @@ impl App {
         list
     }
 }
-
-/// The agent pane's share when it first opens, and on a double-click of its edge.
-pub const PANE_DEFAULT: f32 = 50.0;
 
 /// Whether a helper session the chat started is still working: each task's
 /// latest status, since a later message (its posted result) supersedes the

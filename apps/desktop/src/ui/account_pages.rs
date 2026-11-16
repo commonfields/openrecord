@@ -10,7 +10,7 @@ use crate::insights::{PERIODS, int};
 use crate::state::{App, Load, PortfolioSort};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::kit::{self, Column, column};
-use crate::ui::widgets::{Variant, button, empty_state, failure, ico, label, page_header, skeleton, status_chip};
+use crate::ui::widgets::{CONTROL, Variant, button, empty_state, failure, ico, label, page_header, skeleton, status_chip};
 
 fn tokens(v: Option<f64>) -> String {
     match v {
@@ -193,14 +193,6 @@ pub fn businesses(s: &App, t: &Theme) -> El {
         Load::Failed(e) => return col().w_full().gap(24.0).child(top).child(failure(t, "portfolio-failed", e, |s: &mut App| s.refresh())),
         _ => return col().w_full().gap(24.0).child(top).child(skeleton(t, 3)),
     };
-    let sum = |f: fn(&crate::api::Overview) -> i64| list.iter().filter_map(|p| p.overview.as_ref()).map(f).sum::<i64>();
-    let never = list.iter().filter(|p| p.overview.as_ref().is_none_or(|o| o.last_checked.is_none())).count();
-    let strip = kit::cols(vec![
-        kit::tile(t, "b-n", "Businesses", list.len().to_string(), None, Some("In this account".into())),
-        kit::tile(t, "b-attention", "Need attention", int(sum(|o| o.needs_attention) as f64), None, Some("Wrong or partial claims".into())),
-        kit::tile(t, "b-review", "Needs review", int(sum(|o| o.unreviewed) as f64), None, Some("Answers needing a verdict".into())),
-        kit::tile(t, "b-never", "Never checked", never.to_string(), None, Some("Run a first check".into())),
-    ]);
     let sort = s.portfolio_sort;
     let tab = |name: &str, v: PortfolioSort| (name.to_string(), sort == v, Box::new(move |s: &mut App| s.portfolio_sort = v) as Box<dyn Fn(&mut App)>);
     let sorts = kit::text_tabs(t, "b-sort", vec![tab("Most attention", PortfolioSort::Attention), tab("Lowest correct share", PortfolioSort::Accuracy), tab("Recently checked", PortfolioSort::Recent), tab("Name", PortfolioSort::Name)]);
@@ -236,7 +228,6 @@ pub fn businesses(s: &App, t: &Theme) -> El {
                     .focusable(true)
                     .cursor(Cursor::Pointer)
                     .on_press(move |s: &mut App| s.open_business(&id))
-                    .child(crate::ui::widgets::business_mark(t, Some(&p.name), 24.0, 6.0))
                     .child(label(p.name.clone(), type_::SM_MEDIUM, t.foreground).truncate().min_w(0.0)),
                 match &p.verdicts {
                     Some(v) if v.total() > 0 => row().w_full().gap(8.0).center_y().child(col().grow(1.0).min_w(0.0).child(crate::ui::charts::verdict_bar_fill(t, v))).child(label(v.accuracy().map(crate::insights::pct).unwrap_or_else(|| "—".into()), type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)),
@@ -250,8 +241,15 @@ pub fn businesses(s: &App, t: &Theme) -> El {
         })
         .collect();
     let body = if rows.is_empty() { kit::note(t, format!("No business matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "b-table", &COLS, rows) };
-    let panel = kit::panel(t, "b-list", "Portfolio", Some("Open a business for its Overview".into()), Some(sorts), 0.0, col().w_full().gap(12.0).child(search(s, t, "b-search", "Search businesses")).child(body));
-    col().w_full().gap(16.0).child(top).child(strip).child(panel)
+    let toolbar = row().key("b-toolbar").w_full().gap(12.0).center_y().flex_wrap().justify_end()
+        .child(col().grow(1.0).min_w(160.0).gap(2.0)
+            .child(label("Portfolio", type_::SM_MEDIUM, t.foreground).role("heading"))
+            .child(label("Open a business for its Overview", type_::XS, t.muted_foreground)))
+        .child(sorts)
+        .child(search(s, t, "b-search", "Search businesses").w(220.0));
+    let panel = shadows(col().key("b-list").w_full().radius(12.0).fill(t.card)
+        .px(20.0).py(18.0).gap(14.0).child(toolbar).child(body), &t.card_shadow);
+    col().w_full().gap(16.0).child(top).child(panel)
 }
 
 // ---- Clients ---------------------------------------------------------------------------
@@ -278,14 +276,6 @@ pub fn clients(s: &App, t: &Theme) -> El {
             None,
         ));
     }
-    let all_known = list.iter().all(|c| c.known);
-    let known = |v: usize| if all_known { v.to_string() } else { "—".into() };
-    let strip = kit::cols(vec![
-        kit::tile(t, "c-all", "Clients and products", list.len().to_string(), None, Some("Records you operate".into())),
-        kit::tile(t, "c-goal", "With a marketing goal", known(list.iter().filter(|c| c.goal.is_some()).count()), None, Some("Goal and metric defined".into())),
-        kit::tile(t, "c-approved", "Approved initiatives", known(list.iter().map(|c| c.approved).sum()), None, Some("Human-approved, across all clients".into())),
-        kit::tile(t, "c-shared", "Shared", list.iter().filter(|c| c.shared).count().to_string(), None, Some("Active record share link".into())),
-    ]);
     const COLS: [Column; 4] = [column("Client", 0.0, false), column("Marketing progress", 0.0, false), column("Initiatives", 120.0, false), column("Share", 96.0, true)];
     let rows: Vec<Vec<El>> = list
         .iter()
@@ -313,7 +303,7 @@ pub fn clients(s: &App, t: &Theme) -> El {
         .collect();
     let body = if rows.is_empty() { kit::note(t, format!("No client matches \"{}\".", s.list_query.text.trim())) } else { kit::table(t, "c-table", &COLS, rows) };
     let panel = kit::panel(t, "c-list", "Clients and products", None, None, 0.0, col().w_full().gap(12.0).child(search(s, t, "c-search", "Search clients")).child(body));
-    col().w_full().gap(16.0).child(top).child(strip).child(panel)
+    col().w_full().gap(16.0).child(top).child(panel)
 }
 
 fn a11y_input_label() -> &'static str {
@@ -323,34 +313,43 @@ fn a11y_input_label() -> &'static str {
 /// "Add a business" (the web's `CreateBusinessDialog` with its `SetupStartForm`):
 /// the website and the goal in one line, sent with Return or the round button.
 pub fn add_business_dialog(s: &App, t: &Theme, _k: &rune_kit::Kit, a: &crate::state::AddBusiness, layer: &mut Vec<El>) {
-    let input = text_input(&a.text, type_::SM)
+    use super::agent::{COMPOSER_BUTTON, COMPOSER_INSET, COMPOSER_PILL};
+    let input = text_input(&a.text, type_::BASE)
         .key("add-business-input")
         .placeholder("acme.com, we want more booked appointments", t.muted_foreground)
         .label(a11y_input_label())
         .w_full()
+        .py(4.0)
         .max_h(192.0)
         .color(t.foreground)
         .on_edit(|s: &mut App| &mut s.add_business.as_mut().expect("dialog open").text)
         .on_submit(|s: &mut App, _tx| s.submit_add_business())
         .autofocus();
     let has_text = !a.text.text.trim().is_empty();
-    let send = shadows(
-        row()
-            .key("add-business-send")
-            .size(32.0, 32.0)
-            .radius(16.0)
-            .center()
-            .fill(t.primary)
-            .role("button")
-            .label("Start setup")
-            .cursor(Cursor::Pointer)
-            .opacity(if a.busy { 0.5 } else { 1.0 })
-            .on_press(|s: &mut App| s.submit_add_business())
-            .child(if a.busy { ico(&icons::LOADER, 16.0, t.primary_foreground).looping(rune::LoopSpec::rotation(1.0)) } else { ico(&icons::ARROW_UP, 16.0, t.primary_foreground) }),
-        &t.primary_shadow,
-    );
+    let ink = t.foreground.alpha(0.85);
+    let send = row()
+        .key("add-business-send")
+        .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
+        .radius(COMPOSER_BUTTON / 2.0)
+        .center()
+        .fill(t.foreground.alpha(if t.dark { 0.12 } else { 0.10 }))
+        .hover(t.foreground.alpha(if t.dark { 0.18 } else { 0.16 }))
+        .motion(CONTROL)
+        .role("button")
+        .label("Start setup")
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .disabled(a.busy)
+        .opacity(if a.busy { 0.5 } else { 1.0 })
+        .on_press(|s: &mut App| s.submit_add_business())
+        .child(if a.busy { ico(&icons::LOADER, 16.0, ink).looping(rune::LoopSpec::rotation(1.0)) } else { ico(&icons::CORNER_DOWN_LEFT, 16.0, ink) });
     let field = shadows(
-        row().w_full().min_h(48.0).px(12.0).py(8.0).gap(12.0).radius(10.0).items_end().fill(t.card).child(col().grow(1.0).min_w(0.0).py(4.0).child(input)).children((has_text || a.busy).then_some(send)),
+        row().key("add-business-field").w_full()
+            .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
+            .padding(COMPOSER_INSET).gap(8.0).radius(COMPOSER_PILL)
+            .items_end().border(1.0, t.border).fill(t.card)
+            .child(col().grow(1.0).min_w(0.0).self_center().px(8.0).child(input))
+            .children((has_text || a.busy).then_some(send)),
         &t.control_shadow,
     );
     let mut content = col().w_full().gap(8.0).child(field);

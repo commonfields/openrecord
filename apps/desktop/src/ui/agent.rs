@@ -5,7 +5,7 @@
 //! the composer with its model picker at the bottom.
 
 use rune::{Align, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
-use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement};
+use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle};
 
 use crate::api::Message;
 use crate::brands;
@@ -13,7 +13,7 @@ use crate::chat::{self, Activity, Progress};
 use crate::icons;
 use crate::state::{ComposerSlot, App, Load, Page, Turn, View};
 use crate::theme::{Theme, hex, shadows, type_};
-use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, icon_button, label};
+use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, label};
 
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
@@ -25,6 +25,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     // or starting a turn never slides the column up the window. Another chat
     // crossfades in over the last one instead of blanking and popping.
     let shown = s.conversation.ready().map(|c| c.id.as_str()).unwrap_or("none");
+    let turns: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m.role == "user").map(|(i, _)| i).collect();
     let mut list = col().key(format!("messages-{shown}")).w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0).transition(Transition::opacity());
     match &s.conversation {
         // Only a slow load says so: a quick one goes straight to the chat.
@@ -52,7 +53,12 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             list = list.child(divider(t, &format!("wake-{i}"), None, &title));
             continue;
         }
-        list = list.child(message(s, t, k, i, m, &statuses));
+        let mut item = message(s, t, k, i, m, &statuses);
+        if m.role == "user" {
+            let owner = shown.to_string();
+            item = item.on_layout(move |s: &mut App, rect: [f32; 4]| s.timeline.mark(&owner, i, rect[1]));
+        }
+        list = list.child(item);
     }
     match &s.turn {
         Turn::Working { progress, started, stopping, .. } => {
@@ -99,15 +105,43 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
+        .pl(if turns.len() > 1 { 24.0 } else { 0.0 })
+        .on_layout(|s: &mut App, rect: [f32; 4]| s.timeline.top = rect[1])
         .child(col().w_full().items_center().child(list))
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(16.0);
 
-    // A chat with nothing in it yet opens on Home: what waits on the person and a few ways to begin.
+    // Only Home shows the rolling starters; a new session opens on its transcript.
     let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
-    let body = if fresh { start(s, t, &business) } else { transcript };
+    let body = if fresh && (s.home || s.general) { start(s, t, &business) } else {
+        col().key("transcript-body").w_full().grow(1.0).min_h(0.0)
+            .child(transcript).children(timeline_rail(s, t, shown, &messages, &turns))
+    };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
     col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main))
+}
+
+fn timeline_rail(s: &App, t: &Theme, owner: &str, messages: &[Message], turns: &[usize]) -> Option<El> {
+    if turns.len() < 2 { return None; }
+    let active = s.timeline.active(owner, turns);
+    let mut marks = col().key("timeline-marks").w(28.0).gap(2.0);
+    for (number, &index) in turns.iter().enumerate() {
+        let key = format!("timeline-turn-{index}");
+        let hovered = s.row_hover.as_deref() == Some(key.as_str());
+        let on = active == Some(index);
+        let text = messages[index].text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let preview: String = text.chars().take(120).collect();
+        let preview = if text.chars().count() > 120 { format!("{preview}…") } else { preview };
+        marks = marks.child(row().key(key.clone()).w(28.0).h(12.0).center_y()
+            .role("button").label(format!("Go to turn {}: {preview}", number + 1)).help(preview)
+            .focusable(true).cursor(Cursor::Pointer)
+            .on_hover_change(super::widgets::track_hover(key))
+            .on_press_tx(move |_s: &mut App, tx| tx.scroll_key_to(format!("msg-{index}"), 16.0))
+            .child(el().key(format!("timeline-tick-{index}")).w(if on || hovered { 22.0 } else { 9.0 }).h(2.0).radius(1.0)
+                .fill(t.foreground.alpha(if on || hovered { 0.65 } else { 0.22 })).motion(CONTROL)));
+    }
+    Some(col().key("conversation-timeline").w(28.0).pin(Some(4.0), Some(16.0), None, Some(16.0)).justify_center()
+        .child(marks.max_h(360.0).min_h(0.0).shrink().scroll(ScrollSpec { stick_bottom: false })))
 }
 
 /// Ways to begin, each a request the agent can act on at once: its name, what
@@ -121,7 +155,7 @@ const STARTERS: [(&rune::Icon, &str, &str, &str); 4] = [
 
 /// How long one starter holds the focus before the next rolls in.
 pub const ROLL_EVERY: std::time::Duration = std::time::Duration::from_millis(4600);
-const ROLL_H: f32 = 300.0;
+pub(super) const ROLL_H: f32 = 300.0;
 /// The drum's width: a card reads as one line of intent, not a banner.
 const ROLL_W: f32 = 440.0;
 const ROLL_CARD_H: f32 = 92.0;
@@ -196,6 +230,11 @@ fn starters(s: &App, t: &Theme) -> El {
 /// Home: the first thing a business's agent shows. What waits on the person
 /// comes first, since a decision is the one thing only they can do; then ways
 /// to start that send in one press. A general chat has no business to brief on.
+pub(super) fn home_stack_top(s: &App) -> f32 {
+    let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
+    ((height - 48.0 - 150.0 - ROLL_H) * 0.42).max(32.0)
+}
+
 fn start(s: &App, t: &Theme, _business: &str) -> El {
     let column = s.prefs.chat_width.max().min(760.0);
     let mut c = col().key("start").w_full().max_w(column).px(24.0).gap(28.0);
@@ -208,9 +247,7 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
     }
     c = c.child(row().w_full().justify_center().child(starters(s, t)));
     // Sits a little above the middle of a tall window, and scrolls in a short one.
-    let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
-    let blocks = ROLL_H;
-    let top = ((height - 48.0 - 150.0 - blocks) * 0.42).max(32.0);
+    let top = home_stack_top(s);
     col()
         .key("start-scroll")
         .w_full()
@@ -314,98 +351,6 @@ fn draft_card(s: &App, t: &Theme, p: &crate::api::Proposal) -> El {
         None => c = c.child(label("Sources not available", type_::XS, t.muted_foreground)),
     }
     shadows(c, &t.card_shadow)
-}
-
-/// The agent beside a workspace page (`AgentPane` in `workspace-agent.tsx`):
-/// the business's conversation on its own card left of the page, sliding in
-/// from the left at half the space by default, its right edge dragged within
-/// 30 to 70 percent. "Open full chat" moves it to the Agent view; the close
-/// button, Escape or "Hide the agent" slides it away.
-pub fn pane(s: &App, t: &Theme, k: &Kit) -> El {
-    let title = s.conversation.ready().and_then(|c| c.title.clone()).filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "New chat".into());
-    let head = row()
-        .w_full()
-        .h(44.0)
-        .pl(16.0)
-        .pr(8.0)
-        .gap(8.0)
-        .center_y()
-        .child(label(title, type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0))
-        .child(
-            label("Open full chat", type_::XS_MEDIUM, t.muted_foreground)
-                .key("pane-full")
-                .role("button")
-                .focusable(true)
-                .px(8.0)
-                .py(4.0)
-                .radius(6.0)
-                .cursor(Cursor::Pointer)
-                .hover(t.hover_tint)
-                .on_press(|s: &mut App| s.show_view(View::Agent)),
-        )
-        .child(icon_button(t, "pane-close", &icons::X, "Close the agent (Esc)", false).on_press(|s: &mut App| s.close_pane()));
-    let w = if s.pane_row_w > 0.0 { (s.pane_row_w * s.pane_split.clamp(30.0, 70.0) / 100.0).round() } else { 0.0 };
-    col()
-        .key("agent-pane")
-        .w(w)
-        .grow(if w > 0.0 { 0.0 } else { 1.0 })
-        .min_w(w)
-        .h_full()
-        .pt(8.0)
-        .pb(8.0)
-        .pr(8.0)
-        .role("complementary")
-        .label("Agent")
-        .transition(Transition::offset(-64.0, 0.0).combined(Transition::opacity()))
-        .child(
-            shadows(
-                col().w_full().grow(1.0).min_h(0.0).radius(10.0).fill(t.background).clip_rounded(10.0).child(head).child(col().w_full().grow(1.0).min_h(0.0).child(view(s, t, k))),
-                &t.panel_shadow,
-            ),
-        )
-        .child(pane_edge())
-}
-
-/// The pane's right edge: drag to resize within 30 to 70 percent of the space
-/// beside the sidebar, double-click for half, arrow keys to nudge.
-fn pane_edge() -> El {
-    use crate::state::PANE_DEFAULT;
-    el().key("pane-edge")
-        .pin(Some(0.0), None, Some(0.0), Some(0.0))
-        .w(8.0)
-        .role("separator")
-        .label("Resize agent panel")
-        .help("Drag to resize; double-click for half and half")
-        .focusable(true)
-        .cursor(Cursor::ResizeColumn)
-        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
-            tx.instant();
-            match d.phase {
-                rune::Phase::Down => {
-                    d.data = s.pane_split;
-                    s.resizing = Some(crate::ui::Resize::AgentPane);
-                }
-                // Dragging right widens the pane.
-                rune::Phase::Move if s.pane_row_w > 0.0 => s.pane_split = (d.data + d.dx / s.zoom() / s.pane_row_w * 100.0).clamp(30.0, 70.0),
-                rune::Phase::Move => {}
-                rune::Phase::Up => {
-                    if d.cancelled() {
-                        s.pane_split = d.data;
-                    }
-                    s.resizing = None;
-                }
-            }
-        })
-        .on_double_press(|s: &mut App| s.pane_split = PANE_DEFAULT)
-        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
-            let step = match ev.key {
-                rune::Key::Left => -2.0,
-                rune::Key::Right => 2.0,
-                _ => return false,
-            };
-            s.pane_split = (s.pane_split + step).clamp(30.0, 70.0);
-            true
-        })
 }
 
 /// A helper session opened from the conversation, to review (`HelperPane`): its
@@ -1217,9 +1162,9 @@ fn chip_in_t() -> Transition {
 
 /// The box's inset around its round buttons, the same on every side, so the
 /// buttons sit concentric with the pill's ends (radius = inset + 16).
-const COMPOSER_INSET: f32 = 6.0;
-const COMPOSER_BUTTON: f32 = 32.0;
-const COMPOSER_PILL: f32 = COMPOSER_INSET + COMPOSER_BUTTON / 2.0;
+pub(super) const COMPOSER_INSET: f32 = 6.0;
+pub(super) const COMPOSER_BUTTON: f32 = 32.0;
+pub(super) const COMPOSER_PILL: f32 = COMPOSER_INSET + COMPOSER_BUTTON / 2.0;
 
 /// Equalizer bars for the composer's idle voice affordance.
 fn waveform_bars(ink: rune::Color) -> El {
@@ -1284,6 +1229,9 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
     let circle = |key: &str, name: &str, help: &str, fill: rune::Color| {
         row().key(slot.key(key)).size(COMPOSER_BUTTON, COMPOSER_BUTTON).radius(COMPOSER_BUTTON / 2.0).center().role("button").label(name).help(help).focusable(true).cursor(Cursor::Pointer).fill(fill).motion(CONTROL)
     };
+    let action_fill = if t.dark { t.foreground.alpha(0.12) } else { t.foreground.alpha(0.10) };
+    let action_hover = t.foreground.alpha(if t.dark { 0.18 } else { 0.16 });
+    let action_ink = t.foreground.alpha(0.85);
     let mut actions = row().gap(4.0).center_y().self_end();
     if working {
         if has_text {
@@ -1298,39 +1246,39 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
         }
         let stopping = matches!(s.turn, Turn::Working { stopping: true, .. });
         actions = actions.child(
-            circle("stop", "Stop the agent", "Stop the agent", t.primary)
+            circle("stop", "Stop the agent", "Stop the agent", action_fill)
                 .disabled(stopping)
-                .hover(t.primary.alpha(0.9))
+                .hover(action_hover)
                 .on_press(|s: &mut App| s.stop_turn())
-                .child(el().size(10.0, 10.0).radius(2.0).fill(t.primary_foreground)),
+                .child(el().size(10.0, 10.0).radius(2.0).fill(action_ink)),
         );
     } else if has_text {
         let can = !blocked;
         actions = actions.child(
-            circle("send", "Send message", if s.prefs.enter_to_send { "Send (Enter). Shift Enter adds a new line." } else { "Send (⌘ Enter). Enter adds a new line." }, t.primary)
+            circle("send", "Send message", if s.prefs.enter_to_send { "Send (Enter). Shift Enter adds a new line." } else { "Send (⌘ Enter). Enter adds a new line." }, action_fill)
                 .disabled(!can)
                 .opacity(if can { 1.0 } else { 0.5 })
-                .hover(t.primary.alpha(0.9))
+                .hover(action_hover)
                 .on_press_tx(move |s: &mut App, tx| s.send_from(slot, tx))
-                .child(ico(&icons::CORNER_DOWN_LEFT, 16.0, t.primary_foreground)),
+                .child(ico(&icons::CORNER_DOWN_LEFT, 16.0, action_ink)),
         );
     }
-    // Voice input: one control — the blue waveform when the box is empty (no duplicate mic icon).
+    // Voice input shares the subdued treatment of the send control.
     let mut trailing = row().gap(4.0).center_y().self_end();
     if !working && !has_text && s.prefs.voice_input {
         trailing = trailing.child(
-            circle("voice-affordance", "Start voice input", "Voice input (macOS dictation)", t.primary)
-                .hover(t.primary.alpha(0.9))
+            circle("voice-affordance", "Start voice input", "Voice input (macOS dictation)", action_fill)
+                .hover(action_hover)
                 .on_press_tx(move |_s: &mut App, tx| {
                     tx.focus(&slot.key("composer-input"), false);
                     crate::dictation::start();
                 })
-                .child(waveform_bars(t.primary_foreground)),
+                .child(waveform_bars(action_ink)),
         );
     } else {
         trailing = trailing.child(actions);
     }
-    // "Chat actions" on the left of the box: save as playbook, share, attach and providers.
+    // Quick actions beside the message input.
     let plus = row()
         .key(slot.key("chat-actions-trigger"))
         .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
@@ -1340,22 +1288,26 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
         .fill(t.foreground.alpha(0.08))
         .role("button")
         .label("Chat actions")
-        .expanded(s.chat_actions)
+        .expanded(s.chat_actions && s.composer_slot == slot)
         .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
         .hover_group()
         .motion(CONTROL)
-        .on_press(move |s: &mut App| {
+        .on_press_tx(move |s: &mut App, tx| {
             s.composer_slot = slot;
             s.chat_actions = !s.chat_actions;
+            if s.chat_actions {
+                tx.focus("chat-action-attach", false);
+            }
         })
         .child(ico(&icons::PLUS, 18.0, t.muted_foreground).group_color(t.foreground));
 
-    let mut field = shadows(
+    let field = shadows(
         row()
             .key(slot.key("composer"))
             .w_full()
+            .on_layout(move |s: &mut App, rect: [f32; 4]| s.composer_widths[side as usize] = rect[2])
             .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
             .padding(COMPOSER_INSET)
             .gap(8.0)
@@ -1374,11 +1326,6 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
             .child(trailing),
         &t.control_shadow,
     );
-    // The "/" menu sits over the transcript just above the box, inset 8 points
-    // each side, every entry listed: the web's `absolute inset-x-2 bottom-full mb-2`.
-    if let Some(menu) = command_menu(s, t).filter(|_| !side) {
-        field = field.child(menu);
-    }
 
     // "Chat options" under the box: the business on the left; follow-ups, the
     // memory meter, the model and reasoning on the right, 12 points apart.
@@ -1472,8 +1419,39 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
     if let Some(e) = &s.attach_error {
         stack = stack.child(label(e.clone(), type_::XS, t.wrong).px(12.0).wrap().live_region(LiveRegion::Polite));
     }
+    stack = stack.children(ahead);
+    if !side {
+        if let Some(pills) = composer_pills(s, t) { stack = stack.child(pills); }
+    }
     // Beside the decisions stack when it would overlap the box, the composer centres in the room left.
-    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.children(ahead).child(field).child(options))
+    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.child(field).child(options))
+}
+
+fn composer_pills(s: &App, t: &Theme) -> Option<El> {
+    if s.general { return None; }
+    let pill = |key: &str, title: String, icon: &'static rune::Icon| {
+        row().key(key.to_string()).h(28.0).px(10.0).gap(6.0).radius(14.0).center_y()
+            .border(1.0, t.border).fill(t.card).role("button").label(title.clone())
+            .focusable(true).cursor(Cursor::Pointer).hover(t.accent)
+            .child(ico(icon, 14.0, t.muted_foreground))
+            .child(label(title, type_::XS, t.foreground))
+    };
+    let mut pills = row().key("composer-pills").w_full().gap(8.0).flex_wrap().pb(8.0);
+    let mut count = 0;
+    if s.brief_schedule_here() {
+        count += 1;
+        let title = if s.brief_schedule.saving { "Weekly brief · Saving…" } else { "Weekly brief · Turn off" };
+        pills = pills.child(pill("brief-schedule-toggle", title.into(), &icons::CALENDAR_CLOCK)
+            .disabled(s.brief_schedule.saving || !matches!(s.turn, Turn::Idle))
+            .on_press(|s: &mut App| s.toggle_brief_schedule()));
+    }
+    let changes = s.chat_artifacts();
+    if !changes.is_empty() {
+        count += 1;
+        pills = pills.child(pill("composer-changes", format!("Changes · {}", changes.len()), &icons::GIT_COMPARE)
+            .on_press(|s: &mut App| s.launch(crate::side::Launch::Changes)));
+    }
+    (count > 0).then_some(pills)
 }
 
 /// A file attached to a message: its name and length, removable before sending.
@@ -1875,8 +1853,7 @@ fn command_menu(s: &App, t: &Theme) -> Option<El> {
         return None;
     }
     let active = s.command_index.min(entries.len() - 1);
-    let height = entries.len() as f32 * 28.0 + 8.0;
-    let mut list = col().key("command-menu").padding(4.0).radius(10.0).fill(t.popover).role("listbox").label("Commands").pin(Some(8.0), Some(-(height + 8.0)), Some(8.0), None);
+    let mut list = col().key("command-menu").w(s.composer_widths[0].max(1.0)).min_h(0.0).padding(4.0).radius(10.0).fill(t.popover).border(1.0, t.border).role("listbox").label("Commands");
     for (i, e) in entries.iter().enumerate() {
         let on = i == active;
         let id = e.id();
@@ -1902,7 +1879,9 @@ fn command_menu(s: &App, t: &Theme) -> Option<El> {
         r = crate::ui::widgets::highlight(t, r, on, false);
         list = list.child(r);
     }
-    Some(shadows(list, &t.float_shadow))
+    Some(shadows(col().w(s.composer_widths[0].max(1.0)).min_h(0.0)
+        .child(list.max_h(340.0).min_h(0.0).shrink().scroll(ScrollSpec { stick_bottom: false }))
+        .anchored_fit("composer", Side::Top, Align::Start, 12.0), &t.control_shadow))
 }
 
 /// "Start a new chat" (`new-chat-dialog.tsx`): a search, "Start without a
@@ -1915,9 +1894,18 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
         .w_full()
         .color(t.foreground)
         .on_edit(|s: &mut App| &mut s.new_chat.as_mut().expect("dialog open").query);
+    // The "/" menu's surface: popover fill and border, with its accent highlight under the pointer.
+    let field_hovered = s.row_hover.as_deref() == Some("new:search");
     let field = shadows(
-        row().w_full().h(32.0).px(10.0).gap(8.0).radius(8.0).center_y().fill(t.control).child(ico(&icons::SEARCH, 16.0, t.muted_foreground)).child(search),
-        &t.control_shadow,
+        crate::ui::widgets::highlight(
+            t,
+            row().key("new-chat-field").w_full().h(44.0).px(12.0).gap(10.0).radius(10.0).center_y().border(1.0, t.border)
+                .on_hover_change(hover_key("new:search".into()))
+                .child(ico(&icons::SEARCH, 16.0, t.muted_foreground)).child(col().grow(1.0).min_w(0.0).child(search)),
+            field_hovered,
+            false,
+        ).fill(if field_hovered { t.accent } else { t.popover }),
+        &t.float_shadow,
     );
     let hover = |key: String, r: El| {
         let hovered = s.row_hover.as_deref() == Some(key.as_str());
@@ -1993,8 +1981,8 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
     let link = |key: &str, name: &str| label(name, type_::XS, t.muted_foreground).key(key).role("link").cursor(Cursor::Pointer).hover_group().group_color(t.foreground);
     let footer = row()
         .w_full()
-        .px(24.0)
-        .py(12.0)
+        .px(16.0)
+        .py(10.0)
         .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
         .child(link("manage-businesses", "Manage businesses").on_press(|s: &mut App| {
             s.new_chat = None;
@@ -2002,46 +1990,47 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
         }))
         .child(el().grow(1.0))
         .child(link("add-business", "Add a business").on_press(|s: &mut App| s.open_add_business(None)));
-    let content = col()
+    let list = col()
         .w_full()
-        .child(col().w_full().px(24.0).pb(12.0).child(field))
-        .child(col().w_full().px(16.0).pb(8.0).child(general))
-        .child(col().key("new-chat-list").w_full().max_h(360.0).px(16.0).py(8.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border).child(body).scroll(ScrollSpec { stick_bottom: false }))
+        .radius(10.0)
+        .fill(t.popover)
+        .border(1.0, t.border)
+        .clip_rounded(10.0)
+        .child(col().w_full().px(4.0).pt(4.0).child(general))
+        .child(col().key("new-chat-list").w_full().max_h(360.0).px(4.0).py(4.0).border_sides([1.0, 0.0, 0.0, 0.0], t.border).child(body).scroll(ScrollSpec { stick_bottom: false }))
         .child(footer);
-    Dialog::new("new-chat", "Start a new chat")
-        .description("Choose the business to talk about, or start without one.")
-        .width(672.0)
-        .fit()
-        .open(true)
-        .child(content)
-        .on_close(|s: &mut App| s.new_chat = None)
-        .build(k, layer);
+    let close = |s: &mut App| s.new_chat = None;
+    let panel = col()
+        .key("new-chat-dialog")
+        .role("dialog")
+        .label("Start a new chat")
+        .w_full()
+        .max_w(672.0)
+        .gap(6.0)
+        .child(field)
+        .child(shadows(list, &t.float_shadow))
+        .token_motion(k.motion.overlay)
+        .modal(true, close)
+        .modal_click_outside(true);
+    layer.push(col().key("new-chat-layer").absolute(0.0, 0.0).w_full().h_full().pt(96.0).px(12.0).items_center().child(panel));
 }
 
 // ---- Overlays: the "/" menu, the "+" menu and their dialogs ---------------------
 
 /// What the agent view floats over the window, built with Rune's kit: the "/"
 /// menu as a `PopupList` above the composer, the "+" menu, and its dialogs.
+/// Whether the composer's "/" menu is showing: it floats over the chat
+/// without blurring it, since the composer it belongs to stays in use.
+pub fn command_menu_open(s: &App) -> bool {
+    s.view == View::Agent && !s.chat_actions && !s.menu_entries().is_empty()
+}
+
 pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
+    if s.view == View::Agent && !s.chat_actions {
+        if let Some(menu) = command_menu(s, t) { layer.push(menu); }
+    }
     if s.chat_actions {
-        let draft = s.composer.text.trim();
-        let can_save = !draft.is_empty() && !draft.starts_with('/');
-        let can_share = s.chat_id.is_some() && s.conversation.ready().is_some();
-        let _ = Menu::new(s.composer_slot.key("chat-actions"))
-            .open(true)
-            .placement(Placement::TopEnd)
-            .min_width(240.0)
-            .item(MenuItem::new("Save as playbook").icon(&icons::BOOKMARK_PLUS).disabled(!can_save).on_select_tx(|s: &mut App, tx| s.open_save_playbook(tx)))
-            .item(MenuItem::new("Share this chat").icon(&icons::SHARE).description("read-only link").disabled(!can_share).on_select(|s: &mut App| s.open_share()))
-            .separator()
-            .item(MenuItem::new("Attach files").icon(&icons::PAPERCLIP).on_select_tx(|s: &mut App, tx| s.attach(tx)))
-            .separator()
-            .item(MenuItem::new("Manage providers").on_select(|s: &mut App| {
-                s.chat_actions = false;
-                s.open_settings(crate::state::SettingsPage::Agent);
-            }))
-            .on_close(|s: &mut App| s.chat_actions = false)
-            .build(k, layer);
+        layer.push(chat_actions_menu(s, t));
     }
     if let Some(f) = &s.save_playbook {
         save_playbook_dialog(s, t, k, f, layer);
@@ -2052,6 +2041,44 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
     if s.followups_open {
         followups_dialog(s, t, k, layer);
     }
+}
+
+/// Quick actions aligned with the message box.
+fn chat_actions_menu(s: &App, t: &Theme) -> El {
+    let item = |key: &str, name: &str, icon: &'static rune::Icon| {
+        let hovered = s.row_hover.as_deref() == Some(key);
+        let r = row().key(key.to_string()).w_full().h(36.0).px(10.0).gap(10.0).center_y().radius(6.0)
+            .role("menuitem").label(name.to_string()).focusable(true).cursor(Cursor::Pointer)
+            .on_hover_change(super::widgets::track_hover(key.to_string()))
+            .child(ico(icon, 16.0, t.foreground))
+            .child(label(name, type_::XS_MEDIUM, t.foreground).grow(1.0).min_w(0.0).truncate());
+        super::widgets::highlight(t, r, hovered, false)
+    };
+    let width = s.composer_widths[(s.composer_slot == ComposerSlot::Side) as usize];
+    let mut menu = col().key("chat-actions-menu").w(width.max(1.0)).min_h(0.0).padding(4.0)
+        .radius(10.0).fill(t.popover).border(1.0, t.border).role("menu").label("Chat actions").focus_group()
+        .child(item("chat-action-attach", "Attach", &icons::PAPERCLIP)
+            .on_press_tx(|s: &mut App, tx| s.attach(tx)))
+        .child(item("chat-action-connect", "Connect", &icons::NAV_CHANNELS)
+            .on_press(|s: &mut App| s.open_channel_connections()))
+        .child(item("chat-action-plan", "Plan", &icons::TARGET)
+            .on_press_tx(|s: &mut App, tx| {
+                s.prepare_composer_command("plan");
+                tx.focus(&s.composer_slot.key("composer-input"), false);
+            }));
+    if !s.general && s.active.is_some() {
+        let title = if s.brief_schedule.saving { "Saving weekly brief…" }
+            else if s.brief_schedule_here() { "Turn off weekly brief" } else { "Weekly brief" };
+        menu = menu.child(item("chat-action-weekly-brief", title, &icons::CALENDAR_CLOCK)
+            .help(s.brief_schedule.error.clone().unwrap_or_else(|| if s.brief_schedule_here() { "Turn off weekly briefs for this session".into() } else { "Enable weekly briefs in this session".into() }))
+            .disabled(s.brief_schedule.saving || !matches!(s.turn, Turn::Idle) || matches!(s.brief_schedule.value, Load::Loading))
+            .on_press(|s: &mut App| s.toggle_brief_schedule()));
+    }
+    let menu = menu
+        .anchored_fit(s.composer_slot.key("composer"), Side::Top, Align::Start, 12.0)
+        .focus_return(s.composer_slot.key("chat-actions-trigger"))
+        .modal(true, |s: &mut App| s.chat_actions = false);
+    shadows(menu, &t.control_shadow)
 }
 
 /// "Follow-ups", "Follow-ups on" or "Follow-ups elsewhere", by the model picker.
