@@ -416,8 +416,6 @@ pub struct App {
     pub window: (f32, f32),
     /// The drag edge held right now, if any.
     pub resizing: Option<crate::ui::Resize>,
-    /// Width and height when an answer-popup resize drag began.
-    pub answer_dialog_resize: Option<(f32, f32)>,
     /// The Realtime map: how far in, and the point at its centre (longitude, latitude).
     pub map_zoom: f32,
     pub map_center: (f32, f32),
@@ -644,7 +642,6 @@ impl App {
             split_w: 0.0,
             window: (0.0, 0.0),
             resizing: None,
-            answer_dialog_resize: None,
             map_zoom: 1.0,
             map_center: crate::ui::world::HOME,
             map_w: 0.0,
@@ -1217,8 +1214,7 @@ impl App {
         self.answer = None;
         self.campaign_open = None;
         self.list_query.clear();
-        // The list is already on screen behind the popup; refetching here replaces it
-        // when the request fails even though the data was fine.
+        self.load_page();
     }
 
     /// The claim before or after the open one in the list (`-1` or `1`).
@@ -2386,14 +2382,7 @@ impl App {
                 }
             }
             Reply::Overview(b, r) if here(self, &b) => self.overview = to_load(self.failed(r)),
-            Reply::Issues(b, r) if here(self, &b) => match self.failed(r) {
-                Ok(v) => self.issues = Load::Ready(v),
-                Err(e) if e.is_empty() => {}
-                Err(e) if self.answer.is_none() && self.page == Page::AiAnswers && self.issues.ready().is_some() => {
-                    self.notice = Some(format!("Issues could not refresh. {e}"));
-                }
-                Err(e) => self.issues = Load::Failed(e),
-            },
+            Reply::Issues(b, r) if here(self, &b) => self.issues = to_load(self.failed(r)),
             Reply::Facts(b, r) if here(self, &b) => self.find_facts = to_load(self.failed(r)),
             Reply::Facts(..) => {}
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
@@ -2767,8 +2756,8 @@ impl App {
                             a.verdict = None;
                             a.facts.clear();
                             a.notes.clear();
-                            if let Some(b) = &business {
-                                self.net.answer(b.clone(), claim);
+                            if let Some(b) = business {
+                                self.net.answer(b, claim);
                             }
                             self.notice = Some(if verdict == "SUPPORTED" {
                                 "Rating saved. Answers marked correct leave the review list.".into()
@@ -2785,9 +2774,6 @@ impl App {
                     let notice = self.notice.take();
                     self.close_answer();
                     self.notice = notice;
-                    if let Some(b) = business {
-                        self.net.issues(b);
-                    }
                 }
             }
             Reply::ActionRecorded { claim, result } => {
