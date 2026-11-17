@@ -11,11 +11,40 @@ use crate::api::{AnswerDetail, Fact};
 use crate::brands;
 use crate::format;
 use crate::icons;
+use crate::prefs::{ANSWER_DIALOG_MIN_H, ANSWER_DIALOG_MIN_W};
 use crate::state::{AnswerView, App, Load, VERDICTS};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, Variant, button, failure, ico, icon_button, label, skeleton};
 
+#[derive(Clone, Copy)]
+enum AnswerResize {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Window size for fitting the popup: the measured window, the headless viewport, or the default.
+fn dialog_window(s: &App) -> (f32, f32) {
+    if let Some(run) = rune::tooling::headless_run() {
+        let sz = run.size();
+        if sz.0 > 0.0 && sz.1 > 0.0 {
+            return sz;
+        }
+    }
+    if s.window.0 > 0.0 && s.window.1 > 0.0 {
+        s.window
+    } else {
+        (1280.0, 800.0)
+    }
+}
+
 pub fn dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &AnswerView) -> Vec<El> {
+    let (dw, dh) = s.prefs.answer_dialog(dialog_window(s), s.zoom());
     let (body, foot) = match &a.detail {
         Load::Ready(d) => (body(s, t, k, a, d), Some(footer(t, a, d))),
         Load::Failed(e) => {
@@ -30,18 +59,20 @@ pub fn dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &AnswerView) -> Vec<El> 
         col()
             .key("answer-inset")
             .w_full()
+            .grow(1.0)
+            .min_h(0.0)
             .radius(10.0)
             .fill(t.background)
             .clip_rounded(10.0)
-            .child(col().key("answer-scroll").w_full().max_h(520.0).child(body).scroll(ScrollSpec { stick_bottom: false })),
+            .child(col().key("answer-scroll").w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: false })),
         &t.panel_shadow,
     );
     let mut frame = col()
         .key("answer-dialog")
         .role("dialog")
         .label("AI answer")
-        .w_full()
-        .max_w(800.0)
+        .w(dw)
+        .h(dh)
         .padding(8.0)
         .radius(16.0)
         .fill(t.sidebar)
@@ -52,10 +83,158 @@ pub fn dialog(s: &App, t: &Theme, k: &rune_kit::Kit, a: &AnswerView) -> Vec<El> 
         frame = frame.child(f);
     }
     let frame = shadows(frame, &t.float_shadow).modal(true, |s: &mut App| s.close_answer());
+    let shell = el()
+        .key("answer-dialog-shell")
+        .w(dw)
+        .h(dh)
+        .child(frame)
+        .children([
+            AnswerResize::Left,
+            AnswerResize::Right,
+            AnswerResize::Top,
+            AnswerResize::Bottom,
+            AnswerResize::TopLeft,
+            AnswerResize::TopRight,
+            AnswerResize::BottomLeft,
+            AnswerResize::BottomRight,
+        ]
+        .map(resize_edge));
     vec![
         el().key("answer-scrim").absolute(0.0, 0.0).w_full().h_full().fill(Color::BLACK.alpha(0.25)).a11y_hidden(),
-        el().key("answer-layer").absolute(0.0, 0.0).w_full().h_full().padding(16.0).center().child(frame),
+        el().key("answer-layer").absolute(0.0, 0.0).w_full().h_full().padding(12.0).center().child(shell),
     ]
+}
+
+fn resize_edge(mode: AnswerResize) -> El {
+    const EDGE: f32 = 6.0;
+    const CORNER: f32 = 10.0;
+    let (key, cursor, pin, width, height) = match mode {
+        AnswerResize::Left => (
+            "answer-resize-l",
+            Cursor::ResizeColumn,
+            (Some(0.0), None, Some(0.0), Some(0.0)),
+            Some(EDGE),
+            None,
+        ),
+        AnswerResize::Right => (
+            "answer-resize-w",
+            Cursor::ResizeColumn,
+            (None, Some(0.0), Some(0.0), Some(0.0)),
+            Some(EDGE),
+            None,
+        ),
+        AnswerResize::Top => (
+            "answer-resize-t",
+            Cursor::ResizeRow,
+            (Some(0.0), None, Some(0.0), None),
+            None,
+            Some(EDGE),
+        ),
+        AnswerResize::Bottom => (
+            "answer-resize-h",
+            Cursor::ResizeRow,
+            (Some(0.0), None, None, Some(0.0)),
+            None,
+            Some(EDGE),
+        ),
+        AnswerResize::TopLeft => (
+            "answer-resize-tl",
+            Cursor::ResizeColumn,
+            (Some(0.0), None, Some(0.0), None),
+            Some(CORNER),
+            Some(CORNER),
+        ),
+        AnswerResize::TopRight => (
+            "answer-resize-tr",
+            Cursor::ResizeColumn,
+            (None, Some(0.0), Some(0.0), None),
+            Some(CORNER),
+            Some(CORNER),
+        ),
+        AnswerResize::BottomLeft => (
+            "answer-resize-bl",
+            Cursor::ResizeColumn,
+            (Some(0.0), None, None, Some(0.0)),
+            Some(CORNER),
+            Some(CORNER),
+        ),
+        AnswerResize::BottomRight => (
+            "answer-resize-br",
+            Cursor::ResizeColumn,
+            (None, Some(0.0), None, Some(0.0)),
+            Some(CORNER),
+            Some(CORNER),
+        ),
+    };
+    let mut edge = el()
+        .key(key)
+        .role("none")
+        .a11y_hidden()
+        .cursor(cursor)
+        .on_drag(move |s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| answer_drag(s, d, tx, mode))
+        .on_double_press(|s: &mut App| {
+            s.prefs.answer_dialog_custom = false;
+            s.prefs.save();
+        });
+    if let Some(v) = width {
+        edge = edge.w(v);
+    } else {
+        edge = edge.w_full();
+    }
+    if let Some(v) = height {
+        edge = edge.h(v);
+    } else {
+        edge = edge.h_full();
+    }
+    edge.pin(pin.0, pin.1, pin.2, pin.3)
+}
+
+fn answer_drag(s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx, mode: AnswerResize) {
+    tx.instant();
+    let z = s.zoom();
+    let window = dialog_window(s);
+    match d.phase {
+        rune::Phase::Down => {
+            let size = s.prefs.answer_dialog(window, z);
+            s.answer_dialog_resize = Some(size);
+            s.prefs.answer_dialog_width = size.0;
+            s.prefs.answer_dialog_height = size.1;
+            s.resizing = Some(crate::ui::Resize::AnswerDialog);
+        }
+        rune::Phase::Move => {
+            let Some((sw, sh)) = s.answer_dialog_resize else { return };
+            let (max_w, max_h) = s.prefs.answer_dialog_max(window, z);
+            let dx = d.dx / z;
+            let dy = d.dy / z;
+            let mut w = sw;
+            let mut h = sh;
+            match mode {
+                AnswerResize::Left | AnswerResize::TopLeft | AnswerResize::BottomLeft => w = sw - dx,
+                AnswerResize::Right | AnswerResize::TopRight | AnswerResize::BottomRight => w = sw + dx,
+                AnswerResize::Top | AnswerResize::Bottom => {}
+            }
+            match mode {
+                AnswerResize::Top | AnswerResize::TopLeft | AnswerResize::TopRight => h = sh - dy,
+                AnswerResize::Bottom | AnswerResize::BottomLeft | AnswerResize::BottomRight => h = sh + dy,
+                AnswerResize::Left | AnswerResize::Right => {}
+            }
+            s.prefs.answer_dialog_width = w.clamp(ANSWER_DIALOG_MIN_W, max_w).round();
+            s.prefs.answer_dialog_height = h.clamp(ANSWER_DIALOG_MIN_H, max_h).round();
+        }
+        rune::Phase::Up => {
+            if d.cancelled() {
+                if let Some((sw, sh)) = s.answer_dialog_resize {
+                    s.prefs.answer_dialog_width = sw;
+                    s.prefs.answer_dialog_height = sh;
+                }
+            } else {
+                s.prefs.answer_dialog_custom = true;
+            }
+            s.answer_dialog_resize = None;
+            s.resizing = None;
+            s.prefs.save();
+        }
+    }
 }
 
 fn state_ink(t: &Theme, verdict: &str) -> Color {

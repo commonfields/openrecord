@@ -87,6 +87,12 @@ pub struct Prefs {
     pub inbox_read: std::collections::BTreeSet<String>,
     /// The share of the card beside the panel (an artifact or a helper session), in percent (30 to 70).
     pub helper_width: f32,
+    /// The AI answer review popup, dragged from its edges; kept between launches.
+    pub answer_dialog_width: f32,
+    pub answer_dialog_height: f32,
+    /// When false, the popup opens nearly full-window; set true after the user resizes.
+    #[serde(default)]
+    pub answer_dialog_custom: bool,
     /// How large the whole interface draws (⌘+ and ⌘−), 1.0 being the web's sizes.
     pub zoom: f32,
     /// The OpenRecord server this app signs in to, when it is not the one on this Mac.
@@ -104,6 +110,12 @@ pub const INBOX_DEFAULT: f32 = 320.0;
 pub const INBOX_MIN: f32 = 240.0;
 pub const INBOX_MAX: f32 = 520.0;
 pub const HELPER_DEFAULT: f32 = 50.0;
+pub const ANSWER_DIALOG_DEFAULT_W: f32 = 1080.0;
+pub const ANSWER_DIALOG_DEFAULT_H: f32 = 760.0;
+pub const ANSWER_DIALOG_MIN_W: f32 = 640.0;
+pub const ANSWER_DIALOG_MIN_H: f32 = 420.0;
+/// Padding around the AI answer popup in the scrim (`answer-layer`).
+pub const ANSWER_DIALOG_WINDOW_PAD: f32 = 24.0;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -121,6 +133,9 @@ impl Default for Prefs {
             inbox_width: INBOX_DEFAULT,
             inbox_read: Default::default(),
             helper_width: HELPER_DEFAULT,
+            answer_dialog_width: ANSWER_DIALOG_DEFAULT_W,
+            answer_dialog_height: ANSWER_DIALOG_DEFAULT_H,
+            answer_dialog_custom: false,
             zoom: ZOOM_DEFAULT,
             server: None,
         }
@@ -176,6 +191,41 @@ impl Prefs {
     /// The helper's share of the split, kept within 30 to 70 percent.
     pub fn helper(&self) -> f32 {
         self.helper_width.clamp(30.0, 70.0)
+    }
+
+    /// Largest size the answer popup may take in the current window.
+    pub fn answer_dialog_max(&self, window: (f32, f32), zoom: f32) -> (f32, f32) {
+        let z = zoom.max(0.01);
+        let max_w = (window.0 / z - ANSWER_DIALOG_WINDOW_PAD).max(ANSWER_DIALOG_MIN_W);
+        let max_h = (window.1 / z - ANSWER_DIALOG_WINDOW_PAD).max(ANSWER_DIALOG_MIN_H);
+        (max_w, max_h)
+    }
+
+    /// Nearly all of the workspace, for the default (non-custom) popup size.
+    pub fn answer_dialog_fitted(&self, window: (f32, f32), zoom: f32) -> (f32, f32) {
+        let (max_w, max_h) = self.answer_dialog_max(window, zoom);
+        let w = (max_w * 0.94).round();
+        let h = (max_h * 0.92).round();
+        (w.clamp(ANSWER_DIALOG_MIN_W, max_w), h.clamp(ANSWER_DIALOG_MIN_H, max_h))
+    }
+
+    /// The answer popup's size: fitted large until the user has resized once.
+    pub fn answer_dialog(&self, window: (f32, f32), zoom: f32) -> (f32, f32) {
+        if !self.answer_dialog_custom {
+            return self.answer_dialog_fitted(window, zoom);
+        }
+        let (max_w, max_h) = self.answer_dialog_max(window, zoom);
+        let w = if self.answer_dialog_width.is_finite() {
+            self.answer_dialog_width
+        } else {
+            ANSWER_DIALOG_DEFAULT_W
+        };
+        let h = if self.answer_dialog_height.is_finite() {
+            self.answer_dialog_height
+        } else {
+            ANSWER_DIALOG_DEFAULT_H
+        };
+        (w.clamp(ANSWER_DIALOG_MIN_W, max_w).round(), h.clamp(ANSWER_DIALOG_MIN_H, max_h).round())
     }
 
     /// Whether to draw dark, given what the system asks for.

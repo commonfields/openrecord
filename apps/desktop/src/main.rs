@@ -243,8 +243,12 @@ fn main() {
         ..AppSpec::new("OpenRecord", (1280.0, 800.0), App::new, ui::view)
     };
     rune::App::new(spec)
-        .chrome(Chrome { full_size_content: true, traffic_lights: Some((16.0, 22.0)), drag_regions: true })
-        .titlebar(rune::Titlebar::new(50.0).traffic_lights(16.0, 22.0))
+        .chrome(Chrome {
+            full_size_content: true,
+            traffic_lights: Some((ui::TRAFFIC_LIGHT_INSET, ui::TRAFFIC_LIGHT_INSET)),
+            drag_regions: true,
+        })
+        .titlebar(rune::Titlebar::new(ui::TITLEBAR).traffic_lights(ui::TRAFFIC_LIGHT_INSET, ui::TRAFFIC_LIGHT_INSET))
         .standard_menus()
         // Clear where the app paints nothing, so the browser's page, drawn
         // behind the app's view, shows through with the chat box over it.

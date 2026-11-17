@@ -40,7 +40,29 @@ def main():
         assert head[1] + head[3] <= inset[1] + 1, 'The header belongs above the inset'
         assert foot[1] >= inset[1] + inset[3] - 1, 'The footer belongs below the inset'
         inside(keys, 'verdict-options', 'answer-inset')
-        assert keys['answer-dialog']['rect'][2] <= 800 * keys['answer-dialog']['scale'] + 1, 'Popup is wider than 800'
+    keys = render('layout-1280x900', size='1280x900')
+    scale = keys['answer-dialog']['scale']
+    # Nearly full window: 94% × 92% of (window − 24pt scrim pad), matching prefs::answer_dialog_fitted.
+    pw, ph = 1280, 900
+    pad = 24
+    zoom = 0.9  # headless fixtures use Prefs::default(), not --scale
+    exp_w = (pw / zoom - pad) * 0.94
+    exp_h = (ph / zoom - pad) * 0.92
+    assert abs(keys['answer-dialog']['rect'][2] - exp_w * scale) < 3, 'Popup should open nearly full width'
+    assert abs(keys['answer-dialog']['rect'][3] - exp_h * scale) < 3, 'Popup should open nearly full height'
+
+    base = keys
+    w0, h0 = base['answer-dialog']['rect'][2], base['answer-dialog']['rect'][3]
+    grown = render(
+        'resized',
+        size='1280x900',
+        events=[
+            {'t': .2, 'type': 'drag', 'key': 'answer-resize-w', 'dx': 80, 'dy': 0, 'dur': .25},
+            {'t': .55, 'type': 'drag', 'key': 'answer-resize-h', 'dx': 0, 'dy': 60, 'dur': .25},
+        ],
+    )
+    assert grown['answer-dialog']['rect'][2] > w0 + 50, 'Right-edge drag did not widen the popup'
+    assert grown['answer-dialog']['rect'][3] > h0 + 40, 'Bottom-edge drag did not lengthen the popup'
 
     text = 'The correct answer.\nAnother line with the facts we checked.\nOne more line.'
     events = [{'t': .2, 'key': 'verdict-notes'}, {'t': .4, 'paste': text},
@@ -60,7 +82,7 @@ def main():
 
     keys = render('closed', scene='ai-answer', events=[{'t': .2, 'key': 'answer-close'}])
     assert 'answer-dialog' not in keys and 'issue-panel' in keys, 'Close did not return to the list'
-    print('7 answer popup layout, inset, correction field, rating and close checks passed. Evidence: ' + str(out))
+    print('10 answer popup layout, resize, inset, correction field, rating and close checks passed. Evidence: ' + str(out))
 
 
 if __name__ == '__main__':

@@ -15,9 +15,10 @@ use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, avatar_sphere, count_badge, ico, icon_button, label};
 
 pub const RAIL_WIDTH: f32 = 52.0;
-/// Room above the business switcher for the traffic lights.
-/// The sidebar's top band: down to the header's centre line (32 points) and as far below it.
-pub const TITLEBAR: f32 = 56.0;
+/// Room above the business switcher for the traffic lights (matches their inset).
+pub const TITLEBAR: f32 = 48.0;
+/// macOS traffic lights: same inset from the window's top and left edges.
+pub const TRAFFIC_LIGHT_INSET: f32 = 16.0;
 const PANE: Spring = Spring::new(0.5, 0.0);
 const CHATS_SHOWN: usize = 6;
 
@@ -39,12 +40,12 @@ pub fn collapsed_slot_end(titlebar_inset: f32) -> f32 {
 }
 
 /// Where the collapsed sidebar's button sits: just past the traffic lights,
-/// on the header's line, 32 points down, as the traffic lights are.
+/// on the header's line, level with the traffic lights.
 pub fn collapsed_toggle(s: &App, t: &Theme, titlebar_inset: f32) -> El {
     let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
     row()
         .key("sidebar-toggle-slot")
-        .pin(Some(collapsed_slot_start(titlebar_inset)), Some(18.0), None, None)
+        .pin(Some(collapsed_slot_start(titlebar_inset)), Some(18.0), Some(TRAFFIC_LIGHT_INSET), None)
         .gap(2.0)
         .center_y()
         .child(find)
@@ -199,7 +200,6 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
                 .key("titlebar-band")
                 .w_full()
                 .h(TITLEBAR)
-                .pt(8.0)
                 .pr(8.0)
                 .center_y()
                 .window_drag()
@@ -217,6 +217,7 @@ pub enum Resize {
     Sidebar,
     Inbox,
     Helper,
+    AnswerDialog,
 }
 
 /// The sidebar's right edge: drag to resize between the web's 224 and 448

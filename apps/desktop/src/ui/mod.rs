@@ -21,7 +21,7 @@ mod overview;
 pub use overview::number as overview_number;
 mod pages;
 mod shell;
-pub use shell::Resize;
+pub use shell::{Resize, TITLEBAR, TRAFFIC_LIGHT_INSET};
 mod settings;
 mod series;
 pub mod side;
@@ -60,9 +60,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         crate::native_preview::browser_pass_through(s.native_view_clear());
     } else { crate::native_preview::browser_hide(); }
     let z = s.zoom();
-    // The traffic lights follow the zoom so they stay on the header's line,
-    // 32 points down in the interface's own units.
-    cx.set_titlebar(rune::Titlebar::new((56.0 * z).round()).traffic_lights(16.0, (32.0 * z - 7.0).round()));
+    // Traffic lights: 16pt from the left and top in interface units (symmetric inset).
+    let light = (shell::TRAFFIC_LIGHT_INSET * z).round();
+    cx.set_titlebar(rune::Titlebar::new((shell::TITLEBAR * z).round()).traffic_lights(light, light));
     let t = Theme::get(s.prefs.dark(cx.system_dark()));
     if s.prefs.reduce_motion {
         cx.reduced_motion(true);
@@ -200,7 +200,6 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .pt(8.0)
         .pb(8.0)
         .pr(if side_card.is_some() { 0.0 } else { 8.0 })
         .pl(if s.sidebar_open || wide { 0.0 } else { 8.0 })
