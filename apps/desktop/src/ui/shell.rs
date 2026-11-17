@@ -12,7 +12,7 @@ use crate::icons;
 use crate::insights::Section;
 use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, avatar_sphere, count_badge, ico, icon_button, label};
+use crate::ui::widgets::{CONTROL, account_tile, count_badge, ico, icon_button, label};
 
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights (matches their inset).
@@ -166,7 +166,7 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .child({
                 // A dot on the avatar while a newer version waits in the account menu.
                 let ready = matches!(s.update, crate::update::Update::Available(_));
-                row().size(24.0, 24.0).child(avatar_sphere(t, 24.0)).children(ready.then(|| {
+                row().size(24.0, 24.0).child(account_tile(t, s.account_email.as_deref(), 24.0)).children(ready.then(|| {
                     el().absolute(17.0, -1.0).size(9.0, 9.0).radius(4.5).fill(t.primary_ink).border(1.5, t.sidebar).help("A new version is ready")
                 }))
             });
@@ -518,8 +518,10 @@ fn chat_filter_menu(s: &App, t: &Theme) -> El {
 pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> El {
     // 48 tall as before, its line centred in the top 32: the panel starts 8 points
     // down, so that puts the breadcrumbs level with the traffic lights and the
-    // sidebar's buttons (centred 24 points from the window's top).
-    let mut h = row().key("header").w_full().h(48.0).pb(16.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag();
+    // sidebar's buttons (centred 24 points from the window's top). The Inbox's and Analytics'
+    // insets start right under that line, so there it keeps only 4 below.
+    let inbox = s.view == View::Workspace && matches!(s.page, Page::Inbox | Page::Overview);
+    let mut h = row().key("header").w_full().h(if inbox { 36.0 } else { 48.0 }).pb(if inbox { 4.0 } else { 16.0 }).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag();
 
     if s.view == View::Workspace && s.page.account() {
         // An account page belongs to no business.
@@ -649,7 +651,7 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
     let width = if s.sidebar_full() { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
     let mut m = menu(t, "account-menu-list", width)
         .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
-            .child(avatar_sphere(t, 36.0))
+            .child(account_tile(t, s.account_email.as_deref(), 36.0))
             .child(col().min_w(0.0).gap(1.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate())))
         .child(rule())
         .child(item("acct-settings", &icons::SETTINGS, "Settings").autofocus().on_press(settings(crate::state::SettingsPage::General)))
@@ -662,7 +664,16 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         .child(rule())
         .child(update_row(s, t))
         .child(rule());
-    m = m.child(item("sign-out", &icons::LOG_OUT, "Sign out").on_press(|s: &mut App| s.sign_out()));
+    // Sign out turns red under the pointer: it ends the session.
+    let out_hovered = s.row_hover.as_deref() == Some("acct:sign-out");
+    let out_ink = if out_hovered { t.wrong } else { t.muted_foreground };
+    let sign_out = row().key("sign-out").w_full().h(40.0).px(12.0).gap(10.0).radius(8.0).center_y()
+        .role("menuitem").label("Sign out").focusable(true).cursor(Cursor::Pointer).focus_highlight(t.wrong_soft)
+        .on_hover_change(crate::ui::widgets::track_hover("acct:sign-out".to_string()))
+        .fill(if out_hovered { t.wrong_soft } else { t.wrong_soft.alpha(0.0) }).motion(CONTROL)
+        .child(ico(&icons::LOG_OUT, 16.0, out_ink))
+        .child(label("Sign out", type_::SM, if out_hovered { t.wrong } else { t.foreground }).truncate().grow(1.0).min_w(0.0));
+    m = m.child(sign_out.on_press(|s: &mut App| s.sign_out()));
     let side = if s.sidebar_full() { Side::Top } else { Side::Right };
     layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
@@ -684,7 +695,7 @@ fn update_row(s: &App, t: &Theme) -> El {
     let mut r = row()
         .key("app-update")
         .w_full()
-        .h(44.0)
+        .h(if matches!(s.update, Update::UpToDate) { 40.0 } else { 44.0 })
         .px(10.0)
         .gap(10.0)
         .radius(6.0)
@@ -701,7 +712,7 @@ fn update_row(s: &App, t: &Theme) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .child(label(text_, type_::SM, t.foreground).truncate())
-                .child(label(format!("OpenRecord {}{}", current(), note.map(|n| format!(", {}", n.to_lowercase())).unwrap_or_default()), type_::XS11, t.muted_foreground).truncate()),
+                .children((!matches!(s.update, Update::UpToDate)).then(|| label(format!("OpenRecord {}{}", current(), note.map(|n| format!(", {}", n.to_lowercase())).unwrap_or_default()), type_::XS11, t.muted_foreground).truncate())),
         );
     if available {
         r = r.fill(t.primary_ink.alpha(0.08));

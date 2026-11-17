@@ -131,34 +131,17 @@ pub fn business_mark(t: &Theme, name: Option<&str>, size: f32, radius: f32) -> E
     shadows(tile, &t.mark_shadow)
 }
 
-/// The account sphere: a glossy periwinkle ball, the same in both themes.
-pub fn avatar_sphere(t: &Theme, size: f32) -> El {
-    let hex = |s: &str| rune::color::hex(s).unwrap_or(Color::BLACK);
-    let w = |a: f32| Color::WHITE.alpha(a);
-    let base = el()
+/// The account's mark: a glossy tile in the colour picked from its email, as a
+/// business mark is, with no letter on it.
+pub fn account_tile(t: &Theme, email: Option<&str>, size: f32) -> El {
+    let (bg, _) = t.mark(email.unwrap_or("account"));
+    let tile = el()
         .size(size, size)
-        .radius(size / 2.0)
-        .fill(hex("#6f6b9d"))
-        .radial_gradient([0.44, 0.36], size * 0.71, [
-            (0.0, hex("#918cba")),
-            (0.32, hex("#7e79ab")),
-            (0.62, hex("#5a5687")),
-            (0.88, hex("#3d3a5f")),
-            (1.0, hex("#343157")),
-        ])
+        .radius((size * 0.28).round())
+        .fill(bg)
+        .linear_gradient(std::f32::consts::PI, [(0.0, Color::WHITE.alpha(0.3)), (0.5, Color::WHITE.alpha(0.05)), (1.0, Color::BLACK.alpha(0.16))])
         .a11y_hidden();
-    let shade = el().absolute(0.0, 0.0).size(size, size).radius(size / 2.0).radial_gradient([0.46, 0.78], size * 0.45, [
-        (0.0, hex("#141226").alpha(0.5)),
-        (1.0, Color::TRANSPARENT),
-    ]);
-    let wide = el().absolute(0.0, 0.0).size(size, size).radius(size / 2.0).radial_gradient([0.76, 0.30], size * 0.22, [
-        (0.0, w(0.9)),
-        (0.41, w(0.25)),
-        (1.0, w(0.0)),
-    ]);
-    let small = el().absolute(0.0, 0.0).size(size, size).radius(size / 2.0).radial_gradient([0.26, 0.22], size * 0.14, [(0.0, w(0.75)), (1.0, w(0.0))]);
-    let edge = if t.dark { Color::WHITE.alpha(0.04) } else { Color::BLACK.alpha(0.08) };
-    base.child(shade).child(wide).child(small).box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: edge, inset: false })
+    shadows(tile, &t.mark_shadow)
 }
 
 /// A small count on a soft red pill (the sidebar's "AI answers 4").

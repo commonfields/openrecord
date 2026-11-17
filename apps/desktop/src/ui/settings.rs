@@ -12,7 +12,7 @@ use crate::prefs::{ChatWidth, Landing, Style, ThemePref};
 use crate::settings::{Bridge, Catalog, Instance, NOTE_KINDS, kind_label};
 use crate::state::{App, Load, SettingsPage};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, Variant, avatar_sphere, button, ico, label};
+use crate::ui::widgets::{CONTROL, Variant, account_tile, button, ico, label};
 
 /// The scrim and the dialog, as two layers over the window.
 pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
@@ -818,7 +818,7 @@ fn account(s: &App, t: &Theme) -> El {
                 .center_y()
                 .radius(10.0)
                 .fill(t.card)
-                .child(avatar_sphere(t, 40.0))
+                .child(account_tile(t, s.account_email.as_deref(), 40.0))
                 .child(
                     col()
                         .grow(1.0)

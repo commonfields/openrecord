@@ -412,6 +412,8 @@ pub struct App {
     pub portfolio_sort: PortfolioSort,
     /// The split's width, measured, for the share of the artifact or helper beside the panel.
     pub split_w: f32,
+    /// The Analytics folder's measured width, in the window and in the side panel, for laying out its tabs.
+    pub analytics_w: [f32; 2],
     /// The window's size in window points, measured, for the zoom.
     pub window: (f32, f32),
     /// The drag edge held right now, if any.
@@ -642,6 +644,7 @@ impl App {
             issue_query: IssueQuery::default(),
             portfolio_sort: PortfolioSort::Attention,
             split_w: 0.0,
+            analytics_w: [0.0; 2],
             window: (0.0, 0.0),
             resizing: None,
             answer_dialog_resize: None,

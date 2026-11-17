@@ -152,6 +152,11 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         View::Agent => (agent_boot(s, &t), None),
         // The inbox fills the panel; its list and reading pane scroll on their own.
         View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), None),
+        // Analytics too: its tabs stay put and its sheet fills the panel, inset as the panel is in the window.
+        View::Workspace if s.page == crate::state::Page::Overview => (
+            col().key("page-analytics").w_full().grow(1.0).min_h(0.0).px(8.0).pb(8.0).child(overview::view(s, t, false)),
+            None,
+        ),
         View::Workspace if s.page == crate::state::Page::AiAnswers => (
             col().key("answers-page").w_full().grow(1.0).min_h(0.0)
                 .px(40.0).pt(32.0).pb(16.0).child(pages::view(s, t)),

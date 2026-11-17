@@ -40,7 +40,7 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
     let order: Vec<_> = shown.iter().rev().collect();
     let last = order.len() - 1;
     // The shadow room above and below is part of what scrolls, so the newest card's shadow stays whole at the bottom.
-    let mut stack = col().key("notices-cards").w(WIDTH).gap(GAP).pt(SHADOW_ROOM).pb(SHADOW_ROOM);
+    let mut stack = col().key("notices-cards").w(WIDTH).gap(GAP).pt(TOP_ROOM).pb(SHADOW_ROOM);
     for (j, d) in order.iter().enumerate() {
         let behind = last - j;
         let (dy, scale, fade) = if open { (0.0, 1.0, 1.0) } else { (behind as f32 * (CARD_H + GAP - PEEK), 1.0 - 0.045 * behind as f32, [1.0, 0.75, 0.5].get(behind).copied().unwrap_or(0.0)) };
@@ -76,7 +76,11 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
                     s.show_page(Page::Inbox);
                     s.select_decision(&key);
                 })
-                .child(row().size(30.0, 30.0).radius(8.0).center().fill(t.primary_ink.alpha(if t.dark { 0.16 } else { 0.08 })).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, t.primary_ink)))
+                // The provider that asked, by its logo; the Inbox icon when it is not known.
+                .child(match crate::ui::pages::sender_logo(s, t, d, 30.0) {
+                    Some(logo) => row().size(30.0, 30.0).opacity(content).motion(SPREAD).child(logo),
+                    None => row().size(30.0, 30.0).radius(8.0).center().fill(t.primary_ink.alpha(if t.dark { 0.16 } else { 0.08 })).opacity(content).motion(SPREAD).child(ico(&icons::NAV_INBOX, 15.0, t.primary_ink)),
+                })
                 .child(
                     col()
                         .opacity(content)
@@ -130,8 +134,8 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
     // at rest it holds only the stack.
     // Wider and taller than the cards by their shadow, so the clip that scrolling
     // needs never cuts a shadow into a visible box.
-    let list_h = (order.len() as f32).min(VISIBLE) * (CARD_H + GAP) + 2.0 * SHADOW_ROOM;
-    let rest_h = CARD_H + 2.0 * PEEK + 2.0 * SHADOW_ROOM;
+    let list_h = (order.len() as f32).min(VISIBLE) * (CARD_H + GAP) + TOP_ROOM + SHADOW_ROOM;
+    let rest_h = CARD_H + 2.0 * PEEK + TOP_ROOM + SHADOW_ROOM;
     let mut stack = col()
         .key("notices-scroll")
         .w(WIDTH + 2.0 * SHADOW_ROOM)
@@ -145,7 +149,6 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
         .pin(None, top.then_some(TOP - SHADOW_ROOM), Some(24.0 - SHADOW_ROOM), (!top).then_some(BOTTOM - SHADOW_ROOM))
         .w(WIDTH + 2.0 * SHADOW_ROOM)
         .items_center()
-        .gap(6.0)
         .role("region")
         .label("Decisions waiting on you");
     if top || open {
@@ -162,7 +165,7 @@ pub fn layer(s: &App, t: &Theme) -> Option<El> {
         // Keep the scroll viewport anchored and unchanged while the cards spread.
         // The collapsed hit region stays small; the unused viewport is inert.
         stack = stack.pin(Some(0.0), None, None, Some(0.0));
-        let head = head.pin(Some(SHADOW_ROOM), None, None, Some(list_h + 6.0));
+        let head = head.pin(Some(SHADOW_ROOM), None, None, Some(list_h));
         if !open { stack = stack.inert(); }
         let newest = order[last].key.clone();
         let trigger = el().key("notices-trigger").pin(Some(0.0), None, None, Some(0.0))
@@ -191,6 +194,9 @@ const BOTTOM: f32 = 41.0;
 const TOP: f32 = 8.0 + 48.0 + 8.0;
 /// Room around the cards inside the scrolling list for their shadows.
 const SHADOW_ROOM: f32 = 22.0;
+/// Room above the first card: its shadow reaches only a few points up, so the
+/// header sits close to the cards.
+const TOP_ROOM: f32 = 6.0;
 
 /// Whether the stack waits in the top right corner: on the agent, when the chat
 /// box would otherwise run into it at the bottom. Elsewhere the bottom is free.
