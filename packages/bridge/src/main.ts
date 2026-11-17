@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url"
 import { Schema } from "effect"
 import { HARNESS_NAMES, HarnessDriver, type HarnessJobResult, type HarnessReport } from "@openrecord/contracts"
 import { LocalInstance, executableFor, execute, probe } from "./adapters.js"
+import { cursorSdk } from "./cursor-sdk.js"
 import { sessions } from "./sessions.js"
 import { UsageLimits } from "./limits.js"
 import { BridgeClient, serverOrigin } from "./client.js"
@@ -147,9 +148,16 @@ export async function main(args = process.argv.slice(2)) {
       throw new BridgeSetupError("Choose --driver codex|claude|opencode|cursor or --instance from local configuration")
     if (instance.driver === "cliproxy")
       throw new BridgeSetupError("Sign in to providers in CLIProxyAPI itself (for example: cli-proxy-api --claude-login)")
+    if (instance.driver === "cursor") {
+      // Cursor signs in through its SDK: a browser sign-in that stores a user key for this computer.
+      const { Cursor } = await cursorSdk().catch(() => { throw new BridgeSetupError("Cursor's SDK is not installed next to this bridge") })
+      const result = await Cursor.auth.login({ onLoginUrl: url => log(`if the browser did not open, sign in here: ${url}`) })
+      log(`signed in to Cursor${result.email ? ` as ${result.email}` : ""}: refresh the provider in OpenRecord`)
+      return
+    }
     const loginDriver = instance.driver
     const binary = await executableFor(instance)
-    const commands = { codex: ["login"], claude: ["auth", "login"], opencode: ["auth", "login"], cursor: ["login"] }
+    const commands = { codex: ["login"], claude: ["auth", "login"], opencode: ["auth", "login"] }
     const env = driverEnvironment(loginDriver)
     if (instance.home) {
       if (instance.driver === "codex") env["CODEX_HOME"] = instance.home

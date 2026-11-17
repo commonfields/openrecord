@@ -23,7 +23,8 @@ it("starts the downloadable bundle through a symlinked folder without project de
       bundle: true,
       platform: "node",
       target: "node24",
-      format: "esm"
+      format: "esm",
+      external: ["@cursor/sdk"]
     })
     const result = await promisify(execFile)(process.execPath, [join(linked, "bridge.mjs"), "--help"], {
       cwd: directory

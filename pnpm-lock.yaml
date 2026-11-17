@@ -291,6 +291,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.316
         version: 0.3.316(@anthropic-ai/sdk@1.3.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
+      '@cursor/sdk':
+        specifier: 1.4.0
+        version: 1.4.0(zod@4.6.7)
       '@openrecord/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -756,6 +759,20 @@ packages:
     resolution: {integrity: sha512-0GEz8qJWokkUVYQYRukmkSHIFNoBH8QTreeHrAFbvz1XFYc3Y+puhMs8PQ5x8GNugiC2l5jvDBXKLbBIByeSBw==}
     hasBin: true
 
+  '@bufbuild/protobuf@1.10.0':
+    resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
+
+  '@connectrpc/connect-web@1.7.0':
+    resolution: {integrity: sha512-qyP0YOnUPRWwCc/VfsoydMJvkb7EyUPr2q9sHgBuJzbADjiqck1gKH5V5ZPzPhTLBvmz5UvG+wiZ5sMRQHU1MQ==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^1.10.0
+      '@connectrpc/connect': 1.7.0
+
+  '@connectrpc/connect@1.7.0':
+    resolution: {integrity: sha512-iNKdJRi69YP3mq6AePRT8F/HrxWCewrhxnLMNm0vpqXAR8biwzRtO6Hjx80C6UvtKJ5sFmffQT7I4Baecz389w==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^1.10.0
+
   '@csstools/color-helpers@5.1.0':
     resolution: {integrity: sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==}
     engines: {node: '>=18'}
@@ -819,6 +836,42 @@ packages:
   '@csstools/css-tokenizer@4.0.2':
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
+
+  '@cursor/sdk-darwin-arm64@1.4.0':
+    resolution: {integrity: sha512-fVUjxZAFFYfd8XBwURhtpBzy+e5QseT69i3mS9vb5SlabZdty6ApcFiPxBDPYLWNoK/IZwBBmzYXpI0XXCv95Q==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@cursor/sdk-darwin-x64@1.4.0':
+    resolution: {integrity: sha512-dEYElA2yxg5d0Es+0clV9h2Le6IMGhn69aADpbMKKXwunX5wW9uLjZamKwS+YdEsWiCBv1fIlCiMs8wEYNyRCA==}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@cursor/sdk-linux-arm64@1.4.0':
+    resolution: {integrity: sha512-sdr8dBAOJxI9ljEiLbEMRsEEa/lt0r/iz9JBKbIu6PbQYaIu3Ih8c//Z5DIc+dXxn3SZ2gw4p7bG6qMKVWUqrg==}
+    cpu: [arm64]
+    os: [linux]
+    hasBin: true
+
+  '@cursor/sdk-linux-x64@1.4.0':
+    resolution: {integrity: sha512-kC55zy52WbpNm56cIRPyEcXJtOgCCtr6n9g+5Ht4tqlpftBxgyBi/lubOsRfIDWACXpSl2BP9kcdpWS1fKKa1w==}
+    cpu: [x64]
+    os: [linux]
+    hasBin: true
+
+  '@cursor/sdk-win32-x64@1.4.0':
+    resolution: {integrity: sha512-N7BSufvhfxN18a8+BYFAIn9vQzVx0ly3qriUZL8WTgSUhthTSFXdUrj8Eliqd+QcoHPG/oq+V+Jg+HyeilMOSA==}
+    cpu: [x64]
+    os: [win32]
+    hasBin: true
+
+  '@cursor/sdk@1.4.0':
+    resolution: {integrity: sha512-I3ICV4z8Qcj1DikmbVrAAIYMm5LzxJ/Q9uygkRnq3XXeF+5uzCoUYEqQMEsDh5RpkJ5IY9DZNHgG8adCEwRgbg==}
+    engines: {node: '>=22.13'}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@effect/cluster@0.60.2':
     resolution: {integrity: sha512-GEODN5kvFJ0L0XSkANcS8s6lfhjrrA8x/ezYUV/lXerqCHf5xo3ZTPUanGMHu5Byvikng0mZDcyNvke2sGjfSQ==}
@@ -2277,6 +2330,12 @@ packages:
 
   '@standard-schema/utils@0.3.0':
     resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
+
+  '@statsig/client-core@3.31.0':
+    resolution: {integrity: sha512-SuxQD6TmVszPG7FoMKwTk/uyBuVFk7XnxI3T/E0uyb7PL7GNjONtfsoh+NqBBVUJVse0CUeSFfgJPoZy1ZOslQ==}
+
+  '@statsig/js-client@3.31.0':
+    resolution: {integrity: sha512-LFa5E0LjT6sTfZv3sNGoyRLSZ1078+agdgOA+Vm1ecjG+KbSOfBLTW7hMwimrJ29slRwbYDzbtKaPJo/R37N2g==}
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
@@ -4996,6 +5055,17 @@ snapshots:
       css-tree: 3.2.1
     optional: true
 
+  '@bufbuild/protobuf@1.10.0': {}
+
+  '@connectrpc/connect-web@1.7.0(@bufbuild/protobuf@1.10.0)(@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0))':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.0
+      '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
+
+  '@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0)':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.0
+
   '@csstools/color-helpers@5.1.0': {}
 
   '@csstools/color-helpers@6.1.2':
@@ -5045,6 +5115,35 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.2':
     optional: true
+
+  '@cursor/sdk-darwin-arm64@1.4.0':
+    optional: true
+
+  '@cursor/sdk-darwin-x64@1.4.0':
+    optional: true
+
+  '@cursor/sdk-linux-arm64@1.4.0':
+    optional: true
+
+  '@cursor/sdk-linux-x64@1.4.0':
+    optional: true
+
+  '@cursor/sdk-win32-x64@1.4.0':
+    optional: true
+
+  '@cursor/sdk@1.4.0(zod@4.6.7)':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.0
+      '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
+      '@connectrpc/connect-web': 1.7.0(@bufbuild/protobuf@1.10.0)(@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0))
+      '@statsig/js-client': 3.31.0
+      zod: 4.6.7
+    optionalDependencies:
+      '@cursor/sdk-darwin-arm64': 1.4.0
+      '@cursor/sdk-darwin-x64': 1.4.0
+      '@cursor/sdk-linux-arm64': 1.4.0
+      '@cursor/sdk-linux-x64': 1.4.0
+      '@cursor/sdk-win32-x64': 1.4.0
 
   '@effect/cluster@0.60.2(@effect/platform@0.97.2(effect@3.22.2))(@effect/rpc@0.76.2(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(@effect/sql@0.52.1(@effect/experimental@0.61.1(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(@effect/workflow@0.19.1(@effect/experimental@0.61.1(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(@effect/platform@0.97.2(effect@3.22.2))(@effect/rpc@0.76.2(@effect/platform@0.97.2(effect@3.22.2))(effect@3.22.2))(effect@3.22.2))(effect@3.22.2)':
     dependencies:
@@ -6344,6 +6443,12 @@ snapshots:
   '@standard-schema/spec@1.1.0': {}
 
   '@standard-schema/utils@0.3.0': {}
+
+  '@statsig/client-core@3.31.0': {}
+
+  '@statsig/js-client@3.31.0':
+    dependencies:
+      '@statsig/client-core': 3.31.0
 
   '@tailwindcss/node@4.3.3':
     dependencies:

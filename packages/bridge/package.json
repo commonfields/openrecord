@@ -8,10 +8,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src --max-warnings 0",
     "test": "vitest run",
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "cursor:login": "tsx src/cursor-login.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.316",
+    "@cursor/sdk": "1.4.0",
     "@openrecord/contracts": "workspace:*",
     "effect": "3.22.2",
     "tsx": "4.19.2"
