@@ -154,17 +154,16 @@ fn inbox_at(s: &App, t: &Theme, in_panel: bool) -> El {
     } else {
         row().key("inbox").w_full().h_full().padding(12.0).pt(6.0)
             .child(left.w(s.prefs.inbox().min(max_width)).min_w(s.prefs.inbox().min(max_width)).h_full())
-            .child(inbox_resize_edge(t, max_width))
+            .child(inbox_resize_edge(max_width))
             .child(right.w(0.0).grow(1.0))
     }
 }
 
-fn inbox_resize_edge(t: &Theme, max_width: f32) -> El {
+fn inbox_resize_edge(max_width: f32) -> El {
     use crate::prefs::{INBOX_DEFAULT, INBOX_MIN};
     el().key("inbox-edge").w(6.0).h_full()
         .role("separator").label("Resize Inbox sidebar")
-        .help("Drag to resize; double-click to reset; use left and right arrows to adjust")
-        .focusable(true).cursor(Cursor::ResizeColumn).hover(t.hover_tint)
+        .focusable(true).cursor(Cursor::ResizeColumn)
         .on_drag(move |s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {
