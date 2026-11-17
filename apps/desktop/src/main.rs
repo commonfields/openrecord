@@ -209,6 +209,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("overview-realtime", fixtures::overview_realtime),
     ("overview-events", fixtures::overview_events),
     ("campaigns", fixtures::campaigns),
+    ("campaigns-empty", fixtures::campaigns_empty),
     ("campaign", fixtures::campaign_open),
     ("campaign-brief", fixtures::campaign_brief),
     ("ai-answers", fixtures::ai_answers),

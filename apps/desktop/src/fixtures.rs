@@ -809,6 +809,11 @@ fn insights() -> Insights {
     }
 }
 
+pub fn campaigns_empty(s: &mut App) {
+    page(s, Page::Campaigns);
+    s.campaigns = crate::state::Load::Ready(vec![]);
+}
+
 pub fn campaigns(s: &mut App) {
     page(s, Page::Campaigns);
     let today = |d: i64| crate::format::iso_date(crate::format::now() + d * 86_400);

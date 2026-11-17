@@ -107,7 +107,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                     .w_full()
                     .h(room)
                     .justify_center()
-                    .items_start()
+                    .items_center()
                     .child(empty_state_plain(
                         t,
                         "campaigns-empty",
