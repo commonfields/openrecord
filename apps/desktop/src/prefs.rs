@@ -78,7 +78,6 @@ pub struct Prefs {
     pub enter_to_send: bool,
     /// The composer's microphone, for macOS dictation.
     pub voice_input: bool,
-    pub default_provider: String,
     /// The sidebar's width when open, dragged from its edge (the web's 224 to 448).
     pub sidebar_width: f32,
     /// The Inbox message list, resized independently of the workspace sidebar.
@@ -128,7 +127,6 @@ impl Default for Prefs {
             response_style: Style::Friendly,
             enter_to_send: true,
             voice_input: true,
-            default_provider: "mock".into(),
             sidebar_width: SIDEBAR_DEFAULT,
             inbox_width: INBOX_DEFAULT,
             inbox_read: Default::default(),
