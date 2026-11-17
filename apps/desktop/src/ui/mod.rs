@@ -200,6 +200,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         .grow(1.0)
         .min_w(0.0)
         .h_full()
+        .pt(8.0)
         .pb(8.0)
         .pr(if side_card.is_some() { 0.0 } else { 8.0 })
         .pl(if s.sidebar_open || wide { 0.0 } else { 8.0 })
