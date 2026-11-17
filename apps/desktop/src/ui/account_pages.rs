@@ -10,7 +10,7 @@ use crate::insights::{PERIODS, int};
 use crate::state::{App, Load, PortfolioSort};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::kit::{self, Column, column};
-use crate::ui::widgets::{CONTROL, Variant, button, empty_state, failure, ico, label, page_header, skeleton, status_chip};
+use crate::ui::widgets::{CONTROL, Variant, button, empty_state_page, empty_viewport_room, failure, ico, label, page_header, skeleton, status_chip};
 
 fn tokens(v: Option<f64>) -> String {
     match v {
@@ -179,10 +179,11 @@ pub fn businesses(s: &App, t: &Theme) -> El {
     let new_business = button(t, "new-business", "+ New business", Variant::Primary).on_press(|s: &mut App| s.open_add_business(None));
     let top = head(t, "Businesses", "See your businesses and what needs attention, then open one to see the agent's work and results.", Some(new_business));
     if s.businesses.is_empty() {
-        return col().w_full().gap(24.0).child(top).child(empty_state(
+        return col().w_full().gap(24.0).child(top).child(empty_state_page(
+            "businesses-empty-shell",
+            empty_viewport_room(s),
             t,
             "businesses-empty",
-            &icons::BUILDING,
             "Add your first business",
             "Start with a website. Your agent will read it and prepare a brief for you to review.",
             None,
@@ -267,10 +268,11 @@ pub fn clients(s: &App, t: &Theme) -> El {
         _ => return col().w_full().gap(24.0).child(top).child(skeleton(t, 3)),
     };
     if list.is_empty() {
-        return col().w_full().gap(24.0).child(top).child(empty_state(
+        return col().w_full().gap(24.0).child(top).child(empty_state_page(
+            "clients-empty-shell",
+            empty_viewport_room(s),
             t,
             "clients-empty",
-            &icons::BRIEFCASE,
             "Add your first business",
             "Add a website to start working with your agent, for a client or your own business.",
             None,

@@ -59,10 +59,38 @@ fn workspace(s: &mut App) {
     s.decisions = decisions();
 }
 
+/// The agent's message behind the first inbox item: prose, a generated view and a diagram.
+const INBOX_MESSAGE: &str = r#"I checked this week's answers against your approved facts. **Three of five** guessed at pricing, and none could describe setup.
+
+```ui
+{"title":"What assistants say about pricing","root":"r","elements":[
+ {"id":"r","type":"column","gap":"md","children":["m","t"]},
+ {"id":"m","type":"row","children":["m1","m2","m3"]},
+ {"id":"m1","type":"metric","label":"Answers that guess pricing","value":"3 of 5","trend":"down"},
+ {"id":"m2","type":"metric","label":"Trial sign-ups","value":184,"trend":"up","hint":"Last 30 days"},
+ {"id":"m3","type":"metric","label":"Pages stating price","value":0,"trend":"flat"},
+ {"id":"t","type":"table","columns":["Assistant","Says","Correct"],"rows":[["ChatGPT","From $99 a month","No"],["Gemini","From $49 a month","Yes"],["Perplexity","Not stated","Unknown"]]}
+]}
+```
+
+Here is where a clear pricing page would sit in the path to a trial:
+
+```mermaid
+flowchart LR
+  A[AI answer] --> B[Pricing page]
+  S[Search result] --> B
+  B --> C{Clear setup steps?}
+  C -- yes --> D[Trial sign-up]
+  C -- no --> E[Leaves]
+```
+
+If you approve, I'll draft the page from your approved facts and set a baseline to measure against."#;
+
 fn decisions() -> Vec<Decision> {
     let northstar = json!({ "id": "b-northstar", "name": "Northstar Analytics" });
     let items = [
-        json!({ "type": "GROWTH_OPPORTUNITY", "business": northstar, "createdAt": ago(90), "conversationId": "c1", "opportunity": {
+        json!({ "type": "GROWTH_OPPORTUNITY", "business": northstar, "createdAt": ago(90), "conversationId": "c1", "agent": {
+            "provider": "claude", "model": "claude-sonnet-5-5", "session": "Next step for the pricing page", "text": INBOX_MESSAGE }, "opportunity": {
             "id": "o1", "title": "Publish a transparent pricing and onboarding guide", "status": "PROPOSED", "revision": 2,
             "problemStatement": "Three of five checked answers guess at pricing. One page with verified prices and setup steps gives assistants something true to quote.",
             "proposedChange": "One public page with each plan's price, what it includes, and the setup steps, built only from approved facts.",

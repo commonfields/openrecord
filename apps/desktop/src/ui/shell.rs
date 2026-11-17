@@ -45,7 +45,9 @@ pub fn collapsed_toggle(s: &App, t: &Theme, titlebar_inset: f32) -> El {
     let find = icon_button(t, "find-trigger", &icons::SEARCH, "Find (F)", s.find.is_some()).on_press_tx(|s: &mut App, tx| s.toggle_find(tx));
     row()
         .key("sidebar-toggle-slot")
-        .pin(Some(collapsed_slot_start(titlebar_inset)), Some(18.0), Some(TRAFFIC_LIGHT_INSET), None)
+        // 10 points down, where the docked sidebar keeps the same two buttons, so
+        // they stay level with the traffic lights; only as wide as the buttons.
+        .pin(Some(collapsed_slot_start(titlebar_inset)), Some(10.0), None, None)
         .gap(2.0)
         .center_y()
         .child(find)
@@ -514,7 +516,10 @@ fn chat_filter_menu(s: &App, t: &Theme) -> El {
 
 /// The header across the top of the content panel.
 pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> El {
-    let mut h = row().key("header").w_full().h(48.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag();
+    // 48 tall as before, its line centred in the top 32: the panel starts 8 points
+    // down, so that puts the breadcrumbs level with the traffic lights and the
+    // sidebar's buttons (centred 24 points from the window's top).
+    let mut h = row().key("header").w_full().h(48.0).pb(16.0).pl(20.0 + leading_inset).pr(12.0).gap(8.0).center_y().window_drag();
 
     if s.view == View::Workspace && s.page.account() {
         // An account page belongs to no business.

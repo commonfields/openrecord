@@ -16,15 +16,20 @@ import { listChanges, type WordPressChange } from "./wordpress.js"
 import { listWebflowChanges, type WebflowChange } from "./webflow.js"
 import { listActions, type AccountAction } from "./account-actions.js"
 
+/** The agent message that put a decision in the inbox: who sent it, from which
+ * chat, and its text with any diagrams or generated views, so the inbox can
+ * show the message as the person would have read it in the chat. */
+export type DecisionAgent = { readonly provider: string | null; readonly model: string | null; readonly session: string | null; readonly text: string }
+
 export type DecisionItem =
-  | { readonly type: "MARKETING_STRATEGY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly strategy: Record<string, unknown> }
-  | { readonly type: "CAMPAIGN_REVIEW"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly review: Record<string, unknown> }
-  | { readonly type: "CAMPAIGN_PUBLICATION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly publication: Record<string, unknown> }
-  | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly proposal: AgentProposal }
-  | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly opportunity: GrowthOpportunity }
-  | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly change: WordPressChange }
-  | { readonly type: "WEBFLOW_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly change: WebflowChange }
-  | { readonly type: "ACCOUNT_ACTION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly action: AccountAction }
+  | { readonly type: "MARKETING_STRATEGY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly strategy: Record<string, unknown> }
+  | { readonly type: "CAMPAIGN_REVIEW"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly review: Record<string, unknown> }
+  | { readonly type: "CAMPAIGN_PUBLICATION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly publication: Record<string, unknown> }
+  | { readonly type: "AGENT_PROPOSAL"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly proposal: AgentProposal }
+  | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly opportunity: GrowthOpportunity }
+  | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly change: WordPressChange }
+  | { readonly type: "WEBFLOW_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly change: WebflowChange }
+  | { readonly type: "ACCOUNT_ACTION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly action: AccountAction }
 
 export const pendingDecisions = (accountId: string, userId: string) => Effect.gen(function*() {
   const businesses = yield* (yield* BusinessRepository).list(accountId)
@@ -63,6 +68,16 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
     WHERE r.account_id=${accountId} AND r.user_id=${userId} AND c.account_id=${accountId}
       AND c.user_id=${userId} AND c.expires_at>now() AND e.type='TOOL_COMPLETED'
       AND e.payload ? 'receipt' ORDER BY e.created_at DESC`
+  // The reply that names a decision in its `decisions`: the same private scope.
+  const sent = yield* sql`SELECT c.id AS conversation_id, c.business_id, COALESCE(c.task_title, c.last_reply->>'title') AS title, m.value AS message
+    FROM agent_conversations c CROSS JOIN LATERAL jsonb_array_elements(c.messages) m
+    WHERE c.account_id=${accountId} AND c.user_id=${userId} AND c.expires_at>now()
+      AND m.value->>'role'='agent' AND jsonb_typeof(m.value->'decisions')='array'
+    ORDER BY c.updated_at DESC`
+  const refs = (m: unknown) => {
+    const list = (m as Record<string, unknown> | null)?.["decisions"]
+    return Array.isArray(list) ? list as ReadonlyArray<Record<string, unknown>> : []
+  }
   return items.map(item => {
     const [key, id] = item.type === "MARKETING_STRATEGY" ? ["marketingStrategyId", item.strategy["id"]]
       : item.type === "CAMPAIGN_REVIEW" ? ["campaignReviewId", item.review["id"]]
@@ -71,6 +86,14 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id]
       : item.type === "ACCOUNT_ACTION" ? ["accountActionId", item.action.id]
       : item.type === "WEBFLOW_CHANGE" ? ["webflowChangeId", item.change.id] : ["wordpressChangeId", item.change.id]
+    const said = sent.find(row => String(row["business_id"]) === item.business.id && refs(row["message"]).some(d => d["type"] === item.type && d["id"] === id))
+    if (said) {
+      const message = said["message"] as Record<string, unknown>
+      const inference = (message["inference"] ?? {}) as Record<string, unknown>
+      const str = (v: unknown) => typeof v === "string" && v.length ? v : null
+      const agent: DecisionAgent = { provider: str(inference["provider"]), model: str(inference["requestedModel"]), session: str(said["title"]), text: String(message["text"] ?? "").slice(0, 8000) }
+      return { ...item, conversationId: String(said["conversation_id"]), agent }
+    }
     const match = receipts.find(row => String(row["business_id"]) === item.business.id && (row["receipt"] as Record<string, unknown> | null)?.[key] === id)
     return match ? { ...item, conversationId: String(match["conversation_id"]) } : item
   })

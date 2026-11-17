@@ -159,15 +159,14 @@ fn switcher(s: &App, t: &Theme, goal: Option<&Goal>) -> El {
 }
 
 fn empty(t: &Theme, days: u32, what: &str) -> El {
-    col()
-        .w_full()
-        .h(280.0)
-        .center()
-        .gap(4.0)
-        .radius(12.0)
-        .border(1.0, t.border)
-        .child(label(format!("No {what} in the last {days} days"), type_::XS_MEDIUM, t.foreground))
-        .child(label("Try a longer period, or run a check to collect fresh answers.", type_::XS, t.muted_foreground))
+    crate::ui::widgets::empty_state_panel(
+        "discovery-empty-shell",
+        t,
+        "discovery-empty",
+        &format!("No {what} in the last {days} days"),
+        "Try a longer period, or run a check to collect fresh answers.",
+        None,
+    )
 }
 
 /// The hero: the metric tabs, the Trend / split toggle and the chart they pick.

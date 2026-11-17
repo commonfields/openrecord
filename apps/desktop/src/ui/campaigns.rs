@@ -11,7 +11,7 @@ use crate::format;
 use crate::state::{App, Load};
 use crate::theme::{Theme, type_};
 use crate::ui::kit::{self, Column, column};
-use crate::ui::widgets::{CONTROL, Variant, button as widget_button, empty_state_plain, failure, label, page_header, skeleton, status_chip};
+use crate::ui::widgets::{CONTROL, Variant, button as widget_button, empty_state_page, empty_viewport_room, failure, label, page_header, skeleton, status_chip};
 
 /// Campaign actions keep their content width even when placed in a full-width column.
 pub(super) fn campaign_button(t: &Theme, key: &str, title: &str, variant: Variant) -> El {
@@ -95,27 +95,20 @@ pub fn view(s: &App, t: &Theme) -> El {
         return detail(s, t, cp);
     }
     if list.is_empty() {
-        let room = (s.window.1 / s.zoom() - 220.0).max(360.0);
         return col()
             .key("campaigns-page-empty")
             .w_full()
             .gap(24.0)
             .child(header(t))
-            .child(
-                col()
-                    .key("campaigns-empty-shell")
-                    .w_full()
-                    .h(room)
-                    .justify_center()
-                    .items_center()
-                    .child(empty_state_plain(
-                        t,
-                        "campaigns-empty",
-                        "No campaigns yet",
-                        "Start with a brief: define the goal, audience, offer and decision window. Then prepare, distribute, monitor and learn.",
-                        Some(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Primary).on_press(|s: &mut App| s.edit_campaign(None))),
-                    )),
-            );
+            .child(empty_state_page(
+                "campaigns-empty-shell",
+                empty_viewport_room(s),
+                t,
+                "campaigns-empty",
+                "No campaigns yet",
+                "Start with a brief: define the goal, audience, offer and decision window. Then prepare, distribute, monitor and learn.",
+                Some(campaign_button(t, "new-campaign", "Create campaign brief", Variant::Primary).on_press(|s: &mut App| s.edit_campaign(None))),
+            ));
     }
     let today = today();
     let count = |st: &str| list.iter().filter(|c| c.status == st).count();

@@ -41,7 +41,7 @@ use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::label;
 
 /// The kit's components (text fields, Markdown) on the app's palette.
-fn kit(t: &Theme) -> Kit {
+pub(crate) fn kit(t: &Theme) -> Kit {
     let mut k = Kit::from_palette(PaletteSeed { bg: t.control, fg: t.foreground, accent: t.primary_ink });
     k.c.border_focus = t.ring;
     k
