@@ -13,7 +13,7 @@ use crate::format;
 use crate::icons;
 use crate::state::{App, IssueQuery, Load, Menu};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{AutofocusIf, CONTROL, Variant, button, empty_state, failure, ico, label, page_header, skeleton};
+use crate::ui::widgets::{AutofocusIf, CONTROL, Variant, button, empty_state_panel, failure, ico, label, page_header, skeleton};
 
 const PAGE_SIZE: usize = 25;
 const XS11_MEDIUM: rune::TextStyle = rune::TextStyle::new(11.0, 500.0).lh(16.0);
@@ -306,17 +306,17 @@ pub fn view(s: &App, t: &Theme) -> El {
     let mut panel = shadows(col().key("issue-panel").w_full().grow(1.0).min_h(0.0).radius(12.0).fill(t.card).clip_rounded(12.0), &t.card_shadow).child(toolbar(s, t, issues, groups.len(), visible.len()));
     let filtered = !q.q.text.is_empty() || q.provider != "all" || q.fact != "all" || q.state != "ALL";
     let list_body = if issues.is_empty() {
-        col().w_full().padding(16.0).child(empty_state(t, "issues-empty", &icons::INBOX, "No answers to review", "When answers are collected and need review, they will appear here.", None))
+        empty_state_panel("issues-empty-shell", t, "issues-empty", "No answers to review", "When answers are collected and need review, they will appear here.", None)
     } else if visible.is_empty() {
         let title = if q.state != "ALL" && q.q.text.is_empty() && q.provider == "all" && q.fact == "all" { format!("No answers rated {}", tone(t, &q.state).2.to_lowercase()) } else { "No answers match these filters".into() };
-        col().w_full().padding(16.0).child(empty_state(
+        empty_state_panel(
+            "issues-none-shell",
             t,
             "issues-none",
-            &icons::SEARCH,
             &title,
             "Loosen a filter or clear them all to see the other answers.",
-            Some(button(t, "issues-clear", "Clear filters", Variant::Outline).on_press(|s: &mut App| s.clear_issue_filters())),
-        ))
+            Some(button(t, "issues-clear", "Clear filters", Variant::Outline).self_start().on_press(|s: &mut App| s.clear_issue_filters())),
+        )
     } else if q.answers {
         answers_table(t, &answers, q.page)
     } else {
@@ -328,8 +328,12 @@ pub fn view(s: &App, t: &Theme) -> El {
         }
         list
     };
-    panel = panel.child(col().key("issue-list-scroll").w_full().grow(1.0).min_h(0.0)
-        .child(list_body).scroll(ScrollSpec { stick_bottom: false }));
+    let empty_list = issues.is_empty() || visible.is_empty();
+    panel = if empty_list {
+        panel.child(list_body)
+    } else {
+        panel.child(col().key("issue-list-scroll").w_full().grow(1.0).min_h(0.0).child(list_body).scroll(ScrollSpec { stick_bottom: false }))
+    };
     if filtered && !visible.is_empty() {
         panel = panel.child(
             row()

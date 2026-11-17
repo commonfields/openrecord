@@ -240,47 +240,49 @@ pub fn page_header(t: &Theme, title: &str, description: &str) -> El {
         .child(label(description, type_::SM, t.muted_foreground).wrap())
 }
 
-/// The dashed empty card: a boxed icon, a title, a sentence and an action.
-pub fn empty_state(t: &Theme, key: &str, i: &'static Icon, title: &str, body: &str, action: Option<El>) -> El {
-    empty_state_inner(t, key, Some(i), title, body, action, true, None)
+pub const EMPTY_STATE_TEXT_W: f32 = 380.0;
+
+/// Room below a page header for a centered empty block, matching Campaigns.
+pub fn empty_viewport_room(s: &App) -> f32 {
+    (s.window.1 / s.zoom() - 220.0).max(360.0)
 }
 
 /// Centered plain empty block: no icon, no frame, left-aligned copy and action.
 pub fn empty_state_plain(t: &Theme, key: &str, title: &str, body: &str, action: Option<El>) -> El {
-    empty_state_inner(t, key, None, title, body, action, false, Some(380.0))
-}
-
-fn empty_state_inner(
-    t: &Theme,
-    key: &str,
-    icon: Option<&'static Icon>,
-    title: &str,
-    body: &str,
-    action: Option<El>,
-    framed: bool,
-    text_max_w: Option<f32>,
-) -> El {
-    let plain = !framed && text_max_w.is_some();
-    let mut c = col().key(key).gap(8.0);
-    if plain {
-        c = c.max_w(text_max_w.unwrap()).items_start();
-    } else {
-        c = c.w_full().py(48.0).px(24.0).gap(6.0).items_center();
-    }
-    if framed {
-        c = c.radius(12.0).border(1.0, t.border).border_dash(4.0, 4.0);
-    }
-    if let Some(i) = icon {
-        let boxed = shadows(row().size(46.0, 46.0).radius(12.0).center().fill(t.control).child(ico(i, 20.0, t.foreground)), &t.control_shadow);
-        c = c.child(boxed.mb(14.0));
-    }
-    c = c
+    let mut c = col()
+        .key(key)
+        .gap(8.0)
+        .max_w(EMPTY_STATE_TEXT_W)
+        .items_start()
         .child(label(title, type_::SM_MEDIUM, t.foreground).wrap().w_full())
         .child(label(body, type_::SM_13, t.muted_foreground).wrap().w_full());
     if let Some(a) = action {
         c = c.child(a.mt(6.0));
     }
     c
+}
+
+/// Campaign-style region below a page header.
+pub fn empty_state_page(shell_key: &str, height: f32, t: &Theme, key: &str, title: &str, body: &str, action: Option<El>) -> El {
+    col()
+        .key(shell_key)
+        .w_full()
+        .h(height)
+        .justify_center()
+        .items_center()
+        .child(empty_state_plain(t, key, title, body, action))
+}
+
+/// Plain empty block centered in a growing panel (list card, inbox detail, and so on).
+pub fn empty_state_panel(shell_key: &str, t: &Theme, key: &str, title: &str, body: &str, action: Option<El>) -> El {
+    col()
+        .key(shell_key)
+        .w_full()
+        .grow(1.0)
+        .min_h(280.0)
+        .justify_center()
+        .items_center()
+        .child(empty_state_plain(t, key, title, body, action))
 }
 
 /// Grey bars where text will land, while a page loads.

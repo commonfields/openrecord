@@ -35,6 +35,17 @@ pub struct Section {
     pub text: String,
 }
 
+/// The agent message that put a decision in the inbox (`agent` on `/api/decisions`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Sender {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    /// The chat's title.
+    pub session: Option<String>,
+    /// The reply as Markdown, with any ```chart, ```ui or ```mermaid blocks.
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decision {
     /// `TYPE:id`, unique across kinds.
@@ -61,6 +72,7 @@ pub struct Decision {
     /// The title the decision-feedback record keeps.
     pub feedback_title: String,
     pub feedback_kind: &'static str,
+    pub agent: Option<Sender>,
 }
 
 impl Decision {
@@ -263,6 +275,7 @@ pub fn parse(v: &Value) -> Option<Decision> {
         decline: "Reject".into(),
         feedback_title: String::new(),
         feedback_kind: "AGENT_PROPOSAL",
+        agent: v.get("agent").filter(|a| a.is_object()).map(|a| Sender { provider: opt(a, "provider"), model: opt(a, "model"), session: opt(a, "session"), text: s(a, "text") }),
     };
     let sec = |label: &str, text: String| Section { label: label.into(), before: None, text };
     match kind.as_str() {

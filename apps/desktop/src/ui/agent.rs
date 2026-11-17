@@ -26,7 +26,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     // crossfades in over the last one instead of blanking and popping.
     let shown = s.conversation.ready().map(|c| c.id.as_str()).unwrap_or("none");
     let turns: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m.role == "user").map(|(i, _)| i).collect();
-    let mut list = col().key(format!("messages-{shown}")).w_full().max_w(column).gap(12.0).px(24.0).pt(24.0).pb(16.0).transition(Transition::opacity());
+    let mut list = col().key(format!("messages-{shown}")).w_full().max_w(column).gap(12.0).pt(24.0).pb(16.0).transition(Transition::opacity());
     match &s.conversation {
         // Only a slow load says so: a quick one goes straight to the chat.
         Load::Loading if messages.is_empty() => {
@@ -105,7 +105,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .pl(if turns.len() > 1 { 24.0 } else { 0.0 })
+        // Both sides as the composer's, so replies start at its left edge and
+        // the person's bubbles end at its right edge.
+        .px(24.0)
         .on_layout(|s: &mut App, rect: [f32; 4]| s.timeline.top = rect[1])
         .child(col().w_full().items_center().child(list))
         .scroll(ScrollSpec { stick_bottom: true })
@@ -491,6 +493,27 @@ fn divider(t: &Theme, key: &str, logo: Option<&str>, note: &str) -> El {
 /// Each helper's latest status: a later message (its posted result) supersedes the card that started it.
 fn task_statuses(messages: &[Message]) -> std::collections::HashMap<String, String> {
     messages.iter().flat_map(|m| m.tasks.iter()).map(|t| (t.id.clone(), t.status.clone())).collect()
+}
+
+/// An agent reply drawn as the chat draws it, outside the chat: Markdown with
+/// its ```chart blocks as charts, ```ui blocks as generated views and
+/// ```mermaid blocks as diagrams.
+pub(crate) fn reply_body(s: &App, t: &Theme, k: &Kit, key: &str, text_: &str) -> El {
+    let mut reply = col().key(key.to_string()).w_full().gap(6.0);
+    for (j, part) in crate::visual::split(text_).into_iter().enumerate() {
+        reply = reply.child(match part {
+            crate::visual::Part::Text(md) => Markdown::new(md)
+                .style(prose(t, k))
+                .selectable(true)
+                // A diagram wider than a narrow pane scrolls sideways instead of spilling out of it.
+                .diagram_frame(|card, _| col().w_full().child(card).scroll_x())
+                .build(k)
+                .w_full(),
+            crate::visual::Part::Chart(raw) => crate::ui::visual::view(s, t, format!("{key}-visual-{j}"), &raw).my(4.0),
+            crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("{key}-surface-{j}"), &raw).my(4.0),
+        });
+    }
+    reply
 }
 
 /// A reply's prose, as Rune's chat sets it: 14 point Inter on a 22.4 line,

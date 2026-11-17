@@ -33,7 +33,7 @@ def main():
         right = root[0] + root[2] - detail[0] - detail[2]
         bottom = root[1] + root[3] - detail[1] - detail[3]
         assert max(abs(left - 12 * scale), abs(right - left), abs(bottom - left)) < 1, 'Inbox outer insets differ'
-        assert abs(sidebar[1] - root[1] - 6 * scale) < 1, 'Inbox top inset is too wide'
+        assert abs(sidebar[1] - root[1]) < 1, 'Inbox top inset is too wide'
         if 'inbox-edge' in keys:
             assert abs(detail[1] - sidebar[1]) < 1, 'Inbox panes have different top insets'
         for n in nodes:
@@ -52,11 +52,20 @@ def main():
         assert document[2] <= 840 * scale + 1, 'Message paragraphs are too wide'
         assert keys['decision-paragraphs']['fill'] == '#00000000', 'Message still has a nested card'
         for n in nodes:
-            if n.get('role') == 'text' and '/decision-document/' in n.get('path', ''):
+            # A diagram wider than the pane scrolls sideways inside it, so its labels may sit past the edge.
+            if n.get('role') == 'text' and '/decision-document/' in n.get('path', '') and '/diagram/' not in n['path']:
                 assert n['rect'][0] >= detail[0] - 1 and n['rect'][0] + n['rect'][2] <= detail[0] + detail[2] + 1, 'Message text overflows content pane'
+        head, foot, scroll = keys['decision-header']['rect'], keys['decision-footer']['rect'], keys['decision-scroll']['rect']
+        assert head[1] + head[3] <= scroll[1] + 1 and foot[1] >= scroll[1] + scroll[3] - 1, 'Sender line and actions should frame the scrolling message'
+        assert foot[1] + foot[3] <= detail[1] + detail[3] + 1, 'Actions leave the message pane'
         return keys, sidebar[2]
 
     keys, baseline = render('default')
+    texts = [n.get('text', '') for n in json.loads((output / 'default.json').read_text())['elements']]
+    assert 'Claude Sonnet 5.5' in texts, 'The sender model is missing from the message header'
+    assert any(t.startswith('In \u201cNext step for the pricing page') for t in texts), 'The chat the message came from is missing'
+    assert any(k and k.startswith('decision-message-surface-') for k in keys), 'The generated view is missing from the message'
+    assert 'decision-chat' in keys and 'approve' in keys and 'decline' in keys
     assert keys['inbox-read-GROWTH_OPPORTUNITY:o1']['label'] == 'Read', 'Visible message not marked read'
     assert keys['inbox-read-WORDPRESS_CHANGE:w1']['label'] == 'Unread', 'Unopened message already read'
     assert abs(baseline - 320 * keys['inbox']['scale']) < 1, 'Inbox did not use its wider default'
