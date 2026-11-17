@@ -19,7 +19,7 @@ pub fn view(s: &App, t: &Theme) -> El {
 pub fn view_page(s: &App, t: &Theme, page: Page) -> El {
     let body = match page {
         Page::Inbox => inbox(s, t),
-        Page::Overview => crate::ui::overview::view(s, t),
+        Page::Overview => crate::ui::overview::view(s, t, false),
         Page::Campaigns => crate::ui::campaigns::view(s, t),
         Page::AiAnswers => ai_answers(s, t),
         Page::Channels => crate::ui::channels::view(s, t),
@@ -206,6 +206,17 @@ struct From {
     provider: Option<String>,
     model: Option<String>,
     session: Option<String>,
+}
+
+/// The logo of the provider that asked for a decision, `size` points square, if it is known.
+pub fn sender_logo(s: &App, t: &Theme, d: &Decision, size: f32) -> Option<El> {
+    let f = sender(s, d)?;
+    let provider = f.provider.clone().unwrap_or_default();
+    if provider.is_empty() && f.model.is_none() {
+        return None;
+    }
+    let brand = crate::brands::model_brand(f.model.as_deref().unwrap_or_default(), &provider);
+    Some(crate::brands::logo(t, &brand, size))
 }
 
 fn sender(s: &App, d: &Decision) -> Option<From> {

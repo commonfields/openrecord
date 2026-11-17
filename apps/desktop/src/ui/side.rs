@@ -27,7 +27,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
         },
         SideTab::Browser => browser(s, t),
         SideTab::Launcher => launcher(s, t),
-        SideTab::Analytics => scrolled("side-analytics", col().w_full().px(24.0).pt(16.0).pb(24.0).child(super::overview::view(s, t))),
+        SideTab::Analytics | SideTab::Page(crate::state::Page::Overview) => col().key("side-analytics").w_full().grow(1.0).min_h(0.0).padding(8.0).child(super::overview::view(s, t, true)),
         SideTab::CampaignBrief => match s.campaign_editor {
             Some(_) => super::campaign_brief::view(s, t),
             None => empty(t, "campaign-document-closed", "This brief has been closed."),
