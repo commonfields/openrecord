@@ -8,10 +8,9 @@ const XS11_MEDIUM: rune::TextStyle = rune::TextStyle::new(11.0, 500.0).lh(16.0);
 use crate::api::Decision;
 use crate::decisions::Act;
 use crate::format;
-use crate::icons;
 use crate::state::{App, Load, Page};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, Variant, button, card, empty_state, label};
+use crate::ui::widgets::{CONTROL, Variant, button, card, empty_state_plain, label};
 
 pub fn view(s: &App, t: &Theme) -> El {
     view_page(s, t, s.page)
@@ -129,19 +128,21 @@ fn inbox_at(s: &App, t: &Theme, in_panel: bool) -> El {
                 .radius(12.0)
                 .fill(t.card)
                 .clip_rounded(12.0)
-                .center()
-                .child(empty_state(
+                .justify_center()
+                .items_center()
+                .child(empty_state_plain(
                     t,
                     "inbox-clear",
-                    &icons::INBOX,
                     "Nothing is waiting on you",
                     "When the agent needs your decision, it shows up here.",
                     Some(
-                        button(t, "ask-next", "Ask the agent what to do next", Variant::Outline).on_press(ask(
-                            "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.",
-                        )),
+                        button(t, "ask-next", "Ask the agent what to do next", Variant::Outline)
+                            .self_start()
+                            .on_press(ask(
+                                "What should we work on next? Check our results and channels and propose the most useful next step for me to approve.",
+                            )),
                     ),
-                ).border(0.0, t.border)),
+                )),
             &t.card_shadow,
         ),
     };
