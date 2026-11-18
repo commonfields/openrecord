@@ -9,6 +9,15 @@ cd "$(dirname "$0")/.."
 # Local secrets and settings (hosted agent model, provider keys) live in the
 # git-ignored .env; nothing else loads it, so the API and workers get it here.
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
+# Node from .nvmrc. The API hands its own Node to the bridge it runs, and the
+# bridge (Cursor's SDK in particular) needs this version; nvm's default may be
+# older, which silently leaves Cursor "not installed".
+want_node="$(cat .nvmrc 2>/dev/null || true)"
+if [ -n "$want_node" ] && ! node -v 2>/dev/null | grep -q "^v$want_node\."; then
+  node_dir="$(ls -d "$HOME"/.nvm/versions/node/v"$want_node".* 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$node_dir" ]; then export PATH="$node_dir/bin:$PATH"
+  else echo "WARNING: Node $want_node (.nvmrc) is not installed; run nvm install $want_node. The bridge needs it." >&2; fi
+fi
 DATABASE_URL="postgres://openrecord:openrecord@localhost:5432/openrecord_dev"
 # The dev database container. Since 2026-10-30 this is the restored copy; the
 # original volume openrecord_openrecord-pg is damaged and must not be started.
@@ -79,7 +88,15 @@ if [ "$agent_worker_count" -eq 0 ]; then
   DATABASE_URL="$DATABASE_URL" detach /tmp/opencode-agent-worker.log pnpm --filter @openrecord/api agent:worker
 fi
 
-# 2. API on :3001 (no watcher). Restart it when it serves an older commit,
+# 2. API on :3001 (no watcher), run by a keeper loop that starts it again
+# whenever it exits, and appends to its log so a crash's last words survive.
+# Stop the API for good: kill "$(cat /tmp/openrecord-api-keeper.pid)" first.
+api_keeper_pid_file="/tmp/openrecord-api-keeper.pid"
+api_keeper_alive() {
+  local pid; pid="$(cat "$api_keeper_pid_file" 2>/dev/null || true)"
+  [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null | grep -q '[o]penrecord-api-keeper'
+}
+# Restart it when it serves an older commit,
 # but never deliberately interrupt an active turn (including helper sessions).
 head_sha="$(git rev-parse --short=12 HEAD)"
 if lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
@@ -92,32 +109,41 @@ if lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
       echo "API serves ${running:-unknown}, checkout is $head_sha; restarting API"
       kill $(lsof -tiTCP:3001 -sTCP:LISTEN)
       while lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
+      # A running keeper starts the new code by itself.
     fi
   fi
 fi
 #    OPENRECORD_LOCAL_BRIDGE=1: the API starts a bridge for the signed-in user
 #    on this computer, so local CLI subscriptions work without pairing.
-if ! lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+if ! api_keeper_alive && ! lsof -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting API on :3001 (logs: /tmp/opencode-api.log)"
   DATABASE_URL="$DATABASE_URL" \
   PORT=3001 APP_BASE_URL="http://localhost:3000" OPENRECORD_LOCAL_BRIDGE=1 AGENT_REQUEST_WORKER_ENABLED=false \
-    detach /tmp/opencode-api.log pnpm --filter @openrecord/api dev
+    detach /dev/null bash -c 'while :; do
+      echo "[keeper] $(date "+%F %T") starting API"
+      pnpm --filter @openrecord/api dev
+      echo "[keeper] $(date "+%F %T") API exited with status $?; starting it again in 5s"
+      sleep 5
+    done >> /tmp/opencode-api.log 2>&1' openrecord-api-keeper
+  echo "$!" > "$api_keeper_pid_file"
 fi
 
 # 3. Web on :3000 (Vite hot-reloads code changes; restart it by hand after a
-#    dependency change).
-if ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
+#    dependency change). OPENRECORD_WEB=0 skips it when only the desktop app is used.
+web=1; [ "${OPENRECORD_WEB:-1}" = "0" ] && web=0
+if [ "$web" = 1 ] && ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "starting web on :3000 (logs: /tmp/opencode-web.log)"
   detach /tmp/opencode-web.log pnpm --filter @openrecord/web dev
 fi
 
-for _ in $(seq 1 60); do
-  curl -sf -m 5 -o /dev/null http://localhost:3001/api/health && curl -sf -m 5 -o /dev/null http://localhost:3000/ && break
+for _ in $(seq 1 90); do
+  running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  [ "$running" = "$head_sha" ] && { [ "$web" = 0 ] || curl -sf -m 5 -o /dev/null http://localhost:3000/; } && break
   sleep 1
 done
 curl -s -m 5 -o /dev/null -w "api:    %{http_code}\n" -X POST http://localhost:3001/api/auth/signin \
   -H "Content-Type: application/json" -d '{"email":"demo@northstar.test","password":"password123"}'
-curl -s -m 5 -o /dev/null -w "web:    %{http_code}\n" http://localhost:3000/
+[ "$web" = 1 ] && curl -s -m 5 -o /dev/null -w "web:    %{http_code}\n" http://localhost:3000/
 running="$(curl -s -m 5 http://localhost:3001/api/health | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 echo "commit: API $running, checkout $head_sha ($(git rev-parse --abbrev-ref HEAD)), origin/main $(git rev-parse --short=12 origin/main)"
 echo "ready → http://localhost:3000 (demo@northstar.test / password123)"

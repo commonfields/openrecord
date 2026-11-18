@@ -545,7 +545,9 @@ fn setting_icon(t: &Theme, icon: Option<El>, name: &str, description: Option<Str
 /// One computer and the providers on it; an offline one folds to one line.
 fn machine(s: &App, t: &Theme, cat: &Catalog, b: &Bridge) -> Vec<El> {
     let missing: Vec<String> = cat.missing(&b.id).iter().map(|i| i.name.clone()).collect();
-    let note = if !b.online {
+    let note = if s.confirming_revoke.as_deref() == Some(b.id.as_str()) {
+        Some(if b.managed { "This turns off every provider here and stops work in progress. The agent can't use them until you connect again.".to_string() } else { "This removes the computer and turns off its providers. It has to be paired again to come back.".to_string() })
+    } else if !b.online {
         Some(if b.managed { "OpenRecord starts it again by itself; this clears once it reconnects.".to_string() } else { "Not connected. Start the bridge on that computer again, or remove it here.".to_string() })
     } else if !missing.is_empty() {
         Some(format!("Not installed here: {}", missing.join(", ")))
@@ -563,7 +565,6 @@ fn machine(s: &App, t: &Theme, cat: &Catalog, b: &Bridge) -> Vec<El> {
     if let Some(n) = note {
         left = left.child(label(n, type_::SM_13, t.muted_foreground).wrap());
     }
-    let id = b.id.clone();
     let mut out = vec![row()
         .key(format!("machine-{}", b.id))
         .w_full()
@@ -572,13 +573,28 @@ fn machine(s: &App, t: &Theme, cat: &Catalog, b: &Bridge) -> Vec<El> {
         .gap(20.0)
         .center_y()
         .child(left)
-        .child(small_button(t, &format!("revoke-{}", b.id), if b.managed { "Disconnect" } else { "Remove" }).on_press(move |s: &mut App| s.change_provider(ProviderChange::Revoke(id.clone()))))];
+        .child(revoke(s, t, b))];
     if b.online {
         for i in cat.found(&b.id) {
             out.push(instance(s, t, i, b.managed));
         }
     }
     out
+}
+
+/// Disconnecting turns off every provider on that computer and stops its
+/// running work until it is connected again, so it takes a second press.
+fn revoke(s: &App, t: &Theme, b: &Bridge) -> El {
+    let id = b.id.clone();
+    let name = if b.managed { "Disconnect" } else { "Remove" };
+    if s.confirming_revoke.as_deref() != Some(b.id.as_str()) {
+        return small_button(t, &format!("revoke-{}", b.id), name).on_press(move |s: &mut App| s.confirming_revoke = Some(id.clone()));
+    }
+    row()
+        .gap(8.0)
+        .center_y()
+        .child(button(t, &format!("revoke-cancel-{}", b.id), "Keep connected", Variant::Ghost).h(28.0).px(10.0).on_press(|s: &mut App| s.confirming_revoke = None))
+        .child(small_button(t, &format!("revoke-confirm-{}", b.id), name).on_press(move |s: &mut App| s.change_provider(ProviderChange::Revoke(id.clone()))))
 }
 
 /// A provider on a computer: its state, a refresh, the switch, and which models the chat offers.

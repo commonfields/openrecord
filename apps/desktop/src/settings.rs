@@ -249,7 +249,7 @@ impl Client {
 
     /// Starts the bridge the server runs on its own computer; the status it reports.
     pub fn start_local_bridge(&self) -> ApiResult<String> {
-        let v: Value = self.post("/api/agent/bridges/local", json!({ "enabled": true }))?;
+        let v: Value = self.post("/api/agent/bridges/local", json!({ "connect": true }))?;
         Ok(v.get("status").and_then(Value::as_str).unwrap_or("").to_string())
     }
 }
