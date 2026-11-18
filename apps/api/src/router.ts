@@ -1,3 +1,4 @@
+import { isDemoBusiness } from "./demo-data.js"
 import { campaignPublicationApi } from "./campaign-publication.js"
 import { campaignResultsApi } from "./campaign-results.js"
 import { strategyApi } from "./marketing-strategy.js"
@@ -530,7 +531,8 @@ export const makeRouter = () => {
           // ?archived=1 lists the archived ones instead, for restoring.
           const archived = new URL((yield* HttpServerRequest.HttpServerRequest).url, "http://localhost").searchParams.get("archived") === "1"
           const rows = archived ? yield* repo.listArchived(session.accountId) : yield* repo.list(session.accountId)
-          return yield* json(200, { businesses: rows })
+          // A demo workspace's numbers are sample data; the apps say so beside its name.
+          return yield* json(200, { businesses: rows.map(r => ({ ...r, sample: isDemoBusiness(r.id) })) })
         }),
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),

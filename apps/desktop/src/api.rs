@@ -47,6 +47,9 @@ pub type ApiResult<T> = Result<T, ApiError>;
 pub struct Business {
     pub id: String,
     pub name: String,
+    /// Its numbers are sample data (a demo workspace), not the business's own.
+    #[serde(default)]
+    pub sample: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
