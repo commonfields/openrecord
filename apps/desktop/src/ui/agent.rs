@@ -4,7 +4,7 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune::{Align, Color, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
 use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle};
 
 use crate::api::Message;
@@ -125,7 +125,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .child(transcript).children(timeline_rail(s, t, shown, &messages, &turns))
     };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
-    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main))
+    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main, false))
 }
 
 fn timeline_rail(s: &App, t: &Theme, owner: &str, messages: &[Message], turns: &[usize]) -> Option<El> {
@@ -1253,7 +1253,7 @@ fn waveform_bars(ink: rune::Color) -> El {
 /// The chat box. The right panel draws the same one under an artifact or a
 /// helper (`ComposerSlot::Side`): its own text, the same model, files and
 /// buttons, and what is sent goes to the chat about the tab in front.
-pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
+pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on_page: bool) -> El {
     let side = slot == ComposerSlot::Side;
     let text_state = if side { &s.side.composer } else { &s.composer };
     let working = matches!(s.turn, Turn::Working { .. });
@@ -1376,29 +1376,27 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
         })
         .child(ico(&icons::PLUS, 18.0, t.muted_foreground).group_color(t.foreground));
 
-    let field = shadows(
-        row()
-            .key(slot.key("composer"))
-            .w_full()
-            .on_layout(move |s: &mut App, rect: [f32; 4]| s.composer_widths[side as usize] = rect[2])
-            .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
-            .padding(COMPOSER_INSET)
-            .gap(8.0)
-            .items_end()
-            .radius(COMPOSER_PILL)
-            .border(1.0, t.border)
-            .fill(t.card)
-            // Files dropped on the box are attached, as on the web.
-            .on_drop_files(|s: &mut App, paths, _tx| {
-                for p in paths {
-                    s.attach_path(p);
-                }
-            })
-            .child(plus)
-            .child(col().grow(1.0).min_w(0.0).self_center().px(2.0).child(input))
-            .child(trailing),
-        &t.control_shadow,
-    );
+    let field_row = row()
+        .key(slot.key("composer"))
+        .w_full()
+        .on_layout(move |s: &mut App, rect: [f32; 4]| s.composer_widths[side as usize] = rect[2])
+        .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
+        .padding(COMPOSER_INSET)
+        .gap(8.0)
+        .items_end()
+        .radius(COMPOSER_PILL)
+        .border(1.0, t.border)
+        .fill(if float_on_page { Color::TRANSPARENT } else { t.card })
+        // Files dropped on the box are attached, as on the web.
+        .on_drop_files(|s: &mut App, paths, _tx| {
+            for p in paths {
+                s.attach_path(p);
+            }
+        })
+        .child(plus)
+        .child(col().grow(1.0).min_w(0.0).self_center().px(2.0).child(input))
+        .child(trailing);
+    let field = if float_on_page { field_row } else { shadows(field_row, &t.control_shadow) };
 
     // "Chat options" under the box: the business on the left; follow-ups, the
     // memory meter, the model and reasoning on the right, 12 points apart.
