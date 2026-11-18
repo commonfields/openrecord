@@ -18,6 +18,8 @@ import { decode, json, operatorSessionFor, readJson, type WithSession } from "./
 export const BRIEF_INTERVAL_DAYS = 7
 const PRIVATE = { "cache-control": "no-store" }
 
+// The desktop recognises this opening and shows a "Scheduled weekly brief" line
+// instead of the instructions (apps/desktop/src/chat.rs, is_brief_request).
 export const BRIEF_PROMPT = (today: string) => `Write this week's growth brief for this business (today is ${today}). It is for the owner: plain words, in their language.
 
 First read: read_objective_investigations (the goal the owner set and what is being investigated), read_results, read_search_performance (28 days), read_ad_performance (28 days), read_local_profile (28 days), read_revenue (28 days), read_acquisition_overview, read_ai_referral_evidence and read_open_issues, read_competitors and read_proposals. Some may say not connected; don't treat that as zero.

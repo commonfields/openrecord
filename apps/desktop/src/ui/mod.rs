@@ -3,7 +3,6 @@
 mod account_pages;
 mod agent;
 mod artifacts;
-pub use agent::ROLL_EVERY;
 mod answer;
 mod campaigns;
 mod campaign_brief;
