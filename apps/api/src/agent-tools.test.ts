@@ -25,6 +25,7 @@ describe("agent tool harness", () => {
       "read_acquisition_overview",
       "read_ad_performance",
       "read_ai_referral_evidence",
+      "read_app_settings",
       "read_business_truth",
       "read_buyer_question_results",
       "read_competitor_appearances",

@@ -1,0 +1,181 @@
+[
+  {
+    "id": "weekly-focus",
+    "prompt": "What should we focus on this week? Read our goal, open work and latest numbers, and propose the most useful next step for me to approve.",
+    "minTools": 2,
+    "must": [
+      "(?i)(next step|first|start with|focus)"
+    ]
+  },
+  {
+    "id": "site-audit",
+    "prompt": "Audit our website and prepare the most valuable fix for me to approve.",
+    "minTools": 1
+  },
+  {
+    "id": "ai-answers",
+    "prompt": "What do AI assistants say about us? Check their answers against our approved facts and tell me what is wrong and what to fix first.",
+    "minTools": 2
+  },
+  {
+    "id": "progress",
+    "prompt": "How are we doing against our goal? Show what changed, what worked and what is still unknown.",
+    "minTools": 1,
+    "must": [
+      "(?i)(unknown|don't know|not connected|no data|isn't measured|not measured)"
+    ]
+  },
+  {
+    "id": "landing-page",
+    "prompt": "Write a landing page for our early-access waitlist.",
+    "artifact": true
+  },
+  {
+    "id": "linkedin-posts",
+    "prompt": "Write three LinkedIn posts announcing our product to founders who have no marketer.",
+    "artifact": true
+  },
+  {
+    "id": "cold-email",
+    "prompt": "Write a short cold email to small marketing agencies offering them a pilot.",
+    "artifact": true
+  },
+  {
+    "id": "explainer-article",
+    "prompt": "Draft a blog article explaining what AI answer monitoring is and why it matters for small teams.",
+    "artifact": true
+  },
+  {
+    "id": "pricing-faq",
+    "prompt": "Write an FAQ section for our pricing page.",
+    "artifact": true
+  },
+  {
+    "id": "search-snippets",
+    "prompt": "Suggest better search titles and meta descriptions for our three most important pages.",
+    "minTools": 1
+  },
+  {
+    "id": "competitors",
+    "prompt": "Who are our closest competitors and how do we differ from them?",
+    "minTools": 1
+  },
+  {
+    "id": "small-budget",
+    "prompt": "We have $500 to test one paid channel this month. Where should it go?",
+    "minTools": 1,
+    "must": [
+      "\\$\\s?\\d",
+      "(?i)(success|measure|count)"
+    ]
+  },
+  {
+    "id": "buyer-questions",
+    "prompt": "Which buyer questions should we track in AI assistants?",
+    "minTools": 1
+  },
+  {
+    "id": "signup-change",
+    "prompt": "Why did our sign-ups change last week?",
+    "minTools": 1
+  },
+  {
+    "id": "brief-off",
+    "prompt": "Can you turn off the weekly brief?",
+    "must": [
+      "\\+"
+    ],
+    "mustNot": [
+      "(?i)scheduler where it was created",
+      "(?i)unsubscribe",
+      "(?i)notification settings",
+      "(?i)(workspace )?admin",
+      "(?i)support"
+    ],
+    "minTools": 1
+  },
+  {
+    "id": "launch-week",
+    "prompt": "Plan our launch week on X, day by day.",
+    "must": [
+      "(?i)(monday|day 1|day one)"
+    ]
+  },
+  {
+    "id": "headline",
+    "prompt": "Rewrite our homepage headline and subheadline so a founder understands it in five seconds.",
+    "artifact": true
+  },
+  {
+    "id": "ai-crawlers",
+    "prompt": "Can AI crawlers read our website?",
+    "minTools": 1
+  },
+  {
+    "id": "best-connection",
+    "prompt": "Which one connection would make your advice better?",
+    "must": [
+      "(?i)channels"
+    ]
+  },
+  {
+    "id": "past-decisions",
+    "prompt": "What have we decided on recently, and what happened since?",
+    "minTools": 1
+  },
+  {
+    "id": "x-thread",
+    "prompt": "Write an X thread that introduces our product to founders, with a hook in the first post.",
+    "artifact": true
+  },
+  {
+    "id": "community-post",
+    "prompt": "Write a post for a founders' community that shares a useful lesson and mentions our product without sounding like an ad.",
+    "artifact": true
+  },
+  {
+    "id": "newsletter",
+    "prompt": "Write this month's newsletter for our early users.",
+    "artifact": true
+  },
+  {
+    "id": "launch-listing",
+    "prompt": "Write our product launch listing: tagline, short description and first comment from the maker.",
+    "artifact": true
+  },
+  {
+    "id": "repurpose",
+    "prompt": "Turn our most useful page into five short social posts for different channels.",
+    "artifact": true,
+    "minTools": 1
+  },
+  {
+    "id": "keyword-plan",
+    "prompt": "Which search topics should we write about first to bring in founders who need marketing help?",
+    "minTools": 1
+  },
+  {
+    "id": "get-cited",
+    "prompt": "What should we publish so AI assistants start recommending us?",
+    "minTools": 1
+  },
+  {
+    "id": "outreach-list",
+    "prompt": "Who should we reach out to first to get our first 20 users, and what do we say to them?",
+    "minTools": 1
+  },
+  {
+    "id": "channel-mix",
+    "prompt": "We're two people with no ad budget. Which distribution channels should we use this month and why?",
+    "must": [
+      "(?i)(first|start)"
+    ]
+  },
+  {
+    "id": "weekly-plan",
+    "prompt": "Make a marketing plan for next week: what to publish, where, and what to measure.",
+    "must": [
+      "(?i)(measure|track|count)"
+    ]
+  }
+]

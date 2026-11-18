@@ -257,7 +257,7 @@ fn launcher(s: &App, t: &Theme) -> El {
     }
     col().key("side-launcher").w_full().grow(1.0).min_h(0.0)
         .child(col().w_full().px(24.0).pt(super::agent::home_stack_top(s)).pb(32.0)
-            .child(row().w_full().h(super::agent::STARTERS_H).center().child(list)))
+            .child(row().w_full().h(super::agent::ROLL_H).center().child(list)))
         .scroll(ScrollSpec { stick_bottom: false })
 }
 
