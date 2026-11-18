@@ -21,6 +21,11 @@ Practical notes for running this checkout locally. Architecture lives in
   dependencies, starts the database, applies migrations, restarts the API if it
   serves an older commit, starts web, and checks the demo login. It ends by
   printing the API's commit next to the checkout's and `origin/main`'s.
+  `OPENRECORD_WEB=0` skips web (desktop-only work). It runs on the Node in
+  `.nvmrc` (24) when nvm has it: the API gives its own Node to the local
+  bridge, and Cursor's SDK fails on older ones. The API runs under a keeper
+  loop that restarts it when it exits and appends to `/tmp/opencode-api.log`;
+  to stop it for good, kill `$(cat /tmp/openrecord-api-keeper.pid)` first.
   It is idempotent but NOT a watcher: if OpenCode's server restarts it kills
   background tasks, so re-run the script to restore the stack.
 - The script loads the git-ignored `.env` before starting anything; that is

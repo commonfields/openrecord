@@ -530,6 +530,8 @@ pub struct App {
     pub open_models: std::collections::BTreeSet<String>,
     pub pairing: Load<crate::settings::Pairing>,
     pub settings_error: Option<String>,
+    /// The computer whose Disconnect is waiting for a second press.
+    pub confirming_revoke: Option<String>,
     pub insights: Load<Insights>,
 
     pub chat_id: Option<String>,
@@ -718,6 +720,7 @@ impl App {
             open_models: Default::default(),
             pairing: Load::Idle,
             settings_error: None,
+            confirming_revoke: None,
             insights: Load::Idle,
             chat_id: None,
             conversation: Load::Idle,
@@ -1638,6 +1641,7 @@ impl App {
 
     pub fn change_provider(&mut self, change: crate::net::ProviderChange) {
         self.settings_error = None;
+        self.confirming_revoke = None;
         // Switches answer at once; the reload confirms them.
         if let Load::Ready(cat) = &mut self.providers {
             match &change {
