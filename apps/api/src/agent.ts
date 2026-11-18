@@ -92,6 +92,11 @@ const PACE_STEP = 8
 export const noteNotice = (notes: ReadonlyArray<string>) =>
   `The person sent ${notes.length === 1 ? "this message" : "these messages"} while you were working. ${notes.length === 1 ? "It is" : "They are"} from them, not from a tool: treat ${notes.length === 1 ? "it" : "them"} as their latest instruction for this request. Change your plan if needed rather than starting over, keep work already done that still applies, and say briefly in your answer how you took ${notes.length === 1 ? "it" : "them"} into account.\n${notes.map(n => `«${n}»`).join("\n")}`
 const PACE_NOTICE = "OpenRecord runtime notice: this request has used eight steps. Make only the reads the answer still needs, several in one step, then answer and say plainly what was not checked."
+// A request to write, draft or rewrite a piece of work: its result belongs in a
+// saved piece the person can edit and download, not only in the reply.
+export const asksForPiece = (message: string) =>
+  /\b(write|draft|rewrite|create|compose|make)\b[\s\S]{0,80}\b(page|landing|article|post|posts|thread|email|newsletter|faq|copy|headline|listing|blog|script|brief|announcement|ad|ads)\b/i.test(message)
+const PIECE_NOTICE = "OpenRecord runtime check: the person asked for a piece of work. Save it now with create_artifact (or edit_artifact for a piece already open), then answer with a short note about it; do not paste the whole piece into the reply."
 const verificationNotice = (missing: ReadonlyArray<string>) =>
   `OpenRecord runtime check: this workflow requires ${missing.join(", ")} before a final answer. Call ${missing.length > 1 ? "them" : "it"} now, or say plainly why it could not be run.`
 type Usage = { observedModel: string | null; promptTokens: number | null; outputTokens: number | null; thoughtTokens: number | null; totalTokens: number | null; cachedTokens: number | null }
@@ -225,7 +230,7 @@ export const runConversation = (input: {
     if (!calls && !text) return Effect.fail(new AgentModelError({ reason: "MALFORMED", detail: "EMPTY_REPLY" }))
     return Effect.succeed(response)
   }))
-  let calls = 0, finalStep = false, reminded = false
+  let calls = 0, finalStep = false, reminded = false, pieceReminded = false
   for (let step = 1; step <= budget.modelSteps; step++) {
     if (deadline - Date.now() <= EXECUTION_LIMITS.answerReserveMs) {
       finalStep = true
@@ -339,6 +344,15 @@ export const runConversation = (input: {
         reminded = true
         yield* journal.record("VERIFICATION", { passed: false, missing, action: "REMINDED" })
         contents.push(content, { role: "user", parts: [{ text: verificationNotice(missing) }] })
+        continue
+      }
+      // Asked for a piece but answered without saving one: told once to save it.
+      const canSave = tools.some(d => d.name === "create_artifact")
+      if (canSave && !pieceReminded && !finalStep && step < budget.modelSteps && calls < budget.toolCalls
+        && asksForPiece(input.message) && !succeeded.has("create_artifact") && !succeeded.has("edit_artifact")) {
+        pieceReminded = true
+        yield* journal.record("VERIFICATION", { passed: false, missing: ["create_artifact"], action: "REMINDED" })
+        contents.push(content, { role: "user", parts: [{ text: PIECE_NOTICE }] })
         continue
       }
       for (const tool of missing) gaps.push(`Required step not run: ${toolLabel(tool).toLowerCase()}`)
