@@ -971,6 +971,8 @@ impl App {
         if self.prefs.landing == crate::prefs::Landing::Today {
             self.view = View::Workspace;
             self.page = Page::Overview;
+        } else {
+            self.home = true;
         }
         self.net.playbooks(Some(id.to_string()));
         self.proposals = Load::Loading;

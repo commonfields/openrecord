@@ -108,7 +108,7 @@ fn usage_body(t: &Theme, u: &Usage) -> El {
                     .w_full()
                     .gap(10.0)
                     .center_y()
-                    .child(crate::brands::logo(t, &crate::brands::model_brand(&m.model, &m.provider), 22.0))
+                    .child(crate::brands::mark(t, &crate::brands::model_brand(&m.model, &m.provider), 22.0))
                     .child(col().min_w(0.0).gap(0.0).child(label(m.model.clone(), type_::SM_MEDIUM, t.foreground).truncate()).child(label(crate::brands::brand(&m.provider).0, type_::XS11, t.muted_foreground))),
                 kit::faint(t, int(m.turns)),
                 kit::faint(t, tokens(m.tokens_in)),
@@ -135,7 +135,7 @@ fn usage_body(t: &Theme, u: &Usage) -> El {
                 .w_full()
                 .gap(10.0)
                 .center_y()
-                .child(crate::brands::logo(t, &provider.to_lowercase(), 22.0))
+                .child(crate::brands::mark(t, &provider.to_lowercase(), 22.0))
                 .child(
                     col()
                         .grow(1.0)

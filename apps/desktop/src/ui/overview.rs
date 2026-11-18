@@ -10,6 +10,11 @@ use crate::theme::{Theme, shadows, type_};
 use crate::ui::{charts, discovery, kit};
 use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleton};
 
+/// Space around the analytics sheet on the left, right and bottom so the
+/// panel background reads as a gutter (a little more than Inbox's 12pt).
+const PAGE_INSET_X: f32 = 20.0;
+const PAGE_INSET_BOTTOM: f32 = 20.0;
+
 pub fn view(s: &App, t: &Theme, in_side: bool) -> El {
     let sec = s.section;
     let body = match &s.insights {
@@ -54,15 +59,27 @@ pub fn view(s: &App, t: &Theme, in_side: bool) -> El {
     let slot = in_side as usize;
     let room = if s.analytics_w[slot] > 0.0 { s.analytics_w[slot] } else { available(s, in_side) };
     let (tabs, rows) = section_tabs(s, t, room);
-    col()
+    let sheet_col = col()
         .key(format!("overview-{}", sec.key()))
         .w_full()
-        .h_full()
+        .h(0.0)
+        .grow(1.0)
         .min_h(0.0)
         .pt(rows as f32 * TAB_H)
         .on_layout(move |s: &mut App, r: [f32; 4]| s.analytics_w[slot] = r[2])
         .child(sheet)
         .child(tabs)
+        .child(el().key("analytics-bottom-gutter").w_full().h(PAGE_INSET_BOTTOM));
+    // Horizontal on the `h_full` shell; bottom gutter on the flex column, so the
+    // sheet cannot grow through the panel background.
+    col()
+        .key(format!("overview-shell-{}", sec.key()))
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .px(PAGE_INSET_X)
+        .pt(0.0)
+        .child(sheet_col)
 }
 
 /// The folder tabs' height.
@@ -83,10 +100,11 @@ const SHEET_CORNERS: [f32; 4] = [0.0, 12.0, 12.0, 12.0];
 fn available(s: &App, in_side: bool) -> f32 {
     let split = if s.split_w > 0.0 { s.split_w } else { 1000.0 };
     let helper = s.prefs.helper() / 100.0;
+    let inset_w = PAGE_INSET_X * 2.0;
     if in_side {
-        (if s.side.wide { split } else { split * helper }) - 16.0
+        (if s.side.wide { split } else { split * helper }) - inset_w
     } else {
-        (if s.side_shown() { split * (1.0 - helper) } else { split }) - 32.0
+        (if s.side_shown() { split * (1.0 - helper) } else { split }) - inset_w
     }
 }
 

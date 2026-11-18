@@ -102,7 +102,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         // Any menu or dialog softens what is behind it with a slight blur.
         // Notices are not menus, and the "/" menu leaves its composer sharp.
         let floating = layers.len() - notice_count - usize::from(s.chat_shown() && s.settings.is_none() && agent::command_menu_open(s));
-        if floating > 0 {
+        // A landing page in the browser sits behind the app; its menus draw over it
+        // without blanking or blurring the page.
+        if floating > 0 && !s.browser_visible() {
             layers.insert(0, el().key("menu-backdrop").role("none").a11y_hidden().absolute(0.0, 0.0).w_full().h_full()
                 .backdrop_blur(MENU_BLUR).token_motion(k.motion.overlay));
         }
@@ -114,7 +116,16 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     // view clear (over a page in the browser, drawn behind it) the frame
     // around the page still reads as the app.
     crate::native_preview::window_background(t.sidebar);
-    crate::native_preview::browser_backdrop(t.background);
+    let browser_backdrop = if s.browser_page_shown() {
+        match crate::native_preview::browser_page_light() {
+            Some(light) => Theme::get(!light).background,
+            None if s.browser_artifact().is_some() => Theme::get(false).background,
+            None => t.background,
+        }
+    } else {
+        t.background
+    };
+    crate::native_preview::browser_backdrop(browser_backdrop);
     let screen = if s.screen == Screen::Workspace && s.browser_page_shown() { screen } else { screen.fill(t.sidebar) };
     let root = rune_kit::root(screen.hover_motion_within(ease, ease), layers);
     zoomed(s, root, z)
@@ -154,7 +165,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         View::Workspace if s.page == crate::state::Page::Inbox => (col().key("page-inbox").w_full().grow(1.0).min_h(0.0).child(pages::inbox(s, t)), None),
         // Analytics too: its tabs stay put and its sheet fills the panel, inset as the panel is in the window.
         View::Workspace if s.page == crate::state::Page::Overview => (
-            col().key("page-analytics").w_full().grow(1.0).min_h(0.0).px(8.0).pb(8.0).child(overview::view(s, t, false)),
+            col().key("page-analytics").w_full().grow(1.0).min_h(0.0).child(overview::view(s, t, false)),
             None,
         ),
         View::Workspace if s.page == crate::state::Page::AiAnswers => (

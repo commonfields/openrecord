@@ -216,7 +216,7 @@ pub fn sender_logo(s: &App, t: &Theme, d: &Decision, size: f32) -> Option<El> {
         return None;
     }
     let brand = crate::brands::model_brand(f.model.as_deref().unwrap_or_default(), &provider);
-    Some(crate::brands::logo(t, &brand, size))
+    Some(crate::brands::mark(t, &brand, size))
 }
 
 fn sender(s: &App, d: &Decision) -> Option<From> {
@@ -268,7 +268,7 @@ fn decision_header(s: &App, t: &Theme, d: &Decision, now: i64, narrow: bool) -> 
         Some(f) => {
             let provider = f.provider.clone().unwrap_or_default();
             let brand = crate::brands::model_brand(f.model.as_deref().unwrap_or_default(), &provider);
-            let badge = crate::brands::logo(t, &brand, 28.0);
+            let badge = crate::brands::mark(t, &brand, 28.0);
             // The model's name says the brand already ("Claude Sonnet 5.5"); the brand alone when the model is unknown.
             let brand_name = crate::brands::brand(&brand).0;
             let title = match f.model.as_deref().map(|m| model_name(s, m)) {

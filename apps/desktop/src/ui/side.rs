@@ -27,7 +27,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
         },
         SideTab::Browser => browser(s, t),
         SideTab::Launcher => launcher(s, t),
-        SideTab::Analytics | SideTab::Page(crate::state::Page::Overview) => col().key("side-analytics").w_full().grow(1.0).min_h(0.0).padding(8.0).child(super::overview::view(s, t, true)),
+        SideTab::Analytics | SideTab::Page(crate::state::Page::Overview) => col().key("side-analytics").w_full().grow(1.0).min_h(0.0).child(super::overview::view(s, t, true)),
         SideTab::CampaignBrief => match s.campaign_editor {
             Some(_) => super::campaign_brief::view(s, t),
             None => empty(t, "campaign-document-closed", "This brief has been closed."),
@@ -83,7 +83,7 @@ fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
         _ => false,
     };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
-    ready.then(|| col().w_full().pt(8.0).child(super::agent::composer(s, t, &business, crate::state::ComposerSlot::Side)))
+    ready.then(|| col().w_full().pt(8.0).child(super::agent::composer(s, t, &business, crate::state::ComposerSlot::Side, false)))
 }
 
 /// What a tab shows on the strip: its icon and name.
@@ -478,28 +478,27 @@ fn browser(s: &App, t: &Theme) -> El {
         }))
         .children(open.then(|| icon_button(t, "browser-home", &icons::X, "Close page", false).on_press(|s: &mut App| s.browser_home())));
 
-    let page = if open {
-        // Clear while the page shows (it is behind the app); white while it is
-        // put away for a menu or dialog over it.
-        let shown = s.browser_visible();
-        let mut page = col()
-            .key("browser-page")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
-                s.side.browser.rect = Some(r);
-                if s.browser_artifact().is_none() {
-                    native_preview::browser_keep(&[]);
-                }
-                if s.browser_visible() {
-                    let pending = s.side.browser.pending.take();
-                    native_preview::browser_show(pending.as_deref(), r);
-                }
-            });
-        if !shown {
-            page = page.fill(rune::Color::WHITE).child(label("Loading…", type_::XS, t.muted_foreground).padding(20.0));
-        }
+    let mut browser_col = col().key("browser").w_full().grow(1.0).min_h(0.0).child(bar);
+    if open {
+        // The page runs to the panel's foot; the composer overlays it without
+        // shrinking the slot the native web view fills.
+        browser_col = browser_col.child(
+            col()
+                .key("browser-page")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
+                    s.side.browser.rect = Some(r);
+                    if s.browser_artifact().is_none() {
+                        native_preview::browser_keep(&[]);
+                    }
+                    if s.browser_visible() {
+                        let pending = s.side.browser.pending.take();
+                        native_preview::browser_show(pending.as_deref(), r);
+                    }
+                }),
+        );
         // A landing page from the chat: the chat box floats over its foot.
         if s.browser_artifact().is_some() {
             let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
@@ -512,20 +511,19 @@ fn browser(s: &App, t: &Theme) -> El {
                 }
                 None => t,
             };
-            page = page.child(
+            browser_col = browser_col.child(
                 col()
                     .key("browser-chat")
                     // The chat box and its details on the page itself, no card behind them.
                     .pin(Some(0.0), None, Some(0.0), Some(0.0))
                     .on_drawn_layout(|_: &mut App, r: [f32; 4]| native_preview::browser_keep(&[r]))
-                    .child(super::agent::composer(s, ct, &business, crate::state::ComposerSlot::Side)),
+                    .child(super::agent::composer(s, ct, &business, crate::state::ComposerSlot::Side, true)),
             );
         }
-        page
     } else {
-        start(s, t)
-    };
-    col().key("browser").w_full().grow(1.0).min_h(0.0).child(bar).child(page)
+        browser_col = browser_col.child(start(s, t));
+    }
+    browser_col
 }
 
 /// Before a page is open: the web app and the pages opened this session.
