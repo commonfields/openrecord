@@ -1038,3 +1038,17 @@ mod tests {
         assert!(buf.is_empty());
     }
 }
+
+/// The request OpenRecord sends to write the weekly brief (apps/api/src/growth-brief.ts, BRIEF_PROMPT).
+pub fn is_brief_request(text: &str) -> bool {
+    text.starts_with("Write this week's growth brief for this business")
+}
+
+#[cfg(test)]
+mod brief_request_tests {
+    #[test]
+    fn only_the_scheduled_brief_request_is_recognised() {
+        assert!(super::is_brief_request("Write this week's growth brief for this business (today is 2026-11-15). It is for the owner"));
+        assert!(!super::is_brief_request("Can you write this week's growth brief?"));
+    }
+}

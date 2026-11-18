@@ -162,7 +162,7 @@ const discoverBuyerQuestions: AgentToolDef = {
 
 const readOpenIssues: AgentToolDef = {
   name: "read_open_issues",
-  description: "Read unresolved issues (claims disagreeing with approved truth). Read-only.",
+  description: "Read unresolved issues (claims disagreeing with approved truth), up to 20 (all of them by default). Each has the observation_id of the AI answer it came from; open that answer with read_observation. Read-only.",
   ...inputContract(Schema.Struct({ limit: Limit })),
   run: (accountId, businessId, input: { readonly limit?: number | undefined }) =>
     Effect.gen(function*() {
@@ -172,9 +172,10 @@ const readOpenIssues: AgentToolDef = {
       const open = rows
         .map((r) => ({ row: r, state: issueStateOf((r["verdict"] as string | null) ?? null) }))
         .filter((i) => i.state !== "RESOLVED")
-      const top = open.slice(0, limitOf(input))
+      // All of them by default: advice built on a few of the issues reads as if it covered them all.
+      const top = open.slice(0, limitOf(input, 20))
       return {
-        summary: `${open.length} open issues read`,
+        summary: top.length < open.length ? `${top.length} of ${open.length} open issues read` : `${open.length} open issues read`,
         citations: top.flatMap(({ row }) => {
           const claimId = String(row["claim_id"] ?? row["id"] ?? "")
           const claimText = String(row["claim_text"] ?? "")

@@ -352,9 +352,6 @@ pub struct App {
     pub signing_in: bool,
     /// Home's rolling starters: the one in focus, when it took the focus, and whether the pointer holds them.
     pub home: bool,
-    pub starter: usize,
-    pub starter_at: std::time::Instant,
-    pub starter_hover: bool,
     /// The decisions stack in the corner: whether it is spread out, and the ones put away with "Hide".
     pub notices_open: bool,
     pub notices_hidden: std::collections::BTreeSet<String>,
@@ -600,9 +597,6 @@ impl App {
             signin_error: None,
             signing_in: false,
             home: true,
-            starter: 0,
-            starter_at: std::time::Instant::now(),
-            starter_hover: false,
             notices_open: false,
             notices_hidden: std::collections::BTreeSet::new(),
             metric_pick: std::collections::HashMap::new(),
@@ -2248,19 +2242,6 @@ impl App {
         if matches!(self.turn, Turn::Working { .. }) && !self.prefs.reduce_motion {
             tx.wake_after(std::time::Duration::from_millis(220));
             changed = true;
-        }
-        // Home's starters turn one step each interval while nothing holds them.
-        let home = self.home && self.screen == Screen::Workspace && self.view == View::Agent && self.chat_id.is_none() && !self.general && self.active.is_some() && matches!(self.turn, Turn::Idle);
-        if home && !self.starter_hover && !self.prefs.reduce_motion && self.settings.is_none() && rune::tooling::headless_run().is_none() {
-            let held = self.starter_at.elapsed();
-            if held >= crate::ui::ROLL_EVERY {
-                self.starter = (self.starter + 1) % 4;
-                self.starter_at = std::time::Instant::now();
-                changed = true;
-                tx.wake_after(crate::ui::ROLL_EVERY);
-            } else {
-                tx.wake_after(crate::ui::ROLL_EVERY - held);
-            }
         }
         self.sync_open_chat(tx);
         // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.

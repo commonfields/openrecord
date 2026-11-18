@@ -53,6 +53,11 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             list = list.child(divider(t, &format!("wake-{i}"), None, &title));
             continue;
         }
+        // The weekly brief's instructions are OpenRecord's, not the person's words.
+        if m.role == "user" && crate::chat::is_brief_request(&m.text) {
+            list = list.child(divider(t, &format!("brief-{i}"), None, "Scheduled weekly brief"));
+            continue;
+        }
         let mut item = message(s, t, k, i, m, &statuses);
         if m.role == "user" {
             let owner = shown.to_string();
@@ -155,78 +160,38 @@ const STARTERS: [(&rune::Icon, &str, &str, &str); 4] = [
     (&icons::CHART_LINE, "How are we doing?", "Progress against your goal, what changed and what is still unknown.", "How are we doing against our goal? Show what changed, what worked and what is still unknown."),
 ];
 
-/// How long one starter holds the focus before the next rolls in.
-pub const ROLL_EVERY: std::time::Duration = std::time::Duration::from_millis(4600);
-pub(super) const ROLL_H: f32 = 300.0;
-/// The drum's width: a card reads as one line of intent, not a banner.
-const ROLL_W: f32 = 440.0;
-const ROLL_CARD_H: f32 = 92.0;
-/// From the focused card to the one above or below it.
-const ROLL_STEP: f32 = 98.0;
-const ROLL: rune::Spring = rune::Spring::new(0.85, 0.0);
+/// The starters stand still: each card sends its own request. (They used to
+/// turn on their own, and a press while they turned sent a different card's
+/// request from the one the person aimed at.)
+const STARTER_H: f32 = 68.0;
+const STARTER_GAP: f32 = 8.0;
+/// The column's height, which the side launcher matches so both line up.
+pub(super) const STARTERS_H: f32 = STARTER_H * 4.0 + STARTER_GAP * 3.0;
+const STARTERS_W: f32 = 440.0;
 
-/// Where starter `k` sits while `focus` has the focus: -1 above, 0 in focus, 1 below, 2 out of sight below.
-pub fn roll_slot(k: usize, focus: usize, n: usize) -> i32 {
-    ((k + n + 1 - focus % n) % n) as i32 - 1
-}
-
-/// The ways to begin as a drum that turns on its own: one card in focus, the
-/// one before above it and the one after below, each smaller, fainter and out
-/// of focus. Under the pointer it holds still; a press on the card in focus
-/// sends it, a press on another brings it into focus.
-fn starters(s: &App, t: &Theme) -> El {
-    let n = STARTERS.len();
-    let drum = el().key("starters").w_full().max_w(ROLL_W).h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
-        s.starter_hover = inside;
-        if !inside {
-            s.starter_at = std::time::Instant::now();
-        }
-    });
-    let mut cards: Vec<(i32, El)> = Vec::new();
-    for (k, (icon, name, what, prompt)) in STARTERS.iter().enumerate() {
-        let slot = roll_slot(k, s.starter, n);
-        let focus = slot == 0;
-        let (y, scale, fade, blur) = match slot {
-            0 => (0.0, 1.0, 1.0, 0.0),
-            -1 => (-ROLL_STEP, 0.9, 0.55, 1.6),
-            1 => (ROLL_STEP, 0.9, 0.55, 1.6),
-            _ => (ROLL_STEP * 1.8, 0.82, 0.0, 4.0),
-        };
+fn starters(_s: &App, t: &Theme) -> El {
+    let cards = STARTERS.iter().map(|(icon, name, what, prompt)| {
         let prompt = *prompt;
-        let card = crate::ui::widgets::card(t)
+        crate::ui::widgets::card(t)
             .key(format!("starter-{}", chat::slug(name)))
-            .pin(Some(0.0), Some((ROLL_H - ROLL_CARD_H) / 2.0), Some(0.0), None)
-            .h(ROLL_CARD_H)
-            .px(20.0)
-            .gap(6.0)
+            .w_full()
+            .h(STARTER_H)
+            .px(18.0)
+            .gap(4.0)
             .justify_center()
             .role("button")
             .label(name.to_string())
-            .focusable(focus)
+            .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(if focus { t.hover_tint } else { rune::Color::TRANSPARENT })
-            // The card that leaves at the top comes back from below unseen, so it never crosses the drum.
-            .motion(if slot == 2 { rune::Spring::NONE } else { ROLL })
-            .offset(0.0, y)
-            .scale(scale)
-            .opacity(fade)
-            .blur(blur)
+            .hover(t.hover_tint)
             .on_press_tx(move |s: &mut App, tx| {
-                if focus {
-                    s.composer.replace_text(prompt);
-                    s.send_message(tx);
-                } else {
-                    s.starter = k;
-                    s.starter_at = std::time::Instant::now();
-                }
+                s.composer.replace_text(prompt);
+                s.send_message(tx);
             })
             .child(row().w_full().gap(10.0).center_y().child(ico(icon, 16.0, t.primary_ink)).child(label(name.to_string(), type_::BASE_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0)))
-            .child(label(what.to_string(), type_::SM_13, t.muted_foreground).truncate());
-        cards.push((slot, card));
-    }
-    // The card in focus is drawn last, over its neighbours; the one out of sight first.
-    cards.sort_by_key(|(slot, _)| std::cmp::Reverse(slot.abs()));
-    drum.children(cards.into_iter().map(|(_, c)| c))
+            .child(label(what.to_string(), type_::SM_13, t.muted_foreground).truncate())
+    });
+    col().key("starters").w_full().max_w(STARTERS_W).gap(STARTER_GAP).role("list").label("Ways to start").children(cards)
 }
 
 /// Home: the first thing a business's agent shows. What waits on the person
@@ -234,7 +199,7 @@ fn starters(s: &App, t: &Theme) -> El {
 /// to start that send in one press. A general chat has no business to brief on.
 pub(super) fn home_stack_top(s: &App) -> f32 {
     let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
-    ((height - 48.0 - 150.0 - ROLL_H) * 0.42).max(32.0)
+    ((height - 48.0 - 150.0 - STARTERS_H) * 0.42).max(32.0)
 }
 
 fn start(s: &App, t: &Theme, _business: &str) -> El {
@@ -2428,16 +2393,3 @@ fn share_dialog(t: &Theme, k: &Kit, sh: &crate::state::ShareChat, layer: &mut Ve
         .build(k, layer);
 }
 
-#[cfg(test)]
-mod roll_tests {
-    use super::roll_slot;
-
-    #[test]
-    fn each_starter_has_one_place_and_the_drum_turns_one_step() {
-        // With the first in focus: the last above it, the second below, the third out of sight.
-        assert_eq!((0..4).map(|k| roll_slot(k, 0, 4)).collect::<Vec<_>>(), vec![0, 1, 2, -1]);
-        // One step on, every card moves up one place, and the one at the top goes out of sight below.
-        assert_eq!((0..4).map(|k| roll_slot(k, 1, 4)).collect::<Vec<_>>(), vec![-1, 0, 1, 2]);
-        assert_eq!((0..4).map(|k| roll_slot(k, 3, 4)).collect::<Vec<_>>(), vec![1, 2, -1, 0]);
-    }
-}
