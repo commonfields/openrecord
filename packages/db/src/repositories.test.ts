@@ -23,6 +23,8 @@ const memBusiness = () => {
         return row
       }),
     list: (accountId: string) => Effect.succeed([...store.values()].filter((b) => b.accountId === accountId)),
+    listArchived: () => Effect.succeed([]),
+    setArchived: () => Effect.succeed(false),
     getScoped: (accountId: string, id: string) =>
       Effect.succeed([...store.values()].find((b) => b.id === id && b.accountId === accountId) ?? null),
   })

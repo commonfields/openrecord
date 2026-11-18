@@ -23,7 +23,7 @@ describe("public record revocation during evidence loading", () => {
     })
     const dependencies = Layer.mergeAll(layer,
       Layer.succeed(AuthRepository, { getSession: unused, signup: unused, signinLookup: unused, createSession: unused, deleteSession: unused }),
-      Layer.succeed(BusinessRepository, { create: unused, list: unused, getScoped: unused }))
+      Layer.succeed(BusinessRepository, { create: unused, list: unused, listArchived: unused, setArchived: unused, getScoped: unused }))
     const web = HttpApp.toWebHandlerLayer(recordApi(() => Effect.die("unexpected operator call")), dependencies)
     try { return await web.handler(new Request(`http://localhost/api/public/records/${token}`)) }
     finally { await web.dispose() }

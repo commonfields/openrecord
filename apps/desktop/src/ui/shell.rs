@@ -111,7 +111,13 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Businesses) { None } else { Some(Menu::Businesses) });
+            .on_press(|s: &mut App| {
+                s.confirm_archive = false;
+                s.menu = if s.menu == Some(Menu::Businesses) { None } else {
+                    s.net.archived_businesses();
+                    Some(Menu::Businesses)
+                };
+            });
         if open {
             b = b
                 .w_full()
@@ -748,6 +754,33 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
             }
             if s.businesses.is_empty() {
                 m = m.child(label("No businesses yet. Set one up on the web.", type_::SM_13, t.muted_foreground).px(8.0).py(6.0).wrap());
+            }
+            // Archive takes the open business out of this list (nothing is deleted); it asks twice.
+            if let Some(active) = s.active.clone().filter(|a| s.businesses.iter().any(|b| &b.id == a)) {
+                let name = s.businesses.iter().find(|b| b.id == active).map(|b| b.name.clone()).unwrap_or_default();
+                let text_ = if s.confirm_archive { format!("Archive \"{name}\"? Press again. Nothing is deleted") } else { format!("Archive \"{name}\"") };
+                m = m.child(menu_row(t, "business-archive".into(), Some(ico(&icons::ARCHIVE, 14.0, t.muted_foreground)), &text_, false).on_press(move |s: &mut App| {
+                    if s.confirm_archive {
+                        s.confirm_archive = false;
+                        s.menu = None;
+                        s.net.archive_business(active.clone(), true);
+                    } else {
+                        s.confirm_archive = true;
+                    }
+                }));
+            }
+            if !s.archived_businesses.is_empty() {
+                let toggle = format!("Archived ({})", s.archived_businesses.len());
+                m = m.child(menu_row(t, "business-archived".into(), None, &toggle, s.show_archived_businesses).on_press(|s: &mut App| s.show_archived_businesses = !s.show_archived_businesses));
+                if s.show_archived_businesses {
+                    for b in &s.archived_businesses {
+                        let id = b.id.clone();
+                        m = m.child(menu_row(t, format!("business-restore-{}", b.id), None, &format!("Restore {}", b.name), false).on_press(move |s: &mut App| {
+                            s.menu = None;
+                            s.net.archive_business(id.clone(), false);
+                        }));
+                    }
+                }
             }
             Some(m.role("menu").anchored("business-switcher", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
         }

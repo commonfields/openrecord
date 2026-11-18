@@ -19,6 +19,8 @@ const FACT_A = "44444444-4444-4444-8444-444444444444"
 const BusinessStub = Layer.succeed(BusinessRepository, {
   create: () => Effect.dieMessage("unused"),
   list: () => Effect.succeed([]),
+  listArchived: () => Effect.succeed([]),
+  setArchived: () => Effect.succeed(false),
   getScoped: (_accountId: string, _id: string) => Effect.succeed(null),
 })
 
