@@ -73,6 +73,10 @@ export class BusinessRepository extends Context.Tag("BusinessRepository")<
   {
     readonly create: (accountId: string, name: string) => DbEffect<BusinessRow>
     readonly list: (accountId: string) => DbEffect<ReadonlyArray<BusinessRow>>
+    /** The account's archived businesses, most recently archived first. */
+    readonly listArchived: (accountId: string) => DbEffect<ReadonlyArray<BusinessRow>>
+    /** Archives or restores one business; false when it isn't this account's. */
+    readonly setArchived: (accountId: string, id: string, archived: boolean) => DbEffect<boolean>
     readonly getScoped: (accountId: string, id: string) => DbEffect<BusinessRow | null>
   }
 >() {}
@@ -85,9 +89,18 @@ export const BusinessRepositoryLive = Layer.effect(
         Effect.flatMap((rows) => decodeBusiness((rows as Array<unknown>)[0])),
       ),
     list: (accountId: string) =>
-      sql`SELECT id, account_id, name, created_at FROM businesses WHERE account_id = ${accountId} ORDER BY created_at ASC`.pipe(
+      sql`SELECT id, account_id, name, created_at FROM businesses WHERE account_id = ${accountId} AND archived_at IS NULL ORDER BY created_at ASC`.pipe(
         Effect.flatMap((rows) => Effect.forEach(rows as Array<unknown>, decodeBusiness)),
       ),
+    listArchived: (accountId: string) =>
+      sql`SELECT id, account_id, name, created_at FROM businesses WHERE account_id = ${accountId} AND archived_at IS NOT NULL ORDER BY archived_at DESC`.pipe(
+        Effect.flatMap((rows) => Effect.forEach(rows as Array<unknown>, decodeBusiness)),
+      ),
+    setArchived: (accountId: string, id: string, archived: boolean) =>
+      (archived
+        ? sql`UPDATE businesses SET archived_at = coalesce(archived_at, now()) WHERE id = ${id} AND account_id = ${accountId} RETURNING id`
+        : sql`UPDATE businesses SET archived_at = NULL WHERE id = ${id} AND account_id = ${accountId} RETURNING id`
+      ).pipe(Effect.map((rows) => (rows as Array<unknown>).length > 0)),
     getScoped: (accountId: string, id: string) =>
       sql`SELECT id, account_id, name, created_at FROM businesses WHERE id = ${id} AND account_id = ${accountId}`.pipe(
         Effect.flatMap((rows) => {

@@ -19,6 +19,9 @@ pub enum Reply {
     SignedIn(ApiResult<()>),
     SignedOut,
     Businesses(ApiResult<Vec<Business>>),
+    ArchivedBusinesses(ApiResult<Vec<Business>>),
+    /// A line for the notice strip.
+    Notice(String),
     Chats(ApiResult<Vec<ChatSummary>>),
     Branched(String, ApiResult<crate::api::Conversation>),
     Decisions(ApiResult<Vec<Decision>>),
@@ -211,6 +214,23 @@ impl Net {
 
     /// Everything the shell shows for the account: businesses, chats and the
     /// decisions waiting on the person.
+    /// Archives or restores a business, then reloads both lists.
+    pub fn archive_business(&self, id: String, archived: bool) {
+        self.spawn(move |c, send| {
+            send(Reply::Notice(match c.set_business_archived(&id, archived) {
+                Ok(()) if archived => "Archived. Nothing was deleted; restore it from Archived in this menu.".into(),
+                Ok(()) => "Restored.".into(),
+                Err(e) => format!("Couldn't change that business: {}", e.message()),
+            }));
+            send(Reply::Businesses(c.businesses()));
+            send(Reply::ArchivedBusinesses(c.archived_businesses()));
+        });
+    }
+
+    pub fn archived_businesses(&self) {
+        self.spawn(|c, send| send(Reply::ArchivedBusinesses(c.archived_businesses())));
+    }
+
     pub fn workspace(&self) {
         self.spawn(|c, send| {
             send(Reply::Businesses(c.businesses()));

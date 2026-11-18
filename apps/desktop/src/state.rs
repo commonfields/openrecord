@@ -377,6 +377,11 @@ pub struct App {
     /// With the sidebar collapsed, whether it is showing over the page because the pointer reached the left edge.
     pub sidebar_peek: bool,
     pub menu: Option<Menu>,
+    /// The business switcher: archived businesses (for restoring), whether they
+    /// show, and whether "Archive" is waiting for its second press.
+    pub archived_businesses: Vec<crate::api::Business>,
+    pub show_archived_businesses: bool,
+    pub confirm_archive: bool,
 
     pub overview: Load<Overview>,
     pub issues: Load<Vec<Issue>>,
@@ -619,6 +624,9 @@ impl App {
             sidebar_open: true,
             sidebar_peek: false,
             menu: None,
+            archived_businesses: Vec::new(),
+            show_archived_businesses: false,
+            confirm_archive: false,
             overview: Load::Idle,
             issues: Load::Idle,
             channels: Load::Idle,
@@ -2393,6 +2401,12 @@ impl App {
                         // Always open Home (agent starters), not a setup interstitial.
                         self.go_home();
                     }
+                }
+            }
+            Reply::Notice(n) => self.notice = Some(n),
+            Reply::ArchivedBusinesses(r) => {
+                if let Ok(list) = self.failed(r) {
+                    self.archived_businesses = list;
                 }
             }
             Reply::Chats(r) => match self.failed(r) {

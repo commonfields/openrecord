@@ -142,6 +142,7 @@ export const runDueBriefs = <R = Effect.Effect.Context<ReturnType<typeof sendSes
     WHERE s.business_id IN (SELECT business_id FROM growth_brief_schedules WHERE enabled AND next_run_at <= now() AND (lease_until IS NULL OR lease_until < now())
       ORDER BY next_run_at LIMIT 5 FOR UPDATE SKIP LOCKED)
       AND EXISTS (SELECT 1 FROM account_users au WHERE au.account_id = s.account_id AND au.user_id = s.user_id)
+      AND EXISTS (SELECT 1 FROM businesses b WHERE b.id = s.business_id AND b.archived_at IS NULL)
     RETURNING s.business_id, s.account_id, s.user_id`
   for (const r of due) {
     yield* startBrief({ accountId: String(r["account_id"]), userId: String(r["user_id"]), businessId: String(r["business_id"]) }, "SCHEDULE", sender).pipe(

@@ -637,6 +637,20 @@ impl Client {
         Ok(self.get::<R>("/api/businesses")?.businesses)
     }
 
+    /// The account's archived businesses, for restoring.
+    pub fn archived_businesses(&self) -> ApiResult<Vec<Business>> {
+        #[derive(Deserialize)]
+        struct R {
+            businesses: Vec<Business>,
+        }
+        Ok(self.get::<R>("/api/businesses?archived=1")?.businesses)
+    }
+
+    /// Archives or restores a business; nothing is deleted.
+    pub fn set_business_archived(&self, id: &str, archived: bool) -> ApiResult<()> {
+        self.post::<Value>(&format!("/api/businesses/{}/archive", enc(id)), json!({ "archived": archived })).map(|_| ())
+    }
+
     pub fn chats(&self) -> ApiResult<Vec<ChatSummary>> {
         #[derive(Deserialize)]
         struct R {

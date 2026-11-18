@@ -682,6 +682,8 @@ describe("issue loop tenancy", () => {
   const BusinessStub = Layer.succeed(BusinessRepository, {
     create: () => Effect.dieMessage("unused"),
     list: () => Effect.succeed([]),
+    listArchived: () => Effect.succeed([]),
+    setArchived: () => Effect.succeed(false),
     getScoped: (accountId: string, id: string) =>
       Effect.succeed(
         accountId === "acct-a" && id === BIZ

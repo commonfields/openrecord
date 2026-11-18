@@ -527,7 +527,9 @@ export const makeRouter = () => {
       withSession((session) =>
         Effect.gen(function*() {
           const repo = yield* BusinessRepository
-          const rows = yield* repo.list(session.accountId)
+          // ?archived=1 lists the archived ones instead, for restoring.
+          const archived = new URL((yield* HttpServerRequest.HttpServerRequest).url, "http://localhost").searchParams.get("archived") === "1"
+          const rows = archived ? yield* repo.listArchived(session.accountId) : yield* repo.list(session.accountId)
           return yield* json(200, { businesses: rows })
         }),
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
@@ -1639,8 +1641,23 @@ export const makeRouter = () => {
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
   )
+  // Archive or restore a business: out of the lists and scheduled work, nothing deleted.
+  const archiveApi = HttpRouter.empty.pipe(
+    HttpRouter.post(
+      "/api/businesses/:id/archive",
+      withSession((session) =>
+        Effect.gen(function*() {
+          const { params } = yield* HttpRouter.RouteContext
+          const body = (yield* readJson) as { archived?: unknown } | null
+          if (typeof body?.archived !== "boolean" || !isRouteId(params["id"] ?? "")) return yield* json(422, malformed)
+          const ok = yield* (yield* BusinessRepository).setArchived(session.accountId, params["id"] ?? "", body.archived)
+          return ok ? yield* json(200, { archived: body.archived }) : yield* json(404, { _tag: "BusinessNotFound" })
+        }),
+      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+    ),
+  )
   return HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), HttpRouter.concat(strategyApi(withSession), channelsApi(withSession)))), HttpRouter.concat(desktopOAuthApi(), artifactsApi(withSession))), HttpRouter.concat(HttpRouter.concat(accountActionsApi(withSession), HttpRouter.concat(campaignsApi(withSession), campaignOutcomeApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentRequestApi(withSession), objectivesApi(withSession)), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
-    HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, productApi), discoveryApi), memoryApi),
+    HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, archiveApi), productApi), discoveryApi), memoryApi),
     HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(HttpRouter.concat(acquisitionApi(withSession), HttpRouter.concat(wordpressApi(withSession), HttpRouter.concat(webflowApi(withSession), connectionsApi(withSession)))), HttpRouter.concat(trackingScheduleApi(withSession), HttpRouter.concat(answerScheduleApi(withSession), HttpRouter.concat(researchConnectionsApi(withSession), HttpRouter.concat(mcpGrantsApi(withSession), HttpRouter.concat(mcpApi, HttpRouter.concat(aiTrafficFeedApi(withSession), HttpRouter.concat(mcpConnectionsApi(withSession), HttpRouter.concat(playbooksApi(withSession), HttpRouter.concat(chatSharesApi(withSession), HttpRouter.concat(usageApi(withSession), HttpRouter.concat(decisionFeedbackApi(withSession), pluginsApi(withSession)))))))))))))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
   )))))
 }
