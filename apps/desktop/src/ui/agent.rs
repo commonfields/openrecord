@@ -1210,7 +1210,7 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot) -> El {
     let blocked = s.model_unavailable();
     let has_text = !text_state.text.trim().is_empty();
     let placeholder = if blocked {
-        "The model you used is unavailable now. Pick another model below"
+        "No agent model is available. Connect one in Settings, Agent"
     } else if working {
         "Add to what the agent is doing"
     } else if side && matches!(s.side_tab(), crate::side::SideTab::Helper(_)) {
@@ -1602,6 +1602,14 @@ fn context_meter(s: &App, t: &Theme, slot: ComposerSlot) -> Option<El> {
     )
 }
 
+/// Says which model runs in place of the picked one, while that one is unavailable.
+fn stand_in_note(s: &App) -> Option<String> {
+    let stand_in = s.model_stand_in()?;
+    let picked = s.agent_model.as_deref()?;
+    let picked = picked.split_once(':').map_or(picked, |(_, m)| m);
+    Some(format!("{picked} isn't available right now, so the agent uses {} instead. It goes back to {picked} once that works again.", stand_in.name))
+}
+
 /// The composer's model button: the chosen model's logo and name.
 fn model_trigger(s: &App, t: &Theme, locked: bool, slot: ComposerSlot) -> El {
     let chosen = s.chosen_model();
@@ -1629,6 +1637,9 @@ fn model_trigger(s: &App, t: &Theme, locked: bool, slot: ComposerSlot) -> El {
                 s.open_model_menu();
             }
         });
+    if let Some(note) = stand_in_note(s) {
+        r = r.help(note);
+    }
     if let Some(o) = chosen.filter(|_| !s.model_unavailable()) {
         r = r.child(brands::mark(t, &o.brand, 16.0));
     }
@@ -1856,7 +1867,9 @@ pub fn model_menu(s: &App, t: &Theme) -> El {
         m = m.child(label(st, type_::XS, t.muted_foreground).px(8.0).py(12.0).wrap());
     }
     if s.model_unavailable() {
-        m = m.child(label("The model you used is unavailable now. Pick another one.", type_::XS, t.wrong).px(8.0).py(8.0).wrap());
+        m = m.child(label("No model is available right now. Connect one under Manage.", type_::XS, t.wrong).px(8.0).py(8.0).wrap());
+    } else if let Some(note) = stand_in_note(s) {
+        m = m.child(label(note, type_::XS, t.muted_foreground).px(8.0).py(8.0).wrap());
     }
     m.child(el().w_full().h(1.0).mt(6.0).mb(4.0).fill(t.border))
         .child(manage)

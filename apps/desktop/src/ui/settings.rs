@@ -17,7 +17,7 @@ use crate::ui::widgets::{CONTROL, Variant, account_tile, button, ico, label};
 /// The scrim and the dialog, as two layers over the window.
 pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
     let groups: [(&str, &[SettingsPage]); 2] = [
-        ("Preferences", &[SettingsPage::General, SettingsPage::Agent, SettingsPage::Checks, SettingsPage::Shortcuts]),
+        ("Preferences", &[SettingsPage::General, SettingsPage::Agent, SettingsPage::Shortcuts]),
         ("Account", &[SettingsPage::Account, SettingsPage::Privacy, SettingsPage::About]),
     ];
     let mut nav = col().w(224.0).px(8.0).pt(12.0).pb(8.0).gap(20.0).child(label("Settings", type_::BASE_MEDIUM, t.foreground).px(8.0));
@@ -55,7 +55,6 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
     let body = match page {
         SettingsPage::General => general(s, t),
         SettingsPage::Agent => agent(s, t, k),
-        SettingsPage::Checks => checks(s, t),
         SettingsPage::Shortcuts => shortcuts(t),
         SettingsPage::Account => account(s, t),
         SettingsPage::Privacy => privacy(t),
@@ -138,7 +137,6 @@ fn page_icon(p: SettingsPage) -> &'static rune::Icon {
     match p {
         SettingsPage::General => &icons::SLIDERS_HORIZONTAL,
         SettingsPage::Agent => &icons::MESSAGES_SQUARE,
-        SettingsPage::Checks => &icons::RADAR,
         SettingsPage::Shortcuts => &icons::KEYBOARD,
         SettingsPage::Account => &icons::USER_ROUND,
         SettingsPage::Privacy => &icons::SHIELD,
@@ -750,25 +748,6 @@ fn pairing(s: &App, t: &Theme) -> Option<El> {
 }
 
 // ---- Checks, shortcuts, account, privacy, about -----------------------------
-
-fn checks(s: &App, t: &Theme) -> El {
-    let value = if s.prefs.default_provider == "9router" { 1 } else { 0 };
-    group(
-        t,
-        "checks-prefs",
-        "Running checks",
-        None,
-        vec![
-            setting(
-                t,
-                "Default provider",
-                Some("Preselected when a re-check runs. You can still switch before each run.".into()),
-                Some(choice(t, "default-provider", value, &[(0, "Mock (test answers)"), (1, "9Router (live model)")], |s, v| s.set_pref(|p| p.default_provider = if v == 1 { "9router".into() } else { "mock".into() }))),
-            ),
-            setting(t, "Retries", Some("Rate limits, timeouts and unavailable providers are retried up to 3 times. Other failures stop right away.".into()), Some(muted(t, "Managed by the server"))),
-        ],
-    )
-}
 
 fn shortcuts(t: &Theme) -> El {
     let line = |name: &str, keys: &[&str]| {

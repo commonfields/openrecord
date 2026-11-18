@@ -110,7 +110,7 @@ impl Instance {
                 "codex" => "codex login",
                 "claude" => "claude auth login",
                 "opencode" => "opencode auth login",
-                "cursor" => "cursor-agent login",
+                "cursor" => "pnpm --filter @openrecord/bridge cursor:login",
                 _ => "cli-proxy-api -claude-login",
             }
             .into()

@@ -36,7 +36,7 @@ describe("local harness protocol boundary (fixture binaries; no provider calls)"
     model: "fixture-model",
     input: { system: "TEST", contents: [{ role: "user", parts: [{ text: "TEST message" }] }], tools: [] }
   })
-  for (const driver of ["codex", "claude", "opencode", "cursor"] as const) {
+  for (const driver of ["codex", "claude", "opencode"] as const) {
     it(`discovers and executes the ${driver} protocol with local tools refused`, async () => {
       const i = instance(driver)
       const status = await probe(i)

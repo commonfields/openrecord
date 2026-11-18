@@ -12,10 +12,11 @@ import {
   type HarnessModel,
   type HarnessReport
 } from "@openrecord/contracts"
-import { BridgeFailure, RpcProcess, capture, driverEnvironment } from "./process.js"
+import { BridgeFailure, RpcProcess, capture, driverEnvironment, failureReason } from "./process.js"
 import { sessions, type WarmProcess } from "./sessions.js"
 import { prepareSearchPath, searchPath } from "./discovery.js"
 import { claudeCatalog, claudeSdkProcess, claudeSearchAnswer, searchSources } from "./claude-sdk.js"
+import { CURSOR_SDK_VERSION, cursorCatalog, cursorSdk, cursorSdkProcess } from "./cursor-sdk.js"
 import { executeCliProxy, probeCliProxy } from "./cliproxy.js"
 
 export const LocalInstance = Schema.Struct({
@@ -209,8 +210,23 @@ export async function executableFor(instance: LocalInstance) {
   return withWorkspace(async (cwd) => (await resolveBinary(instance, cwd, environment(instance))).binary)
 }
 
+/** Cursor through its official SDK: no CLI to find; the SDK reports sign-in and models. */
+async function probeCursor(instance: LocalInstance): Promise<HarnessReport> {
+  const base: HarnessReport = { localId: instance.id, driver: "cursor", name: instance.name || HARNESS_NAMES.cursor,
+    installed: true, version: CURSOR_SDK_VERSION, auth: "unknown", state: "unavailable", models: [] }
+  try { await cursorSdk() } catch { return { ...base, installed: false, version: null } }
+  try {
+    const catalog = await cursorCatalog(AbortSignal.timeout(20000))
+    if (!catalog.signedIn) return { ...base, accountLabel: null, auth: "unauthenticated" }
+    return { ...base, accountLabel: catalog.accountLabel, auth: "authenticated", state: catalog.models.length ? "ready" : "unavailable", models: catalog.models }
+  } catch (error) {
+    return failureReason(String(error)) === "RATE_LIMITED" ? { ...base, auth: "authenticated", state: "usage_limited" } : base
+  }
+}
+
 export async function probe(instance: LocalInstance): Promise<HarnessReport> {
   if (instance.driver === "cliproxy") return probeCliProxy(instance)
+  if (instance.driver === "cursor") return probeCursor(instance)
   await prepareSearchPath()
   const base: HarnessReport = {
     localId: instance.id,
@@ -425,6 +441,11 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
     let thought = ""
     const relay = (t: string) => { thought = t; onThought?.(t) }
     const start = async () => {
+      if (driver === "cursor") {
+        const cwd = await lockedWorkspace()
+        return cursorSdkProcess({ cwd, model: job.model, system: transportSystem(job), startSignal: signal,
+          onClose: () => { void rm(cwd, { recursive: true, force: true }) } })
+      }
       if (driver !== "claude") return acpProcess(instance, binary, env, job, signal)
       const cwd = await lockedWorkspace()
       try {
@@ -435,7 +456,7 @@ export async function execute(instance: LocalInstance, job: HarnessJob, signal: 
         throw error
       }
     }
-    const { answer } = await sessions.run(instance.id, job, start, driver === "claude" ? conversationMessage(job) : prompt(job), signal, relay)
+    const { answer } = await sessions.run(instance.id, job, start, driver === "claude" || driver === "cursor" ? conversationMessage(job) : prompt(job), signal, relay)
     if (answer.length > 64000) throw new BridgeFailure("MALFORMED")
     return withThought(parseAnswer(answer), thought)
   }

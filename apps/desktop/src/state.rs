@@ -185,7 +185,6 @@ pub enum Turn {
 pub enum SettingsPage {
     General,
     Agent,
-    Checks,
     Shortcuts,
     Account,
     Privacy,
@@ -197,7 +196,6 @@ impl SettingsPage {
         match self {
             Self::General => "General",
             Self::Agent => "Agent",
-            Self::Checks => "Checks",
             Self::Shortcuts => "Keyboard shortcuts",
             Self::Account => "Account",
             Self::Privacy => "Privacy and data",
@@ -208,7 +206,6 @@ impl SettingsPage {
         match self {
             Self::General => "Appearance, language and how the app opens.",
             Self::Agent => "How the chat box behaves, and which agent it talks to.",
-            Self::Checks => "Defaults for running buyer questions against AI providers.",
             Self::Shortcuts => "Move around OpenRecord without the mouse.",
             Self::Account => "Your sign-in details and current session.",
             Self::Privacy => "What leaves this app, and what is kept.",
@@ -219,7 +216,6 @@ impl SettingsPage {
         match self {
             Self::General => "general",
             Self::Agent => "agent",
-            Self::Checks => "checks",
             Self::Shortcuts => "shortcuts",
             Self::Account => "account",
             Self::Privacy => "privacy",
@@ -1511,17 +1507,34 @@ impl App {
         }
     }
 
-    /// The model the next turn uses: the one picked if it's still offered,
-    /// otherwise the first offered (the hosted default when there is one).
+    /// The model the next turn uses: the one picked if it's still offered.
+    /// When it is not (its tool hit a usage limit or went offline), the same
+    /// model through another connection, otherwise the first offered, and
+    /// `model_stand_in` says so. The pick is kept, so it comes back by itself.
     pub fn chosen_model(&self) -> Option<&crate::chat::ModelOption> {
         let list = self.catalog.ready()?;
-        self.agent_model.as_ref().and_then(|v| list.iter().find(|o| &o.value == v)).or_else(|| list.first())
+        let Some(v) = self.agent_model.as_ref() else { return list.first() };
+        let model_id = |value: &str| value.split_once(':').map(|(_, m)| m.to_string());
+        list.iter()
+            .find(|o| &o.value == v)
+            .or_else(|| model_id(v).and_then(|m| list.iter().find(|o| model_id(&o.value).as_deref() == Some(m.as_str()))))
+            .or_else(|| list.first())
     }
 
-    /// The picked model is gone from the catalog: never re-routed silently.
+    /// The picked model is gone and another runs in its place: the one running, to say so.
+    pub fn model_stand_in(&self) -> Option<&crate::chat::ModelOption> {
+        let list = self.catalog.ready()?;
+        let v = self.agent_model.as_ref()?;
+        if v == "hosted" || list.iter().any(|o| &o.value == v) {
+            return None;
+        }
+        self.chosen_model()
+    }
+
+    /// No model can run a turn at all: the picked one is gone and nothing else is offered.
     pub fn model_unavailable(&self) -> bool {
         match (self.catalog.ready(), &self.agent_model) {
-            (Some(list), Some(v)) if v != "hosted" => !list.iter().any(|o| &o.value == v),
+            (Some(list), Some(v)) if v != "hosted" => list.is_empty(),
             _ => false,
         }
     }
@@ -3052,5 +3065,46 @@ mod agent_sync_tests {
         assert!(helpers_working(&[msg("RUNNING")]));
         assert!(!helpers_working(&[msg("RUNNING"), msg("COMPLETED")]));
         assert!(!helpers_working(&[]));
+    }
+}
+
+#[cfg(test)]
+mod model_fallback_tests {
+    use super::*;
+
+    fn with(picked: &str, catalog: serde_json::Value) -> App {
+        let mut s = App::new();
+        s.agent_model = Some(picked.into());
+        s.catalog = Load::Ready(crate::chat::model_options(&catalog));
+        s
+    }
+
+    fn instance(id: &str, driver: &str, state: &str, models: &[&str]) -> serde_json::Value {
+        serde_json::json!({ "id": id, "driver": driver, "name": driver, "enabled": true, "installed": true, "auth": "authenticated", "state": state,
+            "models": models.iter().map(|m| serde_json::json!({ "id": m, "name": m })).collect::<Vec<_>>() })
+    }
+
+    #[test]
+    fn a_model_that_stops_working_is_stood_in_for_and_said_so() {
+        // Codex hit its usage limit; Claude Code is ready.
+        let s = with("cx:gpt-6.1-terra", serde_json::json!({ "instances": [instance("cx", "codex", "usage_limited", &["gpt-6.1-terra"]), instance("cl", "claude", "ready", &["default", "opus"])] }));
+        assert!(!s.model_unavailable(), "a turn can still run");
+        assert_eq!(s.chosen_model().map(|m| m.value.as_str()), Some("cl:default"));
+        assert_eq!(s.model_stand_in().map(|m| m.value.as_str()), Some("cl:default"));
+        assert_eq!(s.agent_model.as_deref(), Some("cx:gpt-6.1-terra"), "the pick is kept for when it returns");
+    }
+
+    #[test]
+    fn the_same_model_through_another_connection_is_preferred() {
+        let s = with("old:opus", serde_json::json!({ "instances": [instance("cl", "claude", "ready", &["default", "opus"])] }));
+        assert_eq!(s.chosen_model().map(|m| m.value.as_str()), Some("cl:opus"));
+    }
+
+    #[test]
+    fn a_working_pick_has_no_stand_in_and_nothing_left_blocks() {
+        let s = with("cl:opus", serde_json::json!({ "instances": [instance("cl", "claude", "ready", &["default", "opus"])] }));
+        assert!(s.model_stand_in().is_none());
+        let none = with("cx:gpt-6.1-terra", serde_json::json!({ "instances": [] }));
+        assert!(none.model_unavailable());
     }
 }

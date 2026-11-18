@@ -8,5 +8,7 @@ await build({
   platform: "node",
   target: "node24",
   format: "esm",
+  // Loaded on demand; Cursor reports as not installed where the SDK is absent.
+  external: ["@cursor/sdk"],
   banner: { js: "#!/usr/bin/env node" }
 })
