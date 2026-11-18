@@ -350,7 +350,7 @@ pub struct App {
     pub password: TextEdit,
     pub signin_error: Option<String>,
     pub signing_in: bool,
-    /// Home's rolling starters: the one in focus, when it took the focus, and whether the pointer holds them.
+    /// Whether Home (the starters) shows instead of a chat.
     pub home: bool,
     /// The decisions stack in the corner: whether it is spread out, and the ones put away with "Hide".
     pub notices_open: bool,
@@ -2698,6 +2698,8 @@ impl App {
             Reply::Decided { key, approved, result } => {
                 self.deciding = None;
                 let done = self.decisions.iter().find(|d| d.key == key).map(|d| d.done(approved));
+                // Approved work starts at once: the agent makes it in a chat of its own.
+                let work = if approved { self.decisions.iter().find(|d| d.key == key).and_then(|d| d.work_request().map(|r| (d.business_id.clone(), r))) } else { None };
                 match result {
                     Ok(()) => {
                         let list = self.inbox();
@@ -2713,6 +2715,11 @@ impl App {
                         self.net.decisions();
                         if let Some(b) = self.active.clone() {
                             self.net.proposals(b);
+                        }
+                        if let Some((business, request)) = work.filter(|_| matches!(self.turn, Turn::Idle)) {
+                            self.start_chat(Some(business));
+                            self.composer.replace_text(&request);
+                            self.send_message(tx);
                         }
                     }
                     Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),

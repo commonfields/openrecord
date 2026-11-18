@@ -154,6 +154,21 @@ impl Decision {
         (format!("/api/businesses/{}/decision-feedback", crate::api::enc(&self.business_id)), body)
     }
 
+    /// What the agent is asked to do once proposed work is approved: make the
+    /// finished thing, not a plan, and hand it over in a form that can be applied.
+    pub fn work_request(&self) -> Option<String> {
+        if !matches!(self.act, Act::Growth { .. }) {
+            return None;
+        }
+        let change = self.sections.iter().find(|x| x.label == "The change").map(|x| x.text.trim()).filter(|t| !t.is_empty());
+        let mut r = format!("I approved \"{}\". Do it now.", self.title.trim());
+        if let Some(c) = change {
+            r.push_str(&format!(" The change: {c}"));
+        }
+        r.push_str(" Make the finished work in this turn with create_artifact: the actual page, copy or file, not a plan. If our site is connected, prepare the exact change for my approval. If it isn't, end with a handoff I can apply myself: where it goes and the exact text. Then say what to measure, and when to check it.");
+        Some(r)
+    }
+
     /// The sentence shown after a successful decision.
     pub fn done(&self, approved: bool) -> &'static str {
         match (&self.act, approved) {
@@ -165,6 +180,7 @@ impl Decision {
             (Act::Account, true) => "Change made in Google Ads.",
             (Act::Draft, true) => "Draft accepted.",
             (Act::Acquisition { .. } | Act::Check, true) => "Approved and queued.",
+            (Act::Growth { .. }, true) => "Approved. The agent is making it now.",
             (_, true) => "Approved.",
             (Act::Growth { .. }, false) => "Declined.",
             (_, false) => "Rejected.",
@@ -365,7 +381,8 @@ pub fn parse(v: &Value) -> Option<Decision> {
                     if suggested { "Suggested by OpenRecord from your brief and homepage. An idea to try, not a measured result.".into() } else { s(o, "source") },
                 ),
             ];
-            d.note = Some("Approving records your decision. Nothing is published or changed on your site.".into());
+            d.note = Some("Approving starts the work: the agent makes the finished change in a chat. Nothing goes live on your site until you approve that too.".into());
+            d.approve = "Approve and start".into();
             d.act = Act::Growth { status: s(o, "status"), revision: o.get("revision").and_then(Value::as_i64).unwrap_or(1) };
             d.decline = "Not now".into();
             d.feedback_title = d.title.clone();
@@ -629,5 +646,24 @@ mod tests {
     fn names_refusals() {
         assert_eq!(refusal(r#"{"reason":"ChangeNotPending"}"#), Some("This was already decided."));
         assert_eq!(refusal("nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod work_request_tests {
+    use super::*;
+
+    #[test]
+    fn approved_proposed_work_asks_the_agent_for_the_finished_change() {
+        let d = parse(&serde_json::json!({ "type": "GROWTH_OPPORTUNITY", "business": { "id": "b1", "name": "B" }, "opportunity": {
+            "id": "o1", "title": "Add an FAQ to pricing", "status": "PROPOSED", "revision": 1,
+            "proposedChange": "Answer the five trial questions on the pricing page." } })).unwrap();
+        let r = d.work_request().unwrap();
+        assert!(r.starts_with("I approved \"Add an FAQ to pricing\". Do it now. The change: Answer the five trial questions"));
+        assert!(r.contains("create_artifact"));
+        assert_eq!(d.approve, "Approve and start");
+        let mut other = d.clone();
+        other.act = Act::WordPress;
+        assert!(other.work_request().is_none());
     }
 }
