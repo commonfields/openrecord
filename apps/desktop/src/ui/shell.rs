@@ -122,7 +122,11 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .child(label(business.map_or("OpenRecord", |b| b.name.as_str()), type_::SM_MEDIUM, t.foreground).truncate())
-                        .child(label(if business.is_some() { "Business" } else { "Choose a business" }, type_::XS2, t.muted_foreground).truncate()),
+                        .child(match business {
+                            Some(b) if b.sample => label("Sample data, not real numbers", type_::XS2, t.partial).truncate(),
+                            Some(_) => label("Business", type_::XS2, t.muted_foreground).truncate(),
+                            None => label("Choose a business", type_::XS2, t.muted_foreground).truncate(),
+                        }),
                 )
                 .child(ico(&icons::CHEVRONS_UP_DOWN, 16.0, t.muted_foreground));
         } else {
