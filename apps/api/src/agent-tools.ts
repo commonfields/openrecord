@@ -252,6 +252,39 @@ const readDiscoveryScopes: AgentToolDef = {
     }),
 }
 
+// What the person controls in the app, and where. The agent changes no
+// settings itself; it reads this before telling someone where one is, so it
+// never sends them to a place that doesn't exist.
+const readAppSettings: AgentToolDef = {
+  name: "read_app_settings",
+  description: "Read the settings the person controls in OpenRecord and exactly where each one is: the weekly brief (whether it is on and when the next one runs), AI models, connections and approvals. Use it whenever someone asks to turn something on or off, or where to find a setting. Read-only.",
+  ...inputContract(Schema.Struct({})),
+  run: (accountId, businessId) =>
+    Effect.gen(function*() {
+      yield* scoped(accountId, businessId)
+      const sql = yield* SqlClient.SqlClient
+      const brief = (yield* sql`SELECT enabled, next_run_at FROM growth_brief_schedules WHERE business_id = ${businessId} AND account_id = ${accountId}`)[0]
+      const on = brief?.["enabled"] === true
+      return {
+        summary: `app settings read: weekly brief ${on ? "on" : "off"}`,
+        citations: [],
+        data: {
+          weeklyBrief: {
+            on,
+            nextRunAt: on && brief?.["next_run_at"] ? new Date(String(brief["next_run_at"])).toISOString() : null,
+            whereToChange: on
+              ? "In any chat for this business, press + beside the message box, then \"Turn off weekly brief\"."
+              : "In any chat for this business, press + beside the message box, then \"Weekly brief\" to turn it on.",
+          },
+          models: "Settings, then Agent: which AI providers and models the agent may use.",
+          connections: "The Channels page in the sidebar: website, Search Console, analytics, Stripe, ads and others.",
+          approvals: "The Inbox in the sidebar: everything waiting for the person's decision.",
+          note: "The agent cannot change these itself. Tell the person the exact place above; there is no email, notification or admin setting for them.",
+        },
+      } satisfies AgentToolResult
+    }),
+}
+
 const readObservation: AgentToolDef = {
   name: "read_observation",
   description: "Fetch one collected AI answer with its citations. Read-only; raw provider payloads are excluded.",
@@ -418,6 +451,7 @@ export const AGENT_TOOLS: ReadonlyArray<AgentToolDef> = [
   readRepresentations,
   readDiscoveryScopes,
   readObservation,
+  readAppSettings,
   readIssue,
   readRecordOutcomes,
   readProposals,

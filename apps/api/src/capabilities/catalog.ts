@@ -99,6 +99,7 @@ const META: Readonly<Record<string, Meta>> = {
   read_representations: { ns: "research", title: "Read how the business is represented", not: "Not for approved facts (read_business_truth).", evidence: ["none"] },
   read_discovery_scopes: { ns: "research", title: "Read discovery scopes", not: "Not for running discovery.", evidence: ["none"] },
   read_observation: { ns: "research", title: "Read one saved observation", not: "Not for listing evidence (read_research_evidence).", evidence: ["none"] },
+  read_app_settings: { ns: "work", title: "Read the person's app settings and where they are", not: "Not for changing settings; the agent changes none.", evidence: ["none"] },
   read_issue: { ns: "research", title: "Read one representation issue", not: "Not for the issue list (read_open_issues).", evidence: ["none"] },
   read_record_outcomes: { ns: "measurement", title: "Read record outcomes", not: "Not for the results ledger (read_results).", evidence: ["none"] },
   read_proposals: { ns: "work", title: "Read saved drafts, proposals and decisions", not: "Not for past decision reasons alone (read_decision_feedback).", evidence: ["none"] },
