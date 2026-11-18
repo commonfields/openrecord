@@ -8,7 +8,7 @@ use crate::insights::{self, Analytics, Insights, Report, Section, Source, Verdic
 use crate::state::{App, Load, Menu, Page, Screen, Turn, View};
 
 fn business(id: &str, name: &str) -> Business {
-    Business { id: id.into(), name: name.into() }
+    Business { id: id.into(), name: name.into(), sample: false }
 }
 
 fn ago(minutes: i64) -> Option<String> {

@@ -1,3 +1,4 @@
+import { isDemoBusiness } from "./demo-data.js"
 import { campaignPublicationApi } from "./campaign-publication.js"
 import { campaignResultsApi } from "./campaign-results.js"
 import { strategyApi } from "./marketing-strategy.js"
@@ -528,7 +529,8 @@ export const makeRouter = () => {
         Effect.gen(function*() {
           const repo = yield* BusinessRepository
           const rows = yield* repo.list(session.accountId)
-          return yield* json(200, { businesses: rows })
+          // A demo workspace's numbers are sample data; the apps say so beside its name.
+          return yield* json(200, { businesses: rows.map(r => ({ ...r, sample: isDemoBusiness(r.id) })) })
         }),
       ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
     ),
