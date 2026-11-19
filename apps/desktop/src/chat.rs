@@ -303,32 +303,20 @@ pub fn command_matches(text: &str) -> Vec<(&'static str, &'static str)> {
     COMMANDS.iter().filter(|(k, _)| k.starts_with(&rest)).copied().collect()
 }
 
-/// How much of a reply that just arrived shows: word by word on an ease-out,
-/// fast for short answers and at most about two seconds for long ones
-/// (`RevealReply` in `agent-chat.tsx`). `None` once it is whole.
-pub fn reveal_prefix(text: &str, elapsed: std::time::Duration) -> Option<String> {
-    let mut words: Vec<&str> = Vec::new();
-    let mut start = 0;
-    let mut in_space = None;
-    for (i, c) in text.char_indices() {
-        let space = c.is_whitespace();
-        if in_space.is_some_and(|w| w != space) {
-            words.push(&text[start..i]);
-            start = i;
-        }
-        in_space = Some(space);
-    }
-    if start < text.len() {
-        words.push(&text[start..]);
-    }
-    let total = words.len();
-    let duration = (total as f64 * 7.0).clamp(450.0, 2200.0);
-    let k = (elapsed.as_secs_f64() * 1000.0 / duration).min(1.0);
-    if k >= 1.0 {
-        return None;
-    }
-    let shown = ((1.0 - (1.0 - k).powi(2)) * total as f64).ceil().max(1.0) as usize;
-    (shown < total).then(|| words[..shown].concat())
+/// Fade duration for a reply that just arrived, in milliseconds — the same 180ms
+/// step `@pierre/words` uses on web (`animated: { animation: 'fadeIn', duration: 180 }`).
+pub const WORDS_FADE_MS: u64 = 180;
+
+/// How long a fresh reply stays in Pierre Words streaming mode: at least one fade,
+/// scaled gently for long answers (capped like the old word-by-word reveal).
+pub fn words_reveal_ms(text: &str) -> u64 {
+    let words = text.split_whitespace().count().max(1);
+    ((words as u64) * WORDS_FADE_MS).clamp(WORDS_FADE_MS, 2200)
+}
+
+/// Whether a reply is still in its Words fade-in (`isAnimating` on web).
+pub fn words_reveal_active(elapsed: std::time::Duration, text: &str) -> bool {
+    elapsed.as_millis() < words_reveal_ms(text) as u128
 }
 
 /// A saved prompt the "/" menu offers after the commands: built-in SEO, AEO
@@ -924,12 +912,13 @@ mod tests {
     }
 
     #[test]
-    fn replies_reveal_word_by_word() {
+    fn replies_use_words_fade_timing() {
         use std::time::Duration;
-        let text = "one two three four five six seven eight nine ten";
-        let early = reveal_prefix(text, Duration::from_millis(50)).unwrap();
-        assert!(early.len() < text.len() && text.starts_with(&early));
-        assert_eq!(reveal_prefix(text, Duration::from_millis(500)), None, "short replies finish in 450ms");
+        let short = "hi there";
+        assert!(words_reveal_active(Duration::from_millis(50), short));
+        assert!(!words_reveal_active(Duration::from_millis(500), short));
+        let long = "one two three four five six seven eight nine ten";
+        assert_eq!(words_reveal_ms(long), 10 * WORDS_FADE_MS);
     }
 
     #[test]

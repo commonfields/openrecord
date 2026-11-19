@@ -3,6 +3,9 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 
+static NSColor *browserPanel;
+static void passThrough(NSView *host);
+
 // A document renderer, never an application browser. It has no app cookies,
 // persistent storage, script execution, popups, or external navigation.
 @interface ORPreviewPolicy : NSObject <WKNavigationDelegate>
@@ -20,6 +23,12 @@ static NSString *document;
 // the card's own "Rendering document" shows instead of a blank white flash.
 static BOOL painted;
 static BOOL animate = YES;
+static NSView *previewBox;
+static NSView *previewHost;
+static BOOL previewPassThrough = YES;
+static NSRect previewKeep[4];
+static int previewKeeps;
+static NSNumber *previewLight;
 
 // Fades the view up once it is on screen and its document has painted.
 static void reveal(void) {
@@ -32,16 +41,50 @@ static void reveal(void) {
     } completionHandler:nil];
 }
 
+static void probePreviewLight(WKWebView *view) {
+    NSString *js = @"(function(){function c(e){while(e&&e.nodeType===1){var m=(getComputedStyle(e).backgroundColor.match(/[\\d.]+/g)||[]).map(Number);if(m.length>=3&&(m.length<4||m[3]>0.5))return m;e=e.parentElement}return null}var e=document.elementFromPoint(innerWidth/2,Math.max(0,innerHeight-40));var m=c(e)||c(document.body)||c(document.documentElement);if(!m)return 1;return(0.299*m[0]+0.587*m[1]+0.114*m[2])>140?1:0})()";
+    [view evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
+        if (!error && [result isKindOfClass:[NSNumber class]]) previewLight = result;
+    }];
+}
+
 @implementation ORPreviewPolicy (Reveal)
 - (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
     painted = YES;
+    probePreviewLight(view);
     reveal();
 }
 @end
 
 // Hidden at once: a menu or dialog drawn by the app must never sit under it.
-void or_preview_hide(void) { [preview setHidden:YES]; preview.alphaValue = 0.0; }
-void or_preview_clear(void) { [preview stopLoading]; [preview removeFromSuperview]; preview = nil; policy = nil; document = nil; painted = NO; }
+void or_preview_hide(void) {
+    [preview setHidden:YES];
+    preview.alphaValue = 0.0;
+    if (previewBox) [previewBox setHidden:YES];
+}
+
+void or_preview_pass_through(int on) { previewPassThrough = on != 0; }
+
+void or_preview_keep(const double *rects, int count) {
+    previewKeeps = count < 0 ? 0 : (count > 4 ? 4 : count);
+    for (int i = 0; i < previewKeeps; i++) previewKeep[i] = NSMakeRect(rects[i * 4], rects[i * 4 + 1], rects[i * 4 + 2], rects[i * 4 + 3]);
+}
+
+int or_preview_page_light(void) {
+    if (preview) probePreviewLight(preview);
+    return previewLight ? previewLight.intValue : -1;
+}
+void or_preview_clear(void) {
+    [preview stopLoading];
+    [preview removeFromSuperview];
+    preview = nil;
+    policy = nil;
+    document = nil;
+    painted = NO;
+    previewLight = nil;
+    previewKeeps = 0;
+    if (previewBox) [previewBox setHidden:YES];
+}
 
 void or_preview_show(const char *html, double x, double y, double w, double h, int motion) {
     animate = motion != 0;
@@ -65,10 +108,22 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
         preview.navigationDelegate = policy;
         preview.allowsBackForwardNavigationGestures = NO;
     }
-    if (preview.superview != host) { [preview removeFromSuperview]; [host addSubview:preview]; }
+    if (!previewBox) {
+        previewBox = [[NSView alloc] initWithFrame:NSZeroRect];
+        previewBox.wantsLayer = YES;
+        previewBox.layer.cornerRadius = 10.0;
+        previewBox.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+        previewBox.layer.masksToBounds = YES;
+        if (browserPanel) previewBox.layer.backgroundColor = browserPanel.CGColor;
+    }
+    if (preview.superview != previewBox) { [preview removeFromSuperview]; [previewBox addSubview:preview]; }
+    NSView *frameView = host.superview;
+    if (previewBox.superview != frameView) { [previewBox removeFromSuperview]; [frameView addSubview:previewBox positioned:NSWindowBelow relativeTo:host]; }
+    passThrough(host);
+    previewHost = host;
     CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
-    NSRect frame = NSMakeRect(x, top, w, h);
-    if (!NSEqualRects(preview.frame, frame)) [preview setFrame:frame];
+    NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
+    if (!NSEqualRects(previewBox.frame, frame)) { [previewBox setFrame:frame]; [preview setFrame:previewBox.bounds]; }
     NSString *next = [NSString stringWithUTF8String:html];
     if (![next isEqualToString:document]) {
         // Another version keeps the one on screen until it has painted.
@@ -77,6 +132,7 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
         [preview loadHTMLString:next baseURL:nil];
     }
     if (preview.hidden) { preview.alphaValue = 0.0; [preview setHidden:NO]; }
+    if (previewBox.hidden) [previewBox setHidden:NO];
     reveal();
 }
 
@@ -166,7 +222,6 @@ static NSView *browserHost;
 // corner, the box only at the foot where the panel itself is rounded, so the
 // page's top corners show the panel and its foot follows the panel's curve.
 static NSView *browserBox;
-static NSColor *browserPanel;
 static BOOL browserPassThrough = YES;
 static NSRect browserKeep[4];
 static int browserKeeps;
@@ -181,6 +236,13 @@ static NSView *hostHitTestThrough(NSView *self, SEL cmd, NSPoint point) {
         BOOL kept = NO;
         for (int i = 0; i < browserKeeps; i++) if (NSPointInRect(NSMakePoint(local.x, y), browserKeep[i])) kept = YES;
         if (!kept) return [browserBox hitTest:point] ?: [browser hitTest:point];
+    }
+    if (self == previewHost && previewPassThrough && previewBox && !previewBox.hidden && previewBox.superview == self.superview && NSPointInRect(point, previewBox.frame)) {
+        NSPoint local = [self convertPoint:point fromView:self.superview];
+        CGFloat y = self.isFlipped ? local.y : self.bounds.size.height - local.y;
+        BOOL kept = NO;
+        for (int i = 0; i < previewKeeps; i++) if (NSPointInRect(NSMakePoint(local.x, y), previewKeep[i])) kept = YES;
+        if (!kept) return [previewBox hitTest:point] ?: [preview hitTest:point];
     }
     return ((NSView *(*)(NSView *, SEL, NSPoint))hostHitTest)(self, cmd, point);
 }
@@ -313,8 +375,11 @@ void or_browser_show(const char *url, double x, double y, double w, double h) {
         // Unflipped layer: min Y is the foot.
         browserBox.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
         browserBox.layer.masksToBounds = YES;
-        if (browserPanel) browserBox.layer.backgroundColor = browserPanel.CGColor;
+    if (browserPanel) {
+        browserBox.layer.backgroundColor = browserPanel.CGColor;
+        if (previewBox) previewBox.layer.backgroundColor = browserPanel.CGColor;
     }
+}
     if (browser.superview != browserBox) { [browser removeFromSuperview]; [browserBox addSubview:browser]; }
     // Behind the app's own view, not on it: the app draws over the page (the
     // chat box floats on it) and leaves the rest of the page's place clear.

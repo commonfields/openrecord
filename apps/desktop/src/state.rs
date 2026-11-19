@@ -566,7 +566,12 @@ pub struct App {
 
     /// The last failure the shell itself hit, shown in a toast.
     pub notice: Option<String>,
+    /// The notice on screen and when it appeared (for auto-dismiss).
+    notice_track: Option<(String, std::time::Instant)>,
 }
+
+/// How long confirmation and error toasts stay on screen.
+const NOTICE_SHOW: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub const API_ENV: &str = "OPENRECORD_API_URL";
 pub const DEFAULT_API: &str = "http://localhost:3001";
@@ -746,6 +751,7 @@ impl App {
             models: Load::Idle,
             model: None,
             notice: None,
+            notice_track: None,
         }
     }
 
@@ -1685,10 +1691,85 @@ impl App {
     pub fn archive_chat(&mut self, id: &str, archived: bool) {
         if archived {
             self.chats.retain(|c| c.id != id);
+            self.prefs.chat_order.retain(|x| x != id);
         } else if let Load::Ready(list) = &mut self.archived {
             list.retain(|c| c.id != id);
         }
         self.net.archive(id.to_string(), archived);
+        self.prefs.save();
+    }
+
+    /// Sidebar order: saved `chat_order`, then any new chats by recency.
+    pub fn ordered_chats<'a>(&self, source: impl IntoIterator<Item = &'a crate::api::ChatSummary>) -> Vec<&'a crate::api::ChatSummary> {
+        let source: Vec<_> = source.into_iter().collect();
+        let mut out = Vec::with_capacity(source.len());
+        for id in &self.prefs.chat_order {
+            if let Some(c) = source.iter().find(|c| c.id == *id) {
+                out.push(*c);
+            }
+        }
+        let mut rest: Vec<_> = source.into_iter().filter(|c| !self.prefs.chat_order.contains(&c.id)).collect();
+        rest.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        out.extend(rest);
+        out
+    }
+
+    fn chat_business_key(c: &crate::api::ChatSummary) -> String {
+        c.business_id.clone().unwrap_or_else(|| "_general".into())
+    }
+
+    /// Moves a chat within its business folder after a drag (positive `dy` moves up).
+    pub fn reorder_chat(&mut self, id: &str, dy: f32) {
+        const THRESHOLD: f32 = 14.0;
+        if dy.abs() < THRESHOLD {
+            return;
+        }
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else { return };
+        let biz = Self::chat_business_key(chat);
+        let group: Vec<_> = self.chats.iter().filter(|c| Self::chat_business_key(c) == biz).collect();
+        let mut order: Vec<String> = self.ordered_chats(group.iter().copied()).into_iter().map(|c| c.id.clone()).collect();
+        let Some(pos) = order.iter().position(|x| x == id) else { return };
+        let to = if dy > 0.0 {
+            pos.saturating_sub(1)
+        } else {
+            (pos + 1).min(order.len().saturating_sub(1))
+        };
+        if to == pos {
+            return;
+        }
+        let moved = order.remove(pos);
+        order.insert(to, moved);
+        let anchor = self
+            .prefs
+            .chat_order
+            .iter()
+            .position(|id| order.iter().any(|x| x == id))
+            .unwrap_or(self.prefs.chat_order.len());
+        let mut next: Vec<String> = self.prefs.chat_order.iter().filter(|id| !order.iter().any(|x| *id == x)).cloned().collect();
+        for (i, id) in order.iter().enumerate() {
+            next.insert(anchor + i, id.clone());
+        }
+        self.prefs.chat_order = next;
+        self.prefs.save();
+    }
+
+    pub fn toggle_chat_group(&mut self, key: &str) {
+        if let Some(i) = self.prefs.chat_groups_collapsed.iter().position(|k| k == key) {
+            self.prefs.chat_groups_collapsed.remove(i);
+        } else {
+            self.prefs.chat_groups_collapsed.push(key.to_string());
+            self.prefs.chat_groups_list_expanded.retain(|k| k != key);
+        }
+        self.prefs.save();
+    }
+
+    pub fn toggle_chat_group_list(&mut self, key: &str) {
+        if let Some(i) = self.prefs.chat_groups_list_expanded.iter().position(|k| k == key) {
+            self.prefs.chat_groups_list_expanded.remove(i);
+        } else {
+            self.prefs.chat_groups_list_expanded.push(key.to_string());
+        }
+        self.prefs.save();
     }
 
     /// Opens another session of this business, such as a helper, in the chat.
@@ -2273,10 +2354,31 @@ impl App {
             }
         }
         self.sync_open_chat(tx);
-        // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.
+        if let Some(text) = self.notice.clone() {
+            let reset = self.notice_track.as_ref().is_none_or(|(prev, _)| prev != &text);
+            if reset {
+                self.notice_track = Some((text, std::time::Instant::now()));
+            }
+            if let Some((_, since)) = self.notice_track {
+                let elapsed = since.elapsed();
+                if elapsed >= NOTICE_SHOW {
+                    self.notice = None;
+                    self.notice_track = None;
+                    changed = true;
+                } else {
+                    tx.wake_after(NOTICE_SHOW.saturating_sub(elapsed));
+                    if reset {
+                        changed = true;
+                    }
+                }
+            }
+        } else {
+            self.notice_track = None;
+        }
+        // Pierre Words fade on a fresh reply (`@pierre/words` on web, native Markdown on desktop).
         if let Some((text, started)) = &self.reveal {
-            if crate::chat::reveal_prefix(text, started.elapsed()).is_some() {
-                tx.wake_after(std::time::Duration::from_millis(40));
+            if crate::chat::words_reveal_active(started.elapsed(), text) {
+                tx.wake_after(std::time::Duration::from_millis(crate::chat::WORDS_FADE_MS));
                 changed = true;
             } else {
                 self.reveal = None;
@@ -2308,13 +2410,13 @@ impl App {
         }
     }
 
-    /// The prefix of a reply still being revealed, or `None` once it is whole.
-    pub fn revealing(&self, text: &str) -> Option<String> {
-        let (t, started) = self.reveal.as_ref()?;
-        if t != text {
-            return None;
-        }
-        crate::chat::reveal_prefix(text, started.elapsed())
+    /// A reply still in its Pierre Words fade-in, or `None` once the fade finished.
+    pub fn words_revealing(&self, text: &str) -> bool {
+        let (t, started) = match self.reveal.as_ref() {
+            Some(v) => v,
+            None => return false,
+        };
+        t == text && crate::chat::words_reveal_active(started.elapsed(), text)
     }
 
     /// Sends the message of a failed turn again.

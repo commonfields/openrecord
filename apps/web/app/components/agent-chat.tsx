@@ -563,43 +563,18 @@ function keepFresh(prev: ReadonlyArray<Message>, next: Message[]): Message[] {
   return fresh.size ? next.map(m => fresh.has(`${m.role}:${m.text}`) ? { ...m, fresh: true } : m) : next
 }
 
-// When each reply's reveal began, by its text, so a remount continues the reveal instead of restarting it.
-const revealStarted = new Map<string, number>()
-
 const reducedMotion = () => typeof window !== "undefined" && (window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.hasAttribute("data-reduce-motion"))
 
-/**
- * A reply that just arrived, revealed word by word behind a soft caret: fast
- * for short answers, capped at about two seconds for long ones. The text is
- * the complete reply; this only paces how it appears. A click shows it all at
- * once, and reduced motion shows it all immediately.
- */
+/** A reply that just arrived: @pierre/words fades it in; reduced motion shows it immediately. */
 function RevealReply({ text, className }: { text: string; className?: string }) {
-  const words = text.split(/(\s+)/)
-  const total = words.length
-  const duration = Math.min(2200, Math.max(450, total * 7))
-  const startedAt = (() => { const t = revealStarted.get(text) ?? Date.now(); revealStarted.set(text, t); return t })()
-  const [shown, setShown] = useState(() => reducedMotion() ? total : Math.min(total, Math.ceil((1 - (1 - Math.min(1, (Date.now() - startedAt) / duration)) ** 2) * total)))
-  useEffect(() => {
-    if (shown >= total) return
-    const start = performance.now() - (Date.now() - startedAt)
-    let raf = 0, last = 0
-    const tick = (t: number) => {
-      const k = Math.min(1, (t - start) / duration)
-      // Updates at most every 40ms: smooth to the eye without re-rendering the Markdown every frame.
-      if (t - last >= 40 || k === 1) { last = t; setShown(Math.max(1, Math.ceil((1 - (1 - k) ** 2) * total))) }
-      if (k < 1) raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total])
-  const done = shown >= total
+  const [reveal, setReveal] = useState(() => !reducedMotion())
   return (
-    <div onClick={done ? undefined : () => setShown(total)} className={done ? undefined : "cursor-default"} aria-busy={!done}>
-      <ChatMarkdown text={done ? text : words.slice(0, shown).join("")} live={!done} {...(className ? { className } : {})} />
-      {done ? null : <span aria-hidden className="reply-caret" />}
-    </div>
+    <ChatMarkdown
+      text={text}
+      reveal={reveal}
+      onRevealEnd={() => setReveal(false)}
+      {...(className ? { className } : {})}
+    />
   )
 }
 

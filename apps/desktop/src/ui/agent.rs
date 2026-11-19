@@ -245,37 +245,6 @@ fn starters(s: &App, t: &Theme) -> El {
     drum.children(cards.into_iter().map(|(_, c)| c))
 }
 
-/// Where things stand, above the ways to start: what waits on the person and
-/// what the agent is doing. Each part opens what it names.
-fn home_status(s: &App, t: &Theme) -> Option<El> {
-    let waiting = s.inbox().len();
-    let working: Vec<&crate::api::ChatSummary> = s.chats.iter().filter(|c| c.working && c.business_id.as_deref() == s.active.as_deref()).collect();
-    if waiting == 0 && working.is_empty() {
-        return None;
-    }
-    let part = |key: &str, icon: &'static rune::Icon, text_: String| {
-        row().key(key.to_string()).gap(6.0).center_y().px(10.0).h(28.0).radius(14.0).role("button").label(text_.clone()).focusable(true)
-            .cursor(Cursor::Pointer).hover(t.hover_tint)
-            .child(ico(icon, 14.0, t.muted_foreground))
-            .child(label(text_, type_::SM_13, t.foreground))
-    };
-    let mut line = row().key("home-status").gap(8.0).center_y().flex_wrap();
-    if waiting > 0 {
-        let text_ = if waiting == 1 { "1 thing waits for your decision".to_string() } else { format!("{waiting} things wait for your decision") };
-        line = line.child(part("home-status-inbox", &icons::INBOX, text_).on_press(|s: &mut App| s.show_page(crate::state::Page::Inbox)));
-    }
-    if let Some(first) = working.first() {
-        let chat = (*first).clone();
-        let text_ = if working.len() == 1 {
-            format!("The agent is working on {}", chat.title.clone().filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "a task".into()))
-        } else {
-            format!("The agent is working on {} tasks", working.len())
-        };
-        line = line.child(part("home-status-working", &icons::LOADER, text_).on_press(move |s: &mut App| s.open_chat(&chat)));
-    }
-    Some(line)
-}
-
 /// Home: the first thing a business's agent shows. What waits on the person
 /// comes first, since a decision is the one thing only they can do; then ways
 /// to start that send in one press. A general chat has no business to brief on.
@@ -293,9 +262,6 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
                 label("Ask anything. This chat reads no business's records; start one from a business to work on it.", type_::SM, t.muted_foreground).wrap(),
             ),
         );
-    }
-    if let Some(line) = home_status(s, t) {
-        c = c.child(row().w_full().justify_center().child(line));
     }
     c = c.child(row().w_full().justify_center().child(starters(s, t)));
     // Sits a little above the middle of a tall window, and scrolls in a short one.
@@ -552,8 +518,7 @@ pub(crate) fn reply_body(s: &App, t: &Theme, k: &Kit, key: &str, text_: &str) ->
     let mut reply = col().key(key.to_string()).w_full().gap(6.0);
     for (j, part) in crate::visual::split(text_).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md)
-                .style(prose(t, k))
+            crate::visual::Part::Text(md) => words_markdown(&md, t, k)
                 .selectable(true)
                 // A diagram wider than a narrow pane scrolls sideways instead of spilling out of it.
                 .diagram_frame(|card, _| col().w_full().child(card).scroll_x())
@@ -564,6 +529,11 @@ pub(crate) fn reply_body(s: &App, t: &Theme, k: &Kit, key: &str, text_: &str) ->
         });
     }
     reply
+}
+
+/// Agent prose with Pierre syntax colouring (same stack as `@pierre/words` / highlights on web).
+fn words_markdown(md: &str, t: &Theme, k: &Kit) -> Markdown {
+    Markdown::new(md).style(prose(t, k)).highlighter(crate::ui::words::highlighter(k))
 }
 
 /// A reply's prose, as Rune's chat sets it: 14 point Inter on a 22.4 line,
@@ -712,19 +682,16 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     let mut body = col().w_full().gap(6.0);
     body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
     let muted = m.run.as_ref().is_some_and(|r| r.status != "COMPLETED" && !r.status.is_empty());
-    // Markdown, with any ```chart blocks drawn as charts in their place. A reply
-    // that just arrived grows word by word, each word fading in (Rune's streaming
-    // Markdown); a click shows it whole.
-    let revealing = s.revealing(&m.text);
-    let shown = revealing.clone().unwrap_or_else(|| m.text.clone());
+    // Markdown (Pierre / rune-kit — native sibling of `@pierre/words` on web), with ```chart
+    // blocks as charts. A fresh reply streams the full text with a 180ms fade; tap to settle.
+    let animating = s.words_revealing(&m.text);
     let mut reply = col().key(format!("reply-{i}")).w_full().gap(6.0);
-    for (j, part) in crate::visual::split(&shown).into_iter().enumerate() {
+    for (j, part) in crate::visual::split(&m.text).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md)
-                .style(prose(t, k))
-                .selectable(revealing.is_none())
-                .streaming(revealing.is_some())
-                .reveal(if revealing.is_some() { 0.18 } else { 0.0 })
+            crate::visual::Part::Text(md) => words_markdown(&md, t, k)
+                .selectable(!animating)
+                .streaming(animating)
+                .reveal(if animating { 0.18 } else { 0.0 })
                 .build(k)
                 .w_full()
                 .opacity(if muted { 0.7 } else { 1.0 }),
@@ -732,7 +699,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
             crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("surface-{i}-{j}"), &raw).my(4.0),
         });
     }
-    if revealing.is_some() {
+    if animating {
         reply = reply.cursor(Cursor::Default).on_press(|s: &mut App| s.reveal = None);
     }
     body = body.child(reply);
@@ -962,7 +929,14 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
 
 /// The answer while it is being written, drawn as it will be once it is stored.
 fn live_reply(t: &Theme, k: &Kit, text: &str) -> El {
-    col().key("live-reply").w_full().pt(4.0).child(Markdown::new(chat::live_answer(text).to_string()).style(prose(t, k)).streaming(true).build(k).w_full())
+    let live = chat::live_answer(text);
+    col().key("live-reply").w_full().pt(4.0).child(
+        words_markdown(&live, t, k)
+            .streaming(true)
+            .reveal(0.18)
+            .build(k)
+            .w_full(),
+    )
 }
 
 /// At the top of a helper session: what it is for and where it came from.

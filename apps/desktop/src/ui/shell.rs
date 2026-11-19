@@ -21,6 +21,8 @@ pub const TITLEBAR: f32 = 48.0;
 pub const TRAFFIC_LIGHT_INSET: f32 = 16.0;
 const PANE: Spring = Spring::new(0.5, 0.0);
 const CHATS_SHOWN: usize = 6;
+const FOLDER_CHATS_SHOWN: usize = 5;
+const FOLDER_CHAT_ROW: f32 = 36.0;
 
 /// The button that docks or collapses the sidebar (⌘B): at the right of the
 /// sidebar's top band, level with the traffic lights, or beside them once the
@@ -129,7 +131,6 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
                         .min_w(0.0)
                         .child(label(business.map_or("OpenRecord", |b| b.name.as_str()), type_::SM_MEDIUM, t.foreground).truncate())
                         .child(match business {
-                            Some(b) if b.sample => label("Sample data, not real numbers", type_::XS2, t.partial).truncate(),
                             Some(_) => label("Business", type_::XS2, t.muted_foreground).truncate(),
                             None => label("Choose a business", type_::XS2, t.muted_foreground).truncate(),
                         }),
@@ -356,8 +357,14 @@ fn chat_history(s: &App, t: &Theme) -> El {
     let archived = s.show_archived;
     let source: Vec<&ChatSummary> = if archived { s.archived.ready().map(|l| l.iter().collect()).unwrap_or_default() } else { s.chats.iter().collect() };
     // With a business filter on, other businesses' chats drop out of the list and its count.
-    let all: Vec<&ChatSummary> = source.into_iter().filter(|c| s.chat_filter.as_ref().is_none_or(|f| c.business_id.as_ref() == Some(f))).collect();
-    let shown: Vec<&ChatSummary> = if s.show_all_chats || archived { all.clone() } else { all.iter().take(CHATS_SHOWN).copied().collect() };
+    let filtered: Vec<&ChatSummary> = source.into_iter().filter(|c| s.chat_filter.as_ref().is_none_or(|f| c.business_id.as_ref() == Some(f))).collect();
+    let all = s.ordered_chats(filtered.iter().copied());
+    let grouped = !archived && s.chat_filter.is_none();
+    let shown: Vec<&ChatSummary> = if grouped || s.show_all_chats || archived {
+        all.clone()
+    } else {
+        all.iter().take(CHATS_SHOWN).copied().collect()
+    };
 
     let mut header = row().w_full().pl(10.0).pr(0.0).pb(4.0).gap(6.0).center_y();
     if archived {
@@ -393,10 +400,19 @@ fn chat_history(s: &App, t: &Theme) -> El {
         let empty = if archived { "No archived chats. Archive a chat you are done with to keep this list short." } else { "No chats yet. Start one from Home." };
         list = list.child(label(empty, type_::SM_13, t.muted_foreground).px(8.0).py(4.0).wrap());
     }
-    for c in shown {
-        list = list.child(chat_row(s, t, c, archived, now));
+    if grouped {
+        for (key, name, chats) in chat_groups(s, &all) {
+            list = list.child(chat_group_header(s, t, &key, &name, chats.len()));
+            if !s.prefs.chat_groups_collapsed.iter().any(|k| k == &key) {
+                list = list.child(folder_chat_list(s, t, &key, &chats, archived, now));
+            }
+        }
+    } else {
+        for c in shown {
+            list = list.child(chat_row(s, t, c, archived, now, false));
+        }
     }
-    if !archived && all.len() > CHATS_SHOWN {
+    if !archived && !grouped && all.len() > CHATS_SHOWN {
         let text_ = if s.show_all_chats { "Show fewer".to_string() } else { format!("Show all {}", all.len()) };
         list = list.child(
             row()
@@ -418,17 +434,144 @@ fn chat_history(s: &App, t: &Theme) -> El {
     col().w_full().child(header).child(list)
 }
 
+/// Chats collected by business, in the businesses' order, then general and any other.
+fn chat_groups<'a>(s: &App, all: &[&'a ChatSummary]) -> Vec<(String, String, Vec<&'a ChatSummary>)> {
+    use std::collections::HashMap;
+    let mut buckets: HashMap<String, Vec<&ChatSummary>> = HashMap::new();
+    for c in all {
+        let key = c.business_id.clone().unwrap_or_else(|| "_general".into());
+        buckets.entry(key).or_default().push(c);
+    }
+    let mut out = Vec::new();
+    for b in &s.businesses {
+        if let Some(list) = buckets.remove(&b.id) {
+            let chats = s.ordered_chats(list.iter().copied());
+            out.push((b.id.clone(), b.name.clone(), chats));
+        }
+    }
+    if let Some(list) = buckets.remove("_general") {
+        let chats = s.ordered_chats(list.iter().copied());
+        out.push(("_general".into(), "General chat".into(), chats));
+    }
+    let mut rest: Vec<_> = buckets.into_iter().collect();
+    rest.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, list) in rest {
+        let name = list.first().map(|c| c.business_name.clone()).unwrap_or_else(|| key.clone());
+        let chats = s.ordered_chats(list.iter().copied());
+        out.push((key, name, chats));
+    }
+    out
+}
+
+/// The most recently active chats in a folder (working first, then by update time).
+fn top_active_chats<'a>(chats: &[&'a ChatSummary], n: usize) -> Vec<&'a ChatSummary> {
+    let mut v: Vec<_> = chats.to_vec();
+    v.sort_by(|a, b| match (a.working, b.working) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => b.updated_at.cmp(&a.updated_at),
+    });
+    v.into_iter().take(n).collect()
+}
+
+fn folder_chat_list(s: &App, t: &Theme, group_key: &str, chats: &[&ChatSummary], archived: bool, now: i64) -> El {
+    let expanded = s.prefs.chat_groups_list_expanded.iter().any(|k| k == group_key);
+    let mut block = col().key(format!("chat-folder-{group_key}")).w_full().gap(2.0);
+    if expanded && chats.len() > FOLDER_CHATS_SHOWN {
+        let scroll_h = FOLDER_CHAT_ROW * FOLDER_CHATS_SHOWN as f32 + (FOLDER_CHATS_SHOWN - 1) as f32 * 2.0;
+        let mut inner = col().w_full().gap(2.0);
+        for c in chats {
+            inner = inner.child(chat_row(s, t, c, archived, now, true));
+        }
+        block = block.child(
+            col()
+                .key(format!("chat-folder-scroll-{group_key}"))
+                .w_full()
+                .max_h(scroll_h)
+                .child(inner)
+                .scroll(ScrollSpec { stick_bottom: false }),
+        );
+        let fold_key = group_key.to_string();
+        block = block.child(
+            row()
+                .key(format!("chat-folder-fewer-{group_key}"))
+                .px(26.0)
+                .py(4.0)
+                .role("button")
+                .cursor(Cursor::Pointer)
+                .hover(t.hover_tint)
+                .on_press(move |s: &mut App| s.toggle_chat_group_list(&fold_key))
+                .child(label("Show fewer", type_::SM_13, t.muted_foreground)),
+        );
+    } else {
+        let visible = if chats.len() > FOLDER_CHATS_SHOWN {
+            top_active_chats(chats, FOLDER_CHATS_SHOWN)
+        } else {
+            chats.to_vec()
+        };
+        for c in visible {
+            block = block.child(chat_row(s, t, c, archived, now, true));
+        }
+        if chats.len() > FOLDER_CHATS_SHOWN {
+            let more_key = group_key.to_string();
+            let extra = chats.len() - FOLDER_CHATS_SHOWN;
+            block = block.child(
+                row()
+                    .key(format!("chat-folder-more-{group_key}"))
+                    .px(26.0)
+                    .py(4.0)
+                    .role("button")
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .on_press(move |s: &mut App| s.toggle_chat_group_list(&more_key))
+                    .child(label(format!("See {extra} more"), type_::SM_13, t.muted_foreground)),
+            );
+        }
+    }
+    block
+}
+
+fn chat_group_header(s: &App, t: &Theme, key: &str, business: &str, count: usize) -> El {
+    let collapsed = s.prefs.chat_groups_collapsed.iter().any(|k| k == key);
+    let toggle_key = key.to_string();
+    let help = if collapsed {
+        format!("Show {count} chats in {business}")
+    } else {
+        format!("Hide chats in {business}")
+    };
+    row()
+        .key(format!("chat-group-{key}"))
+        .w_full()
+        .px(8.0)
+        .pt(8.0)
+        .pb(4.0)
+        .gap(6.0)
+        .center_y()
+        .role("button")
+        .label(business.to_string())
+        .help(help)
+        .cursor(Cursor::Pointer)
+        .hover(t.hover_tint)
+        .on_press(move |s: &mut App| s.toggle_chat_group(&toggle_key))
+        .child(ico(&icons::FOLDER, 14.0, t.muted_foreground))
+        .child(label(business.to_string(), type_::XS_MEDIUM, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+        .child(label(count.to_string(), type_::XS.features("'tnum' 1"), t.muted_foreground.alpha(0.7)))
+}
+
 /// One history row: the business's mark, the title over where and when (or
 /// that it is working), the logos of the models that answered, and on hover
 /// the archive button.
-fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El {
+fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64, grouped: bool) -> El {
     let active = s.chat_id.as_deref() == Some(c.id.as_str());
     let chat = c.clone();
     let title = c.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
+    let when = format::relative(c.updated_at.as_deref(), now);
     let sub = if c.working {
         row().gap(6.0).center_y().child(el().size(6.0, 6.0).radius(3.0).fill(t.working)).child(label("Working", type_::XS2.lh(16.0), t.working))
+    } else if grouped {
+        label(when, type_::XS2.lh(16.0), t.muted_foreground).truncate()
     } else {
-        label(format!("{}, {}", c.business_name, format::relative(c.updated_at.as_deref(), now)), type_::XS2.lh(16.0), t.muted_foreground).truncate()
+        label(format!("{}, {}", c.business_name, when), type_::XS2.lh(16.0), t.muted_foreground).truncate()
     };
     let mut logos = row().gap(4.0).center_y();
     let mut providers: Vec<&String> = Vec::new();
@@ -446,6 +589,7 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         logos = logos.help(if names.len() > 1 { format!("Models used here: {}", names.join(", ")) } else { "Provider used for the last reply".into() });
     }
     let id = c.id.clone();
+    let drag_id = id.clone();
     // Over the row's right end, shown on hover, so it takes no room from the title.
     let archive = row()
         .key(format!("archive-{}", c.id))
@@ -468,10 +612,11 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
     let hover_key = format!("chat:{}", c.id);
     let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
     let hk = hover_key.clone();
+    let inset = if grouped { 26.0 } else { 8.0 };
     let mut r = row()
         .key(format!("chat-{}", c.id))
         .w_full()
-        .pl(8.0)
+        .pl(inset)
         .pr(if hovered { 36.0 } else { 8.0 })
         .py(6.0)
         .gap(10.0)
@@ -481,7 +626,6 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
         .label(format!("{title}, {}", c.business_name))
         .checked(active)
         .focusable(true)
-        .cursor(Cursor::Pointer)
         .hover_group()
         .on_hover_change(move |s: &mut App, inside, _tx| {
             if inside {
@@ -491,6 +635,16 @@ fn chat_row(s: &App, t: &Theme, c: &ChatSummary, archived: bool, now: i64) -> El
             }
         })
         .motion(rune::Spring::new(0.2, 0.0))
+        .cursor(if archived { Cursor::Pointer } else { Cursor::Grab })
+        .on_drag(move |s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            if archived {
+                return;
+            }
+            tx.instant();
+            if matches!(d.phase, rune::Phase::Up) && !d.cancelled() {
+                s.reorder_chat(&drag_id, d.dy);
+            }
+        })
         .on_press(move |s: &mut App| s.open_chat(&chat))
         .child(col().grow(1.0).min_w(0.0).child(label(title, if active { type_::SM_13.lh(20.0) } else { type_::SM_13 }, t.foreground).truncate()).child(sub))
         .child(logos)
@@ -516,7 +670,7 @@ fn chat_filter_menu(s: &App, t: &Theme) -> El {
     }));
     for b in &s.businesses {
         let id = b.id.clone();
-        m = m.child(menu_row(t, format!("filter-{}", b.id), None, &b.name, s.chat_filter.as_deref() == Some(b.id.as_str())).on_press(move |s: &mut App| {
+        m = m.child(menu_row(t, format!("filter-{}", b.id), Some(ico(&icons::FOLDER, 16.0, t.muted_foreground)), &b.name, s.chat_filter.as_deref() == Some(b.id.as_str())).on_press(move |s: &mut App| {
             s.chat_filter = Some(id.clone());
             s.menu = None;
         }));

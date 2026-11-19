@@ -129,11 +129,12 @@ impl App {
         self.side_shown()
     }
     pub fn preview_visible(&self) -> bool {
-        self.artifact_visible()
-            && self
-                .front_artifact()
-                .is_some_and(|p| !p.source && p.loaded.ready().is_some())
-            && self.native_view_clear()
+        self.artifact_visible() && self.front_artifact().is_some_and(|p| !p.source && p.loaded.ready().is_some())
+    }
+
+    /// An artifact preview runs to the panel's foot with the chat box over it.
+    pub fn artifact_preview_float(&self) -> bool {
+        self.preview_visible()
     }
 }
 

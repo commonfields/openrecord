@@ -4,6 +4,9 @@ unsafe extern "C" {
     fn or_preview_show(html: *const std::ffi::c_char, x: f64, y: f64, w: f64, h: f64, motion: i32);
     fn or_preview_hide();
     fn or_preview_clear();
+    fn or_preview_keep(rects: *const f64, count: i32);
+    fn or_preview_pass_through(on: i32);
+    fn or_preview_page_light() -> i32;
     fn or_oauth_start(url: *const std::ffi::c_char);
     fn or_oauth_result() -> i32;
     fn or_oauth_cancel();
@@ -13,6 +16,41 @@ pub fn hide() {
     unsafe {
         or_preview_hide();
     }
+}
+
+/// Whether clicks over the artifact preview reach it (not while a menu is open).
+pub fn preview_pass_through(on: bool) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_preview_pass_through(on as i32);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
+/// Places the app draws over the artifact preview (the floating chat box).
+pub fn preview_keep(rects: &[[f32; 4]]) {
+    #[cfg(target_os = "macos")]
+    {
+        let flat: Vec<f64> = rects.iter().take(4).flat_map(|r| r.iter().map(|v| *v as f64)).collect();
+        unsafe { or_preview_keep(flat.as_ptr(), (flat.len() / 4) as i32) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = rects;
+}
+
+/// Whether the artifact preview is light where the chat box floats; None until known.
+pub fn preview_page_light() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        match unsafe { or_preview_page_light() } {
+            1 => Some(true),
+            0 => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
 }
 fn escape(text: &str) -> String {
     text.replace('\0', "�")
