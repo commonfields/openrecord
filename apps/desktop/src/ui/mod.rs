@@ -24,6 +24,7 @@ mod shell;
 pub use shell::{Resize, TITLEBAR, TRAFFIC_LIGHT_INSET};
 mod settings;
 mod series;
+mod words;
 pub mod side;
 mod signin;
 mod sources;

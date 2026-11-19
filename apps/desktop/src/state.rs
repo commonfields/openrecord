@@ -2375,10 +2375,10 @@ impl App {
         } else {
             self.notice_track = None;
         }
-        // A reply being revealed redraws every 40 milliseconds until it is whole, as the web paces it.
+        // Pierre Words fade on a fresh reply (`@pierre/words` on web, native Markdown on desktop).
         if let Some((text, started)) = &self.reveal {
-            if crate::chat::reveal_prefix(text, started.elapsed()).is_some() {
-                tx.wake_after(std::time::Duration::from_millis(40));
+            if crate::chat::words_reveal_active(started.elapsed(), text) {
+                tx.wake_after(std::time::Duration::from_millis(crate::chat::WORDS_FADE_MS));
                 changed = true;
             } else {
                 self.reveal = None;
@@ -2410,13 +2410,13 @@ impl App {
         }
     }
 
-    /// The prefix of a reply still being revealed, or `None` once it is whole.
-    pub fn revealing(&self, text: &str) -> Option<String> {
-        let (t, started) = self.reveal.as_ref()?;
-        if t != text {
-            return None;
-        }
-        crate::chat::reveal_prefix(text, started.elapsed())
+    /// A reply still in its Pierre Words fade-in, or `None` once the fade finished.
+    pub fn words_revealing(&self, text: &str) -> bool {
+        let (t, started) = match self.reveal.as_ref() {
+            Some(v) => v,
+            None => return false,
+        };
+        t == text && crate::chat::words_reveal_active(started.elapsed(), text)
     }
 
     /// Sends the message of a failed turn again.

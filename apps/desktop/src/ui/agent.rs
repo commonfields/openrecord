@@ -518,8 +518,7 @@ pub(crate) fn reply_body(s: &App, t: &Theme, k: &Kit, key: &str, text_: &str) ->
     let mut reply = col().key(key.to_string()).w_full().gap(6.0);
     for (j, part) in crate::visual::split(text_).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md)
-                .style(prose(t, k))
+            crate::visual::Part::Text(md) => words_markdown(&md, t, k)
                 .selectable(true)
                 // A diagram wider than a narrow pane scrolls sideways instead of spilling out of it.
                 .diagram_frame(|card, _| col().w_full().child(card).scroll_x())
@@ -530,6 +529,11 @@ pub(crate) fn reply_body(s: &App, t: &Theme, k: &Kit, key: &str, text_: &str) ->
         });
     }
     reply
+}
+
+/// Agent prose with Pierre syntax colouring (same stack as `@pierre/words` / highlights on web).
+fn words_markdown(md: &str, t: &Theme, k: &Kit) -> Markdown {
+    Markdown::new(md).style(prose(t, k)).highlighter(crate::ui::words::highlighter(k))
 }
 
 /// A reply's prose, as Rune's chat sets it: 14 point Inter on a 22.4 line,
@@ -678,19 +682,16 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     let mut body = col().w_full().gap(6.0);
     body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
     let muted = m.run.as_ref().is_some_and(|r| r.status != "COMPLETED" && !r.status.is_empty());
-    // Markdown, with any ```chart blocks drawn as charts in their place. A reply
-    // that just arrived grows word by word, each word fading in (Rune's streaming
-    // Markdown); a click shows it whole.
-    let revealing = s.revealing(&m.text);
-    let shown = revealing.clone().unwrap_or_else(|| m.text.clone());
+    // Markdown (Pierre / rune-kit — native sibling of `@pierre/words` on web), with ```chart
+    // blocks as charts. A fresh reply streams the full text with a 180ms fade; tap to settle.
+    let animating = s.words_revealing(&m.text);
     let mut reply = col().key(format!("reply-{i}")).w_full().gap(6.0);
-    for (j, part) in crate::visual::split(&shown).into_iter().enumerate() {
+    for (j, part) in crate::visual::split(&m.text).into_iter().enumerate() {
         reply = reply.child(match part {
-            crate::visual::Part::Text(md) => Markdown::new(md)
-                .style(prose(t, k))
-                .selectable(revealing.is_none())
-                .streaming(revealing.is_some())
-                .reveal(if revealing.is_some() { 0.18 } else { 0.0 })
+            crate::visual::Part::Text(md) => words_markdown(&md, t, k)
+                .selectable(!animating)
+                .streaming(animating)
+                .reveal(if animating { 0.18 } else { 0.0 })
                 .build(k)
                 .w_full()
                 .opacity(if muted { 0.7 } else { 1.0 }),
@@ -698,7 +699,7 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
             crate::visual::Part::Ui(raw) => crate::ui::surface::view(s, t, format!("surface-{i}-{j}"), &raw).my(4.0),
         });
     }
-    if revealing.is_some() {
+    if animating {
         reply = reply.cursor(Cursor::Default).on_press(|s: &mut App| s.reveal = None);
     }
     body = body.child(reply);
@@ -928,7 +929,14 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
 
 /// The answer while it is being written, drawn as it will be once it is stored.
 fn live_reply(t: &Theme, k: &Kit, text: &str) -> El {
-    col().key("live-reply").w_full().pt(4.0).child(Markdown::new(chat::live_answer(text).to_string()).style(prose(t, k)).streaming(true).build(k).w_full())
+    let live = chat::live_answer(text);
+    col().key("live-reply").w_full().pt(4.0).child(
+        words_markdown(&live, t, k)
+            .streaming(true)
+            .reveal(0.18)
+            .build(k)
+            .w_full(),
+    )
 }
 
 /// At the top of a helper session: what it is for and where it came from.
