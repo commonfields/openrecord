@@ -245,37 +245,6 @@ fn starters(s: &App, t: &Theme) -> El {
     drum.children(cards.into_iter().map(|(_, c)| c))
 }
 
-/// Where things stand, above the ways to start: what waits on the person and
-/// what the agent is doing. Each part opens what it names.
-fn home_status(s: &App, t: &Theme) -> Option<El> {
-    let waiting = s.inbox().len();
-    let working: Vec<&crate::api::ChatSummary> = s.chats.iter().filter(|c| c.working && c.business_id.as_deref() == s.active.as_deref()).collect();
-    if waiting == 0 && working.is_empty() {
-        return None;
-    }
-    let part = |key: &str, icon: &'static rune::Icon, text_: String| {
-        row().key(key.to_string()).gap(6.0).center_y().px(10.0).h(28.0).radius(14.0).role("button").label(text_.clone()).focusable(true)
-            .cursor(Cursor::Pointer).hover(t.hover_tint)
-            .child(ico(icon, 14.0, t.muted_foreground))
-            .child(label(text_, type_::SM_13, t.foreground))
-    };
-    let mut line = row().key("home-status").gap(8.0).center_y().flex_wrap();
-    if waiting > 0 {
-        let text_ = if waiting == 1 { "1 thing waits for your decision".to_string() } else { format!("{waiting} things wait for your decision") };
-        line = line.child(part("home-status-inbox", &icons::INBOX, text_).on_press(|s: &mut App| s.show_page(crate::state::Page::Inbox)));
-    }
-    if let Some(first) = working.first() {
-        let chat = (*first).clone();
-        let text_ = if working.len() == 1 {
-            format!("The agent is working on {}", chat.title.clone().filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "a task".into()))
-        } else {
-            format!("The agent is working on {} tasks", working.len())
-        };
-        line = line.child(part("home-status-working", &icons::LOADER, text_).on_press(move |s: &mut App| s.open_chat(&chat)));
-    }
-    Some(line)
-}
-
 /// Home: the first thing a business's agent shows. What waits on the person
 /// comes first, since a decision is the one thing only they can do; then ways
 /// to start that send in one press. A general chat has no business to brief on.
@@ -293,9 +262,6 @@ fn start(s: &App, t: &Theme, _business: &str) -> El {
                 label("Ask anything. This chat reads no business's records; start one from a business to work on it.", type_::SM, t.muted_foreground).wrap(),
             ),
         );
-    }
-    if let Some(line) = home_status(s, t) {
-        c = c.child(row().w_full().justify_center().child(line));
     }
     c = c.child(row().w_full().justify_center().child(starters(s, t)));
     // Sits a little above the middle of a tall window, and scrolls in a short one.

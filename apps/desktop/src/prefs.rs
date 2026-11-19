@@ -96,6 +96,15 @@ pub struct Prefs {
     pub zoom: f32,
     /// The OpenRecord server this app signs in to, when it is not the one on this Mac.
     pub server: Option<String>,
+    /// Chat history order in the sidebar (most recent drag wins; unknown chats append).
+    #[serde(default)]
+    pub chat_order: Vec<String>,
+    /// Collapsed business folders in the chat list (business id, or `_general`).
+    #[serde(default)]
+    pub chat_groups_collapsed: Vec<String>,
+    /// Business folders whose chat list is expanded (scroll inside the folder).
+    #[serde(default)]
+    pub chat_groups_list_expanded: Vec<String>,
 }
 
 /// The zoom steps ⌘+ and ⌘− move through, and where ⌘0 returns.
@@ -136,6 +145,9 @@ impl Default for Prefs {
             answer_dialog_custom: false,
             zoom: ZOOM_DEFAULT,
             server: None,
+            chat_order: Vec::new(),
+            chat_groups_collapsed: Vec::new(),
+            chat_groups_list_expanded: Vec::new(),
         }
     }
 }

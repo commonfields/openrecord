@@ -38,11 +38,10 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
         SideTab::Files => files(s, t),
         SideTab::Changes => changes(s, t),
     };
-    // A page open in the browser runs to the panel's foot: the page is drawn
-    // behind the app, so the panel paints only its top band and leaves the
-    // rest clear, the chat box floating over the page.
-    if s.browser_page_shown() {
-        return col()
+    // A page in the browser or an artifact preview runs to the foot: native WebKit
+    // sits behind the app and the chat box floats over it.
+    if s.browser_page_shown() || s.artifact_preview_float() {
+        let mut panel = col()
             .key("side-panel")
             .w_full()
             .grow(1.0)
@@ -53,6 +52,25 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
             .label("Side panel")
             .child(strip(s, t, &tab, lead).fill(t.background))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body));
+        if s.artifact_preview_float() {
+            let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
+            let owned;
+            let ct: &Theme = match crate::native_preview::preview_page_light() {
+                Some(light) => {
+                    owned = Theme::get(!light);
+                    &owned
+                }
+                None => t,
+            };
+            panel = panel.child(
+                col()
+                    .key("artifact-chat")
+                    .pin(Some(0.0), None, Some(0.0), Some(0.0))
+                    .on_drawn_layout(|_: &mut App, r: [f32; 4]| crate::native_preview::preview_keep(&[r]))
+                    .child(super::agent::composer(s, ct, &business, crate::state::ComposerSlot::Side, true)),
+            );
+        }
+        return panel;
     }
     shadows(
         col()
@@ -76,7 +94,9 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
 /// where the main chat has its own.
 fn chat_box(s: &App, t: &Theme, tab: &SideTab) -> Option<El> {
     let ready = match tab {
-        SideTab::Artifact(_) => s.front_artifact().is_some_and(|p| p.loaded.ready().is_some()),
+        SideTab::Artifact(_) => {
+            s.front_artifact().is_some_and(|p| p.loaded.ready().is_some()) && !s.artifact_preview_float()
+        }
         SideTab::Helper(_) => s.front_helper().is_some(),
         // Over a page in the browser it floats on the page instead (`browser`);
         // the other tabs sit beside the main chat and need none.

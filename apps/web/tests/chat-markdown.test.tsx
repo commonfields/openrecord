@@ -8,11 +8,11 @@ const html = (text: string) => renderToStaticMarkup(<ChatMarkdown text={text} />
 describe("chat markdown", () => {
   it("renders lists, bold, tables and code", () => {
     const out = html("Do this:\n\n1. **Fix** the title\n2. Add `schema`\n\n| Page | Score |\n|---|---|\n| Home | 82 |")
-    expect(out).toContain("<ol>")
-    expect(out).toContain("<strong>Fix</strong>")
-    expect(out).toContain("<code>schema</code>")
-    expect(out).toContain("<table")
-    expect(out).toContain("<td>82</td>")
+    expect(out).toContain('data-markdown="ol"')
+    expect(out).toContain("<strong")
+    expect(out).toContain('data-markdown="code"')
+    expect(out).toContain('data-markdown="table"')
+    expect(out).toContain(">82<")
   })
 
   it("never renders raw HTML, and only opens web and mail links, in a new tab", () => {

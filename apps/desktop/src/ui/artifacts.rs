@@ -21,13 +21,12 @@ pub fn view(s: &App, t: &Theme) -> El {
         }
         return c;
     }
-    // The page, then the chat box under it where the main chat has its own.
+    // The preview runs to the foot; the chat box floats on it (`side::view`).
     let slot = col()
         .key("artifact-html")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .fill(rune::Color::WHITE)
         .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
             s.preview_rect = Some(r);
             if s.preview_visible() {
@@ -35,7 +34,6 @@ pub fn view(s: &App, t: &Theme) -> El {
                     crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
                 }
             }
-        })
-        .child(label("Rendering document", type_::XS, t.muted_foreground).padding(20.0));
+        });
     pane.child(slot)
 }

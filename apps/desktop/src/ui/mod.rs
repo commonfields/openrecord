@@ -50,8 +50,13 @@ pub(crate) fn kit(t: &Theme) -> Kit {
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if !s.artifact_visible() { crate::native_preview::clear(); }
     if s.preview_visible() {
-        if let (Some(rect), Some(a)) = (s.preview_rect, s.front_artifact().and_then(|p| p.loaded.ready())) { crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion); }
-    } else { crate::native_preview::hide(); }
+        if let (Some(rect), Some(a)) = (s.preview_rect, s.front_artifact().and_then(|p| p.loaded.ready())) {
+            crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion);
+        }
+        crate::native_preview::preview_pass_through(s.native_view_clear());
+    } else {
+        crate::native_preview::hide();
+    }
     // The browser tab's page sits over its slot only while nothing is drawn over it.
     if s.browser_visible() {
         if let Some(rect) = s.side.browser.rect { crate::native_preview::browser_show(None, rect); }
@@ -99,12 +104,12 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if let Some(page) = s.settings {
             layers.extend(settings::view(s, &t, &k, page));
         }
-        // Any menu or dialog softens what is behind it with a slight blur.
-        // Notices are not menus, and the "/" menu leaves its composer sharp.
-        let floating = layers.len() - notice_count - usize::from(s.chat_shown() && s.settings.is_none() && agent::command_menu_open(s));
-        // A landing page in the browser sits behind the app; its menus draw over it
-        // without blanking or blurring the page.
-        if floating > 0 && !s.browser_visible() {
+        if let Some(note) = &s.notice {
+            layers.push(notice_toast(&t, note));
+        }
+        // Only Find and New chat soften the window behind them; other menus stay sharp.
+        let _ = notice_count;
+        if s.find.is_some() || s.new_chat.is_some() {
             layers.insert(0, el().key("menu-backdrop").role("none").a11y_hidden().absolute(0.0, 0.0).w_full().h_full()
                 .backdrop_blur(MENU_BLUR).token_motion(k.motion.overlay));
         }
@@ -116,17 +121,22 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     // view clear (over a page in the browser, drawn behind it) the frame
     // around the page still reads as the app.
     crate::native_preview::window_background(t.sidebar);
-    let browser_backdrop = if s.browser_page_shown() {
-        match crate::native_preview::browser_page_light() {
-            Some(light) => Theme::get(!light).background,
-            None if s.browser_artifact().is_some() => Theme::get(false).background,
-            None => t.background,
-        }
+    let page_light = if s.browser_page_shown() {
+        crate::native_preview::browser_page_light()
+    } else if s.artifact_preview_float() {
+        crate::native_preview::preview_page_light()
     } else {
-        t.background
+        None
+    };
+    let browser_backdrop = match page_light {
+        Some(light) => Theme::get(!light).background,
+        None if s.browser_page_shown() && s.browser_artifact().is_some() => Theme::get(false).background,
+        None if s.artifact_preview_float() => Theme::get(false).background,
+        None => t.background,
     };
     crate::native_preview::browser_backdrop(browser_backdrop);
-    let screen = if s.screen == Screen::Workspace && s.browser_page_shown() { screen } else { screen.fill(t.sidebar) };
+    let native_page = s.browser_page_shown() || s.artifact_preview_float();
+    let screen = if s.screen == Screen::Workspace && native_page { screen } else { screen.fill(t.sidebar) };
     let root = rune_kit::root(screen.hover_motion_within(ease, ease), layers);
     zoomed(s, root, z)
 }
@@ -198,7 +208,6 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             .fill(t.background)
             .clip_rounded(10.0)
             .child(shell::header(s, t, leading, trailing))
-            .children(s.notice.as_deref().map(|n| notice(t, n)))
             .child(col().w_full().grow(1.0).min_h(0.0).child(content)),
         &t.panel_shadow,
     );
@@ -289,9 +298,9 @@ fn agent_boot(s: &App, t: &Theme) -> El {
         .child(label(hint, type_::BASE_MEDIUM, t.muted_foreground))
 }
 
-/// A bar under the header for something the shell has to say: the web's
-/// `Alert`, a bordered card with its text and a way to dismiss it.
-fn notice(t: &Theme, text_: &str) -> El {
+/// Confirmations and errors: a compact card in the top-right corner, not a full-width bar.
+fn notice_toast(t: &Theme, text_: &str) -> El {
+    const W: f32 = 380.0;
     let body = row()
         .w_full()
         .gap(10.0)
@@ -305,5 +314,14 @@ fn notice(t: &Theme, text_: &str) -> El {
                 .cursor(Cursor::Pointer)
                 .on_press(|s: &mut App| s.notice = None),
         );
-    col().w_full().px(20.0).pb(8.0).child(crate::ui::widgets::alert(t, "notice", None, body))
+    shadows(
+        col()
+            .key("notice-toast")
+            .pin(None, Some(12.0), Some(24.0), None)
+            .w(W)
+            .role("status")
+            .label("Notification")
+            .child(crate::ui::widgets::alert(t, "notice", None, body)),
+        &t.float_shadow,
+    )
 }
