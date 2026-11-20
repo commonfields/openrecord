@@ -483,6 +483,8 @@ pub struct App {
     /// The panel on the right: the artifact or helper, and a browser, as tabs.
     pub side: crate::side::SidePanel,
     pub preview_rect: Option<[f32; 4]>,
+    /// The agent transcript slot for `@pierre/words` in a WKWebView.
+    pub words_rect: Option<[f32; 4]>,
     /// The chat on screen has no business: a general chat (`/api/agent`).
     pub general: bool,
     /// "Start a new chat", while it is open.
@@ -687,6 +689,7 @@ impl App {
             artifacts: Vec::new(),
             side: Default::default(),
             preview_rect: None,
+            words_rect: None,
             settle_next: false,
             syncing: false,
             synced_at: std::time::Instant::now(),
@@ -1152,6 +1155,11 @@ impl App {
         self.answer = None;
         self.campaign_open = None;
         self.list_query.clear();
+        // A full-page Analytics view already paints every chart; folding the side
+        // panel avoids laying the same Overview out twice and gives the page width.
+        if page == Page::Overview || self.side_panel_duplicates_page(page) {
+            self.side.open = false;
+        }
         self.load_page();
     }
 
@@ -2330,9 +2338,9 @@ impl App {
         for r in replies {
             self.apply(r, tx);
         }
-        // The Realtime globe turns while it is on screen.
-        if self.view == View::Workspace && self.page == Page::Overview && self.section == crate::insights::Section::Realtime && !self.prefs.reduce_motion {
-            tx.wake_after(std::time::Duration::from_millis(40));
+        // The Realtime "Live" pulse on the full Analytics page (not in the side panel).
+        if self.view == View::Workspace && self.realtime_overview_visible() && !self.prefs.reduce_motion {
+            tx.wake_after(std::time::Duration::from_millis(120));
             changed = true;
         }
         // While a turn runs, the thinking glyph steps every 220 milliseconds and the clock ticks.

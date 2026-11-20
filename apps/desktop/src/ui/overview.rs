@@ -24,7 +24,7 @@ pub fn view(s: &App, t: &Theme, in_side: bool) -> El {
             Section::Revenue => revenue(s, t, i),
             Section::Funnel => funnel(s, t, i),
             Section::Events => events(s, t, i),
-            Section::Realtime => realtime(s, t, i),
+            Section::Realtime => realtime(s, t, i, in_side),
             Section::Answers => answers(s, t, i),
         },
         Load::Failed(e) => failure(t, "insights-failed", e, |s: &mut App| s.refresh()),
@@ -1068,14 +1068,20 @@ fn flag(t: &Theme, code: &str) -> El {
 
 /// Who is on the site now: the key numbers, a world map of where people are
 /// (zoom and pan), then the latest activity and the countries ranked.
-fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
+fn realtime(s: &App, t: &Theme, i: &Insights, in_side: bool) -> El {
     let Some(r) = &i.realtime else {
         return panel(t, "realtime", "Connect Google Analytics to see who is on your site now", None)
             .child(note(t, "Realtime reads your Google Analytics property: people on the site in the last 30 minutes, where they are and what they read."))
             .child(row().child(button(t, "realtime-connect", "Connect on the Channels page", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
     };
-    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
-    let pulse = (0.55 + 0.45 * (now_ms / 600.0).sin().abs()) as f32;
+    // Side Analytics and reduce-motion skip the ~8fps redraw loop for the Live dot.
+    let pulse = if in_side || s.prefs.reduce_motion {
+        0.85
+    } else {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+        (0.55 + 0.45 * (now_ms / 600.0).sin().abs()) as f32
+    };
+    let map_h = if in_side { 300.0 } else { 520.0 };
     let opt = |x: Option<f64>| x.map(crate::insights::int).unwrap_or_else(|| "—".into());
     let live = row().gap(6.0).center_y().child(el().size(7.0, 7.0).radius(4.0).fill(t.chart.primary.alpha(pulse))).child(label("Live", type_::XS11, t.muted_foreground));
     let thirty = || label("30 min", type_::XS11, t.muted_foreground);
@@ -1113,7 +1119,7 @@ fn realtime(s: &App, t: &Theme, i: &Insights) -> El {
                 )
                 .child(label("Pinch or ⌘ and scroll to zoom, drag to move", type_::XS11, t.muted_foreground).wrap().min_w(0.0)),
         )
-        .child(crate::ui::world::view(s, t, 520.0, &r.countries));
+        .child(crate::ui::world::view(s, t, map_h, &r.countries));
 
     // The latest events, when the source reports them; otherwise the pages being read.
     let activity = if r.activity.is_empty() {

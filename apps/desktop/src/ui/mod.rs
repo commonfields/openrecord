@@ -65,6 +65,13 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         // While a menu or dialog is open over it, clicks are the app's.
         crate::native_preview::browser_pass_through(s.native_view_clear());
     } else { crate::native_preview::browser_hide(); }
+    // Overview beside the chat is heavy Rune UI; native markdown is enough while it is open.
+    if s.prefs.words_webview && s.chat_shown() && s.settings.is_none() && !s.side_shows_overview() {
+        crate::words_pane::pass_through(s.native_view_clear());
+        crate::words_pane::sync(s, s.prefs.dark(cx.system_dark()));
+    } else {
+        crate::words_pane::hide();
+    }
     let z = s.zoom();
     // Traffic lights: 16pt from the left and top in interface units (symmetric inset).
     let light = (shell::TRAFFIC_LIGHT_INSET * z).round();
@@ -220,7 +227,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // its tabs start past the traffic lights and the sidebar's buttons, 12
     // points after them as the header's breadcrumbs do (the card sits 8 in).
     let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 } else { 10.0 };
-    let side_card = s.side_shown().then(|| side::view(s, t, k, strip_lead));
+    let side_card = (s.side_shown() && !s.side_panel_duplicates_page(s.page)).then(|| side::view(s, t, k, strip_lead));
     let panel = col()
         .key("panel-column")
         .grow(1.0)

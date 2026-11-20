@@ -225,6 +225,13 @@ static NSView *browserBox;
 static BOOL browserPassThrough = YES;
 static NSRect browserKeep[4];
 static int browserKeeps;
+static WKWebView *words;
+static NSView *wordsBox;
+static NSView *wordsHost;
+static BOOL wordsPassThrough = NO;
+static BOOL wordsReady = NO;
+@class ORWordsPolicy;
+static ORWordsPolicy *wordsPolicy;
 static IMP hostHitTest;
 
 // Over the page, a click or scroll goes to the page; over what the app draws
@@ -243,6 +250,9 @@ static NSView *hostHitTestThrough(NSView *self, SEL cmd, NSPoint point) {
         BOOL kept = NO;
         for (int i = 0; i < previewKeeps; i++) if (NSPointInRect(NSMakePoint(local.x, y), previewKeep[i])) kept = YES;
         if (!kept) return [previewBox hitTest:point] ?: [preview hitTest:point];
+    }
+    if (self == wordsHost && !wordsPassThrough && wordsBox && !wordsBox.hidden && wordsBox.superview == self.superview && NSPointInRect(point, wordsBox.frame)) {
+        return [wordsBox hitTest:point] ?: [words hitTest:point];
     }
     return ((NSView *(*)(NSView *, SEL, NSPoint))hostHitTest)(self, cmd, point);
 }
@@ -422,4 +432,98 @@ const char *or_browser_url(void) {
     return browserURL;
 }
 int or_browser_state(void) { return (browser.canGoBack ? 1 : 0) | (browser.canGoForward ? 2 : 0) | (browser.loading ? 4 : 0); }
+
+// ---- Agent transcript (@pierre/words in a local bundle) ----------------------
+@interface ORWordsPolicy : NSObject <WKNavigationDelegate>
+@end
+@implementation ORWordsPolicy
+- (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
+    (void)view;
+    (void)navigation;
+    wordsReady = YES;
+}
+@end
+
+void or_words_hide(void) {
+    if (wordsBox) [wordsBox setHidden:YES];
+}
+
+void or_words_clear(void) {
+    if (words) {
+        [words stopLoading];
+        [words removeFromSuperview];
+        words = nil;
+    }
+    wordsPolicy = nil;
+    wordsReady = NO;
+    if (wordsBox) {
+        [wordsBox removeFromSuperview];
+        wordsBox = nil;
+    }
+    wordsHost = nil;
+}
+
+void or_words_pass_through(int on) { wordsPassThrough = on != 0; }
+
+void or_words_show(double x, double y, double w, double h) {
+    if (w <= 0 || h <= 0) return;
+    NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;
+    if (!window) for (NSWindow *candidate in NSApp.windows) {
+        if (candidate.visible && candidate.canBecomeMainWindow) { window = candidate; break; }
+    }
+    if (!window) return;
+    NSView *host = window.contentView;
+    if (!words) {
+        WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
+        [config.preferences setValue:@YES forKey:@"javaScriptEnabled"];
+        config.defaultWebpagePreferences.allowsContentJavaScript = YES;
+        words = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
+        words.allowsBackForwardNavigationGestures = NO;
+        wordsPolicy = [ORWordsPolicy new];
+        words.navigationDelegate = wordsPolicy;
+        NSURL *url = [[NSBundle mainBundle] URLForResource:@"index" withExtension:@"html" subdirectory:@"WordsPane"];
+        if (!url) {
+            NSString *env = [NSProcessInfo.processInfo.environment objectForKey:@"OPENRECORD_WORDS_PANE"];
+            if (env.length) url = [NSURL fileURLWithPath:env];
+        }
+        if (!url) {
+            NSString *dev = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:@"words-pane/dist/index.html"];
+            if ([NSFileManager.defaultManager fileExistsAtPath:dev]) url = [NSURL fileURLWithPath:dev];
+        }
+        if (url) {
+            [words loadFileURL:url allowingReadAccessToURL:url.URLByDeletingLastPathComponent];
+        }
+    }
+    if (!wordsBox) {
+        wordsBox = [[NSView alloc] initWithFrame:NSZeroRect];
+        wordsBox.wantsLayer = YES;
+        wordsBox.layer.masksToBounds = YES;
+    }
+    if (words.superview != wordsBox) [wordsBox addSubview:words];
+    NSView *frameView = host.superview;
+    if (wordsBox.superview != frameView) [frameView addSubview:wordsBox positioned:NSWindowBelow relativeTo:host];
+    passThrough(host);
+    wordsHost = host;
+    CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
+    NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
+    if (!NSEqualRects(wordsBox.frame, frame)) {
+        [wordsBox setFrame:frame];
+        [words setFrame:wordsBox.bounds];
+    }
+    if (wordsBox.hidden) [wordsBox setHidden:NO];
+}
+
+void or_words_update(const char *json) {
+    if (!words || !wordsReady || !json) return;
+    NSString *raw = [NSString stringWithUTF8String:json];
+    if (!raw) return;
+    NSData *data = [raw dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *b64 = data ? [data base64EncodedStringWithOptions:0] : nil;
+    if (!b64) return;
+    NSString *js = [NSString stringWithFormat:
+        @"(function(){try{var p=JSON.parse(atob('%@'));window.__openrecord&&window.__openrecord(p)}catch(e){}})()",
+        b64];
+    [words evaluateJavaScript:js completionHandler:nil];
+}
 

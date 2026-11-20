@@ -40,6 +40,7 @@ mod timeline;
 mod ui;
 mod update;
 mod visual;
+mod words_pane;
 
 use rune::{AppSpec, Chrome, KeyEvent, Tx, Waker};
 

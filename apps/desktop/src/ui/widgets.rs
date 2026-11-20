@@ -137,7 +137,7 @@ pub fn account_tile(t: &Theme, email: Option<&str>, size: f32) -> El {
     let (bg, _) = t.mark(email.unwrap_or("account"));
     let tile = el()
         .size(size, size)
-        .radius((size * 0.28).round())
+        .radius(size / 2.0)
         .fill(bg)
         .linear_gradient(std::f32::consts::PI, [(0.0, Color::WHITE.alpha(0.3)), (0.5, Color::WHITE.alpha(0.05)), (1.0, Color::BLACK.alpha(0.16))])
         .a11y_hidden();

@@ -35,6 +35,7 @@ done
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
+WORDS_PANE="words-pane"
 
 if [[ $UNIVERSAL == 1 ]]; then
   targets=(aarch64-apple-darwin x86_64-apple-darwin)
@@ -50,9 +51,17 @@ else
   BUILT="$TARGET_DIR/$PROFILE/$BIN"
 fi
 
+if [[ -d "$WORDS_PANE" ]]; then
+  (cd "$WORDS_PANE" && pnpm install --ignore-workspace 2>/dev/null; pnpm run build)
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BUILT" "$APP/Contents/MacOS/$BIN"
+if [[ -d "$WORDS_PANE/dist" ]]; then
+  rm -rf "$APP/Contents/Resources/WordsPane"
+  cp -R "$WORDS_PANE/dist" "$APP/Contents/Resources/WordsPane"
+fi
 
 # Icon: assets/icon.png (1024px) -> AppIcon.icns
 ICONSET="$(mktemp -d)/AppIcon.iconset"

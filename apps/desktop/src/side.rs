@@ -6,6 +6,7 @@
 use rune::{TextEdit, Tx};
 
 use crate::native_preview::{self, BrowserCommand};
+use crate::insights::Section;
 use crate::state::{App, Page, Screen, View};
 
 /// One of the panel's tabs. The browser's tabs come first once a page has
@@ -158,6 +159,32 @@ impl App {
 
     pub fn side_shown(&self) -> bool {
         self.screen == Screen::Workspace && self.side.open && (!self.side.for_item || self.side_item())
+    }
+
+    /// True when the side panel is showing the same workspace page as the main panel.
+    pub fn side_panel_duplicates_page(&self, page: Page) -> bool {
+        if !self.side.open {
+            return false;
+        }
+        match self.side_tab() {
+            SideTab::Analytics => page == Page::Overview,
+            SideTab::Page(p) => p == page,
+            _ => false,
+        }
+    }
+
+    /// Analytics in the agent's right panel (not the main workspace page).
+    pub fn side_shows_overview(&self) -> bool {
+        self.side_shown() && self.view == View::Agent && matches!(self.side_tab(), SideTab::Analytics | SideTab::Page(Page::Overview))
+    }
+
+    /// Analytics visible in the main window or the side panel.
+    pub fn overview_on_screen(&self) -> bool {
+        (self.view == View::Workspace && self.page == Page::Overview) || self.side_shows_overview()
+    }
+
+    pub fn realtime_overview_visible(&self) -> bool {
+        self.overview_on_screen() && self.section == Section::Realtime
     }
 
     /// The tab in front: the chosen one while it is there, else the last one
