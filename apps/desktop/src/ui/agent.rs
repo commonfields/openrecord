@@ -19,6 +19,9 @@ use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, label};
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     let column = s.prefs.chat_width.max();
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
+    if s.prefs.words_webview {
+        return words_webview(s, t, k, column, &business);
+    }
     let messages = s.transcript();
 
     // Messages land where they belong: no rise and no glide, so opening a chat
@@ -126,6 +129,48 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
     col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main, false))
+}
+
+/// Agent chat with the transcript in `@pierre/words` (WKWebView); composer stays native Rune.
+fn words_webview(s: &App, t: &Theme, k: &Kit, column: f32, business: &str) -> El {
+    let messages = s.transcript();
+    let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
+    let body = if fresh && (s.home || s.general) {
+        start(s, t, business)
+    } else {
+        let mut stack = col().key("words-stack").w_full().grow(1.0).min_h(0.0);
+        stack = stack.child(
+            col()
+                .key("words-transcript-slot")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .on_layout(|s: &mut App, rect: [f32; 4]| s.words_rect = Some(rect))
+                .child(el().key("words-slot-spacer").w_full().h_full()),
+        );
+        if matches!(s.turn, Turn::Working { .. }) {
+            if let Turn::Working { progress, started, stopping, .. } = &s.turn {
+                stack = stack.child(
+                    live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping)
+                        .pin(None, None, Some(8.0), Some(8.0)),
+                );
+            }
+        }
+        col()
+            .key("transcript-body")
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .items_center()
+            .child(col().w_full().max_w(column).grow(1.0).min_h(0.0).child(stack))
+    };
+    col()
+        .key("agent")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .child(body)
+        .child(composer(s, t, business, ComposerSlot::Main, false))
 }
 
 fn timeline_rail(s: &App, t: &Theme, owner: &str, messages: &[Message], turns: &[usize]) -> Option<El> {

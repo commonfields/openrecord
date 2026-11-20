@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenRecord chat</title>
+    <style>
+      html, body, #root { margin: 0; height: 100%; }
+      body {
+        font-family: Inter, system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.625;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+      :root {
+        --background: #f9f9f9;
+        --foreground: #1a1a1a;
+        --muted: #efefef;
+        --muted-foreground: #6b6b6b;
+        --primary-ink: #020c44;
+        --card-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+      }
+      html.dark {
+        --background: #0a0a0a;
+        --foreground: #ededed;
+        --muted: #1a1a1a;
+        --muted-foreground: #a1a1a1;
+        --primary-ink: #7096f9;
+      }
+      body { background: var(--background); color: var(--foreground); }
+      .thread {
+        box-sizing: border-box;
+        max-width: var(--chat-max, 48rem);
+        margin: 0 auto;
+        padding: 24px 24px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .user { align-self: flex-end; max-width: 85%; background: var(--muted);
+        border-radius: 16px; padding: 10px 16px; white-space: pre-wrap; }
+      .agent { width: 100%; }
+      .agent.muted { opacity: 0.7; }
+      .divider { display: flex; align-items: center; gap: 8px; padding: 4px 0;
+        font-size: 11px; color: var(--muted-foreground); }
+      .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #ddd; }
+      html.dark .divider::before, html.dark .divider::after { background: #333; }
+      .loading, .live { font-size: 13px; color: var(--muted-foreground); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

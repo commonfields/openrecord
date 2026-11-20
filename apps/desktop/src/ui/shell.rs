@@ -171,7 +171,6 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .expanded(s.menu == Some(Menu::Account))
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .hover(t.hover_tint)
             .motion(CONTROL)
             .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Account) { None } else { Some(Menu::Account) })
             .child({
@@ -186,13 +185,9 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
                 .w_full()
                 .h(64.0)
                 .px(10.0)
-                .child(label(name, type_::BASE_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0))
-                .child(ico(&icons::CHEVRONS_UP_DOWN, 16.0, t.muted_foreground));
+                .child(label(name, type_::BASE_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0));
         } else {
             b = b.size(36.0, 56.0).justify_center();
-        }
-        if s.menu == Some(Menu::Account) {
-            b = shadows(b.fill(t.accent), &t.control_shadow);
         }
         b
     };
@@ -417,9 +412,11 @@ fn chat_history(s: &App, t: &Theme) -> El {
         list = list.child(
             row()
                 .key("show-all-chats")
-                .px(8.0)
+                .w_full()
+                .pl(8.0)
+                .pr(8.0)
                 .py(4.0)
-                .radius(6.0)
+                .radius(8.0)
                 .role("button")
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
@@ -495,8 +492,11 @@ fn folder_chat_list(s: &App, t: &Theme, group_key: &str, chats: &[&ChatSummary],
         block = block.child(
             row()
                 .key(format!("chat-folder-fewer-{group_key}"))
-                .px(26.0)
+                .w_full()
+                .pl(26.0)
+                .pr(8.0)
                 .py(4.0)
+                .radius(8.0)
                 .role("button")
                 .cursor(Cursor::Pointer)
                 .hover(t.hover_tint)
@@ -518,8 +518,11 @@ fn folder_chat_list(s: &App, t: &Theme, group_key: &str, chats: &[&ChatSummary],
             block = block.child(
                 row()
                     .key(format!("chat-folder-more-{group_key}"))
-                    .px(26.0)
+                    .w_full()
+                    .pl(26.0)
+                    .pr(8.0)
                     .py(4.0)
+                    .radius(8.0)
                     .role("button")
                     .cursor(Cursor::Pointer)
                     .hover(t.hover_tint)
@@ -542,10 +545,12 @@ fn chat_group_header(s: &App, t: &Theme, key: &str, business: &str, count: usize
     row()
         .key(format!("chat-group-{key}"))
         .w_full()
-        .px(8.0)
+        .pl(8.0)
+        .pr(8.0)
         .pt(8.0)
         .pb(4.0)
         .gap(6.0)
+        .radius(8.0)
         .center_y()
         .role("button")
         .label(business.to_string())
@@ -812,7 +817,8 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
             s.show_page(p);
         }
     };
-    let width = if s.sidebar_full() { (s.prefs.sidebar() - 16.0).max(256.0) } else { 256.0 };
+    let width = if s.sidebar_full() { s.prefs.sidebar() - 16.0 } else { 256.0 };
+    let side = if s.sidebar_full() { Side::Bottom } else { Side::Right };
     let mut m = menu(t, "account-menu-list", width)
         .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
             .child(account_tile(t, s.account_email.as_deref(), 36.0))
@@ -838,7 +844,6 @@ pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>)
         .child(ico(&icons::LOG_OUT, 16.0, out_ink))
         .child(label("Sign out", type_::SM, if out_hovered { t.wrong } else { t.foreground }).truncate().grow(1.0).min_w(0.0));
     m = m.child(sign_out.on_press(|s: &mut App| s.sign_out()));
-    let side = if s.sidebar_full() { Side::Top } else { Side::Right };
     layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
 

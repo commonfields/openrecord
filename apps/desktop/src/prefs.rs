@@ -105,6 +105,13 @@ pub struct Prefs {
     /// Business folders whose chat list is expanded (scroll inside the folder).
     #[serde(default)]
     pub chat_groups_list_expanded: Vec<String>,
+    /// Render agent chat markdown with `@pierre/words` in a WKWebView (macOS).
+    #[serde(default = "default_words_webview")]
+    pub words_webview: bool,
+}
+
+fn default_words_webview() -> bool {
+    cfg!(target_os = "macos")
 }
 
 /// The zoom steps ⌘+ and ⌘− move through, and where ⌘0 returns.
@@ -148,6 +155,7 @@ impl Default for Prefs {
             chat_order: Vec::new(),
             chat_groups_collapsed: Vec::new(),
             chat_groups_list_expanded: Vec::new(),
+            words_webview: default_words_webview(),
         }
     }
 }
