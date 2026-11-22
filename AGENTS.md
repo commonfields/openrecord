@@ -7,8 +7,11 @@ Practical notes for running this checkout locally. Architecture lives in
 
 - Desktop first: product and UI work goes into the macOS client,
   `apps/desktop`: Rust + Rune (not GPUI or Tauri), a standalone Cargo package
-  that reads the same API as the web app; see its README. The web app keeps
-  working but gets no new UI unless asked for by name. The legacy `tauri-app`
+  that reads the same API as the web app; see its README. After desktop UI
+  changes, rebuild and reinstall (`apps/desktop/scripts/bundle.sh --debug`,
+  copy `dist/OpenRecord.app` to `/Applications/`), quit any running copy, and
+  relaunch; spot-check all seven Analytics section tabs (Summary through AI
+  discovery). The web app keeps working but gets no new UI unless asked for by name. The legacy `tauri-app`
   was removed on 2026-11-06; the separate legacy Rust CLI remains untouched.
   Current milestones: `docs/product/roadmap.md`.
 - Canonical local checkout: `/Users/wira/openrecord`, normally on merged `main`.

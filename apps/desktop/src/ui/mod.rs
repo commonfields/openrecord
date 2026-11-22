@@ -3,13 +3,13 @@
 mod account_pages;
 mod agent;
 mod artifacts;
-pub use agent::ROLL_EVERY;
 mod answer;
 mod campaigns;
 mod campaign_brief;
 mod channels;
 mod channel_setup;
 mod charts;
+pub use charts::LineCache;
 mod discovery;
 pub mod find;
 pub mod issues;

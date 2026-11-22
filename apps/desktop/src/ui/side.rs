@@ -237,7 +237,7 @@ fn scrolled(key: &str, body: El) -> El {
     col().key(key).w_full().grow(1.0).min_h(0.0).child(body).scroll(ScrollSpec { stick_bottom: false })
 }
 
-/// Keep the opening list level with the main chat's starter cards.
+/// Keep the opening list level with the main chat's Home title.
 fn launcher(s: &App, t: &Theme) -> El {
     let mut list = col().key("side-launch-list").w_full().max_w(420.0).gap(2.0);
     for what in Launch::ALL {
@@ -249,7 +249,7 @@ fn launcher(s: &App, t: &Theme) -> El {
             Launch::Campaigns => (&icons::NAV_CAMPAIGNS, "Campaigns", "Briefs, deliverables and results beside the chat"),
         };
         let hover_key = format!("launch:{}", name.to_lowercase());
-        // Hovered, its icon takes the periwinkle Home's starters draw theirs in.
+        // Hovered, its icon takes the periwinkle accent.
         let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
         list = list.child(super::widgets::highlight(t,
             row()
@@ -276,8 +276,7 @@ fn launcher(s: &App, t: &Theme) -> El {
             hovered, false));
     }
     col().key("side-launcher").w_full().grow(1.0).min_h(0.0)
-        .child(col().w_full().px(24.0).pt(super::agent::home_stack_top(s)).pb(32.0)
-            .child(row().w_full().h(super::agent::ROLL_H).center().child(list)))
+        .child(col().w_full().px(24.0).pt(super::agent::home_stack_top(s)).pb(32.0).items_center().child(list))
         .scroll(ScrollSpec { stick_bottom: false })
 }
 

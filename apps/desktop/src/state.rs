@@ -350,16 +350,17 @@ pub struct App {
     pub password: TextEdit,
     pub signin_error: Option<String>,
     pub signing_in: bool,
-    /// Whether Home (the starters) shows instead of a chat.
+    /// Whether Home shows instead of a chat transcript.
     pub home: bool,
-    pub starter: usize,
-    pub starter_at: std::time::Instant,
-    pub starter_hover: bool,
     /// The decisions stack in the corner: whether it is spread out, and the ones put away with "Hide".
     pub notices_open: bool,
     pub notices_hidden: std::collections::BTreeSet<String>,
     /// The key number each source's wide chart shows on Analytics, by the source's key.
     pub metric_pick: std::collections::HashMap<String, usize>,
+    /// Cached smoothed chart polylines; cleared when insights reload.
+    pub chart_lines: std::cell::RefCell<crate::ui::LineCache>,
+    /// Bucketed Realtime pulse so we do not rebuild between animation steps.
+    pub realtime_pulse_bucket: u64,
     /// The sign-in card's server field, and whether it is shown.
     pub server: TextEdit,
     pub server_open: bool,
@@ -440,6 +441,9 @@ pub struct App {
     pub all_models: bool,
     /// The chart and day under the pointer.
     pub chart_hover: Option<(String, usize)>,
+    /// Debounced chart hover so moving across Analytics does not rebuild every column.
+    chart_hover_pending: Option<(String, usize)>,
+    chart_hover_at: Option<std::time::Instant>,
     /// The models the composer offers, the one picked, and the picker's filter.
     pub catalog: Load<Vec<crate::chat::ModelOption>>,
     pub agent_model: Option<String>,
@@ -612,12 +616,11 @@ impl App {
             signin_error: None,
             signing_in: false,
             home: true,
-            starter: 0,
-            starter_at: std::time::Instant::now(),
-            starter_hover: false,
             notices_open: false,
             notices_hidden: std::collections::BTreeSet::new(),
             metric_pick: std::collections::HashMap::new(),
+            chart_lines: std::cell::RefCell::new(crate::ui::LineCache::default()),
+            realtime_pulse_bucket: u64::MAX,
             server: TextEdit::new(""),
             server_open: false,
             account_email: remembered_email(),
@@ -674,6 +677,8 @@ impl App {
             model_focus: None,
             all_models: false,
             chart_hover: None,
+            chart_hover_pending: None,
+            chart_hover_at: None,
             catalog: Load::Idle,
             agent_model: crate::chat::stored_model(),
             model_filter: None,
@@ -1012,9 +1017,50 @@ impl App {
 
     pub fn show_section(&mut self, section: Section) {
         self.section = section;
+        self.chart_hover = None;
         if (self.page != Page::Overview || self.view != View::Workspace) && !(self.view == View::Agent && matches!(self.side_tab(), crate::side::SideTab::Analytics | crate::side::SideTab::Page(Page::Overview))) {
             self.show_page(Page::Overview);
         }
+    }
+
+    pub fn clear_chart_lines(&self) {
+        self.chart_lines.borrow_mut().clear();
+    }
+
+    pub(crate) fn schedule_chart_hover(&mut self, key: String, day: usize, tx: &mut rune::Tx) {
+        const WAIT: std::time::Duration = std::time::Duration::from_millis(48);
+        self.chart_hover_pending = Some((key, day));
+        self.chart_hover_at = Some(std::time::Instant::now() + WAIT);
+        tx.wake_after(WAIT);
+    }
+
+    pub(crate) fn flush_chart_hover(&mut self) -> bool {
+        let Some(at) = self.chart_hover_at else {
+            return false;
+        };
+        if std::time::Instant::now() < at {
+            return false;
+        }
+        self.chart_hover_at = None;
+        let Some((key, day)) = self.chart_hover_pending.take() else {
+            return false;
+        };
+        let next = Some((key, day));
+        if self.chart_hover == next {
+            return false;
+        }
+        self.chart_hover = next;
+        true
+    }
+
+    pub(crate) fn clear_chart_hover_now(&mut self, key: &str, day: usize) -> bool {
+        self.chart_hover_pending = None;
+        self.chart_hover_at = None;
+        if self.chart_hover.as_ref() == Some(&(key.to_string(), day)) {
+            self.chart_hover = None;
+            return true;
+        }
+        false
     }
 
     pub fn set_metric(&mut self, m: Metric) {
@@ -1049,6 +1095,7 @@ impl App {
             return;
         }
         self.days = days;
+        self.clear_chart_lines();
         if let Some(id) = self.active.clone() {
             self.insights = Load::Loading;
             self.net.insights(id, days);
@@ -2334,32 +2381,31 @@ impl App {
         }
         self.sync_draft();
         let replies = self.net.take();
-        let mut changed = !replies.is_empty();
+        let mut changed = self.flush_chart_hover() || !replies.is_empty();
         for r in replies {
             self.apply(r, tx);
         }
-        // The Realtime "Live" pulse on the full Analytics page (not in the side panel).
+        // The Realtime "Live" dot on the full Analytics page (not in the side panel).
         if self.view == View::Workspace && self.realtime_overview_visible() && !self.prefs.reduce_motion {
-            tx.wake_after(std::time::Duration::from_millis(120));
-            changed = true;
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            const PULSE_MS: u64 = 500;
+            let bucket = ms / PULSE_MS;
+            let wait = PULSE_MS - ms % PULSE_MS;
+            tx.wake_after(std::time::Duration::from_millis(wait.max(1)));
+            if bucket != self.realtime_pulse_bucket {
+                self.realtime_pulse_bucket = bucket;
+                changed = true;
+            }
+        } else {
+            self.realtime_pulse_bucket = u64::MAX;
         }
         // While a turn runs, the thinking glyph steps every 220 milliseconds and the clock ticks.
         if matches!(self.turn, Turn::Working { .. }) && !self.prefs.reduce_motion {
             tx.wake_after(std::time::Duration::from_millis(220));
             changed = true;
-        }
-        // Home's starters turn one step each interval while nothing holds them.
-        let home = self.home && self.screen == Screen::Workspace && self.view == View::Agent && self.chat_id.is_none() && !self.general && self.active.is_some() && matches!(self.turn, Turn::Idle);
-        if home && !self.starter_hover && !self.prefs.reduce_motion && self.settings.is_none() && rune::tooling::headless_run().is_none() {
-            let held = self.starter_at.elapsed();
-            if held >= crate::ui::ROLL_EVERY {
-                self.starter = (self.starter + 1) % 4;
-                self.starter_at = std::time::Instant::now();
-                changed = true;
-                tx.wake_after(crate::ui::ROLL_EVERY);
-            } else {
-                tx.wake_after(crate::ui::ROLL_EVERY - held);
-            }
         }
         self.sync_open_chat(tx);
         if let Some(text) = self.notice.clone() {
@@ -3084,7 +3130,10 @@ impl App {
                     };
                 }
             }
-            Reply::Insights(b, days, r) if here(self, &b) && days == self.days => self.insights = to_load(self.failed(r)),
+            Reply::Insights(b, days, r) if here(self, &b) && days == self.days => {
+                self.insights = to_load(self.failed(r));
+                self.clear_chart_lines();
+            }
             Reply::Insights(..) => {}
             Reply::UpdateChecked(r) => {
                 use crate::update::Update;
