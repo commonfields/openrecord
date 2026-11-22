@@ -72,10 +72,8 @@ can check but not install, since it is not inside an `.app`.
   it, with a chart or view block appearing once it is whole. A server without
   the stream is followed by asking, as before, and its reply is revealed word
   by word when it arrives.
-- Home: a business's new chat opens on four ways to start, as a drum that
-  turns every 4.6 seconds: one card in focus, the ones before and after it
-  smaller, fainter and out of focus. The pointer holds it still; a press on
-  the card in focus sends it, a press on another brings it into focus.
+- Home: a business's new chat opens on the business name and the composer,
+  without animated starter cards.
 - Decisions waiting on the person float as a stack of up to six in the
   bottom right corner, level with the chat box, in the sparkle mark's purple.
   Under the pointer the stack spreads into a list that scrolls in place;

@@ -109,8 +109,7 @@ pub fn view(s: &App, t: &Theme, height: f32, places: &[(String, String, f64)]) -
         if maxx < 0.0 || minx > w || maxy < 0.0 || miny > h {
             continue;
         }
-        sh = sh.fill(pts.clone(), ink.alpha(if t.dark { 0.075 } else { 0.06 }));
-        sh = sh.stroke_with(pts, true, line, LineCap::Round, ink.alpha(if t.dark { 0.13 } else { 0.16 }));
+        sh = sh.stroke_with(pts, true, line, LineCap::Round, ink.alpha(if t.dark { 0.16 } else { 0.2 }));
     }
     // Where people are: a soft halo and a core, sized by share of the busiest place.
     let most = places.iter().map(|p| p.2).fold(1.0, f64::max);
@@ -163,7 +162,12 @@ pub fn view(s: &App, t: &Theme, height: f32, places: &[(String, String, f64)]) -
         .h(h)
         .clip_rounded(10.0)
         .cursor(if s.map_drag.is_some() { Cursor::Grabbing } else { Cursor::Grab })
-        .on_layout(|s: &mut App, r: [f32; 4]| s.map_w = r[2] / s.zoom())
+        .on_layout(|s: &mut App, r: [f32; 4]| {
+            let w = r[2] / s.zoom();
+            if (s.map_w - w).abs() > 0.5 {
+                s.map_w = w;
+            }
+        })
         .on_drag(move |s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
             tx.instant();
             match d.phase {

@@ -30,159 +30,84 @@ pub fn view(s: &App, t: &Theme, in_side: bool) -> El {
         Load::Failed(e) => failure(t, "insights-failed", e, |s: &mut App| s.refresh()),
         _ => col().w_full().gap(16.0).child(skeleton(t, 1)).child(skeleton(t, 2)),
     };
-    // A folder: the sections are its tabs along the top, and the chosen one runs
-    // into the sheet, which holds the date range and the section itself. The sheet
-    // is an inset card, as the Inbox's are.
-    // The sheet stays put, filling the page; only what is inside it scrolls.
+    // Plain section chips (not overlapping folder tabs) so switching sections does not
+    // rebuild heavy vector shapes or bounce the whole tree on new keys.
+    let inner = col()
+        .key(format!("analytics-body-{}", sec.key()))
+        .w_full()
+        .gap(20.0)
+        .children(sec.has_period().then(|| periods(s, t)))
+        .child(body);
     let content = col()
-        .key(format!("analytics-scroll-{}", sec.key()))
+        .key("analytics-scroll")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .child(col().w_full().pt(20.0).px(28.0).pb(28.0).gap(20.0).children(sec.has_period().then(|| periods(s, t))).child(body))
+        .child(col().w_full().pt(20.0).px(28.0).pb(28.0).child(inner))
         .scroll(rune::ScrollSpec { stick_bottom: false });
-    let sheet = shadows(
-        col()
-            .key("analytics-sheet")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            // Square top left, under the first tab, so the folder's edge runs straight.
-            .corners(SHEET_CORNERS)
-            .clip_corners(SHEET_CORNERS)
-            .fill(t.card)
-            .child(content),
-        &t.card_shadow,
-    );
-    // The tabs are laid over the sheet's top edge, so the chosen one covers the
-    // sheet's outline where they meet and the two read as one piece.
-    let slot = in_side as usize;
-    let room = if s.analytics_w[slot] > 0.0 { s.analytics_w[slot] } else { available(s, in_side) };
-    let (tabs, rows) = section_tabs(s, t, room);
-    let sheet_col = col()
-        .key(format!("overview-{}", sec.key()))
+    let sheet = col()
+        .key("analytics-sheet")
         .w_full()
-        .h(0.0)
         .grow(1.0)
         .min_h(0.0)
-        .pt(rows as f32 * TAB_H)
-        .on_layout(move |s: &mut App, r: [f32; 4]| s.analytics_w[slot] = r[2])
-        .child(sheet)
-        .child(tabs)
-        .child(el().key("analytics-bottom-gutter").w_full().h(PAGE_INSET_BOTTOM));
-    // Horizontal on the `h_full` shell; bottom gutter on the flex column, so the
-    // sheet cannot grow through the panel background.
+        .radius(12.0)
+        .clip_rounded(12.0)
+        .border(1.0, t.border)
+        .fill(t.card)
+        .child(content);
+    let slot = in_side as usize;
     col()
-        .key(format!("overview-shell-{}", sec.key()))
+        .key("overview-shell")
         .w_full()
         .h_full()
         .min_h(0.0)
         .px(PAGE_INSET_X)
         .pt(0.0)
-        .child(sheet_col)
+        .on_layout(move |s: &mut App, r: [f32; 4]| {
+            let w = r[2];
+            if (s.analytics_w[slot] - w).abs() > 0.5 {
+                s.analytics_w[slot] = w;
+            }
+        })
+        .child(section_picker(s, t))
+        .child(sheet)
+        .child(el().key("analytics-bottom-gutter").w_full().h(PAGE_INSET_BOTTOM))
 }
 
-/// The folder tabs' height.
-const TAB_H: f32 = 30.0;
-/// How far each tab's right edge leans out over the next one.
-const LEAN: f32 = 16.0;
-/// The first tab's distance from the sheet's left edge: none, so the folder's
-/// left side runs straight from the tab down the sheet.
-const TAB_LEAD: f32 = 0.0;
-/// A tab's width when there is room: the same for every section, whatever its name.
-const TAB_W: f32 = 132.0;
-/// The narrowest a tab gets before the tabs take a second row.
-const TAB_MIN: f32 = 100.0;
-/// The sheet's corners: square top left, under the first tab.
-const SHEET_CORNERS: [f32; 4] = [0.0, 12.0, 12.0, 12.0];
-
-/// The width the Analytics page has, in the window or in the side panel.
-fn available(s: &App, in_side: bool) -> f32 {
-    let split = if s.split_w > 0.0 { s.split_w } else { 1000.0 };
-    let helper = s.prefs.helper() / 100.0;
-    let inset_w = PAGE_INSET_X * 2.0;
-    if in_side {
-        (if s.side.wide { split } else { split * helper }) - inset_w
-    } else {
-        (if s.side_shown() { split * (1.0 - helper) } else { split }) - inset_w
-    }
-}
-
-/// A folder tab's outline in its own points: square at the bottom, a round
-/// corner top left, and the right edge leaning out with soft turns at both
-/// ends, flaring a little past `w` at the foot so it meets the sheet in a curve.
-fn tab_path(w: f32, h: f32) -> rune::Path {
-    let r = 8.0;
-    let top = w - LEAN;
-    rune::Path::new()
-        .move_to([0.0, h])
-        .line_to([0.0, r])
-        .cubic_to([0.0, r * 0.45], [r * 0.45, 0.0], [r, 0.0])
-        .line_to([top - 6.0, 0.0])
-        .cubic_to([top - 1.5, 0.0], [top + 0.5, 1.5], [top + 2.5, 5.5])
-        .line_to([w - 3.5, h - 6.0])
-        .cubic_to([w - 1.5, h - 2.0], [w + 1.0, h], [w + 5.0, h])
-}
-
-/// The sections as the folder's tabs, all one width, and how many rows they take.
-/// The chosen one is the sheet's colour and stands in front, running into it;
-/// the others sit behind, a shade darker, each leaning over the next as index
-/// cards do. Without room for one row they stack in rows, as a card file's tabs
-/// do, the chosen tab's row in front against the sheet.
-fn section_tabs(s: &App, t: &Theme, room: f32) -> (El, usize) {
-    let all = Section::ALL;
-    let usable = (room - TAB_LEAD - LEAN).max(TAB_MIN - LEAN);
-    let per = ((usable / (TAB_MIN - LEAN)).floor() as usize).clamp(1, all.len());
-    let rows = all.len().div_ceil(per);
-    // TAB_W when one row has room; across the width when they take rows.
-    let w = if rows == 1 { TAB_W.min((usable / all.len() as f32 + LEAN).floor()) } else { (usable / per as f32 + LEAN).floor() };
-    let step = w - LEAN;
-    let chosen = all.iter().position(|&sec| sec == s.section).unwrap_or(0);
-    let front = chosen / per;
-    // The chosen row sits at the bottom; the others above it in their own order.
-    let line = |row: usize| if row == front { rows - 1 } else if row < front { row } else { row - 1 };
-    let tab = |i: usize, sec: Section| {
-        let on = i == chosen;
-        let (r, c) = (i / per, i % per);
-        let hk = format!("tab:{}", sec.key());
-        let hovered = !on && s.row_hover.as_deref() == Some(hk.as_str());
-        // The chosen one reaches a point into the sheet to cover its outline.
-        let h = if on { TAB_H + 1.0 } else { TAB_H };
-        // Solid even behind, so where one leans over the next only its edge shows.
-        let behind = if t.dark { t.background.mix(t.card, if hovered { 0.75 } else { 0.4 }) } else if hovered { t.sidebar.mix(t.card, 0.5) } else { t.sidebar };
-        let fill = if on { t.card } else { behind };
-        let shape = rune::Shape::new()
-            .fill_path(&tab_path(w, h).line_to([0.0, h]).close(), fill)
-            .stroke_path(&tab_path(w, TAB_H), 1.0, rune::LineCap::Round, t.border);
-        row()
+/// Section chips between the breadcrumbs and the sheet.
+fn section_picker(s: &App, t: &Theme) -> El {
+    let mut r = row()
+        .key("section-picker")
+        .w_full()
+        .min_h(28.0)
+        .pb(8.0)
+        .gap(4.0)
+        .flex_wrap()
+        .role("tablist")
+        .label("Analytics section");
+    for sec in Section::ALL {
+        let on = s.section == sec;
+        let mut chip = row()
             .key(format!("section-{}", sec.key()))
-            .absolute(TAB_LEAD + c as f32 * step, line(r) as f32 * TAB_H)
-            .size(w, h)
-            // Clear of the leaning edge of the tab before it, which covers this one's left side.
-            .pl(if c == 0 { 14.0 } else { LEAN + 10.0 })
-            .pr(LEAN + 4.0)
-            .pb(if on { 1.0 } else { 0.0 })
-            .center_y()
-            .shape(shape)
+            .h(28.0)
+            .px(10.0)
+            .radius(6.0)
+            .center()
             .role("tab")
             .label(sec.label())
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .on_hover_change(crate::ui::widgets::track_hover(hk))
-            // Only the section changes: Analytics beside the chat stays in the panel.
-            .on_press(move |s: &mut App| s.section = sec)
-            .child(label(sec.label(), type_::XS_MEDIUM.lh(16.0), if on || hovered { t.foreground } else { t.muted_foreground }).truncate().min_w(0.0))
-    };
-    let mut track = el().key("section-tabs").absolute(0.0, 0.0).w_full().h(rows as f32 * TAB_H + 1.0).role("tablist").label("Analytics section");
-    // Back rows first; in each row right to left, so a tab's leaning edge lies
-    // over the one after it; the chosen one last, in front of everything.
-    let mut order: Vec<usize> = (0..all.len()).filter(|&i| i != chosen).collect();
-    order.sort_by_key(|&i| (line(i / per), std::cmp::Reverse(i % per)));
-    for i in order {
-        track = track.child(tab(i, all[i]));
+            .on_press(move |st: &mut App| {
+                if st.section != sec {
+                    st.show_section(sec);
+                }
+            })
+            .child(label(sec.label(), type_::XS_MEDIUM, if on { t.foreground } else { t.muted_foreground }));
+        chip = if on { chip.fill(t.accent) } else { chip.hover(t.hover_tint) };
+        r = r.child(chip);
     }
-    (track.child(tab(chosen, all[chosen])), rows)
+    r
 }
 
 fn ask(request: &'static str) -> impl Fn(&mut App) + 'static {
@@ -208,7 +133,6 @@ fn periods(s: &App, t: &Theme) -> El {
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
-            .motion(CONTROL)
             .on_press(move |s: &mut App| s.set_days(d))
             .child(label(format!("{d} days"), type_::XS_MEDIUM, if on { t.foreground } else { t.muted_foreground }));
         chip = if on { chip.fill(t.accent) } else { chip.hover(t.hover_tint) };
@@ -1074,7 +998,7 @@ fn realtime(s: &App, t: &Theme, i: &Insights, in_side: bool) -> El {
             .child(note(t, "Realtime reads your Google Analytics property: people on the site in the last 30 minutes, where they are and what they read."))
             .child(row().child(button(t, "realtime-connect", "Connect on the Channels page", Variant::Outline).on_press(|s: &mut App| s.show_page(Page::Channels))));
     };
-    // Side Analytics and reduce-motion skip the ~8fps redraw loop for the Live dot.
+    // Side Analytics and reduce-motion skip the Live dot pulse redraw.
     let pulse = if in_side || s.prefs.reduce_motion {
         0.85
     } else {
@@ -1171,4 +1095,37 @@ fn realtime(s: &App, t: &Theme, i: &Insights, in_side: bool) -> El {
     let minutes_card = kit::panel(t, "rt-minutes", "Each minute", Some("Active people, the last 30 minutes, newest on the right".into()), None, 0.0,
         col().w_full().gap(8.0).child(minutes).child(row().w_full().child(label("30 min ago", type_::AXIS, t.chart.axis)).child(el().grow(1.0)).child(label("now", type_::AXIS, t.chart.axis))));
     col().w_full().gap(16.0).child(strip).child(map).child(kit::responsive_cols(s, vec![activity, countries])).child(minutes_card)
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+    use crate::fixtures;
+    use crate::state::App;
+    use crate::theme::Theme;
+    use std::time::Instant;
+
+    fn bench(s: &App) -> std::time::Duration {
+        let t = Theme::light();
+        let start = Instant::now();
+        for _ in 0..40 {
+            let _ = view(s, &t, false);
+        }
+        start.elapsed()
+    }
+
+    #[test]
+    fn overview_sections_rebuild_quickly() {
+        let budget = std::time::Duration::from_millis(1500);
+        for sec in Section::ALL {
+            let mut s = App::new();
+            fixtures::overview(&mut s);
+            s.section = sec;
+            if sec == Section::Answers {
+                s.chart_hover = Some(("hero-trend".into(), 20));
+            }
+            let took = bench(&s);
+            assert!(took < budget, "{:?} builds too slow: {took:?}", sec);
+        }
+    }
 }

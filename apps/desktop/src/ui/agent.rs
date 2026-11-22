@@ -121,7 +121,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(16.0);
 
-    // Only Home shows the rolling starters; a new session opens on its transcript.
+    // Only Home shows the empty start state; a new session opens on its transcript.
     let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
     let body = if fresh && (s.home || s.general) { start(s, t, &business) } else {
         col().key("transcript-body").w_full().grow(1.0).min_h(0.0)
@@ -196,127 +196,53 @@ fn timeline_rail(s: &App, t: &Theme, owner: &str, messages: &[Message], turns: &
         .child(marks.max_h(360.0).min_h(0.0).shrink().scroll(ScrollSpec { stick_bottom: false })))
 }
 
-/// Ways to begin, each a request the agent can act on at once: its name, what
-/// the agent does with it, and the message it sends.
-const STARTERS: [(&rune::Icon, &str, &str, &str); 4] = [
-    (&icons::TARGET, "What should we focus on this week?", "Reads your goal, open work and latest numbers, then proposes the next step.", "What should we focus on this week? Read our goal, open work and latest numbers, and propose the most useful next step for me to approve."),
-    (&icons::GLOBE, "Audit my website", "Reads your pages and prepares the first fix for you to approve.", "Audit our website and prepare the most valuable fix for me to approve."),
-    (&icons::MESSAGE_CIRCLE_QUESTION, "What do AI assistants say about us?", "Checks their answers against your facts and names what is wrong.", "What do AI assistants say about us? Check their answers against our approved facts and tell me what is wrong and what to fix first."),
-    (&icons::CHART_LINE, "How are we doing?", "Progress against your goal, what changed and what is still unknown.", "How are we doing against our goal? Show what changed, what worked and what is still unknown."),
-];
-
-/// How long one starter holds the focus before the next rolls in.
-pub const ROLL_EVERY: std::time::Duration = std::time::Duration::from_millis(4600);
-pub(super) const ROLL_H: f32 = 300.0;
-/// The drum's width: a card reads as one line of intent, not a banner.
-const ROLL_W: f32 = 440.0;
-const ROLL_CARD_H: f32 = 92.0;
-/// From the focused card to the one above or below it.
-const ROLL_STEP: f32 = 98.0;
-const ROLL: rune::Spring = rune::Spring::new(0.85, 0.0);
-
-/// How long a card takes to settle in focus after the drum turns.
-const ROLL_SETTLE: std::time::Duration = std::time::Duration::from_millis(600);
-
-/// Whether a press on a starter sends it: only the card in focus, once it has settled.
-pub fn starter_sends(in_focus: bool, since_turn: std::time::Duration) -> bool {
-    in_focus && since_turn >= ROLL_SETTLE
-}
-
-/// Where starter `k` sits while `focus` has the focus: -1 above, 0 in focus, 1 below, 2 out of sight below.
-pub fn roll_slot(k: usize, focus: usize, n: usize) -> i32 {
-    ((k + n + 1 - focus % n) % n) as i32 - 1
-}
-
-/// The ways to begin as a drum that turns on its own: one card in focus, the
-/// one before above it and the one after below, each smaller, fainter and out
-/// of focus. Under the pointer it holds still; a press on the card in focus
-/// sends it, a press on another brings it into focus.
-fn starters(s: &App, t: &Theme) -> El {
-    let n = STARTERS.len();
-    let drum = el().key("starters").w_full().max_w(ROLL_W).h(ROLL_H).role("list").label("Ways to start").on_hover_change(|s: &mut App, inside, _tx| {
-        s.starter_hover = inside;
-        if !inside {
-            s.starter_at = std::time::Instant::now();
-        }
-    });
-    let mut cards: Vec<(i32, El)> = Vec::new();
-    for (k, (icon, name, what, prompt)) in STARTERS.iter().enumerate() {
-        let slot = roll_slot(k, s.starter, n);
-        let focus = slot == 0;
-        let (y, scale, fade, blur) = match slot {
-            0 => (0.0, 1.0, 1.0, 0.0),
-            -1 => (-ROLL_STEP, 0.9, 0.55, 1.6),
-            1 => (ROLL_STEP, 0.9, 0.55, 1.6),
-            _ => (ROLL_STEP * 1.8, 0.82, 0.0, 4.0),
-        };
-        let prompt = *prompt;
-        let card = crate::ui::widgets::card(t)
-            .key(format!("starter-{}", chat::slug(name)))
-            .pin(Some(0.0), Some((ROLL_H - ROLL_CARD_H) / 2.0), Some(0.0), None)
-            .h(ROLL_CARD_H)
-            .px(20.0)
-            .gap(6.0)
-            .justify_center()
-            .role("button")
-            .label(name.to_string())
-            .focusable(focus)
-            .cursor(Cursor::Pointer)
-            .hover(if focus { t.hover_tint } else { rune::Color::TRANSPARENT })
-            // The card that leaves at the top comes back from below unseen, so it never crosses the drum.
-            .motion(if slot == 2 { rune::Spring::NONE } else { ROLL })
-            .offset(0.0, y)
-            .scale(scale)
-            .opacity(fade)
-            .blur(blur)
-            .on_press_tx(move |s: &mut App, tx| {
-                // Judged on the drum as it is now, not as this frame drew it: a card sends
-                // only once it has settled in focus, so a press as the drum turns never
-                // sends the card that slid under the pointer.
-                if starter_sends(s.starter == k, s.starter_at.elapsed()) {
-                    s.composer.replace_text(prompt);
-                    s.send_message(tx);
-                } else {
-                    s.starter = k;
-                    s.starter_at = std::time::Instant::now();
-                }
-            })
-            .child(row().w_full().gap(10.0).center_y().child(ico(icon, 16.0, t.primary_ink)).child(label(name.to_string(), type_::BASE_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0)))
-            .child(label(what.to_string(), type_::SM_13, t.muted_foreground).truncate());
-        cards.push((slot, card));
-    }
-    // The card in focus is drawn last, over its neighbours; the one out of sight first.
-    cards.sort_by_key(|(slot, _)| std::cmp::Reverse(slot.abs()));
-    drum.children(cards.into_iter().map(|(_, c)| c))
-}
-
-/// Home: the first thing a business's agent shows. What waits on the person
-/// comes first, since a decision is the one thing only they can do; then ways
-/// to start that send in one press. A general chat has no business to brief on.
+/// Vertical offset for Home and the side launcher so they line up in a tall window.
 pub(super) fn home_stack_top(s: &App) -> f32 {
     let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) } else { 800.0 };
-    ((height - 48.0 - 150.0 - ROLL_H) * 0.42).max(32.0)
+    ((height - 48.0 - 150.0) * 0.32).max(32.0)
 }
 
-fn start(s: &App, t: &Theme, _business: &str) -> El {
+/// Home before the first message: title and composer, without animated starter cards.
+fn start(s: &App, t: &Theme, business: &str) -> El {
     let column = s.prefs.chat_width.max().min(760.0);
-    let mut c = col().key("start").w_full().max_w(column).px(24.0).gap(28.0);
-    if s.general {
-        return col().key("start-scroll").w_full().grow(1.0).min_h(0.0).center().child(
-            c.items_center().gap(6.0).child(label("General chat", type_::TITLE, t.foreground).role("heading")).child(
-                label("Ask anything. This chat reads no business's records; start one from a business to work on it.", type_::SM, t.muted_foreground).wrap(),
-            ),
-        );
-    }
-    c = c.child(row().w_full().justify_center().child(starters(s, t)));
-    // Sits a little above the middle of a tall window, and scrolls in a short one.
+    let body = if s.general {
+        col()
+            .key("start")
+            .w_full()
+            .max_w(column)
+            .px(24.0)
+            .gap(6.0)
+            .items_center()
+            .child(label("General chat", type_::TITLE, t.foreground).role("heading"))
+            .child(label(
+                "Ask anything. This chat reads no business's records; start one from a business to work on it.",
+                type_::SM,
+                t.muted_foreground,
+            )
+            .wrap())
+    } else {
+        col()
+            .key("start")
+            .w_full()
+            .max_w(column)
+            .px(24.0)
+            .gap(6.0)
+            .items_center()
+            .child(label(business.to_string(), type_::TITLE, t.foreground).role("heading"))
+            .child(label(
+                "Ask a question in the box below, or open Browser, Files, Analytics, or Campaigns from the side panel.",
+                type_::SM,
+                t.muted_foreground,
+            )
+            .wrap())
+    };
     let top = home_stack_top(s);
     col()
         .key("start-scroll")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .child(col().w_full().items_center().pt(top).pb(32.0).child(c))
+        .child(col().w_full().items_center().pt(top).pb(32.0).child(body))
         .scroll(ScrollSpec { stick_bottom: false })
 }
 
@@ -2495,26 +2421,3 @@ fn share_dialog(t: &Theme, k: &Kit, sh: &crate::state::ShareChat, layer: &mut Ve
         .build(k, layer);
 }
 
-#[cfg(test)]
-mod roll_tests {
-    use super::roll_slot;
-
-    #[test]
-    fn each_starter_has_one_place_and_the_drum_turns_one_step() {
-        // With the first in focus: the last above it, the second below, the third out of sight.
-        assert_eq!((0..4).map(|k| roll_slot(k, 0, 4)).collect::<Vec<_>>(), vec![0, 1, 2, -1]);
-        // One step on, every card moves up one place, and the one at the top goes out of sight below.
-        assert_eq!((0..4).map(|k| roll_slot(k, 1, 4)).collect::<Vec<_>>(), vec![-1, 0, 1, 2]);
-        assert_eq!((0..4).map(|k| roll_slot(k, 3, 4)).collect::<Vec<_>>(), vec![1, 2, -1, 0]);
-    }
-
-    #[test]
-    fn a_press_sends_only_the_settled_card_in_focus() {
-        use super::starter_sends;
-        use std::time::Duration;
-        assert!(starter_sends(true, Duration::from_millis(2000)));
-        // Just turned: the card is still sliding in, so the press only focuses it.
-        assert!(!starter_sends(true, Duration::from_millis(100)));
-        assert!(!starter_sends(false, Duration::from_millis(2000)));
-    }
-}

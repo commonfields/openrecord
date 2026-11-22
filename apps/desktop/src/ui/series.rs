@@ -9,6 +9,7 @@ use crate::format;
 use crate::state::App;
 use crate::surface::{Movement, Unit};
 use crate::theme::{Theme, type_};
+use crate::ui::charts;
 use crate::ui::widgets::label;
 
 const VIEW_H: f32 = 100.0;
@@ -106,18 +107,7 @@ pub fn view(s: &App, t: &Theme, key: &str, name: Option<&str>, unit: &Unit, poin
         sh = sh.stroke_with(vec![p, q], false, 13.0, LineCap::Round, t.background).stroke_with(vec![p, q], false, 10.0, LineCap::Round, ink);
     }
 
-    // One hover cell per day.
-    let mut hits = row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
-    for i in 0..n {
-        let k = key.to_string();
-        hits = hits.child(col().grow(1.0).h_full().key(format!("{key}-day-{i}")).help(format::date(&points[i].0)).on_hover_change(move |s: &mut App, inside, _| {
-            if inside {
-                s.chart_hover = Some((k.clone(), i));
-            } else if s.chart_hover.as_ref() == Some(&(k.clone(), i)) {
-                s.chart_hover = None;
-            }
-        }));
-    }
+    let hits = charts::chart_hit_row(key, n);
     let plot = col().key(format!("{key}-plot")).w_full().h(HEIGHT).child(canvas(sh.view_box(1.0, VIEW_H)).w_full().h_full()).child(hits);
 
     let mut c = col().key(key.to_string()).w_full().gap(16.0).role("img").label(format!("{}: {}", name.unwrap_or("Value over time"), points.iter().map(|p| format!("{} {}", p.0, p.1)).collect::<Vec<_>>().join(", ")));

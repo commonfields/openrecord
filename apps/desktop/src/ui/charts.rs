@@ -4,14 +4,17 @@
 //! rate as its trailing average, each day a faint dot), the comparison as a
 //! dashed grey line, an optional dotted comparison line (the
 //! trailing average), three faint gridlines, the value axis on the right and
-//! a tooltip for the day under the pointer. [`verdict_bar`] is `VerdictBar`.
+//! hover help for the day under the pointer. [`verdict_bar`] is `VerdictBar`.
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use rune::{Color, El, LineCap, Shape, canvas, col, el, row};
 
 use crate::format;
 use crate::insights::Verdicts;
 use crate::state::App;
-use crate::theme::{Theme, shadows, type_};
+use crate::theme::{Theme, type_};
 use crate::ui::widgets::label;
 
 /// The verdict colours in the web's order (`verdictSeries`), with their names.
@@ -170,8 +173,8 @@ fn monotone(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
     for i in 0..n - 1 {
         let ([x0, y0], [x1, y1]) = (pts[i], pts[i + 1]);
         let h = x1 - x0;
-        for k in 0..8 {
-            let s = k as f32 / 8.0;
+        for k in 0..4 {
+            let s = k as f32 / 4.0;
             let (h00, h10, h01, h11) = (2.0 * s.powi(3) - 3.0 * s * s + 1.0, s.powi(3) - 2.0 * s * s + s, -2.0 * s.powi(3) + 3.0 * s * s, s.powi(3) - s * s);
             out.push([x0 + s * h, h00 * y0 + h10 * h * m[i] + h01 * y1 + h11 * h * m[i + 1]]);
         }
@@ -202,6 +205,108 @@ fn dots(line: &[[f32; 2]], w: f32, h: f32, gap: f32) -> Vec<[f32; 2]> {
 /// The day under the pointer, if it is over this chart.
 fn hovered(s: &App, key: &str) -> Option<usize> {
     s.chart_hover.as_ref().filter(|(k, _)| k == key).map(|(_, i)| *i)
+}
+
+/// Fewer hit columns than days so moving across a chart does not rebuild the
+/// whole Analytics tree once per day.
+const CHART_HIT_COLUMNS: usize = 20;
+
+/// Reused smoothed lines across redraws; hover and tooltips skip monotone().
+#[derive(Default)]
+pub struct LineCache {
+    stamp: u64,
+    lines: HashMap<String, (u64, Vec<[f32; 2]>)>,
+}
+
+impl LineCache {
+    pub fn clear(&mut self) {
+        self.stamp = self.stamp.wrapping_add(1);
+        self.lines.clear();
+    }
+
+    pub fn main_line(&mut self, key: &str, fp: u64, compute: impl FnOnce() -> Vec<[f32; 2]>) -> Vec<[f32; 2]> {
+        if let Some((f, line)) = self.lines.get(key) {
+            if *f == fp {
+                return line.clone();
+            }
+        }
+        let line = compute();
+        self.lines.insert(key.to_string(), (fp, line.clone()));
+        line
+    }
+}
+
+fn chart_fingerprint(tr: &Trend<'_>, smooth: bool, lo: f64, max: f64) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    tr.key.hash(&mut h);
+    tr.height.to_bits().hash(&mut h);
+    tr.width_hint.to_bits().hash(&mut h);
+    tr.percent.hash(&mut h);
+    smooth.hash(&mut h);
+    lo.to_bits().hash(&mut h);
+    max.to_bits().hash(&mut h);
+    for v in tr.values {
+        v.map(f64::to_bits).hash(&mut h);
+    }
+    if let Some((vals, name)) = &tr.compare {
+        name.hash(&mut h);
+        for v in vals.iter() {
+            v.map(f64::to_bits).hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
+
+/// Invisible targets across the plot width; maps each column to the nearest day index.
+pub fn chart_hit_row(chart_key: &str, days: usize) -> El {
+    chart_hit_row_help(chart_key, days, None::<&dyn Fn(usize) -> String>)
+}
+
+/// Like [`chart_hit_row`], with optional accessibility help text per hovered day index.
+pub fn chart_hit_row_help(
+    chart_key: &str,
+    days: usize,
+    help: Option<&dyn Fn(usize) -> String>,
+) -> El {
+    if days == 0 {
+        return el();
+    }
+    let cols = days.min(CHART_HIT_COLUMNS);
+    let mut hits = row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
+    for j in 0..cols {
+        let day = if cols == 1 { 0 } else { j * (days - 1) / (cols - 1) };
+        let key = chart_key.to_string();
+        let tip = help.map(|h| h(day));
+        let mut col = col()
+            .grow(1.0)
+            .h_full()
+            .key(format!("{chart_key}-hit-{j}"))
+            .on_hover_change(move |s: &mut App, inside, tx| {
+                if inside {
+                    s.schedule_chart_hover(key.clone(), day, tx);
+                } else if s.clear_chart_hover_now(&key, day) {
+                    tx.instant();
+                }
+            });
+        if let Some(tip) = tip {
+            col = col.help(tip);
+        }
+        hits = hits.child(col);
+    }
+    hits
+}
+
+fn trend_day_help(tr: &Trend<'_>, day: usize) -> String {
+    let date = tr.dates.get(day).map(|d| format::short_day(d)).unwrap_or_default();
+    let value = tr
+        .values
+        .get(day)
+        .copied()
+        .flatten()
+        .map(|v| tr.format(v))
+        .unwrap_or_else(|| "—".into());
+    format!("{date}: {value}")
 }
 
 pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
@@ -235,26 +340,34 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
             shape = shape.stroke_with(vec![p, [p[0] + 0.0001, p[1]]], false, 3.5, LineCap::Round, tr.color.alpha(0.28));
         }
     }
-    // The line is always a smooth curve through its days.
-    let main = monotone(&line_of(if smooth { tr.compare.as_ref().map(|c| c.0).unwrap_or(&[]) } else { tr.values }));
-    let points = if smooth { tr.compare.as_ref().map(|c| c.0.iter().flatten().count()).unwrap_or(0) } else { tr.values.iter().flatten().count() };
+    let line_vals: &[Option<f64>] = if smooth {
+        tr.compare.as_ref().map(|c| c.0.as_ref()).unwrap_or(&[])
+    } else {
+        tr.values
+    };
+    let fp = chart_fingerprint(&tr, smooth, lo, max);
+    let main = {
+        let key = tr.key.to_string();
+        let line_of_vals = line_of(line_vals);
+        s.chart_lines.borrow_mut().main_line(&key, fp, || monotone(&line_of_vals))
+    };
+    let points = if smooth {
+        tr.compare.as_ref().map(|c| c.0.iter().flatten().count()).unwrap_or(0)
+    } else {
+        tr.values.iter().flatten().count()
+    };
     if main.len() >= 2 {
-        // A soft wash under the line only when there is enough of it to read as a trend.
-        // It fades from the line down to the axis: bands that overlap most just under the line.
+        // One soft fill under the line (18 stacked bands were costly on every redraw).
         if points >= 5 {
-            const BANDS: usize = 18;
-            for k in 1..=BANDS {
-                let f = k as f32 / BANDS as f32;
-                let mut area: Vec<[f32; 2]> = main.clone();
-                area.extend(main.iter().rev().map(|p| [p[0], p[1] + (VIEW_H - p[1]) * f]));
-                shape = shape.fill(area, tr.color.alpha(0.011));
-            }
+            let mut area: Vec<[f32; 2]> = main.clone();
+            area.extend(main.iter().rev().map(|p| [p[0], VIEW_H]));
+            shape = shape.fill(area, tr.color.alpha(0.14));
         }
         // The comparison sits behind the line.
         if let Some((vals, _)) = tr.compare.as_ref().filter(|_| !smooth) {
-            let pts = dots(&monotone(&line_of(vals)), tr.width_hint, tr.height, 4.0);
-            for pair in pts.chunks(2).filter(|c| c.len() == 2) {
-                shape = shape.stroke_with(vec![pair[0], pair[1]], false, 1.25, LineCap::Round, t.chart.compare);
+            let before = monotone(&line_of(vals));
+            if before.len() >= 2 {
+                shape = shape.stroke_with(before, false, 1.25, LineCap::Round, t.chart.compare);
             }
         }
         shape = shape.stroke_with(main.clone(), false, 2.0, LineCap::Round, tr.color);
@@ -273,23 +386,7 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
     }
     let shape = shape.view_box(1.0, VIEW_H);
 
-    // Hit areas, one per day, that set the hovered day.
-    let mut hits = row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
-    for i in 0..n {
-        let key = tr.key.to_string();
-        let mut cell = col().grow(1.0).h_full().key(format!("{}-day-{i}", tr.key)).on_hover_change(move |s: &mut App, inside, _tx| {
-            if inside {
-                s.chart_hover = Some((key.clone(), i));
-            } else if s.chart_hover.as_ref() == Some(&(key.clone(), i)) {
-                s.chart_hover = None;
-            }
-        });
-        if hover == Some(i) {
-            let card = tooltip(t, &tr, i);
-            cell = cell.child(if i > n / 2 { card.pin(None, Some(0.0), Some(14.0), None) } else { card.pin(Some(14.0), Some(0.0), None, None) });
-        }
-        hits = hits.child(cell);
-    }
+    let hits = chart_hit_row_help(tr.key, n, Some(&|day| trend_day_help(&tr, day)));
 
     let plot = col().grow(1.0).min_w(0.0).h(tr.height).child(canvas(shape).w_full().h_full()).child(hits);
     let mut scale = col().w(AXIS_W).h(tr.height);
@@ -303,28 +400,6 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
         .w_full()
         .child(row().w_full().child(plot).child(scale))
         .child(row().w_full().pr(AXIS_W).child(axis(t, tr.dates, tr.width_hint)))
-}
-
-fn tooltip(t: &Theme, tr: &Trend<'_>, i: usize) -> El {
-    let date = tr.dates.get(i).map(|d| format::short_day(d)).unwrap_or_default();
-    let value = |v: Option<f64>| v.map(|v| tr.format(v)).unwrap_or_else(|| "—".into());
-    let line = |mark: El, name: String, v: String| {
-        row().w_full().gap(8.0).center_y().child(mark).child(label(name, type_::XS, t.muted_foreground).grow(1.0)).child(label(v, type_::XS_MEDIUM.features("'tnum' 1"), t.foreground))
-    };
-    let mut c = col()
-        .min_w(168.0)
-        .px(12.0)
-        .py(8.0)
-        .gap(4.0)
-        .radius(8.0)
-        .fill(t.popover)
-        .child(label(date, type_::XS11, t.muted_foreground))
-        .child(line(el().size(12.0, 2.0).radius(1.0).fill(tr.color), tr.label.to_string(), value(tr.values.get(i).copied().flatten())));
-    if let Some((vals, name)) = &tr.compare {
-        let dots = (0..3).fold(Shape::new(), |s, k| s.stroke_with(vec![[1.0 + k as f32 * 5.0, 1.0], [1.01 + k as f32 * 5.0, 1.0]], false, 1.5, LineCap::Round, t.chart.compare));
-        c = c.child(line(canvas(dots).size(12.0, 2.0), name.clone(), value(vals.get(i).copied().flatten())));
-    }
-    shadows(c, &t.float_shadow)
 }
 
 /// Dates under a chart, spaced as the web's axis spaces them (at least 40 points apart).
