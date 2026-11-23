@@ -312,12 +312,42 @@ pub struct NewChat {
     pub clients: Load<Vec<(String, String)>>,
 }
 
-/// The business switcher: a wheel of names at the window's right edge.
+/// What picking a card in the business deck does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerMode {
+    /// From the sidebar: switch to that business.
+    Switch,
+    /// From the composer's folder chip: start a chat about that business (or a general one).
+    Chat,
+}
+
+/// The business picker: a deck of cards in the content panel.
 pub struct BusinessPicker {
-    /// The business at the wheel's middle.
+    pub mode: PickerMode,
+    /// The card in front.
     pub focus: usize,
     /// Scrolling not yet turned into a notch, in points.
     pub scroll: f32,
+    /// The deck's width as last laid out, so the front card sits in its middle.
+    pub width: f32,
+    /// While the deck is dragged: how far the cards follow the pointer, and how
+    /// much of the drag has already been spent moving to another card.
+    pub drag: f32,
+    pub drag_spent: f32,
+}
+
+impl BusinessPicker {
+    fn new(mode: PickerMode, focus: usize) -> Self {
+        BusinessPicker { mode, focus, scroll: 0.0, width: 0.0, drag: 0.0, drag_spent: 0.0 }
+    }
+}
+
+/// One card in the business deck: the business it picks (`None` is a general chat),
+/// its name, and whether its numbers are sample data.
+pub struct PickerCard {
+    pub id: Option<String>,
+    pub name: String,
+    pub sample: bool,
 }
 
 /// "Find…" (the web's command palette): the query and the highlighted result.
@@ -970,7 +1000,42 @@ impl App {
             .as_deref()
             .and_then(|id| self.businesses.iter().position(|b| b.id == id))
             .unwrap_or(0);
-        self.business_picker = Some(BusinessPicker { focus, scroll: 0.0 });
+        self.business_picker = Some(BusinessPicker::new(PickerMode::Switch, focus));
+    }
+
+    /// The composer's folder chip: the same deck, to choose what the next chat is about.
+    pub fn open_chat_picker(&mut self) {
+        self.menu = None;
+        let focus = if self.general {
+            self.businesses.len()
+        } else {
+            self.active.as_deref().and_then(|id| self.businesses.iter().position(|b| b.id == id)).unwrap_or(0)
+        };
+        self.business_picker = Some(BusinessPicker::new(PickerMode::Chat, focus));
+    }
+
+    /// The cards in the open deck: the businesses, and a general chat when choosing a chat.
+    pub fn picker_cards(&self) -> Vec<PickerCard> {
+        let mut cards: Vec<PickerCard> = self.businesses.iter().map(|b| PickerCard { id: Some(b.id.clone()), name: b.name.clone(), sample: b.sample }).collect();
+        if self.business_picker.as_ref().is_some_and(|p| p.mode == PickerMode::Chat) {
+            cards.push(PickerCard { id: None, name: "General chat".into(), sample: false });
+        }
+        cards
+    }
+
+    /// Acts on the card in front: switches business, or starts the chat.
+    pub fn pick_card(&mut self, index: usize) {
+        let Some(p) = &self.business_picker else { return };
+        let mode = p.mode;
+        let Some(card) = self.picker_cards().into_iter().nth(index) else { return };
+        match (mode, card.id) {
+            (PickerMode::Switch, Some(id)) => self.select_business(&id),
+            (PickerMode::Switch, None) => self.close_business_picker(),
+            (PickerMode::Chat, id) => {
+                self.close_business_picker();
+                self.start_chat(id);
+            }
+        }
     }
 
     pub fn close_business_picker(&mut self) {

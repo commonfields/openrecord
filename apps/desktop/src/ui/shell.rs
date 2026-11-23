@@ -800,17 +800,18 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
     h
 }
 
-/// Turns the business wheel one name per notch of scrolling, either direction.
+/// Moves the business deck one card per notch of scrolling, sideways or up and down.
 fn business_picker_wheel(s: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx) -> bool {
     if e.mods.cmd {
         return false;
     }
-    let count = s.businesses.len();
+    let count = s.picker_cards().len();
     let Some(picker) = s.business_picker.as_mut() else {
         return false;
     };
-    const NOTCH: f32 = 36.0;
-    picker.scroll += e.dy;
+    const NOTCH: f32 = 40.0;
+    // A trackpad swipes sideways; a mouse wheel only turns up and down.
+    picker.scroll += if e.dx.abs() > e.dy.abs() { e.dx } else { e.dy };
     let before = picker.focus;
     while picker.scroll >= NOTCH {
         picker.scroll -= NOTCH;
@@ -827,236 +828,267 @@ fn business_picker_wheel(s: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx) ->
     true
 }
 
-/// The dial's ruler, in the wheel's points: the main ring with a band of ticks
-/// that turns with the focus (a long one at each business, four short between),
-/// a finer inner scale, a pointer at the middle, and small markers.
-fn ruler(t: &Theme, cx: f32, cy: f32, r: f32, step: f32, focus: usize) -> rune::Shape {
-    use rune::{LineCap, Shape};
-    let ink = t.foreground;
-    let pt = |radius: f32, a: f32| [cx + radius * a.cos(), cy + radius * a.sin()];
-    let arc = |radius: f32, from: f32, to: f32| -> Vec<[f32; 2]> {
-        let n = 96;
-        (0..=n).map(|i| pt(radius, from + (to - from) * i as f32 / n as f32)).collect()
-    };
-    const REACH: f32 = 1.3;
-    let fade = |a: f32| (1.0 - a.abs() / REACH).clamp(0.0, 1.0);
-    // An arc that thins out towards both ends instead of stopping short.
-    let taper = |mut s: Shape, radius: f32, reach: f32, width: f32, alpha: f32| -> Shape {
-        let n = 80;
-        for i in 0..n {
-            let (a0, a1) = (-reach + 2.0 * reach * i as f32 / n as f32, -reach + 2.0 * reach * (i + 1) as f32 / n as f32);
-            let edge = 1.0 - ((a0 + a1) / 2.0).abs() / reach;
-            let f = (edge / 0.4).clamp(0.0, 1.0);
-            let f = f * f * (3.0 - 2.0 * f);
-            if f > 0.0 {
-                s = s.line(pt(radius, a0), pt(radius, a1), width, LineCap::Butt, ink.alpha(alpha * f));
+/// How far a drag has to travel to bring the next card to the front.
+const DECK_STEP: f32 = 120.0;
+
+/// Dragging the deck with the pointer or a trackpad: the cards follow, and each
+/// `DECK_STEP` of travel brings the next one to the front; let go and they settle.
+fn business_picker_drag(s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx) {
+    let count = s.picker_cards().len();
+    let z = s.zoom().max(0.1);
+    let Some(p) = s.business_picker.as_mut() else { return };
+    match d.phase {
+        rune::Phase::Down => {
+            p.drag = 0.0;
+            p.drag_spent = 0.0;
+        }
+        rune::Phase::Move => {
+            let travel = d.dx / z;
+            let mut left = travel - p.drag_spent;
+            while left <= -DECK_STEP / 2.0 && p.focus + 1 < count {
+                p.focus += 1;
+                p.drag_spent -= DECK_STEP;
+                left += DECK_STEP;
+                crate::tick::detent();
             }
+            while left >= DECK_STEP / 2.0 && p.focus > 0 {
+                p.focus -= 1;
+                p.drag_spent += DECK_STEP;
+                left -= DECK_STEP;
+                crate::tick::detent();
+            }
+            // Past either end the deck only gives a little.
+            let at_end = (left < 0.0 && p.focus + 1 >= count) || (left > 0.0 && p.focus == 0);
+            p.drag = if at_end { left * 0.3 } else { left };
+            tx.instant();
         }
-        s
-    };
-    let mut s = taper(Shape::new(), r, 1.45, 1.0, 0.26);
-    s = taper(s, r - 58.0, 1.25, 1.0, 0.13);
-
-    // The tick band, turning with the focus.
-    let base = focus as i32 * 5;
-    for j in (base - 45)..=(base + 45) {
-        let a = (j - base) as f32 * step / 5.0;
-        let f = fade(a);
-        if f <= 0.0 {
-            continue;
+        rune::Phase::Up => {
+            p.drag = 0.0;
+            p.drag_spent = 0.0;
         }
-        let major = j.rem_euclid(5) == 0;
-        let len = if major { 18.0 } else { 9.0 };
-        s = s.line(pt(r - 3.0, a), pt(r - 3.0 - len, a), if major { 1.5 } else { 1.0 }, LineCap::Butt, ink.alpha(0.08 + if major { 0.5 } else { 0.3 } * f));
     }
-    // The inner scale: fine and fixed, like the dial's housing.
-    for j in -60..=60 {
-        let a = j as f32 * step / 10.0;
-        let f = fade(a);
-        if f <= 0.0 {
-            continue;
-        }
-        s = s.line(pt(r - 58.0, a), pt(r - 58.0 - if j % 10 == 0 { 7.0 } else { 3.5 }, a), 1.0, LineCap::Butt, ink.alpha(0.05 + 0.2 * f));
-    }
-    // A pointer inside the ring, aimed at the name in focus.
-    let tip = pt(r - 66.0, 0.0);
-    s = s.fill(vec![tip, [tip[0] - 13.0, tip[1] - 7.0], [tip[0] - 13.0, tip[1] + 7.0]], ink.alpha(0.55));
-    // Small square markers on the inner side, at the neighbours.
-    for k in [-3i32, -2, -1, 1, 2, 3] {
-        let a = k as f32 * step;
-        let [x, y] = pt(r - 74.0, a);
-        let size = if k.abs() == 1 { 5.0 } else { 4.0 };
-        let h = size / 2.0;
-        s = s.fill(vec![[x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]], ink.alpha(0.1 + 0.18 * fade(a)));
-    }
-    s
 }
 
-/// A business on the wheel: the same ball for every business, in the dial's ink
-/// (graphite on light, silver on dark), lit from the top left. A soft shadow
-/// under it, a shaded body, light bouncing up along its lower edge and a glint.
-fn wheel_knob(t: &Theme, size: f32) -> El {
+const DECK_W: f32 = 280.0;
+const DECK_H: f32 = 400.0;
+/// The deck's cards settle more slowly than a control, so a swap reads as cards moving.
+const DECK_SPRING: rune::Spring = rune::Spring::new(0.42, 0.0);
+
+/// The four tones of a card's metal, light to dark. Every business keeps its own:
+/// the brand's blue, black, or its tile colour, chosen from its name.
+fn deck_metal(t: &Theme, name: &str) -> [rune::Color; 4] {
     use crate::theme::hex;
-    use rune::{Color, Shadow};
-    let (hi, base, lo) = if t.dark {
-        (hex("#ffffff"), hex("#c3c7cf"), hex("#545862"))
-    } else {
-        (hex("#8d93a1"), hex("#2a2d35"), hex("#050608"))
-    };
-    let glint = size * 0.36;
-    el().size(size, size)
-        .radius(size / 2.0)
-        .fill(base)
-        .radial_gradient([0.34, 0.28], size * 0.82, [(0.0, hi), (0.38, base), (1.0, lo)])
-        .box_shadow(Shadow { x: 0.0, y: size * 0.16, blur: size * 0.5, spread: -size * 0.06, color: Color::BLACK.alpha(if t.dark { 0.6 } else { 0.32 }), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: size * 0.02, blur: size * 0.06, spread: 0.0, color: Color::BLACK.alpha(if t.dark { 0.45 } else { 0.25 }), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: -size * 0.07, blur: size * 0.16, spread: 0.0, color: Color::WHITE.alpha(if t.dark { 0.35 } else { 0.22 }), inset: true })
-        .child(
-            el().absolute(size * 0.2, size * 0.13)
-                .size(glint, glint * 0.62)
-                .radius(glint / 2.0)
-                .fill(Color::WHITE.alpha(if t.dark { 0.85 } else { 0.5 }))
-                .blur(size * 0.035),
-        )
-        .a11y_hidden()
+    use rune::Color;
+    let pick = name.bytes().fold(5381u32, |h, b| h.wrapping_mul(33) ^ b as u32) % 3;
+    match pick {
+        0 => [hex("#8aa8ff"), hex("#4a6ff0"), hex("#1d3aa6"), hex("#071660")],
+        1 => [hex("#9da1ab"), hex("#3c3f47"), hex("#16171b"), hex("#040405")],
+        _ => {
+            let (c, _) = t.mark(name);
+            [c.mix(Color::WHITE, 0.45), c.mix(Color::WHITE, 0.1), c.mix(Color::BLACK, 0.35), c.mix(Color::BLACK, 0.72)]
+        }
+    }
 }
 
-/// Switch business: the names along a ring at the window's left edge. Scrolling
-/// (or Up and Down) turns the wheel; the name at the middle is the one in focus,
-/// and pressing it, or Return, switches to it.
+/// One card of the business deck: tall, in its own metal, with a sheen across
+/// it, a lit top edge and a deep shadow. Cards further back are dimmed by a shade over them
+/// and carry no writing.
+fn deck_card(t: &Theme, name: &str, note: Option<&str>, index: usize, count: usize, shade: f32, front: bool) -> El {
+    use rune::{Color, Shadow};
+    let metal = deck_metal(t, name);
+    let quiet = Color::WHITE.alpha(0.66);
+    let (band, angle): (f32, f32) = (0.42, 1.9);
+    let mut card = col()
+        .size(DECK_W, DECK_H)
+        .padding(22.0)
+        .radius(26.0)
+        .fill(metal[1])
+        .linear_gradient(2.35, [(0.0, metal[0]), (0.3, metal[1]), (0.66, metal[2]), (1.0, metal[3])])
+        .border(1.0, Color::WHITE.alpha(0.2))
+        .box_shadow(Shadow { x: 0.0, y: 24.0, blur: 48.0, spread: -8.0, color: Color::BLACK.alpha(if t.dark { 0.6 } else { 0.3 }), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 10.0, spread: 0.0, color: metal[3].alpha(0.35), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 1.5, blur: 1.0, spread: 0.0, color: Color::WHITE.alpha(0.45), inset: true })
+        .box_shadow(Shadow { x: 0.0, y: -2.0, blur: 6.0, spread: 0.0, color: Color::BLACK.alpha(0.25), inset: true })
+        .clip_rounded(26.0)
+        // The sheen: a band of light across the card.
+        .child(
+            el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .linear_gradient(angle, [
+                    (0.0, Color::WHITE.alpha(0.0)),
+                    ((band - 0.14).max(0.0), Color::WHITE.alpha(0.0)),
+                    (band, Color::WHITE.alpha(0.2)),
+                    ((band + 0.14).min(1.0), Color::WHITE.alpha(0.0)),
+                    (1.0, Color::WHITE.alpha(0.0)),
+                ])
+                .a11y_hidden(),
+        );
+    // Only the front card carries writing; the ones behind show their metal.
+    if front {
+        card = card
+            .child(row().w_full().justify_center().child(label("BUSINESS", TextStyle::new(11.0, 600.0).lh(14.0), quiet)))
+            .child(
+                col().w_full().grow(1.0).min_h(0.0).items_center().justify_center().gap(8.0)
+                    .child(label(name.to_string(), TextStyle::new(26.0, 700.0).lh(30.0), Color::WHITE).wrap().max_w(DECK_W - 44.0))
+                    .children(note.map(|n| label(n.to_string(), TextStyle::new(13.0, 500.0).lh(16.0), quiet))),
+            )
+            .child(
+                row().w_full().center_y()
+                    .child(label(format!("{:02}", index + 1), type_::XS.mono(), quiet))
+                    .child(el().grow(1.0))
+                    .child(label(format!("of {:02}", count), type_::XS.mono(), quiet)),
+            );
+    }
+    if shade > 0.0 {
+        card = card.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK.alpha(shade)).a11y_hidden());
+    }
+    card
+}
+
+/// A round arrow beside the deck.
+fn deck_arrow(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, enabled: bool, step: i32) -> El {
+    let hk = format!("biz:{key}");
+    let mut b = row()
+        .key(key.to_string())
+        .size(40.0, 40.0)
+        .radius(20.0)
+        .center()
+        .fill(t.card)
+        .border(1.0, t.border)
+        .role("button")
+        .label(name.to_string())
+        .motion(CONTROL)
+        .child(ico(icon, 18.0, if enabled { t.foreground } else { t.muted_foreground.alpha(0.4) }));
+    if enabled {
+        b = b
+            .cursor(Cursor::Pointer)
+            .hover(t.accent)
+            .on_hover_change(track_hover(hk))
+            .on_press(move |s: &mut App| {
+                let count = s.picker_cards().len();
+                if let Some(p) = &mut s.business_picker {
+                    let next = (p.focus as i32 + step).clamp(0, count.saturating_sub(1) as i32) as usize;
+                    if next != p.focus {
+                        p.focus = next;
+                        crate::tick::detent();
+                    }
+                }
+            });
+    }
+    shadows(b, &t.control_shadow)
+}
+
+/// The business picker: the businesses as a deck of cards in the content panel,
+/// the one in focus upright in front and the rest tucked behind it to either
+/// side. Opened from the sidebar it switches business; from the composer's folder
+/// chip it starts a chat (with a general chat as the last card). Drag or swipe
+/// the deck, scroll, use the arrow keys or the round arrows to move through it;
+/// pressing the front card, or Return, picks it, and pressing a card behind
+/// brings it to the front.
 pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut Vec<El>) {
     let picker = s.business_picker.as_ref().expect("picker open");
     let close = |s: &mut App| s.close_business_picker();
-    let list = &s.businesses;
-    let focus = picker.focus.min(list.len().saturating_sub(1));
+    let cards = s.picker_cards();
+    let count = cards.len();
+    let focus = picker.focus.min(count.saturating_sub(1));
+    let chat = picker.mode == crate::state::PickerMode::Chat;
 
-    // The ring: only its right curve shows, the rest runs past the window's left edge.
-    // Its radius follows the window's height, so the curve never runs off the top or bottom.
-    let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) - 16.0 } else { 840.0 };
-    let r_fit = ((height - 48.0) / 2.0).clamp(240.0, 420.0);
-    #[allow(non_snake_case)]
-    let R = r_fit;
-    const W: f32 = 560.0;
-    const STEP: f32 = 0.19;
-    const SHOWN: i32 = 4;
-    let (cx, cy) = (150.0 - R, R);
-    let mut wheel = el()
-        .key("business-picker-wheel")
-        .size(W, 2.0 * R)
-        .shape(ruler(t, cx, cy, R, STEP, focus))
-        .child(
-            el().key("business-picker-ring")
-                .absolute(cx - R, cy - R)
-                .size(2.0 * R, 2.0 * R)
-                .radius(R)
-                .fill(t.foreground.alpha(0.025))
-                .a11y_hidden(),
-        );
-    // Each name's number on the dial, between the tick band and the inner arc.
-    for (i, _) in list.iter().enumerate() {
-        let k_off = i as i32 - focus as i32;
-        if k_off.abs() > SHOWN + 1 {
-            continue;
-        }
-        let a = k_off as f32 * STEP;
-        let (nx, ny) = (cx + (R - 40.0) * a.cos(), cy + (R - 40.0) * a.sin());
-        let fade = (1.0 - 0.18 * k_off.abs() as f32).max(0.15);
-        wheel = wheel.child(
-            row().key(format!("business-dial-{i}"))
-                .absolute(nx - 16.0, ny - 8.0)
-                .size(32.0, 16.0)
-                .center()
-                .rotate(a)
-                .motion(CONTROL)
-                .a11y_hidden()
-                .child(label(format!("{:02}", i + 1), type_::XS.mono(), if k_off == 0 { t.foreground } else { t.muted_foreground.alpha(fade) })),
-        );
-    }
+    const SHOWN: i32 = 2;
+    const PEEK: f32 = 16.0;
+    let z = s.zoom().max(0.1);
+    let window_w = if s.window.0 > 0.0 { s.window.0 / z } else { 1280.0 };
+    let estimate = (window_w - if s.sidebar_open { s.prefs.sidebar() } else { 8.0 } - 8.0).max(DECK_W);
+    let panel_w = if picker.width > 0.0 { picker.width } else { estimate };
+    let mid = panel_w / 2.0 + picker.drag;
+    let row_h = DECK_H + 80.0;
+    let top = 30.0;
+    let dragging = picker.drag != 0.0;
 
-    if list.is_empty() {
-        wheel = wheel.child(
-            row().absolute(cx + R + 24.0, cy - 12.0).w(320.0).h(24.0).justify_start().center_y()
-                .child(label("No businesses yet. Set one up on the web.", type_::SM, t.muted_foreground)),
-        );
+    let mut deck = el()
+        .key("business-picker-carousel")
+        .w_full()
+        .h(row_h)
+        .on_layout(|s: &mut App, r: [f32; 4]| {
+            if let Some(p) = &mut s.business_picker {
+                if (p.width - r[2]).abs() > 0.5 {
+                    p.width = r[2];
+                }
+            }
+        });
+    if cards.is_empty() {
+        deck = deck.child(col().w_full().h_full().center().child(label("No businesses yet. Set one up on the web.", type_::SM, t.muted_foreground)));
     }
-    for (i, b) in list.iter().enumerate() {
-        let k_off = i as i32 - focus as i32;
-        if k_off.abs() > SHOWN {
-            continue;
-        }
-        let angle = k_off as f32 * STEP;
-        let (px, py) = (cx + R * angle.cos(), cy + R * angle.sin());
-        let on = k_off == 0;
-        let current = s.active.as_deref() == Some(b.id.as_str());
-        let hk = format!("biz:wheel-{}", b.id);
-        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
-        let fade = (1.0 - 0.2 * k_off.abs() as f32).max(0.2);
-        // Each business is its mark sitting on the ring, with its name beside it.
-        let mark = if on { 36.0 } else { 24.0 };
-        let mut badge = el()
-            .size(mark, mark)
-            .radius(mark / 2.0)
-            .child(wheel_knob(t, mark));
-        if on {
-            badge = badge.outline(1.5, 3.0, t.foreground.alpha(0.55));
-        }
-        let name = if on {
-            label(b.name.clone(), TextStyle::new(18.0, 600.0).lh(22.0), t.foreground)
+    // Furthest cards first, so the front card is drawn last, on top.
+    let mut order: Vec<usize> = (0..count).filter(|i| (*i as i32 - focus as i32).abs() <= SHOWN).collect();
+    order.sort_by_key(|i| std::cmp::Reverse((*i as i32 - focus as i32).abs()));
+    for i in order {
+        let card = &cards[i];
+        let off = i as i32 - focus as i32;
+        let depth = off.unsigned_abs() as f32;
+        let side = off.signum() as f32;
+        let front = off == 0;
+        let current = if chat {
+            match &card.id { Some(id) => !s.general && s.active.as_deref() == Some(id.as_str()), None => s.general }
         } else {
-            label(b.name.clone(), TextStyle::new(14.0, 500.0).lh(18.0), if hovered { t.foreground } else { t.muted_foreground })
+            card.id.as_deref() == s.active.as_deref()
         };
-        let id = b.id.clone();
-        let mut entry = row()
-            .key(format!("business-wheel-{}", b.id))
-            .absolute(px - mark / 2.0, py - mark / 2.0)
-            .h(mark)
-            .gap(if on { 16.0 } else { 12.0 })
-            .center_y()
+        let note = if current { Some(if chat { "Chatting about this now" } else { "Current business" }) } else if card.sample { Some("Sample data") } else { None };
+        let face = deck_card(t, &card.name, note, i, count, (0.18 * depth).min(0.45), front);
+        let key = card.id.clone().unwrap_or_else(|| "general".into());
+        let slot = el()
+            .key(format!("business-card-{key}"))
+            .absolute(mid - DECK_W / 2.0 + side * (depth * PEEK + if front { 0.0 } else { 10.0 }), top)
+            .size(DECK_W, DECK_H)
+            .scale(1.0 - 0.05 * depth)
+            .rotate(side * 0.022 * depth)
             .role("button")
-            .label(b.name.clone())
+            .label(card.name.clone())
             .checked(current)
             .cursor(Cursor::Pointer)
-            .motion(CONTROL)
-            .on_hover_change(track_hover(hk))
+            .motion(DECK_SPRING)
             .on_press(move |s: &mut App| {
-                if on {
-                    s.select_business(&id);
+                if front {
+                    s.pick_card(i);
                 } else if let Some(p) = &mut s.business_picker {
                     p.focus = i;
                     crate::tick::detent();
                 }
             })
-            .child(badge)
-            .child(name.truncate().max_w(300.0));
-        if !on {
-            entry = entry.opacity(if hovered { fade.max(0.8) } else { fade });
-        }
-        wheel = wheel.child(entry);
+            .child(face);
+        deck = deck.child(slot);
+    }
+    if count > 1 {
+        // Each arrow sits just past the cards tucked on its side.
+        let reach = |n: usize| DECK_W / 2.0 + if n > 0 { SHOWN.min(n as i32) as f32 * PEEK + 10.0 } else { 0.0 } + 32.0;
+        let (left, right) = (reach(focus), reach(count - 1 - focus));
+        let base = panel_w / 2.0;
+        deck = deck
+            .child(el().key("business-prev-slot").absolute(base - left - 40.0, top + DECK_H / 2.0 - 20.0).motion(DECK_SPRING).child(deck_arrow(t, "business-prev", &icons::CHEVRON_LEFT, "Previous", focus > 0, -1)))
+            .child(el().key("business-next-slot").absolute(base + right, top + DECK_H / 2.0 - 20.0).motion(DECK_SPRING).child(deck_arrow(t, "business-next", &icons::CHEVRON_RIGHT, "Next", focus + 1 < count, 1)));
     }
 
-    let panel = wheel
+    let panel = deck
         .role("dialog")
-        .label("Switch business")
+        .label(if chat { "Choose what to chat about" } else { "Switch business" })
         .focusable(true)
+        .cursor(if dragging { Cursor::Grabbing } else { Cursor::Default })
+        .on_drag(business_picker_drag)
         .on_wheel(business_picker_wheel)
         .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
-            let count = s.businesses.len();
+            let count = s.picker_cards().len();
             let Some(p) = s.business_picker.as_mut() else { return false };
             let before = p.focus;
             match ev.key {
-                rune::Key::Up | rune::Key::Down => {
-                    p.focus = if ev.key == rune::Key::Up { p.focus.saturating_sub(1) } else { (p.focus + 1).min(count.saturating_sub(1)) };
-                    if p.focus != before {
-                        crate::tick::detent();
-                    }
-                }
+                rune::Key::Left | rune::Key::Up => p.focus = p.focus.saturating_sub(1),
+                rune::Key::Right | rune::Key::Down => p.focus = (p.focus + 1).min(count.saturating_sub(1)),
                 rune::Key::Enter => {
                     let focus = p.focus;
-                    if let Some(id) = s.businesses.get(focus).map(|b| b.id.clone()) {
-                        s.select_business(&id);
-                    }
+                    s.pick_card(focus);
+                    return true;
                 }
                 _ => return false,
+            }
+            if p.focus != before {
+                crate::tick::detent();
             }
             true
         })
@@ -1091,7 +1123,7 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
                             .h_full()
                             .clip_rounded(10.0)
                             .justify_center()
-                            .items_start()
+                            .items_center()
                             .child(panel),
                     ),
             ),

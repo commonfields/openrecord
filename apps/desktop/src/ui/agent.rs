@@ -1356,7 +1356,7 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         .flex_wrap()
         .center_y()
         .child({
-            // "Change the business or client": opens "Start a new chat", as the web's chip does.
+            // "Change the business": opens the business deck to choose what the next chat is about.
             let name = if s.general { "General chat".to_string() } else { business.to_string() };
             row()
                 .key(slot.key("chat-context"))
@@ -1371,9 +1371,9 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
                 .focusable(!working)
                 .cursor(if working { Cursor::Default } else { Cursor::Pointer })
                 .hover_group()
-                .on_press_tx(move |s: &mut App, tx| {
+                .on_press(move |s: &mut App| {
                     if !matches!(s.turn, Turn::Working { .. }) {
-                        s.open_new_chat(tx);
+                        s.open_chat_picker();
                     }
                 })
                 .child(ico(&icons::FOLDER, 14.0, t.muted_foreground).group_color(t.foreground))
