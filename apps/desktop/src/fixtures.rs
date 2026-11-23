@@ -1099,7 +1099,7 @@ pub fn collapsed(s: &mut App) {
 pub fn account_update(s: &mut App) {
     inbox(s);
     s.update = crate::update::Update::Available(crate::update::Release { version: "0.2.0".into(), dmg_url: String::new(), page_url: String::new() });
-    s.menu = Some(Menu::Account);
+    s.open_settings(crate::state::SettingsPage::General);
 }
 
 pub fn agent_find(s: &mut App) {
@@ -1109,12 +1109,12 @@ pub fn agent_find(s: &mut App) {
 
 pub fn business_menu(s: &mut App) {
     inbox(s);
-    s.menu = Some(Menu::Businesses);
+    s.open_business_picker();
 }
 
 pub fn account_menu(s: &mut App) {
     inbox(s);
-    s.menu = Some(Menu::Account);
+    s.open_settings(crate::state::SettingsPage::General);
 }
 
 pub fn usage(s: &mut App) {

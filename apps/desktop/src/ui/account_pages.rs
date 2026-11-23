@@ -316,17 +316,17 @@ fn a11y_input_label() -> &'static str {
 /// the website and the goal in one line, sent with Return or the round button.
 pub fn add_business_dialog(s: &App, t: &Theme, _k: &rune_kit::Kit, a: &crate::state::AddBusiness, layer: &mut Vec<El>) {
     use super::agent::{COMPOSER_BUTTON, COMPOSER_INSET, COMPOSER_PILL};
-    let input = text_input(&a.text, type_::BASE)
+    let input = crate::ui::widgets::field_input(&a.text, type_::BASE, t)
         .key("add-business-input")
         .placeholder("acme.com, we want more booked appointments", t.muted_foreground)
         .label(a11y_input_label())
         .w_full()
-        .py(4.0)
+        .py(6.0)
         .max_h(192.0)
-        .color(t.foreground)
         .on_edit(|s: &mut App| &mut s.add_business.as_mut().expect("dialog open").text)
         .on_submit(|s: &mut App, _tx| s.submit_add_business())
         .autofocus();
+    let field_hovered = s.row_hover.as_deref() == Some("add-business-field");
     let has_text = !a.text.text.trim().is_empty();
     let ink = t.foreground.alpha(0.85);
     let send = row()
@@ -346,12 +346,24 @@ pub fn add_business_dialog(s: &App, t: &Theme, _k: &rune_kit::Kit, a: &crate::st
         .on_press(|s: &mut App| s.submit_add_business())
         .child(if a.busy { ico(&icons::LOADER, 16.0, ink).looping(rune::LoopSpec::rotation(1.0)) } else { ico(&icons::CORNER_DOWN_LEFT, 16.0, ink) });
     let field = shadows(
-        row().key("add-business-field").w_full()
-            .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
-            .padding(COMPOSER_INSET).gap(8.0).radius(COMPOSER_PILL)
-            .items_end().border(1.0, t.border).fill(t.card)
-            .child(col().grow(1.0).min_w(0.0).self_center().px(8.0).child(input))
-            .children((has_text || a.busy).then_some(send)),
+        crate::ui::widgets::highlight(
+            t,
+            row()
+                .key("add-business-field")
+                .w_full()
+                .min_h(COMPOSER_BUTTON + 2.0 * COMPOSER_INSET)
+                .padding(COMPOSER_INSET)
+                .gap(8.0)
+                .radius(COMPOSER_PILL)
+                .center_y()
+                .border(1.0, t.border)
+                .on_hover_change(crate::ui::widgets::track_hover("add-business-field".into()))
+                .child(col().grow(1.0).min_w(0.0).px(8.0).child(input))
+                .children((has_text || a.busy).then_some(send)),
+            field_hovered,
+            false,
+        )
+        .fill(if field_hovered { t.accent } else { t.card }),
         &t.control_shadow,
     );
     let mut content = col().w_full().gap(8.0).child(field);

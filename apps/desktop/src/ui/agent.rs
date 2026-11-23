@@ -128,7 +128,8 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             .child(transcript).children(timeline_rail(s, t, shown, &messages, &turns))
     };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
-    col().key("agent").w_full().h_full().min_h(0.0).child(body).child(composer(s, t, &business, ComposerSlot::Main, false))
+    let lit = fresh && (s.home || s.general);
+    col().key("agent").w_full().h_full().min_h(0.0).children(if lit { window_light(s, t) } else { None }).child(body).child(composer(s, t, &business, ComposerSlot::Main, false))
 }
 
 /// Agent chat with the transcript in `@pierre/words` (WKWebView); composer stays native Rune.
@@ -164,13 +165,31 @@ fn words_webview(s: &App, t: &Theme, k: &Kit, column: f32, business: &str) -> El
             .items_center()
             .child(col().w_full().max_w(column).grow(1.0).min_h(0.0).child(stack))
     };
+    let lit = fresh && (s.home || s.general);
     col()
         .key("agent")
         .w_full()
         .h_full()
         .min_h(0.0)
+        .children(if lit { window_light(s, t) } else { None })
         .child(body)
         .child(composer(s, t, business, ComposerSlot::Main, false))
+}
+
+/// Home's backdrop while idle: the chosen picture (or the built-in scene for
+/// this theme) as a dither (`crate::backdrop`). Faded back so the composer
+/// stays the brightest thing; it takes no input and is hidden from assistive tech.
+fn window_light(s: &App, t: &Theme) -> Option<El> {
+    let pixels = crate::backdrop::current(s.prefs.home_background, t.dark)?;
+    Some(
+        el()
+            .key("home-bg")
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .pixels_fit(&pixels, rune::SurfaceFit::Fill)
+            .opacity(if t.dark { 0.5 } else { 0.6 })
+            .clip_rounded(0.0)
+            .a11y_hidden(),
+    )
 }
 
 fn timeline_rail(s: &App, t: &Theme, owner: &str, messages: &[Message], turns: &[usize]) -> Option<El> {
@@ -202,48 +221,13 @@ pub(super) fn home_stack_top(s: &App) -> f32 {
     ((height - 48.0 - 150.0) * 0.32).max(32.0)
 }
 
-/// Home before the first message: title and composer, without animated starter cards.
-fn start(s: &App, t: &Theme, business: &str) -> El {
-    let column = s.prefs.chat_width.max().min(760.0);
-    let body = if s.general {
-        col()
-            .key("start")
-            .w_full()
-            .max_w(column)
-            .px(24.0)
-            .gap(6.0)
-            .items_center()
-            .child(label("General chat", type_::TITLE, t.foreground).role("heading"))
-            .child(label(
-                "Ask anything. This chat reads no business's records; start one from a business to work on it.",
-                type_::SM,
-                t.muted_foreground,
-            )
-            .wrap())
-    } else {
-        col()
-            .key("start")
-            .w_full()
-            .max_w(column)
-            .px(24.0)
-            .gap(6.0)
-            .items_center()
-            .child(label(business.to_string(), type_::TITLE, t.foreground).role("heading"))
-            .child(label(
-                "Ask a question in the box below, or open Browser, Files, Analytics, or Campaigns from the side panel.",
-                type_::SM,
-                t.muted_foreground,
-            )
-            .wrap())
-    };
-    let top = home_stack_top(s);
-    col()
+/// Home before the first message: empty room above the composer until we add content here.
+fn start(s: &App, _t: &Theme, _business: &str) -> El {
+    el()
         .key("start-scroll")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .child(col().w_full().items_center().pt(top).pb(32.0).child(body))
-        .scroll(ScrollSpec { stick_bottom: false })
 }
 
 /// What the agent produced in this chat (`WorkPane`): the proposals its replies
@@ -1217,14 +1201,13 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
     } else {
         "Describe a task or ask a question"
     };
-    let mut input = text_input(text_state, type_::BASE)
+    let mut input = crate::ui::widgets::field_input(text_state, type_::BASE, t)
         .key(slot.key("composer-input"))
         .placeholder(placeholder, t.muted_foreground)
         .label("Message the agent")
         .w_full()
         .py(4.0)
         .max_h(192.0)
-        .color(t.foreground)
         .on_edit(move |s: &mut App| if side { &mut s.side.composer } else { &mut s.composer })
         .on_input_paste(|s: &mut App, content, _tx| s.composer_paste(content))
         // Return sends, or with "Send with Enter" off adds a line (⌘Return sends then).
@@ -1250,6 +1233,24 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
     let action_fill = if t.dark { t.foreground.alpha(0.12) } else { t.foreground.alpha(0.10) };
     let action_hover = t.foreground.alpha(if t.dark { 0.18 } else { 0.16 });
     let action_ink = t.foreground.alpha(0.85);
+    /// Round composer control with the same accent hover as the "+" action menu.
+    let action_btn = |key: &str, name: &str, help: &str, chosen: bool, child: El| {
+        let hover_key = format!("hover:{}", slot.key(key));
+        let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
+        let b = row()
+            .key(slot.key(key))
+            .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
+            .radius(COMPOSER_BUTTON / 2.0)
+            .center()
+            .role("button")
+            .label(name)
+            .help(help)
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .on_hover_change(crate::ui::widgets::track_hover(hover_key))
+            .child(child);
+        crate::ui::widgets::highlight(t, b, hovered, chosen)
+    };
     let mut actions = row().gap(4.0).center_y().self_end();
     if working {
         if has_text {
@@ -1272,54 +1273,56 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         );
     } else if has_text {
         let can = !blocked;
+        let send_help = if s.prefs.enter_to_send {
+            "Send (Enter). Shift Enter adds a new line."
+        } else {
+            "Send (⌘ Enter). Enter adds a new line."
+        };
         actions = actions.child(
-            circle("send", "Send message", if s.prefs.enter_to_send { "Send (Enter). Shift Enter adds a new line." } else { "Send (⌘ Enter). Enter adds a new line." }, action_fill)
+            action_btn("send", "Send message", send_help, false, ico(&icons::CORNER_DOWN_LEFT, 16.0, action_ink))
                 .disabled(!can)
                 .opacity(if can { 1.0 } else { 0.5 })
-                .hover(action_hover)
-                .on_press_tx(move |s: &mut App, tx| s.send_from(slot, tx))
-                .child(ico(&icons::CORNER_DOWN_LEFT, 16.0, action_ink)),
+                .on_press_tx(move |s: &mut App, tx| s.send_from(slot, tx)),
         );
     }
     // Voice input shares the subdued treatment of the send control.
     let mut trailing = row().gap(4.0).center_y().self_end();
     if !working && !has_text && s.prefs.voice_input {
         trailing = trailing.child(
-            circle("voice-affordance", "Start voice input", "Voice input (macOS dictation)", action_fill)
-                .hover(action_hover)
-                .on_press_tx(move |_s: &mut App, tx| {
+            action_btn("voice-affordance", "Start voice input", "Voice input (macOS dictation)", false, waveform_bars(action_ink)).on_press_tx(
+                move |_s: &mut App, tx| {
                     tx.focus(&slot.key("composer-input"), false);
                     crate::dictation::start();
-                })
-                .child(waveform_bars(action_ink)),
+                },
+            ),
         );
     } else {
         trailing = trailing.child(actions);
     }
     // Quick actions beside the message input.
-    let plus = row()
-        .key(slot.key("chat-actions-trigger"))
-        .size(COMPOSER_BUTTON, COMPOSER_BUTTON)
-        .radius(COMPOSER_BUTTON / 2.0)
-        .center()
-        .self_end()
-        .fill(t.foreground.alpha(0.08))
-        .role("button")
-        .label("Chat actions")
-        .expanded(s.chat_actions && s.composer_slot == slot)
-        .focusable(true)
-        .cursor(Cursor::Pointer)
-        .hover(t.hover_tint)
-        .hover_group()
-        .motion(CONTROL)
-        .on_press_tx(move |s: &mut App, tx| {
-            s.composer_slot = slot;
-            s.chat_actions = !s.chat_actions;
-            if s.chat_actions {
-                tx.focus("chat-action-attach", false);
-            }
-        })
-        .child(ico(&icons::PLUS, 18.0, t.muted_foreground).group_color(t.foreground));
+    let plus_open = s.chat_actions && s.composer_slot == slot;
+    let plus_hover_key = format!("hover:{}", slot.key("chat-actions-trigger"));
+    let plus_hovered = s.row_hover.as_deref() == Some(plus_hover_key.as_str());
+    let plus = action_btn(
+        "chat-actions-trigger",
+        "Chat actions",
+        "Chat actions",
+        plus_open,
+        ico(
+            &icons::PLUS,
+            18.0,
+            if plus_hovered || plus_open { t.foreground } else { t.muted_foreground },
+        ),
+    )
+    .self_end()
+    .expanded(plus_open)
+    .on_press_tx(move |s: &mut App, tx| {
+        s.composer_slot = slot;
+        s.chat_actions = !s.chat_actions;
+        if s.chat_actions {
+            tx.focus("chat-action-attach", false);
+        }
+    });
 
     let field_row = row()
         .key(slot.key("composer"))
@@ -1882,46 +1885,61 @@ fn command_menu(s: &App, t: &Theme) -> Option<El> {
         return None;
     }
     let active = s.command_index.min(entries.len() - 1);
-    let mut list = col().key("command-menu").w(s.composer_widths[0].max(1.0)).min_h(0.0).padding(4.0).radius(10.0).fill(t.popover).border(1.0, t.border).role("listbox").label("Commands");
+    let width = s.composer_widths[0].max(1.0);
+    let mut items = col().key("command-menu-list").w_full().min_h(0.0);
     for (i, e) in entries.iter().enumerate() {
         let on = i == active;
         let id = e.id();
-        let mut r = row()
-            .key(format!("command-{id}"))
-            .w_full()
-            .h(28.0)
-            .px(10.0)
-            .radius(6.0)
-            .center_y()
-            .role("option")
-            .label(e.name().to_string())
-            .checked(on)
-            .cursor(Cursor::Pointer)
-            .motion(CONTROL)
-            .on_hover_change(move |s: &mut App, inside, _tx| {
-                if inside {
-                    s.command_index = i;
-                }
-            })
-            .on_press_tx(move |s: &mut App, tx| s.choose_entry(&id, tx))
-            .child(label(e.name().to_string(), type_::XS_MEDIUM, t.foreground).truncate());
-        r = crate::ui::widgets::highlight(t, r, on, false);
-        list = list.child(r);
+        let r = crate::ui::widgets::highlight(
+            t,
+            row()
+                .key(format!("command-{id}"))
+                .w_full()
+                .h(36.0)
+                .px(10.0)
+                .radius(6.0)
+                .center_y()
+                .role("option")
+                .label(e.name().to_string())
+                .checked(on)
+                .focusable(true)
+                .cursor(Cursor::Pointer)
+                .on_hover_change(move |s: &mut App, inside, _tx| {
+                    if inside {
+                        s.command_index = i;
+                    }
+                })
+                .on_press_tx(move |s: &mut App, tx| s.choose_entry(&id, tx))
+                .child(label(e.name().to_string(), type_::XS_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0)),
+            on,
+            false,
+        );
+        items = items.child(r);
     }
-    Some(shadows(col().w(s.composer_widths[0].max(1.0)).min_h(0.0)
-        .child(list.max_h(340.0).min_h(0.0).shrink().scroll(ScrollSpec { stick_bottom: false }))
-        .anchored_fit("composer", Side::Top, Align::Start, 12.0), &t.control_shadow))
+    let menu = col()
+        .key("command-menu")
+        .w(width)
+        .min_h(0.0)
+        .padding(4.0)
+        .radius(10.0)
+        .fill(t.popover)
+        .border(1.0, t.border)
+        .role("listbox")
+        .label("Commands")
+        .focus_group()
+        .child(items.max_h(332.0).min_h(0.0).shrink().scroll(ScrollSpec { stick_bottom: false }))
+        .anchored_fit("composer", Side::Top, Align::Start, 12.0);
+    Some(shadows(menu, &t.control_shadow))
 }
 
 /// "Start a new chat" (`new-chat-dialog.tsx`): a search, "Start without a
 /// business", then the businesses and client records, each listed once.
 pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, layer: &mut Vec<El>) {
-    let search = text_input(&n.query, type_::SM)
+    let search = crate::ui::widgets::field_input(&n.query, type_::SM, t)
         .key("new-chat-search")
         .placeholder("Search businesses", t.muted_foreground)
         .label("Search businesses")
         .w_full()
-        .color(t.foreground)
         .on_edit(|s: &mut App| &mut s.new_chat.as_mut().expect("dialog open").query);
     // The "/" menu's surface: popover fill and border, with its accent highlight under the pointer.
     let field_hovered = s.row_hover.as_deref() == Some("new:search");
@@ -1933,7 +1951,7 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
                 .child(ico(&icons::SEARCH, 16.0, t.muted_foreground)).child(col().grow(1.0).min_w(0.0).child(search)),
             field_hovered,
             false,
-        ).fill(if field_hovered { t.accent } else { t.popover }),
+        ).fill(if field_hovered { t.accent } else { t.card }),
         &t.float_shadow,
     );
     let hover = |key: String, r: El| {
@@ -2007,18 +2025,39 @@ pub fn new_chat_dialog(s: &App, t: &Theme, k: &Kit, n: &crate::state::NewChat, l
             .child(label("Try again", type_::SM, t.foreground).role("button").cursor(Cursor::Pointer).on_press_tx(|s: &mut App, tx| s.open_new_chat(tx))),
         _ => label("Loading workspaces…", type_::SM, t.muted_foreground).px(8.0).py(16.0),
     };
-    let link = |key: &str, name: &str| label(name, type_::XS, t.muted_foreground).key(key).role("link").cursor(Cursor::Pointer).hover_group().group_color(t.foreground);
+    let footer_link = |key: &str, name: &str, press: fn(&mut App)| {
+        let hk = format!("new:{key}");
+        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+        crate::ui::widgets::highlight(
+            t,
+            row()
+                .key(key)
+                .h(32.0)
+                .px(10.0)
+                .radius(6.0)
+                .center_y()
+                .role("link")
+                .label(name)
+                .cursor(Cursor::Pointer)
+                .on_hover_change(hover_key(hk))
+                .on_press(press)
+                .child(label(name, type_::XS, if hovered { t.foreground } else { t.muted_foreground })),
+            hovered,
+            false,
+        )
+    };
     let footer = row()
         .w_full()
         .px(16.0)
-        .py(10.0)
+        .py(8.0)
+        .gap(8.0)
         .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
-        .child(link("manage-businesses", "Manage businesses").on_press(|s: &mut App| {
+        .child(footer_link("manage-businesses", "Manage businesses", |s: &mut App| {
             s.new_chat = None;
             s.show_page(crate::state::Page::Businesses);
         }))
         .child(el().grow(1.0))
-        .child(link("add-business", "Add a business").on_press(|s: &mut App| s.open_add_business(None)));
+        .child(footer_link("add-business", "Add a business", |s: &mut App| s.open_add_business(None)));
     let list = col()
         .w_full()
         .radius(10.0)

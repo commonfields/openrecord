@@ -108,6 +108,9 @@ pub struct Prefs {
     /// Render agent chat markdown with `@pierre/words` in a WKWebView (macOS).
     #[serde(default = "default_words_webview")]
     pub words_webview: bool,
+    /// What Home shows behind the composer while idle, dithered (`backdrop`).
+    #[serde(default)]
+    pub home_background: crate::backdrop::HomeBackground,
 }
 
 fn default_words_webview() -> bool {
@@ -156,6 +159,7 @@ impl Default for Prefs {
             chat_groups_collapsed: Vec::new(),
             chat_groups_list_expanded: Vec::new(),
             words_webview: default_words_webview(),
+            home_background: Default::default(),
         }
     }
 }

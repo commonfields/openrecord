@@ -152,8 +152,6 @@ impl ComposerSlot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
-    Businesses,
-    Account,
     Model,
     Reasoning,
     ChatFilter,
@@ -312,6 +310,14 @@ impl SavePlaybook {
 pub struct NewChat {
     pub query: TextEdit,
     pub clients: Load<Vec<(String, String)>>,
+}
+
+/// The business switcher: a wheel of names at the window's right edge.
+pub struct BusinessPicker {
+    /// The business at the wheel's middle.
+    pub focus: usize,
+    /// Scrolling not yet turned into a notch, in points.
+    pub scroll: f32,
 }
 
 /// "Find…" (the web's command palette): the query and the highlighted result.
@@ -493,6 +499,8 @@ pub struct App {
     pub general: bool,
     /// "Start a new chat", while it is open.
     pub new_chat: Option<NewChat>,
+    /// "Switch business", while it is open.
+    pub business_picker: Option<BusinessPicker>,
     /// "Find…", while it is open, and the approved facts it lists.
     pub find: Option<Find>,
     pub find_facts: Load<Vec<crate::api::Fact>>,
@@ -699,6 +707,7 @@ impl App {
             syncing: false,
             synced_at: std::time::Instant::now(),
             new_chat: None,
+            business_picker: None,
             find: None,
             find_facts: Load::Idle,
             row_hover: None,
@@ -953,8 +962,25 @@ impl App {
         self.net.signout();
     }
 
+    pub fn open_business_picker(&mut self) {
+        self.menu = None;
+        self.confirm_archive = false;
+        let focus = self
+            .active
+            .as_deref()
+            .and_then(|id| self.businesses.iter().position(|b| b.id == id))
+            .unwrap_or(0);
+        self.business_picker = Some(BusinessPicker { focus, scroll: 0.0 });
+    }
+
+    pub fn close_business_picker(&mut self) {
+        self.business_picker = None;
+        self.confirm_archive = false;
+    }
+
     pub fn select_business(&mut self, id: &str) {
         self.menu = None;
+        self.business_picker = None;
         if self.active.as_deref() == Some(id) {
             return;
         }
@@ -1685,6 +1711,22 @@ impl App {
     }
 
     /// Changes a preference and saves it.
+    /// Picks a picture for Home's backdrop; it is dithered when Home next draws.
+    pub fn choose_home_background(&mut self, tx: &mut Tx) {
+        let options = rune::FileDialogOptions { title: "Choose a picture for Home".into(), ..Default::default() }.filter("Pictures", &["png", "jpg", "jpeg"]);
+        tx.open_file(options, |s: &mut App, answer, _tx| match answer {
+            Ok(Some(path)) => match crate::backdrop::store(&path) {
+                Ok(()) => {
+                    s.settings_error = None;
+                    s.set_pref(|p| p.home_background = crate::backdrop::HomeBackground::Custom);
+                }
+                Err(e) => s.settings_error = Some(e),
+            },
+            Ok(None) => {}
+            Err(e) => s.settings_error = Some(e.0),
+        });
+    }
+
     pub fn set_pref(&mut self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
         f(&mut self.prefs);
         self.prefs.save();

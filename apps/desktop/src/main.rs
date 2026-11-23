@@ -8,6 +8,7 @@
 
 mod account;
 mod artifacts;
+mod backdrop;
 mod native_preview;
 mod api;
 mod brand_marks;
@@ -36,6 +37,7 @@ mod side;
 mod state;
 mod surface;
 mod theme;
+mod tick;
 mod timeline;
 mod ui;
 mod update;

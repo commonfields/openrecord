@@ -8,7 +8,7 @@ use crate::insights::{Analytics, Discovery, Goal, Insights, PERIODS, Report, Sec
 use crate::state::{App, Load, Page};
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::{charts, discovery, kit};
-use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleton};
+use crate::ui::widgets::{CONTROL, Variant, button, card, failure, label, skeleton, track_hover};
 
 /// Space around the analytics sheet on the left, right and bottom so the
 /// panel background reads as a gutter (a little more than Inbox's 12pt).
@@ -87,10 +87,12 @@ fn section_picker(s: &App, t: &Theme) -> El {
         .label("Analytics section");
     for sec in Section::ALL {
         let on = s.section == sec;
+        let hover_key = format!("section-tab:{}", sec.key());
+        let hovered = s.row_hover.as_deref() == Some(hover_key.as_str());
         let mut chip = row()
             .key(format!("section-{}", sec.key()))
-            .h(28.0)
-            .px(10.0)
+            .h(24.0)
+            .px(6.0)
             .radius(6.0)
             .center()
             .role("tab")
@@ -98,13 +100,25 @@ fn section_picker(s: &App, t: &Theme) -> El {
             .checked(on)
             .focusable(true)
             .cursor(Cursor::Pointer)
+            .motion(CONTROL)
+            .on_hover_change(track_hover(hover_key))
             .on_press(move |st: &mut App| {
                 if st.section != sec {
                     st.show_section(sec);
                 }
             })
-            .child(label(sec.label(), type_::XS_MEDIUM, if on { t.foreground } else { t.muted_foreground }));
-        chip = if on { chip.fill(t.accent) } else { chip.hover(t.hover_tint) };
+            .child(label(
+                sec.label(),
+                if on { type_::XS_MEDIUM } else { type_::XS },
+                if on { t.foreground } else { t.muted_foreground },
+            ));
+        chip = if on {
+            chip.fill(t.hover_tint)
+        } else if hovered {
+            chip.fill(t.hover_tint)
+        } else {
+            chip.hover(t.hover_tint)
+        };
         r = r.child(chip);
     }
     r

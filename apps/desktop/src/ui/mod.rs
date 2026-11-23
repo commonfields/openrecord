@@ -91,12 +91,10 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
         }
-        shell::account_menu(s, &t, &k, &mut layers);
         if s.chat_shown() && s.settings.is_none() {
             agent::layers(s, &t, &k, &mut layers);
         }
         let before = layers.len();
-        layers.extend(notices::layer(s, &t));
         let notice_count = layers.len() - before;
         find::layers(s, &t, &mut layers);
         if let Some(a) = &s.add_business {
@@ -104,6 +102,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         }
         if let Some(n) = &s.new_chat {
             agent::new_chat_dialog(s, &t, &k, n, &mut layers);
+        }
+        if s.business_picker.is_some() {
+            shell::business_picker_dialog(s, &t, &k, &mut layers);
         }
         // An open answer is a popup over the AI answers list.
         if let (Some(a), View::Workspace, crate::state::Page::AiAnswers) = (&s.answer, s.view, s.page) {
@@ -117,7 +118,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         }
         // Only Find and New chat soften the window behind them; other menus stay sharp.
         let _ = notice_count;
-        if s.find.is_some() || s.new_chat.is_some() {
+        if s.find.is_some() || s.new_chat.is_some() || s.business_picker.is_some() {
             layers.insert(0, el().key("menu-backdrop").role("none").a11y_hidden().absolute(0.0, 0.0).w_full().h_full()
                 .backdrop_blur(MENU_BLUR).token_motion(k.motion.overlay));
         }
@@ -145,6 +146,8 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     crate::native_preview::browser_backdrop(browser_backdrop);
     let native_page = s.browser_page_shown() || s.artifact_preview_float();
     let screen = if s.screen == Screen::Workspace && native_page { screen } else { screen.fill(t.sidebar) };
+    // Swap light/dark instantly, like the web's `theme-switching` (no colour crossfade).
+    let screen = screen.key(if t.dark { "ui-theme-dark" } else { "ui-theme-light" }).motion(rune::Spring::NONE);
     let root = rune_kit::root(screen.hover_motion_within(ease, ease), layers);
     zoomed(s, root, z)
 }

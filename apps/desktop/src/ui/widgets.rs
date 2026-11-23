@@ -1,6 +1,6 @@
 //! The web app's small parts: buttons, marks, badges, cards and empty states.
 
-use rune::{Color, Cursor, El, Icon, Spring, TextStyle, col, el, icon, row, text};
+use rune::{Color, Cursor, El, Icon, Spring, TextEdit, TextStyle, col, el, icon, row, text, text_input};
 
 use crate::state::App;
 use crate::theme::{Theme, shadows, type_};
@@ -46,6 +46,13 @@ impl AutofocusIf for El {
 /// row still presses the row, and only a drag selects.
 pub fn label(s: impl Into<String>, style: TextStyle, color: Color) -> El {
     text(s.into()).font(style).color(color).selectable(true).cursor(rune::Cursor::Default)
+}
+
+/// A text field with theme-aware text, placeholder, caret and selection.
+pub fn field_input(edit: &TextEdit, style: TextStyle, t: &Theme) -> El {
+    let sel = t.primary_ink.alpha(if t.dark { 0.32 } else { 0.22 });
+    let caret = if t.dark { t.foreground } else { t.primary_ink };
+    text_input(edit, style).color(t.foreground).caret(caret, sel)
 }
 
 /// A square ghost button holding an icon (`size="icon-sm"`, 28 points).
@@ -148,6 +155,26 @@ pub fn account_tile(t: &Theme, email: Option<&str>, size: f32) -> El {
 pub fn count_badge(t: &Theme, n: i64) -> El {
     let b = row().px(6.0).h(16.0).radius(8.0).center().fill(t.wrong_soft).label(format!("{n} open")).child(label(n.to_string(), type_::COUNT, t.wrong));
     shadows(b, &t.badge_shadow)
+}
+
+/// A numeric badge pinned to the top-right of a square icon control (sidebar inbox).
+pub fn icon_notification_badge(t: &Theme, n: i64, ring: Color) -> El {
+    if n <= 0 {
+        return el();
+    }
+    let text = if n > 99 { "99+".to_string() } else { n.to_string() };
+    let wide = n > 9 || n > 99;
+    row()
+        .absolute(if wide { 16.0 } else { 22.0 }, 1.0)
+        .h(16.0)
+        .px(if wide { 4.0 } else { 0.0 })
+        .min_w(if wide { 18.0 } else { 16.0 })
+        .radius(8.0)
+        .center()
+        .fill(t.wrong)
+        .border(1.5, ring)
+        .label(format!("{n} waiting"))
+        .child(label(text, type_::COUNT, Color::WHITE))
 }
 
 /// The web's `Badge` (`components/ui/badge.tsx`): a fully rounded pill, 11-point

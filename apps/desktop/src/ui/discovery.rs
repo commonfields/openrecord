@@ -299,11 +299,10 @@ fn small_multiples(s: &App, t: &Theme, st: &Stats) -> El {
         let values: Vec<Option<f64>> = rows.iter().map(|r| Some(r[j])).collect();
         let key = format!("model-trend-{}", x.key);
         let dim = s.model_focus.as_ref().is_some_and(|f| f != &x.key);
-        let tile = card(t)
+        let tile = col()
             .key(format!("multiple-{}", x.key))
             .grow(1.0)
             .min_w(0.0)
-            .padding(12.0)
             .gap(4.0)
             .opacity(if dim { 0.4 } else { 1.0 })
             .child(
