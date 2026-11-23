@@ -14,7 +14,7 @@ use rune::{Color, El, LineCap, Shape, canvas, col, el, row};
 use crate::format;
 use crate::insights::Verdicts;
 use crate::state::App;
-use crate::theme::{Theme, type_};
+use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::label;
 
 /// The verdict colours in the web's order (`verdictSeries`), with their names.
@@ -297,16 +297,63 @@ pub fn chart_hit_row_help(
     hits
 }
 
-fn trend_day_help(tr: &Trend<'_>, day: usize) -> String {
+fn trend_tooltip(t: &Theme, tr: &Trend<'_>, day: usize) -> El {
     let date = tr.dates.get(day).map(|d| format::short_day(d)).unwrap_or_default();
-    let value = tr
-        .values
-        .get(day)
-        .copied()
-        .flatten()
-        .map(|v| tr.format(v))
-        .unwrap_or_else(|| "—".into());
-    format!("{date}: {value}")
+    let main = tr.values.get(day).copied().flatten().map(|v| tr.format(v)).unwrap_or_else(|| "—".into());
+    let mut body = col()
+        .w_full()
+        .gap(4.0)
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(el().w(12.0).h(2.0).radius(1.0).fill(tr.color))
+                .child(label(tr.label.to_string(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+                .child(label(main, type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)),
+        );
+    if let Some((vals, name)) = &tr.compare {
+        let c = vals.get(day).copied().flatten().map(|v| tr.format(v)).unwrap_or_else(|| "—".into());
+        let dots = Shape::new().stroke_with(vec![[0.0, 1.0], [12.0, 1.0]], false, 1.5, LineCap::Round, t.chart.compare);
+        let dots = (0..2).fold(dots, |s, i| s.stroke_with(vec![[i as f32 * 5.0, 1.0], [i as f32 * 5.0 + 0.01, 1.0]], false, 1.5, LineCap::Round, t.chart.compare));
+        body = body.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(canvas(dots).w(12.0).h(2.0))
+                .child(label(name.clone(), type_::XS, t.muted_foreground).truncate().grow(1.0).min_w(0.0))
+                .child(label(c, type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)),
+        );
+    }
+    shadows(
+        col()
+            .gap(6.0)
+            .px(12.0)
+            .py(10.0)
+            .min_w(168.0)
+            .radius(8.0)
+            .fill(t.popover)
+            .border(1.0, t.border)
+            .child(label(date, type_::XS11, t.muted_foreground))
+            .child(body),
+        &t.float_shadow,
+    )
+}
+
+/// Places a tooltip above the hovered day, aligned like the web `ChartTooltip`.
+fn trend_tooltip_row(t: &Theme, tr: &Trend<'_>, day: usize, days: usize) -> El {
+    let cols = days.min(CHART_HIT_COLUMNS);
+    let mut r = row().w_full().pin(Some(0.0), Some(8.0), Some(0.0), None);
+    for j in 0..cols {
+        let d = if cols == 1 { 0 } else { j * (days - 1) / (cols - 1) };
+        if d == day {
+            r = r.child(col().grow(1.0).items_center().child(trend_tooltip(t, tr, day)));
+        } else {
+            r = r.child(el().grow(1.0));
+        }
+    }
+    r.a11y_hidden()
 }
 
 pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
@@ -386,9 +433,11 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
     }
     let shape = shape.view_box(1.0, VIEW_H);
 
-    let hits = chart_hit_row_help(tr.key, n, Some(&|day| trend_day_help(&tr, day)));
-
-    let plot = col().grow(1.0).min_w(0.0).h(tr.height).child(canvas(shape).w_full().h_full()).child(hits);
+    let hits = chart_hit_row(tr.key, n);
+    let mut plot = col().grow(1.0).min_w(0.0).h(tr.height).child(canvas(shape).w_full().h_full()).child(hits);
+    if let Some(day) = hover {
+        plot = plot.child(trend_tooltip_row(t, &tr, day, n));
+    }
     let mut scale = col().w(AXIS_W).h(tr.height);
     for k in 0..3 {
         let v = lo + (max - lo) * k as f64 / 2.0;

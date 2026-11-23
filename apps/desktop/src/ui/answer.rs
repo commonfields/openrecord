@@ -254,7 +254,7 @@ fn header(s: &App, t: &Theme, a: &AnswerView) -> El {
         let model = i.observed_model.clone().filter(|m| !m.is_empty());
         let when = format::relative(i.collected_at.as_deref(), format::now());
         who = who
-            .child(brands::logo(t, &i.provider, 32.0))
+            .child(brands::mark(t, &i.provider, 32.0))
             .child(
                 col()
                     .grow(1.0)

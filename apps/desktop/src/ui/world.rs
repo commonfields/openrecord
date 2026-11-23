@@ -109,7 +109,8 @@ pub fn view(s: &App, t: &Theme, height: f32, places: &[(String, String, f64)]) -
         if maxx < 0.0 || minx > w || maxy < 0.0 || miny > h {
             continue;
         }
-        sh = sh.stroke_with(pts, true, line, LineCap::Round, ink.alpha(if t.dark { 0.16 } else { 0.2 }));
+        sh = sh.fill(pts.clone(), ink.alpha(if t.dark { 0.075 } else { 0.06 }));
+        sh = sh.stroke_with(pts, true, line, LineCap::Round, ink.alpha(if t.dark { 0.13 } else { 0.16 }));
     }
     // Where people are: a soft halo and a core, sized by share of the busiest place.
     let most = places.iter().map(|p| p.2).fold(1.0, f64::max);

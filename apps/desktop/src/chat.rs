@@ -357,6 +357,22 @@ impl MenuEntry {
             MenuEntry::Playbook(p) => &p.name,
         }
     }
+
+    /// Text for the command menu's description column (slash skills and playbooks).
+    pub fn description(&self) -> String {
+        match self {
+            MenuEntry::Command(_, d) => (*d).to_string(),
+            MenuEntry::Playbook(p) => {
+                if !p.title.is_empty() {
+                    p.title.clone()
+                } else if !p.prompt.is_empty() {
+                    p.prompt.lines().next().unwrap_or(&p.prompt).chars().take(160).collect()
+                } else {
+                    p.name.clone()
+                }
+            }
+        }
+    }
 }
 
 /// Playbooks matching "/..." typed in the composer: by name first, then by title.

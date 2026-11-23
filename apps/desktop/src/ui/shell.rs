@@ -4,7 +4,7 @@
 //! pages, then its chats, so nothing is behind a second set of tabs. Surfaces
 //! and tokens are the web's (`components/app-shell.tsx`).
 
-use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, col, el, row};
+use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, TextStyle, col, el, row};
 
 use crate::api::ChatSummary;
 use crate::format;
@@ -12,7 +12,7 @@ use crate::icons;
 use crate::insights::Section;
 use crate::state::{App, Menu, Page, View};
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, account_tile, count_badge, ico, icon_button, label};
+use crate::ui::widgets::{CONTROL, account_tile, count_badge, ico, icon_button, label, track_hover};
 
 pub const RAIL_WIDTH: f32 = 52.0;
 /// Room above the business switcher for the traffic lights (matches their inset).
@@ -108,17 +108,17 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .center_y()
             .role("button")
             .label("Switch business")
-            .expanded(s.menu == Some(Menu::Businesses))
+            .expanded(s.business_picker.is_some())
             .focusable(true)
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
             .on_press(|s: &mut App| {
-                s.confirm_archive = false;
-                s.menu = if s.menu == Some(Menu::Businesses) { None } else {
-                    s.net.archived_businesses();
-                    Some(Menu::Businesses)
-                };
+                if s.business_picker.is_some() {
+                    s.close_business_picker();
+                } else {
+                    s.open_business_picker();
+                }
             });
         if open {
             b = b
@@ -140,7 +140,7 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             // On the rail, a plain mark in place of the name.
             b = b.size(36.0, 36.0).justify_center().child(ico(&icons::BUILDING, 16.0, t.muted_foreground));
         }
-        if s.menu == Some(Menu::Businesses) {
+        if s.business_picker.is_some() {
             b = shadows(b.fill(t.accent), &t.control_shadow);
         }
         b
@@ -160,34 +160,33 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         .scroll(ScrollSpec { stick_bottom: false });
 
     let account = {
-        let name = s.account_email.as_deref().map(|e| e.split('@').next().unwrap_or(e).to_string()).unwrap_or_else(|| "Your account".into());
+        let ready = matches!(s.update, crate::update::Update::Available(_));
         let mut b = row()
             .key("account-trigger")
             .gap(8.0)
             .radius(6.0)
             .center_y()
             .role("button")
-            .label("Account menu")
-            .expanded(s.menu == Some(Menu::Account))
+            .label("Settings")
+            .expanded(s.settings.is_some())
             .focusable(true)
             .cursor(Cursor::Pointer)
             .motion(CONTROL)
-            .on_press(|s: &mut App| s.menu = if s.menu == Some(Menu::Account) { None } else { Some(Menu::Account) })
-            .child({
-                // A dot on the avatar while a newer version waits in the account menu.
-                let ready = matches!(s.update, crate::update::Update::Available(_));
-                row().size(24.0, 24.0).child(account_tile(t, s.account_email.as_deref(), 24.0)).children(ready.then(|| {
-                    el().absolute(17.0, -1.0).size(9.0, 9.0).radius(4.5).fill(t.primary_ink).border(1.5, t.sidebar).help("A new version is ready")
-                }))
-            });
-        if open {
-            b = b
-                .w_full()
-                .h(64.0)
-                .px(10.0)
-                .child(label(name, type_::BASE_MEDIUM, t.foreground).truncate().grow(1.0).min_w(0.0));
-        } else {
-            b = b.size(36.0, 56.0).justify_center();
+            .on_press(|s: &mut App| s.open_settings(crate::state::SettingsPage::General))
+            .child(
+                row()
+                    .size(FOOT, FOOT)
+                    .center()
+                    .child(account_tile(t, s.account_email.as_deref(), FOOT_MARK))
+                    .children(ready.then(|| {
+                        el().absolute(FOOT - 9.0, 1.0).size(8.0, 8.0).radius(4.5).fill(t.primary_ink).border(1.5, t.sidebar).help("A new version is ready")
+                    })),
+            );
+        if s.settings.is_some() {
+            b = shadows(b.fill(t.accent), &t.control_shadow);
+        }
+        if !open {
+            b = b.size(FOOT, FOOT).justify_center();
         }
         b
     };
@@ -216,7 +215,56 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
         )
         .child(col().w_full().gap(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(switcher))
         .child(nav)
-        .child(col().w_full().py(8.0).px(if open { 8.0 } else { 6.0 }).items_center().child(account))
+        .child(if open {
+            row().w_full().py(8.0).px(8.0).center_y().child(account).child(el().grow(1.0)).child(inbox_button(s, t))
+        } else {
+            col().w_full().py(8.0).px(6.0).gap(6.0).items_center().child(inbox_button(s, t)).child(account)
+        })
+}
+
+/// The avatar and the Inbox at the sidebar's foot: each sits in a square this
+/// size (the hover and press target), and draws at `FOOT_MARK` inside it.
+const FOOT: f32 = 28.0;
+const FOOT_MARK: f32 = 20.0;
+
+/// The Inbox at the sidebar's foot, opposite the account: a bare icon the
+/// avatar's size, as the sidebar's other icons are, with what waits as a badge.
+fn inbox_button(s: &App, t: &Theme) -> El {
+    let on = s.view == View::Workspace && s.page == Page::Inbox;
+    let waiting = s.waiting() as i64;
+    let hk = "nav:inbox".to_string();
+    let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+    let badge = (waiting > 0).then(|| {
+        let text = if waiting > 99 { "99+".to_string() } else { waiting.to_string() };
+        row()
+            .absolute(FOOT - 12.0, -2.0)
+            .h(15.0)
+            .min_w(15.0)
+            .px(if waiting > 9 { 4.0 } else { 0.0 })
+            .radius(7.5)
+            .center()
+            .fill(t.wrong)
+            .border(1.5, t.sidebar)
+            .a11y_hidden()
+            .child(label(text, type_::COUNT, rune::Color::WHITE))
+    });
+    row()
+        .key("nav-inbox")
+        .size(FOOT, FOOT)
+        .radius(6.0)
+        .center()
+        .role("link")
+        .label(if waiting > 0 { format!("Inbox, {waiting} waiting") } else { "Inbox".into() })
+        .help("Inbox")
+        .checked(on)
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .motion(CONTROL)
+        .on_hover_change(track_hover(hk))
+        .on_press(|s: &mut App| s.show_page(Page::Inbox))
+        .fill(if on || hovered { t.sidebar_accent } else { t.sidebar_accent.alpha(0.0) })
+        .child(ico(&icons::NAV_INBOX, FOOT_MARK, if on || hovered { t.foreground } else { t.muted_foreground }))
+        .children(badge)
 }
 
 /// What a drag edge is resizing, while one is held.
@@ -325,12 +373,12 @@ fn workspace_links(s: &App, t: &Theme) -> El {
     for page in Page::ALL {
         let active = s.view == View::Workspace && s.page == page;
         let (i, count): (&'static rune::Icon, i64) = match page {
-            Page::Inbox => (&icons::NAV_INBOX, s.waiting() as i64),
             Page::Overview => (&icons::NAV_ANALYTICS, 0),
             Page::Campaigns => (&icons::NAV_CAMPAIGNS, 0),
             Page::AiAnswers => (&icons::NAV_ANSWERS, if s.prefs.show_issue_count { s.attention() } else { 0 }),
             Page::Channels => (&icons::NAV_CHANNELS, 0),
-            Page::Usage | Page::Businesses | Page::Clients => continue,
+            // Inbox sits at the foot, beside the account (`inbox_button`).
+            Page::Inbox | Page::Usage | Page::Businesses | Page::Clients => continue,
         };
         links = links.child(nav_link(s, t, page.key(), i, page.label(), active, count).on_press(move |s: &mut App| s.show_page(page)));
     }
@@ -752,6 +800,304 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
     h
 }
 
+/// Turns the business wheel one name per notch of scrolling, either direction.
+fn business_picker_wheel(s: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx) -> bool {
+    if e.mods.cmd {
+        return false;
+    }
+    let count = s.businesses.len();
+    let Some(picker) = s.business_picker.as_mut() else {
+        return false;
+    };
+    const NOTCH: f32 = 36.0;
+    picker.scroll += e.dy;
+    let before = picker.focus;
+    while picker.scroll >= NOTCH {
+        picker.scroll -= NOTCH;
+        picker.focus = picker.focus.saturating_sub(1);
+    }
+    while picker.scroll <= -NOTCH {
+        picker.scroll += NOTCH;
+        picker.focus = (picker.focus + 1).min(count.saturating_sub(1));
+    }
+    if picker.focus != before {
+        crate::tick::detent();
+    }
+    let _ = tx;
+    true
+}
+
+/// The dial's ruler, in the wheel's points: the main ring with a band of ticks
+/// that turns with the focus (a long one at each business, four short between),
+/// a finer inner scale, a pointer at the middle, and small markers.
+fn ruler(t: &Theme, cx: f32, cy: f32, r: f32, step: f32, focus: usize) -> rune::Shape {
+    use rune::{LineCap, Shape};
+    let ink = t.foreground;
+    let pt = |radius: f32, a: f32| [cx + radius * a.cos(), cy + radius * a.sin()];
+    let arc = |radius: f32, from: f32, to: f32| -> Vec<[f32; 2]> {
+        let n = 96;
+        (0..=n).map(|i| pt(radius, from + (to - from) * i as f32 / n as f32)).collect()
+    };
+    const REACH: f32 = 1.3;
+    let fade = |a: f32| (1.0 - a.abs() / REACH).clamp(0.0, 1.0);
+    // An arc that thins out towards both ends instead of stopping short.
+    let taper = |mut s: Shape, radius: f32, reach: f32, width: f32, alpha: f32| -> Shape {
+        let n = 80;
+        for i in 0..n {
+            let (a0, a1) = (-reach + 2.0 * reach * i as f32 / n as f32, -reach + 2.0 * reach * (i + 1) as f32 / n as f32);
+            let edge = 1.0 - ((a0 + a1) / 2.0).abs() / reach;
+            let f = (edge / 0.4).clamp(0.0, 1.0);
+            let f = f * f * (3.0 - 2.0 * f);
+            if f > 0.0 {
+                s = s.line(pt(radius, a0), pt(radius, a1), width, LineCap::Butt, ink.alpha(alpha * f));
+            }
+        }
+        s
+    };
+    let mut s = taper(Shape::new(), r, 1.45, 1.0, 0.26);
+    s = taper(s, r - 58.0, 1.25, 1.0, 0.13);
+
+    // The tick band, turning with the focus.
+    let base = focus as i32 * 5;
+    for j in (base - 45)..=(base + 45) {
+        let a = (j - base) as f32 * step / 5.0;
+        let f = fade(a);
+        if f <= 0.0 {
+            continue;
+        }
+        let major = j.rem_euclid(5) == 0;
+        let len = if major { 18.0 } else { 9.0 };
+        s = s.line(pt(r - 3.0, a), pt(r - 3.0 - len, a), if major { 1.5 } else { 1.0 }, LineCap::Butt, ink.alpha(0.08 + if major { 0.5 } else { 0.3 } * f));
+    }
+    // The inner scale: fine and fixed, like the dial's housing.
+    for j in -60..=60 {
+        let a = j as f32 * step / 10.0;
+        let f = fade(a);
+        if f <= 0.0 {
+            continue;
+        }
+        s = s.line(pt(r - 58.0, a), pt(r - 58.0 - if j % 10 == 0 { 7.0 } else { 3.5 }, a), 1.0, LineCap::Butt, ink.alpha(0.05 + 0.2 * f));
+    }
+    // A pointer inside the ring, aimed at the name in focus.
+    let tip = pt(r - 66.0, 0.0);
+    s = s.fill(vec![tip, [tip[0] - 13.0, tip[1] - 7.0], [tip[0] - 13.0, tip[1] + 7.0]], ink.alpha(0.55));
+    // Small square markers on the inner side, at the neighbours.
+    for k in [-3i32, -2, -1, 1, 2, 3] {
+        let a = k as f32 * step;
+        let [x, y] = pt(r - 74.0, a);
+        let size = if k.abs() == 1 { 5.0 } else { 4.0 };
+        let h = size / 2.0;
+        s = s.fill(vec![[x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]], ink.alpha(0.1 + 0.18 * fade(a)));
+    }
+    s
+}
+
+/// A business on the wheel: the same ball for every business, in the dial's ink
+/// (graphite on light, silver on dark), lit from the top left. A soft shadow
+/// under it, a shaded body, light bouncing up along its lower edge and a glint.
+fn wheel_knob(t: &Theme, size: f32) -> El {
+    use crate::theme::hex;
+    use rune::{Color, Shadow};
+    let (hi, base, lo) = if t.dark {
+        (hex("#ffffff"), hex("#c3c7cf"), hex("#545862"))
+    } else {
+        (hex("#8d93a1"), hex("#2a2d35"), hex("#050608"))
+    };
+    let glint = size * 0.36;
+    el().size(size, size)
+        .radius(size / 2.0)
+        .fill(base)
+        .radial_gradient([0.34, 0.28], size * 0.82, [(0.0, hi), (0.38, base), (1.0, lo)])
+        .box_shadow(Shadow { x: 0.0, y: size * 0.16, blur: size * 0.5, spread: -size * 0.06, color: Color::BLACK.alpha(if t.dark { 0.6 } else { 0.32 }), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: size * 0.02, blur: size * 0.06, spread: 0.0, color: Color::BLACK.alpha(if t.dark { 0.45 } else { 0.25 }), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: -size * 0.07, blur: size * 0.16, spread: 0.0, color: Color::WHITE.alpha(if t.dark { 0.35 } else { 0.22 }), inset: true })
+        .child(
+            el().absolute(size * 0.2, size * 0.13)
+                .size(glint, glint * 0.62)
+                .radius(glint / 2.0)
+                .fill(Color::WHITE.alpha(if t.dark { 0.85 } else { 0.5 }))
+                .blur(size * 0.035),
+        )
+        .a11y_hidden()
+}
+
+/// Switch business: the names along a ring at the window's left edge. Scrolling
+/// (or Up and Down) turns the wheel; the name at the middle is the one in focus,
+/// and pressing it, or Return, switches to it.
+pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut Vec<El>) {
+    let picker = s.business_picker.as_ref().expect("picker open");
+    let close = |s: &mut App| s.close_business_picker();
+    let list = &s.businesses;
+    let focus = picker.focus.min(list.len().saturating_sub(1));
+
+    // The ring: only its right curve shows, the rest runs past the window's left edge.
+    // Its radius follows the window's height, so the curve never runs off the top or bottom.
+    let height = if s.window.1 > 0.0 { s.window.1 / s.zoom().max(0.1) - 16.0 } else { 840.0 };
+    let r_fit = ((height - 48.0) / 2.0).clamp(240.0, 420.0);
+    #[allow(non_snake_case)]
+    let R = r_fit;
+    const W: f32 = 560.0;
+    const STEP: f32 = 0.19;
+    const SHOWN: i32 = 4;
+    let (cx, cy) = (150.0 - R, R);
+    let mut wheel = el()
+        .key("business-picker-wheel")
+        .size(W, 2.0 * R)
+        .shape(ruler(t, cx, cy, R, STEP, focus))
+        .child(
+            el().key("business-picker-ring")
+                .absolute(cx - R, cy - R)
+                .size(2.0 * R, 2.0 * R)
+                .radius(R)
+                .fill(t.foreground.alpha(0.025))
+                .a11y_hidden(),
+        );
+    // Each name's number on the dial, between the tick band and the inner arc.
+    for (i, _) in list.iter().enumerate() {
+        let k_off = i as i32 - focus as i32;
+        if k_off.abs() > SHOWN + 1 {
+            continue;
+        }
+        let a = k_off as f32 * STEP;
+        let (nx, ny) = (cx + (R - 40.0) * a.cos(), cy + (R - 40.0) * a.sin());
+        let fade = (1.0 - 0.18 * k_off.abs() as f32).max(0.15);
+        wheel = wheel.child(
+            row().key(format!("business-dial-{i}"))
+                .absolute(nx - 16.0, ny - 8.0)
+                .size(32.0, 16.0)
+                .center()
+                .rotate(a)
+                .motion(CONTROL)
+                .a11y_hidden()
+                .child(label(format!("{:02}", i + 1), type_::XS.mono(), if k_off == 0 { t.foreground } else { t.muted_foreground.alpha(fade) })),
+        );
+    }
+
+    if list.is_empty() {
+        wheel = wheel.child(
+            row().absolute(cx + R + 24.0, cy - 12.0).w(320.0).h(24.0).justify_start().center_y()
+                .child(label("No businesses yet. Set one up on the web.", type_::SM, t.muted_foreground)),
+        );
+    }
+    for (i, b) in list.iter().enumerate() {
+        let k_off = i as i32 - focus as i32;
+        if k_off.abs() > SHOWN {
+            continue;
+        }
+        let angle = k_off as f32 * STEP;
+        let (px, py) = (cx + R * angle.cos(), cy + R * angle.sin());
+        let on = k_off == 0;
+        let current = s.active.as_deref() == Some(b.id.as_str());
+        let hk = format!("biz:wheel-{}", b.id);
+        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+        let fade = (1.0 - 0.2 * k_off.abs() as f32).max(0.2);
+        // Each business is its mark sitting on the ring, with its name beside it.
+        let mark = if on { 36.0 } else { 24.0 };
+        let mut badge = el()
+            .size(mark, mark)
+            .radius(mark / 2.0)
+            .child(wheel_knob(t, mark));
+        if on {
+            badge = badge.outline(1.5, 3.0, t.foreground.alpha(0.55));
+        }
+        let name = if on {
+            label(b.name.clone(), TextStyle::new(18.0, 600.0).lh(22.0), t.foreground)
+        } else {
+            label(b.name.clone(), TextStyle::new(14.0, 500.0).lh(18.0), if hovered { t.foreground } else { t.muted_foreground })
+        };
+        let id = b.id.clone();
+        let mut entry = row()
+            .key(format!("business-wheel-{}", b.id))
+            .absolute(px - mark / 2.0, py - mark / 2.0)
+            .h(mark)
+            .gap(if on { 16.0 } else { 12.0 })
+            .center_y()
+            .role("button")
+            .label(b.name.clone())
+            .checked(current)
+            .cursor(Cursor::Pointer)
+            .motion(CONTROL)
+            .on_hover_change(track_hover(hk))
+            .on_press(move |s: &mut App| {
+                if on {
+                    s.select_business(&id);
+                } else if let Some(p) = &mut s.business_picker {
+                    p.focus = i;
+                    crate::tick::detent();
+                }
+            })
+            .child(badge)
+            .child(name.truncate().max_w(300.0));
+        if !on {
+            entry = entry.opacity(if hovered { fade.max(0.8) } else { fade });
+        }
+        wheel = wheel.child(entry);
+    }
+
+    let panel = wheel
+        .role("dialog")
+        .label("Switch business")
+        .focusable(true)
+        .on_wheel(business_picker_wheel)
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+            let count = s.businesses.len();
+            let Some(p) = s.business_picker.as_mut() else { return false };
+            let before = p.focus;
+            match ev.key {
+                rune::Key::Up | rune::Key::Down => {
+                    p.focus = if ev.key == rune::Key::Up { p.focus.saturating_sub(1) } else { (p.focus + 1).min(count.saturating_sub(1)) };
+                    if p.focus != before {
+                        crate::tick::detent();
+                    }
+                }
+                rune::Key::Enter => {
+                    let focus = p.focus;
+                    if let Some(id) = s.businesses.get(focus).map(|b| b.id.clone()) {
+                        s.select_business(&id);
+                    }
+                }
+                _ => return false,
+            }
+            true
+        })
+        .token_motion(k.motion.overlay)
+        .modal(true, close)
+        .modal_click_outside(true);
+
+    // Inside the content panel, clipped to its rounded card, so the ring comes in
+    // from the panel's left edge and never crosses the sidebar. The layer repeats
+    // the shell's layout (the sidebar's width, then the card's 8-point inset)
+    // instead of reading the panel's rectangle back.
+    layer.push(
+        row()
+            .key("business-picker-layer")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .children(s.sidebar_open.then(|| el().w(s.prefs.sidebar()).h_full()))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .h_full()
+                    .pt(8.0)
+                    .pb(8.0)
+                    .pr(8.0)
+                    .pl(if s.sidebar_open { 0.0 } else { 8.0 })
+                    .child(
+                        col()
+                            .key("business-picker-area")
+                            .w_full()
+                            .h_full()
+                            .clip_rounded(10.0)
+                            .justify_center()
+                            .items_start()
+                            .child(panel),
+                    ),
+            ),
+    );
+}
+
 /// A floating menu: the web's wide rounded float with 40-point rows.
 fn menu(t: &Theme, key: &str, width: f32) -> El {
     // Up and Down move through its items, wrapping at the ends.
@@ -781,70 +1127,6 @@ fn menu_row(t: &Theme, key: String, lead: Option<El>, text_: &str, checked: bool
         r = r.child(ico(&icons::CHECK, 16.0, t.foreground)).autofocus();
     }
     r
-}
-
-/// The account menu, as the web draws it: who is signed in, then Settings,
-/// Account, Keyboard shortcuts and Usage; Businesses and Clients and products;
-/// and Sign out. A waiting update shows above Sign out.
-pub fn account_menu(s: &App, t: &Theme, _k: &rune_kit::Kit, layer: &mut Vec<El>) {
-    if s.menu != Some(Menu::Account) {
-        return;
-    }
-    let email = s.account_email.clone().unwrap_or_else(|| "Signed in".into());
-    let name = email.split('@').next().unwrap_or(&email).to_string();
-    let api = crate::state::api_base();
-    let web = web_url(&api);
-    let item = |key: &str, icon: &'static rune::Icon, text_: &str| {
-        let hk = format!("acct:{key}");
-        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
-        let r = row().key(key.to_string()).w_full().h(40.0).px(12.0).gap(10.0).radius(8.0).center_y()
-            .role("menuitem").label(text_.to_string()).focusable(true).cursor(Cursor::Pointer).focus_highlight(t.accent)
-            .on_hover_change(crate::ui::widgets::track_hover(hk))
-            .child(ico(icon, 16.0, if hovered { t.foreground } else { t.muted_foreground }))
-            .child(label(text_.to_string(), type_::SM, t.foreground).truncate().grow(1.0).min_w(0.0));
-        crate::ui::widgets::highlight(t, r, hovered, false)
-    };
-    let rule = || el().w_full().h(1.0).my(6.0).fill(t.border);
-    let settings = |page: crate::state::SettingsPage| move |s: &mut App| {
-        s.menu = None;
-        s.open_settings(page);
-    };
-    let _ = web;
-    // Opens in the app, as the web opens them in its own shell.
-    let page = |p: Page| {
-        move |s: &mut App| {
-            s.menu = None;
-            s.show_page(p);
-        }
-    };
-    let width = if s.sidebar_full() { s.prefs.sidebar() - 16.0 } else { 256.0 };
-    let side = if s.sidebar_full() { Side::Bottom } else { Side::Right };
-    let mut m = menu(t, "account-menu-list", width)
-        .child(row().w_full().px(10.0).py(10.0).gap(12.0).center_y()
-            .child(account_tile(t, s.account_email.as_deref(), 36.0))
-            .child(col().min_w(0.0).gap(1.0).child(label(name, type_::XS_MEDIUM, t.foreground).truncate()).child(label(email, type_::XS, t.muted_foreground).truncate())))
-        .child(rule())
-        .child(item("acct-settings", &icons::SETTINGS, "Settings").autofocus().on_press(settings(crate::state::SettingsPage::General)))
-        .child(item("acct-account", &icons::USER_ROUND, "Account").on_press(settings(crate::state::SettingsPage::Account)))
-        .child(item("acct-shortcuts", &icons::KEYBOARD, "Keyboard shortcuts").on_press(settings(crate::state::SettingsPage::Shortcuts)))
-        .child(item("acct-usage", &icons::GAUGE, "Usage").on_press(page(Page::Usage)))
-        .child(rule())
-        .child(item("acct-businesses", &icons::BUILDING, "Businesses").on_press(page(Page::Businesses)))
-        .child(item("acct-clients", &icons::BRIEFCASE, "Clients and products").on_press(page(Page::Clients)))
-        .child(rule())
-        .child(update_row(s, t))
-        .child(rule());
-    // Sign out turns red under the pointer: it ends the session.
-    let out_hovered = s.row_hover.as_deref() == Some("acct:sign-out");
-    let out_ink = if out_hovered { t.wrong } else { t.muted_foreground };
-    let sign_out = row().key("sign-out").w_full().h(40.0).px(12.0).gap(10.0).radius(8.0).center_y()
-        .role("menuitem").label("Sign out").focusable(true).cursor(Cursor::Pointer).focus_highlight(t.wrong_soft)
-        .on_hover_change(crate::ui::widgets::track_hover("acct:sign-out".to_string()))
-        .fill(if out_hovered { t.wrong_soft } else { t.wrong_soft.alpha(0.0) }).motion(CONTROL)
-        .child(ico(&icons::LOG_OUT, 16.0, out_ink))
-        .child(label("Sign out", type_::SM, if out_hovered { t.wrong } else { t.foreground }).truncate().grow(1.0).min_w(0.0));
-    m = m.child(sign_out.on_press(|s: &mut App| s.sign_out()));
-    layer.push(m.role("menu").anchored("account-trigger", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None));
 }
 
 /// The update row, always there: check for a newer version, install one that
@@ -900,51 +1182,6 @@ pub fn menus(s: &App, t: &Theme) -> Option<El> {
     let width = if s.sidebar_full() { s.prefs.sidebar() - 16.0 } else { 256.0 };
     let side = if s.sidebar_full() { Side::Bottom } else { Side::Right };
     match s.menu? {
-        Menu::Businesses => {
-            let mut m = menu(t, "business-menu", width).child(label("Businesses", type_::XS, t.muted_foreground).px(8.0).py(6.0));
-            for b in &s.businesses {
-                let id = b.id.clone();
-                m = m.child(
-                    menu_row(t, format!("business-{}", b.id), None, &b.name, s.active.as_deref() == Some(b.id.as_str()))
-                        .on_press(move |s: &mut App| {
-                            s.select_business(&id);
-                        }),
-                );
-            }
-            if s.businesses.is_empty() {
-                m = m.child(label("No businesses yet. Set one up on the web.", type_::SM_13, t.muted_foreground).px(8.0).py(6.0).wrap());
-            }
-            // Archive takes the open business out of this list (nothing is deleted); it asks twice.
-            if let Some(active) = s.active.clone().filter(|a| s.businesses.iter().any(|b| &b.id == a)) {
-                let name = s.businesses.iter().find(|b| b.id == active).map(|b| b.name.clone()).unwrap_or_default();
-                let text_ = if s.confirm_archive { format!("Archive \"{name}\"? Press again. Nothing is deleted") } else { format!("Archive \"{name}\"") };
-                m = m.child(menu_row(t, "business-archive".into(), Some(ico(&icons::ARCHIVE, 14.0, t.muted_foreground)), &text_, false).on_press(move |s: &mut App| {
-                    if s.confirm_archive {
-                        s.confirm_archive = false;
-                        s.menu = None;
-                        s.net.archive_business(active.clone(), true);
-                    } else {
-                        s.confirm_archive = true;
-                    }
-                }));
-            }
-            if !s.archived_businesses.is_empty() {
-                let toggle = format!("Archived ({})", s.archived_businesses.len());
-                m = m.child(menu_row(t, "business-archived".into(), None, &toggle, s.show_archived_businesses).on_press(|s: &mut App| s.show_archived_businesses = !s.show_archived_businesses));
-                if s.show_archived_businesses {
-                    for b in &s.archived_businesses {
-                        let id = b.id.clone();
-                        m = m.child(menu_row(t, format!("business-restore-{}", b.id), None, &format!("Restore {}", b.name), false).on_press(move |s: &mut App| {
-                            s.menu = None;
-                            s.net.archive_business(id.clone(), false);
-                        }));
-                    }
-                }
-            }
-            Some(m.role("menu").anchored("business-switcher", side, Align::Start, 8.0).modal(true, |s: &mut App| s.menu = None))
-        }
-        // Built with the kit beside the other layers (`account_menu`).
-        Menu::Account => None,
         Menu::Model => Some(crate::ui::agent::model_menu(s, t)),
         Menu::Reasoning => Some(crate::ui::agent::reasoning_menu(s, t)),
         Menu::ChatFilter => Some(chat_filter_menu(s, t)),

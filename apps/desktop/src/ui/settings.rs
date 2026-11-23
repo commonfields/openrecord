@@ -10,19 +10,26 @@ use crate::icons;
 use crate::net::ProviderChange;
 use crate::prefs::{ChatWidth, Landing, Style, ThemePref};
 use crate::settings::{Bridge, Catalog, Instance, NOTE_KINDS, kind_label};
-use crate::state::{App, Load, SettingsPage};
+use crate::state::{App, Load, Page, SettingsPage};
+use crate::ui::widgets::track_hover;
 use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, Variant, account_tile, button, ico, label};
 
 /// The scrim and the dialog, as two layers over the window.
 pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
-    let groups: [(&str, &[SettingsPage]); 2] = [
+    let settings_groups: [(&str, &[SettingsPage]); 2] = [
         ("Preferences", &[SettingsPage::General, SettingsPage::Agent, SettingsPage::Shortcuts]),
         ("Account", &[SettingsPage::Account, SettingsPage::Privacy, SettingsPage::About]),
     ];
-    let mut nav = col().w(224.0).px(8.0).pt(12.0).pb(8.0).gap(20.0).child(label("Settings", type_::BASE_MEDIUM, t.foreground).px(8.0));
-    for (name, pages) in groups {
-        let mut g = col().w_full().gap(2.0).child(label(name, type_::XS_MEDIUM, t.muted_foreground).px(8.0).pb(4.0));
+    let workspace: [(&str, Page, &'static rune::Icon); 3] = [
+        ("Usage", Page::Usage, &icons::GAUGE),
+        ("Businesses", Page::Businesses, &icons::BUILDING),
+        ("Clients and products", Page::Clients, &icons::BRIEFCASE),
+    ];
+
+    let mut scroll = col().w_full().gap(20.0);
+    for (group, pages) in settings_groups {
+        let mut g = col().w_full().gap(2.0).child(label(group, type_::XS_MEDIUM, t.muted_foreground).px(8.0).pb(4.0));
         for p in pages {
             let p = *p;
             let on = p == page;
@@ -49,8 +56,82 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
             }
             g = g.child(item);
         }
-        nav = nav.child(g);
+        scroll = scroll.child(g);
     }
+    let mut workspace_group =
+        col().w_full().gap(2.0).child(label("Workspace", type_::XS_MEDIUM, t.muted_foreground).px(8.0).pb(4.0));
+    for (title, p, icon) in workspace {
+        let hk = format!("settings-nav-{}", p.key());
+        let hovered = s.row_hover.as_deref() == Some(hk.as_str());
+        let item = row()
+            .key(hk.clone())
+            .w_full()
+            .h(32.0)
+            .px(8.0)
+            .gap(10.0)
+            .center_y()
+            .radius(6.0)
+            .role("link")
+            .label(title)
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .hover(t.sidebar_accent)
+            .motion(CONTROL)
+            .on_hover_change(track_hover(hk))
+            .on_press(move |s: &mut App| {
+                s.settings = None;
+                s.show_page(p);
+            })
+            .child(ico(icon, 14.0, if hovered { t.primary_ink } else { t.muted_foreground }))
+            .child(label(title, type_::SM, if hovered { t.foreground } else { t.sidebar_foreground }));
+        workspace_group = workspace_group.child(if hovered { item.fill(t.sidebar_accent) } else { item });
+    }
+    scroll = scroll.child(workspace_group);
+
+    let out_hovered = s.row_hover.as_deref() == Some("settings:sign-out");
+    let out_ink = if out_hovered { t.wrong } else { t.muted_foreground };
+    let sign_out = row()
+        .key("settings-sign-out-nav")
+        .w_full()
+        .h(36.0)
+        .px(8.0)
+        .gap(10.0)
+        .center_y()
+        .radius(6.0)
+        .role("button")
+        .label("Sign out")
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .on_hover_change(track_hover("settings:sign-out".into()))
+        .fill(if out_hovered { t.wrong_soft } else { t.wrong_soft.alpha(0.0) })
+        .motion(CONTROL)
+        .on_press(|s: &mut App| {
+            s.settings = None;
+            s.sign_out();
+        })
+        .child(ico(&icons::LOG_OUT, 14.0, out_ink))
+        .child(label("Sign out", type_::SM, if out_hovered { t.wrong } else { t.foreground }).truncate());
+
+    let nav = col()
+        .key("settings-nav")
+        .w(248.0)
+        .h_full()
+        .min_h(0.0)
+        .px(8.0)
+        .pt(12.0)
+        .pb(8.0)
+        .gap(12.0)
+        .child(label("Settings", type_::BASE_MEDIUM, t.foreground).px(8.0).pb(4.0))
+        .child(
+            col()
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .child(scroll.scroll(ScrollSpec { stick_bottom: false })),
+        )
+        .child(el().w_full().h(1.0).fill(t.border))
+        .child(update_row(s, t))
+        .child(sign_out);
 
     let body = match page {
         SettingsPage::General => general(s, t),
@@ -80,7 +161,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
         .items_start()
         .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(page.title(), type_::TITLE.lh(24.0), t.foreground).role("heading")).child(label(page.description(), type_::SM_13, t.muted_foreground)))
         .child(close);
-    let mut content = col().w_full().max_w(672.0).gap(20.0);
+    let mut content = col().w_full().max_w(720.0).gap(20.0);
     if let Some(e) = &s.settings_error {
         content = content.child(
             row()
@@ -106,7 +187,15 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
             .fill(t.background)
             .clip_rounded(10.0)
             .child(header)
-            .child(col().key("settings-scroll").w_full().grow(1.0).min_h(0.0).child(col().w_full().items_center().px(24.0).pt(8.0).pb(32.0).child(content)).scroll(ScrollSpec { stick_bottom: false })),
+            .child(
+                col()
+                    .key("settings-scroll")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .child(col().w_full().items_center().px(32.0).pt(8.0).pb(32.0).child(content))
+                    .scroll(ScrollSpec { stick_bottom: false }),
+            ),
         &t.panel_shadow,
     );
     let dialog = shadows(
@@ -115,9 +204,11 @@ pub fn view(s: &App, t: &Theme, k: &Kit, page: SettingsPage) -> Vec<El> {
             .role("dialog")
             .label("Settings")
             .w_full()
-            .max_w(960.0)
+            .min_w(1120.0)
+            .max_w(1360.0)
             .h_full()
-            .max_h(680.0)
+            .min_h(840.0)
+            .max_h(1020.0)
             .padding(8.0)
             .radius(16.0)
             .fill(t.sidebar)
@@ -165,12 +256,30 @@ fn group(t: &Theme, key: &str, title: &str, description: Option<&str>, rows: Vec
 
 /// A row: its name (and a short note under it) on the left, its control on the right.
 fn setting(t: &Theme, name: &str, description: Option<String>, control: Option<El>) -> El {
-    let mut left = col().grow(1.0).min_w(0.0).gap(2.0).child(label(name.to_string(), type_::SM, t.foreground));
+    let mut left = col()
+        .min_w(0.0)
+        .max_w(420.0)
+        .gap(2.0)
+        .shrink()
+        .child(label(name.to_string(), type_::SM, t.foreground));
     let tall = description.is_some();
     if let Some(d) = description {
         left = left.child(label(d, type_::XS.lh(16.0), t.muted_foreground).wrap());
     }
-    row().w_full().min_h(if tall { 56.0 } else { 44.0 }).px(12.0).py(8.0).gap(20.0).center_y().radius(8.0).child(left).children(control)
+    let mut r = row()
+        .w_full()
+        .min_h(if tall { 56.0 } else { 44.0 })
+        .px(12.0)
+        .py(8.0)
+        .gap(16.0)
+        .center_y()
+        .radius(8.0)
+        .child(left)
+        .child(el().grow(1.0).min_w(8.0).shrink());
+    if let Some(c) = control {
+        r = r.child(c.shrink());
+    }
+    r
 }
 
 /// An on/off switch, as Rune draws one: a 38 by 22 track and a white knob with a soft shadow.
@@ -324,6 +433,7 @@ fn general(s: &App, t: &Theme) -> El {
         .w_full()
         .gap(20.0)
         .child(appearance)
+        .child(home_design(s, t))
         .child(group(t, "language", "Language and region", None, vec![setting(t, "Interface language", Some("More languages will follow.".into()), Some(muted(t, "English")))]))
         .child(group(
             t,
@@ -345,6 +455,65 @@ fn general(s: &App, t: &Theme) -> El {
                 ),
             ],
         ))
+}
+
+/// Home's backdrop: the built-in scene, a picture of the person's own, or
+/// nothing, always as a dither in the current theme's inks.
+fn home_design(s: &App, t: &Theme) -> El {
+    use crate::backdrop::{self, HomeBackground};
+    let custom = backdrop::has_custom();
+    let mut options = vec![(HomeBackground::Default, "Default")];
+    if custom {
+        options.push((HomeBackground::Custom, "Your picture"));
+    }
+    options.push((HomeBackground::Off, "None"));
+    let shown = if s.prefs.home_background == HomeBackground::Custom && !custom { HomeBackground::Default } else { s.prefs.home_background };
+
+    let preview = match backdrop::current(shown, t.dark) {
+        Some(px) => el()
+            .key("home-design-preview")
+            .w_full()
+            .aspect_ratio(16.0 / 9.0)
+            .radius(8.0)
+            .fill(t.background)
+            .clip_rounded(8.0)
+            .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(&px, rune::SurfaceFit::Fill).opacity(if t.dark { 0.5 } else { 0.6 })),
+        None => row()
+            .key("home-design-preview")
+            .w_full()
+            .h(120.0)
+            .radius(8.0)
+            .fill(t.background)
+            .center()
+            .child(muted(t, "Home shows no background.")),
+    };
+
+    let mut buttons = row().gap(8.0).child(
+        small_button(t, "home-design-choose", if custom { "Replace picture" } else { "Choose picture" })
+            .on_press_tx(|s: &mut App, tx| s.choose_home_background(tx)),
+    );
+    if custom {
+        buttons = buttons.child(small_button(t, "home-design-remove", "Remove").on_press(|s: &mut App| {
+            backdrop::remove();
+            if s.prefs.home_background == HomeBackground::Custom {
+                s.set_pref(|p| p.home_background = HomeBackground::Default);
+            }
+        }));
+    }
+    let mut rows = vec![
+        setting(
+            t,
+            "Background",
+            Some("Shows behind the composer on Home until you send a message.".into()),
+            Some(choice(t, "home-background", shown, &options, |s, v| s.set_pref(|p| p.home_background = v))),
+        ),
+        setting(t, "Your picture", Some("PNG or JPEG. It is turned into a dither that follows Light and Dark.".into()), Some(buttons)),
+    ];
+    if let Some(e) = backdrop::error().filter(|_| shown == HomeBackground::Custom) {
+        rows.push(row().w_full().px(12.0).py(8.0).child(label(e, type_::XS, t.wrong).wrap().grow(1.0).min_w(0.0)));
+    }
+    rows.push(col().w_full().px(12.0).pt(4.0).pb(12.0).child(preview));
+    group(t, "home-design", "Home design", None, rows)
 }
 
 // ---- Agent ------------------------------------------------------------------
@@ -535,11 +704,22 @@ fn setting_icon(t: &Theme, icon: Option<El>, name: &str, description: Option<Str
         title = title.child(i);
     }
     title = title.child(label(name.to_string(), type_::SM_MEDIUM, t.foreground));
-    let mut left = col().grow(1.0).min_w(0.0).gap(2.0).child(title);
+    let mut left = col().min_w(0.0).max_w(420.0).gap(2.0).shrink().child(title);
     if let Some(d) = description {
         left = left.child(label(d, type_::SM_13, t.muted_foreground).wrap());
     }
-    row().w_full().min_h(80.0).padding(14.0).gap(20.0).center_y().child(left).children(control)
+    let mut r = row()
+        .w_full()
+        .min_h(80.0)
+        .padding(14.0)
+        .gap(16.0)
+        .center_y()
+        .child(left)
+        .child(el().grow(1.0).min_w(8.0).shrink());
+    if let Some(c) = control {
+        r = r.child(c.shrink());
+    }
+    r
 }
 
 /// One computer and the providers on it; an offline one folds to one line.
@@ -901,4 +1081,59 @@ fn about(t: &Theme) -> El {
             setting(t, "What it does", Some("Checks what AI assistants say about your business and compares it with the facts you approve.".into()), None),
         ],
     )
+}
+
+/// Check or install an app update — formerly on the sidebar account menu.
+fn update_row(s: &App, t: &Theme) -> El {
+    use crate::update::{Update, current};
+    let spin = || ico(&icons::LOADER, 14.0, t.muted_foreground).looping(rune::LoopSpec::rotation(1.0));
+    let (lead, text_, note, busy) = match &s.update {
+        Update::Available(r) => (ico(&icons::DOWNLOAD, 14.0, t.primary_ink), format!("Update to {}", r.version), Some("Restarts the app".to_string()), false),
+        Update::Installing(v) => (spin(), format!("Installing {v}…"), None, true),
+        Update::Checking => (spin(), "Checking for updates…".to_string(), None, true),
+        Update::Failed(_) => (ico(&icons::TRIANGLE_ALERT, 14.0, t.wrong), "Update failed, try again".to_string(), None, false),
+        Update::UpToDate => (ico(&icons::CHECK, 14.0, t.muted_foreground), "Up to date".to_string(), Some("Check again".to_string()), false),
+        Update::Unknown => (ico(&icons::DOWNLOAD, 14.0, t.muted_foreground), "Check for updates".to_string(), None, false),
+    };
+    let available = matches!(s.update, Update::Available(_));
+    let mut r = row()
+        .key("settings-app-update")
+        .w_full()
+        .min_h(32.0)
+        .px(8.0)
+        .py(6.0)
+        .gap(8.0)
+        .radius(6.0)
+        .center_y()
+        .role("button")
+        .label(text_.clone())
+        .disabled(busy)
+        .focusable(!busy)
+        .cursor(if busy { Cursor::Default } else { Cursor::Pointer })
+        .hover(t.sidebar_accent)
+        .child(lead)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .child(label(text_, type_::SM, t.foreground).truncate())
+                .children((!matches!(s.update, Update::UpToDate)).then(|| {
+                    label(
+                        format!("OpenRecord {}{}", current(), note.map(|n| format!(", {}", n.to_lowercase())).unwrap_or_default()),
+                        type_::XS11,
+                        t.muted_foreground,
+                    )
+                    .truncate()
+                })),
+        );
+    if available {
+        r = r.fill(t.primary_ink.alpha(0.08));
+    }
+    if busy {
+        return r;
+    }
+    r.on_press(|s: &mut App| match s.update {
+        Update::Available(_) => s.install_update(),
+        _ => s.check_update(),
+    })
 }
