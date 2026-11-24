@@ -128,7 +128,7 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if ev.is_command('b') {
-        s.toggle_sidebar();
+        s.toggle_sidebar(tx);
         return true;
     }
     if ev.is_command('n') {

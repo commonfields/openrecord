@@ -34,7 +34,7 @@ pub mod widgets;
 
 pub(crate) use shell::web_url;
 
-use rune::{Cursor, Cx, El, ScrollSpec, Transition, col, el, row};
+use rune::{Cursor, Cx, El, ScrollSpec, SpringPair, Transition, col, el, row};
 use rune_kit::{Kit, PaletteSeed};
 
 use crate::state::{App, Screen, View};
@@ -52,7 +52,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     if !s.artifact_visible() { crate::native_preview::clear(); }
     if s.preview_visible() {
         if let (Some(rect), Some(a)) = (s.preview_rect, s.front_artifact().and_then(|p| p.loaded.ready())) {
-            crate::native_preview::show(&a.preview_html, rect, !s.prefs.reduce_motion);
+            crate::native_preview::show(&a.preview_html, s.gliding(1, rect), !s.prefs.reduce_motion);
         }
         crate::native_preview::preview_pass_through(s.native_view_clear());
     } else {
@@ -60,7 +60,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     // The browser tab's page sits over its slot only while nothing is drawn over it.
     if s.browser_visible() {
-        if let Some(rect) = s.side.browser.rect { crate::native_preview::browser_show(None, rect); }
+        if let Some(rect) = s.side.browser.rect { crate::native_preview::browser_show(None, s.gliding(2, rect)); }
         crate::native_preview::browser_zoom(if s.side.browser.zoom > 0.0 { s.side.browser.zoom } else { 1.0 });
         // While a menu or dialog is open over it, clicks are the app's.
         crate::native_preview::browser_pass_through(s.native_view_clear());
@@ -88,6 +88,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     };
     let mut layers = Vec::new();
     if s.screen == Screen::Workspace {
+        if !s.sidebar_open {
+            layers.push(shell::collapsed_sidebar_layer(s, &t, cx.titlebar_inset() / z));
+        }
         if let Some(m) = shell::menus(s, &t) {
             layers.push(m);
         }
@@ -170,7 +173,7 @@ fn zoomed(s: &App, root: El, z: f32) -> El {
 const MENU_BLUR: f32 = 4.0;
 
 /// The chat narrowing for a card beside it, and the card arriving: unhurried and with no bounce.
-const SPLIT: rune::Spring = rune::Spring::new(0.38, 0.0);
+const SPLIT: rune::Spring = crate::state::SIDEBAR_SPRING;
 
 fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // Collapsed, the sidebar is out of the layout and the traffic lights sit
@@ -247,6 +250,9 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // move the panel to a new parent, and it would crossfade with a copy of itself.
     let mut split = row()
         .key("side-split")
+        // Its own spring: the root's is none (themes swap at once), and inheriting
+        // that landed the split mid-slide on the first commit after a change.
+        .motion(SPLIT)
         .grow(1.0)
         .min_w(0.0)
         .h_full()
@@ -270,7 +276,6 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .grow(if w > 0.0 { 0.0 } else { 1.0 })
                 // Held at its share: without it the panel's content outweighs it.
                 .min_w(w)
-                .transition(Transition::offset(96.0, 0.0).combined(Transition::opacity()))
                 .motion(SPLIT)
                 .h_full()
                 .pt(8.0)
@@ -284,14 +289,14 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     }
     let mut ws = row().key("workspace").w_full().h_full();
     if s.sidebar_open {
-        ws = ws.child(shell::sidebar(s, t));
+        // It slides off the window's left edge on the spring the page follows it
+        // with, so the two edges stay together; by default it would fade in place
+        // over the page that had already moved under it.
+        let spring = crate::state::SIDEBAR_SPRING;
+        ws = ws.child(shell::sidebar(s, t).transition(Transition::offset(-s.prefs.sidebar(), 0.0).springs(SpringPair::new(spring, spring))));
     }
     ws = ws.child(split);
-    // Over the page panel, so it draws on top of the header beside the traffic lights.
-    if !s.sidebar_open {
-        ws = ws.child(shell::collapsed_toggle(s, t, titlebar_inset));
-    }
-    ws.children(shell::sidebar_overlay(s, t))
+    ws
 }
 
 /// Brief placeholder while the first business is selected after sign-in — no setup CTA here (use sidebar).

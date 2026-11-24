@@ -16,10 +16,29 @@ use crate::theme::{Theme, hex, shadows, type_};
 use crate::ui::widgets::{AutofocusIf, CONTROL, failure, ico, label};
 
 
+/// Where the chat transcript and composer are drawn: the main column or the
+/// right panel under Campaigns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChatLayout {
+    Main,
+    Side,
+}
+
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
-    let column = s.prefs.chat_width.max();
+    chat_session(s, t, k, ChatLayout::Main)
+}
+
+/// The same chat session as the main column, embedded under Campaigns in the
+/// right panel (shared transcript, side composer).
+pub fn side_session(s: &App, t: &Theme, k: &Kit) -> El {
+    chat_session(s, t, k, ChatLayout::Side)
+}
+
+fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
+    let side = layout == ChatLayout::Side;
+    let column = if side { f32::MAX } else { s.prefs.chat_width.max() };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
-    if s.prefs.words_webview {
+    if s.prefs.words_webview && !side {
         return words_webview(s, t, k, column, &business);
     }
     let messages = s.transcript();
@@ -29,7 +48,16 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     // crossfades in over the last one instead of blanking and popping.
     let shown = s.conversation.ready().map(|c| c.id.as_str()).unwrap_or("none");
     let turns: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m.role == "user").map(|(i, _)| i).collect();
-    let mut list = col().key(format!("messages-{shown}")).w_full().max_w(column).gap(12.0).pt(24.0).pb(16.0).transition(Transition::opacity());
+    let mut list = col()
+        .key(format!("{}{shown}", if side { "side-messages-" } else { "messages-" }))
+        .w_full()
+        .gap(if side { 8.0 } else { 12.0 })
+        .pt(if side { 8.0 } else { 24.0 })
+        .pb(if side { 8.0 } else { 16.0 })
+        .transition(Transition::opacity());
+    if !side {
+        list = list.max_w(column);
+    }
     match &s.conversation {
         // Only a slow load says so: a quick one goes straight to the chat.
         Load::Loading if messages.is_empty() => {
@@ -62,7 +90,7 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
             continue;
         }
         let mut item = message(s, t, k, i, m, &statuses);
-        if m.role == "user" {
+        if !side && m.role == "user" {
             let owner = shown.to_string();
             item = item.on_layout(move |s: &mut App, rect: [f32; 4]| s.timeline.mark(&owner, i, rect[1]));
         }
@@ -115,21 +143,46 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
         .min_h(0.0)
         // Both sides as the composer's, so replies start at its left edge and
         // the person's bubbles end at its right edge.
-        .px(24.0)
-        .on_layout(|s: &mut App, rect: [f32; 4]| s.timeline.top = rect[1])
-        .child(col().w_full().items_center().child(list))
+        .px(if side { 12.0 } else { 24.0 })
+        .on_layout({
+            let track_timeline = !side;
+            move |s: &mut App, rect: [f32; 4]| {
+                if track_timeline {
+                    s.timeline.top = rect[1];
+                }
+            }
+        })
+        .child(if side { col().w_full().child(list) } else { col().w_full().items_center().child(list) })
         .scroll(ScrollSpec { stick_bottom: true })
-        .scroll_edge_fade(16.0);
+        .scroll_edge_fade(if side { 10.0 } else { 16.0 });
 
     // Only Home shows the empty start state; a new session opens on its transcript.
     let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
-    let body = if fresh && (s.home || s.general) { start(s, t, &business) } else {
-        col().key("transcript-body").w_full().grow(1.0).min_h(0.0)
-            .child(transcript).children(timeline_rail(s, t, shown, &messages, &turns))
+    let body = if !side && fresh && (s.home || s.general) {
+        start(s, t, &business)
+    } else {
+        let mut b = col()
+            .key(if side { "side-transcript-body" } else { "transcript-body" })
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .child(transcript);
+        if !side {
+            b = b.children(timeline_rail(s, t, shown, &messages, &turns));
+        }
+        b
     };
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
-    let lit = fresh && (s.home || s.general);
-    col().key("agent").w_full().h_full().min_h(0.0).children(if lit { window_light(s, t) } else { None }).child(body).child(composer(s, t, &business, ComposerSlot::Main, false))
+    let lit = !side && fresh && (s.home || s.general);
+    let slot = if side { ComposerSlot::Side } else { ComposerSlot::Main };
+    col()
+        .key(if side { "side-agent-session" } else { "agent" })
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .children(if lit { window_light(s, t) } else { None })
+        .child(body)
+        .child(composer(s, t, &business, slot, false))
 }
 
 /// Agent chat with the transcript in `@pierre/words` (WKWebView); composer stays native Rune.
@@ -1194,6 +1247,8 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         "Add to what the agent is doing"
     } else if side && matches!(s.side_tab(), crate::side::SideTab::Helper(_)) {
         "Ask about this helper's work"
+    } else if side && matches!(s.side_tab(), crate::side::SideTab::Page(Page::Campaigns)) {
+        "Reply to the agent about campaigns"
     } else if side {
         "Ask for a change to this page"
     } else if !s.transcript().is_empty() {

@@ -1,10 +1,11 @@
-//! Sign in: the web app's centred card on the canvas.
+//! Sign in: the window split in two, a soft burgundy-to-sage picture on the
+//! left and the form straight on the canvas on the right.
 
-use rune::{Cursor, El, col, row};
+use rune::{Cursor, El, Pixels, SurfaceFit, col, el, row};
 use rune_kit::{Kit, TextInput};
 
 use crate::state::App;
-use crate::theme::{Theme, shadows, type_};
+use crate::theme::{Theme, type_};
 use crate::ui::widgets::{Variant, button, label};
 
 pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
@@ -86,30 +87,51 @@ pub fn view(s: &App, t: &Theme, k: &Kit) -> El {
     form = form.child(server);
     form = form.child(col().w_full().gap(12.0).child(submit).child(demo));
 
-    let card = shadows(
-        col()
-            .key("signin-card")
-            .w(384.0)
-            .px(32.0)
-            .py(32.0)
-            .gap(24.0)
-            .radius(16.0)
-            .fill(t.card)
-            .child(
-                col()
-                    .gap(6.0)
-                    .child(label("Sign in", type_::BASE_MEDIUM, t.foreground).role("heading"))
-                    .child(label("See what AI assistants say about your business, and fix what they get wrong.", type_::BASE, t.muted_foreground).wrap()),
-            )
-            .child(form),
-        &t.float_shadow,
-    );
-    let footer = row()
-        .gap(4.0)
-        .child(label("No account yet?", type_::SM_13, t.muted_foreground))
-        .child(label("Create one on the web", type_::SM_13.lh(20.0), t.foreground));
+    // The form sits on the canvas itself, no card around it.
+    let panel = col()
+        .key("signin-card")
+        .w(320.0)
+        .gap(28.0)
+        .child(
+            col()
+                .gap(8.0)
+                .child(label("Sign in", type_::TITLE, t.foreground).role("heading"))
+                .child(label("See what AI assistants say about your business, and fix what they get wrong.", type_::BASE, t.muted_foreground).wrap()),
+        )
+        .child(form)
+        .child(
+            row()
+                .gap(4.0)
+                .child(label("No account yet?", type_::SM_13, t.muted_foreground))
+                .child(label("Create one on the web", type_::SM_13.lh(20.0), t.foreground)),
+        );
 
-    col().key("signin").w_full().h_full().center().gap(24.0).fill(t.sidebar).window_drag().child(card).child(footer)
+    row()
+        .key("signin")
+        .w_full()
+        .h_full()
+        .padding(10.0)
+        .gap(10.0)
+        .fill(t.background)
+        .window_drag()
+        .child(backdrop())
+        .child(col().key("signin-side").w(0.0).grow(1.0).min_w(0.0).h_full().center().child(panel))
+}
+
+/// The left half: the picture, filling a rounded panel inset from the window's edge.
+fn backdrop() -> El {
+    thread_local! {
+        static PICTURE: Pixels = {
+            let pixels = Pixels::new();
+            if let Ok(img) = image::load_from_memory(include_bytes!("../../assets/signin-backdrop.jpg")) {
+                let img = img.into_rgba8();
+                pixels.set(img.width(), img.height(), img.into_raw());
+            }
+            pixels
+        };
+    }
+    let picture = PICTURE.with(|p| p.clone());
+    el().key("signin-picture").w(0.0).grow(1.0).min_w(0.0).h_full().radius(14.0).clip_rounded(14.0).pixels_fit(&picture, SurfaceFit::Fill).a11y_hidden()
 }
 
 pub fn restoring(t: &Theme) -> El {

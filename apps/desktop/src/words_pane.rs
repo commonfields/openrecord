@@ -84,6 +84,7 @@ pub fn sync(s: &App, dark: bool) {
             hide();
             return;
         }
+        let rect = s.gliding(0, rect);
         let payload = payload(s, dark);
         let Ok(json) = serde_json::to_string(&payload) else { return };
         let rect_changed = LAST_RECT.with(|r| r.borrow().map_or(true, |prev| prev != rect));

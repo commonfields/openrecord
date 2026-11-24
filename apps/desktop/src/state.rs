@@ -312,6 +312,22 @@ pub struct NewChat {
     pub clients: Load<Vec<(String, String)>>,
 }
 
+/// How the sidebar folds and the page widens into its place: no bounce.
+pub const SIDEBAR_SPRING: rune::Spring = rune::Spring::new(0.38, 0.0);
+
+/// `SIDEBAR_SPRING` from 0 to 1 (critically damped, as Rune samples it), so native
+/// panes keep step with the panel they sit in.
+fn spring_progress(seconds: f32) -> f32 {
+    let x = std::f32::consts::TAU / SIDEBAR_SPRING.duration * seconds.max(0.0);
+    1.0 - (1.0 + x) * (-x).exp()
+}
+
+/// The sidebar on the move: when it started, and where each native pane was drawn.
+pub struct SidebarSlide {
+    pub started: std::time::Instant,
+    pub from: [Option<[f32; 4]>; 3],
+}
+
 /// What picking a card in the business deck does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerMode {
@@ -413,6 +429,9 @@ pub struct App {
     pub sidebar_open: bool,
     /// With the sidebar collapsed, whether it is showing over the page because the pointer reached the left edge.
     pub sidebar_peek: bool,
+    /// Skip split springs for one layout after dock/collapse so the right panel does not ease.
+    /// The sidebar folding or unfolding, while it moves (`SidebarSlide`).
+    pub sidebar_slide: Option<SidebarSlide>,
     pub menu: Option<Menu>,
     /// The business switcher: archived businesses (for restoring), whether they
     /// show, and whether "Archive" is waiting for its second press.
@@ -671,6 +690,7 @@ impl App {
             page: Page::Inbox,
             sidebar_open: true,
             sidebar_peek: false,
+            sidebar_slide: None,
             menu: None,
             archived_businesses: Vec::new(),
             show_archived_businesses: false,
@@ -1614,9 +1634,40 @@ impl App {
     }
 
     /// Docks or collapses the sidebar (⌘B and the header's button).
-    pub fn toggle_sidebar(&mut self) {
+    /// Folds or unfolds the sidebar. Everything that moves does so on one spring,
+    /// and the split's new width is known at once: waiting for layout to report it
+    /// laid the right panel out twice, so the page was pushed one way and back.
+    pub fn toggle_sidebar(&mut self, tx: &mut Tx) {
+        let from = [self.words_rect, self.preview_rect, self.side.browser.rect];
+        let from = [0, 1, 2].map(|i| from[i].map(|r| self.gliding(i, r)));
         self.sidebar_open = !self.sidebar_open;
         self.sidebar_peek = false;
+        if self.split_w > 0.0 {
+            let w = self.prefs.sidebar();
+            self.split_w = (self.split_w + if self.sidebar_open { -w } else { w }).max(0.0);
+        }
+        if !self.prefs.reduce_motion {
+            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from });
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        tx.motion(SIDEBAR_SPRING);
+    }
+
+    /// Where a native pane (0 the chat's text, 1 the artifact preview, 2 the
+    /// browser) is drawn now, on its way to `to` while the sidebar slides. Rune
+    /// reports where layout ends, so a pane placed there would run ahead of the
+    /// panel around it.
+    pub fn gliding(&self, pane: usize, to: [f32; 4]) -> [f32; 4] {
+        match &self.sidebar_slide {
+            Some(SidebarSlide { started, from }) => match from[pane] {
+                Some(from) => {
+                    let p = spring_progress(started.elapsed().as_secs_f32());
+                    std::array::from_fn(|i| from[i] + (to[i] - from[i]) * p)
+                }
+                None => to,
+            },
+            None => to,
+        }
     }
 
     fn enter_agent(&mut self) {
@@ -2535,6 +2586,18 @@ impl App {
             }
         } else {
             self.notice_track = None;
+        }
+        // Native panes are placed by hand each frame while the sidebar slides.
+        if let Some(slide) = &self.sidebar_slide {
+            if slide.started.elapsed().as_secs_f32() > SIDEBAR_SPRING.duration * 2.0 {
+                self.sidebar_slide = None;
+                changed = true;
+            } else if slide.from.iter().any(Option::is_some) {
+                tx.wake_after(std::time::Duration::ZERO);
+                changed = true;
+            } else {
+                tx.wake_after(std::time::Duration::from_millis(100));
+            }
         }
         // Pierre Words fade on a fresh reply (`@pierre/words` on web, native Markdown on desktop).
         if let Some((text, started)) = &self.reveal {

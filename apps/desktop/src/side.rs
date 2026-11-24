@@ -25,6 +25,8 @@ pub enum SideTab {
     Page(Page),
     Files,
     Changes,
+    /// The same agent chat as the main column, in the right panel alone.
+    Chat,
 }
 
 /// What can be opened from the list, in its order.
@@ -35,10 +37,11 @@ pub enum Launch {
     Files,
     Analytics,
     Campaigns,
+    Chat,
 }
 
 impl Launch {
-    pub const ALL: [Launch; 5] = [Launch::Browser, Launch::Changes, Launch::Files, Launch::Analytics, Launch::Campaigns];
+    pub const ALL: [Launch; 6] = [Launch::Browser, Launch::Changes, Launch::Files, Launch::Analytics, Launch::Campaigns, Launch::Chat];
 }
 
 /// One chat's panel while another chat is on screen.
@@ -290,6 +293,10 @@ impl App {
                 self.show_view(View::Agent);
                 self.open_page_tab(Page::Campaigns);
                 return;
+            }
+            Launch::Chat => {
+                self.show_view(View::Agent);
+                SideTab::Chat
             }
             Launch::Changes => SideTab::Changes,
             Launch::Files => SideTab::Files,
