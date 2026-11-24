@@ -28,7 +28,7 @@ const FOLDER_CHAT_ROW: f32 = 36.0;
 /// sidebar's top band, level with the traffic lights, or beside them once the
 /// sidebar is collapsed.
 pub fn sidebar_toggle(t: &Theme, open: bool) -> El {
-    icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false).on_press(|s: &mut App| s.toggle_sidebar())
+    icon_button(t, "sidebar-toggle", &icons::PANEL_LEFT, if open { "Collapse sidebar (⌘B)" } else { "Expand sidebar (⌘B)" }, false).on_press_tx(|s: &mut App, tx| s.toggle_sidebar(tx))
 }
 
 /// Where the collapsed sidebar's buttons start: just past the traffic lights.
@@ -56,44 +56,53 @@ pub fn collapsed_toggle(s: &App, t: &Theme, titlebar_inset: f32) -> El {
         .child(sidebar_toggle(t, false))
 }
 
-/// The sidebar while collapsed: nothing in the layout, only a thin strip at the
-/// window's left edge. Reaching it shows the whole sidebar as a card over the
-/// page, so the page never moves; leaving the card hides it again, unless one of
-/// its menus is open.
-pub fn sidebar_overlay(s: &App, t: &Theme) -> Vec<El> {
-    if s.sidebar_open {
-        return Vec::new();
-    }
+/// Collapsed sidebar controls drawn above the workspace, not in the split row.
+/// Reaching the left edge shows the sidebar as a card over the page so the main
+/// panel and right side never change width; leaving the card hides it again.
+pub fn collapsed_sidebar_layer(s: &App, t: &Theme, titlebar_inset: f32) -> El {
     let strip = el()
         .key("sidebar-reveal")
         .pin(Some(0.0), Some(0.0), None, Some(0.0))
         .w(10.0)
+        .h_full()
         .on_hover_change(|s: &mut App, inside, _| {
             if inside {
                 s.sidebar_peek = true;
             }
+        })
+        .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            tx.instant();
+            if d.phase == rune::Phase::Down {
+                s.sidebar_peek = true;
+            }
         });
-    if !s.sidebar_peek {
-        return vec![strip];
+    let mut layer = el()
+        .key("sidebar-collapsed-layer")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(strip)
+        .child(collapsed_toggle(s, t, titlebar_inset));
+    if s.sidebar_peek {
+        let peek = shadows(
+            col()
+                .key("sidebar-peek")
+                .pin(Some(8.0), Some(8.0), None, Some(8.0))
+                .w(s.prefs.sidebar())
+                .radius(12.0)
+                .fill(t.sidebar)
+                .clip_rounded(12.0)
+                .on_hover_change(|s: &mut App, inside, _| {
+                    if !inside && s.menu.is_none() {
+                        s.sidebar_peek = false;
+                    }
+                })
+                .child(sidebar(s, t).w_full().grow(1.0).min_h(0.0)),
+            &t.float_shadow,
+        );
+        layer = layer.child(peek);
     }
-    let card = shadows(
-        col()
-            .key("sidebar-peek")
-            .pin(Some(8.0), Some(8.0), None, Some(8.0))
-            .w(s.prefs.sidebar())
-            .radius(12.0)
-            .fill(t.sidebar)
-            .clip_rounded(12.0)
-            .transition(rune::Transition::offset(-16.0, 0.0).combined(rune::Transition::opacity()))
-            .on_hover_change(|s: &mut App, inside, _| {
-                if !inside && s.menu.is_none() {
-                    s.sidebar_peek = false;
-                }
-            })
-            .child(sidebar(s, t).w_full().grow(1.0).min_h(0.0)),
-        &t.float_shadow,
-    );
-    vec![strip, card]
+    layer
 }
 
 pub fn sidebar(s: &App, t: &Theme) -> El {
@@ -393,7 +402,7 @@ fn chat_history(s: &App, t: &Theme) -> El {
             .w_full()
             .items_center()
             .gap(4.0)
-            .child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press(|s: &mut App| s.sidebar_open = true))
+            .child(icon_button(t, "chats", &icons::MESSAGES_SQUARE, "Chats", false).on_press_tx(|s: &mut App, tx| s.toggle_sidebar(tx)))
             .child(new_chat);
     }
     let now = format::now();
@@ -823,8 +832,8 @@ fn business_picker_wheel(s: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx) ->
     }
     if picker.focus != before {
         crate::tick::detent();
+        tx.instant();
     }
-    let _ = tx;
     true
 }
 
@@ -865,27 +874,29 @@ fn business_picker_drag(s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx) {
         rune::Phase::Up => {
             p.drag = 0.0;
             p.drag_spent = 0.0;
+            tx.instant();
         }
     }
 }
 
 const DECK_W: f32 = 280.0;
 const DECK_H: f32 = 400.0;
-/// The deck's cards settle more slowly than a control, so a swap reads as cards moving.
-const DECK_SPRING: rune::Spring = rune::Spring::new(0.42, 0.0);
 
-/// The four tones of a card's metal, light to dark. Every business keeps its own:
-/// the brand's blue, black, or its tile colour, chosen from its name.
-fn deck_metal(t: &Theme, name: &str) -> [rune::Color; 4] {
+/// The four tones of a card's metal, light to dark, and whether it is a light
+/// metal that needs dark writing. The deck deals them in turn, so cards side by
+/// side never share one: black, the brand's blue, emerald, pearl white, and the
+/// business's own tile colour.
+fn deck_metal(t: &Theme, name: &str, index: usize) -> ([rune::Color; 4], bool) {
     use crate::theme::hex;
     use rune::Color;
-    let pick = name.bytes().fold(5381u32, |h, b| h.wrapping_mul(33) ^ b as u32) % 3;
-    match pick {
-        0 => [hex("#8aa8ff"), hex("#4a6ff0"), hex("#1d3aa6"), hex("#071660")],
-        1 => [hex("#9da1ab"), hex("#3c3f47"), hex("#16171b"), hex("#040405")],
+    match index % 5 {
+        0 => ([hex("#9da1ab"), hex("#3c3f47"), hex("#16171b"), hex("#040405")], false),
+        1 => ([hex("#8aa8ff"), hex("#4a6ff0"), hex("#1d3aa6"), hex("#071660")], false),
+        2 => ([hex("#86ecc6"), hex("#1fae7e"), hex("#0b6b4c"), hex("#03301f")], false),
+        3 => ([hex("#ffffff"), hex("#eef0f4"), hex("#cdd1d9"), hex("#a3a8b3")], true),
         _ => {
             let (c, _) = t.mark(name);
-            [c.mix(Color::WHITE, 0.45), c.mix(Color::WHITE, 0.1), c.mix(Color::BLACK, 0.35), c.mix(Color::BLACK, 0.72)]
+            ([c.mix(Color::WHITE, 0.45), c.mix(Color::WHITE, 0.1), c.mix(Color::BLACK, 0.35), c.mix(Color::BLACK, 0.72)], false)
         }
     }
 }
@@ -895,8 +906,9 @@ fn deck_metal(t: &Theme, name: &str) -> [rune::Color; 4] {
 /// and carry no writing.
 fn deck_card(t: &Theme, name: &str, note: Option<&str>, index: usize, count: usize, shade: f32, front: bool) -> El {
     use rune::{Color, Shadow};
-    let metal = deck_metal(t, name);
-    let quiet = Color::WHITE.alpha(0.66);
+    let (metal, pale) = deck_metal(t, name, index);
+    let ink = if pale { crate::theme::hex("#15171c") } else { Color::WHITE };
+    let quiet = ink.alpha(if pale { 0.55 } else { 0.66 });
     let (band, angle): (f32, f32) = (0.42, 1.9);
     let mut card = col()
         .size(DECK_W, DECK_H)
@@ -904,7 +916,7 @@ fn deck_card(t: &Theme, name: &str, note: Option<&str>, index: usize, count: usi
         .radius(26.0)
         .fill(metal[1])
         .linear_gradient(2.35, [(0.0, metal[0]), (0.3, metal[1]), (0.66, metal[2]), (1.0, metal[3])])
-        .border(1.0, Color::WHITE.alpha(0.2))
+        .border(1.0, if pale { Color::BLACK.alpha(0.1) } else { Color::WHITE.alpha(0.2) })
         .box_shadow(Shadow { x: 0.0, y: 24.0, blur: 48.0, spread: -8.0, color: Color::BLACK.alpha(if t.dark { 0.6 } else { 0.3 }), inset: false })
         .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 10.0, spread: 0.0, color: metal[3].alpha(0.35), inset: false })
         .box_shadow(Shadow { x: 0.0, y: 1.5, blur: 1.0, spread: 0.0, color: Color::WHITE.alpha(0.45), inset: true })
@@ -928,7 +940,7 @@ fn deck_card(t: &Theme, name: &str, note: Option<&str>, index: usize, count: usi
             .child(row().w_full().justify_center().child(label("BUSINESS", TextStyle::new(11.0, 600.0).lh(14.0), quiet)))
             .child(
                 col().w_full().grow(1.0).min_h(0.0).items_center().justify_center().gap(8.0)
-                    .child(label(name.to_string(), TextStyle::new(26.0, 700.0).lh(30.0), Color::WHITE).wrap().max_w(DECK_W - 44.0))
+                    .child(label(name.to_string(), TextStyle::new(26.0, 700.0).lh(30.0), ink).wrap().max_w(DECK_W - 44.0))
                     .children(note.map(|n| label(n.to_string(), TextStyle::new(13.0, 500.0).lh(16.0), quiet))),
             )
             .child(
@@ -963,7 +975,8 @@ fn deck_arrow(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, enabl
             .cursor(Cursor::Pointer)
             .hover(t.accent)
             .on_hover_change(track_hover(hk))
-            .on_press(move |s: &mut App| {
+            .on_press_tx(move |s: &mut App, tx| {
+                tx.instant();
                 let count = s.picker_cards().len();
                 if let Some(p) = &mut s.business_picker {
                     let next = (p.focus as i32 + step).clamp(0, count.saturating_sub(1) as i32) as usize;
@@ -1044,8 +1057,8 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
             .label(card.name.clone())
             .checked(current)
             .cursor(Cursor::Pointer)
-            .motion(DECK_SPRING)
-            .on_press(move |s: &mut App| {
+            .on_press_tx(move |s: &mut App, tx| {
+                tx.instant();
                 if front {
                     s.pick_card(i);
                 } else if let Some(p) = &mut s.business_picker {
@@ -1062,8 +1075,8 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
         let (left, right) = (reach(focus), reach(count - 1 - focus));
         let base = panel_w / 2.0;
         deck = deck
-            .child(el().key("business-prev-slot").absolute(base - left - 40.0, top + DECK_H / 2.0 - 20.0).motion(DECK_SPRING).child(deck_arrow(t, "business-prev", &icons::CHEVRON_LEFT, "Previous", focus > 0, -1)))
-            .child(el().key("business-next-slot").absolute(base + right, top + DECK_H / 2.0 - 20.0).motion(DECK_SPRING).child(deck_arrow(t, "business-next", &icons::CHEVRON_RIGHT, "Next", focus + 1 < count, 1)));
+            .child(el().key("business-prev-slot").absolute(base - left - 40.0, top + DECK_H / 2.0 - 20.0).child(deck_arrow(t, "business-prev", &icons::CHEVRON_LEFT, "Previous", focus > 0, -1)))
+            .child(el().key("business-next-slot").absolute(base + right, top + DECK_H / 2.0 - 20.0).child(deck_arrow(t, "business-next", &icons::CHEVRON_RIGHT, "Next", focus + 1 < count, 1)));
     }
 
     let panel = deck
@@ -1073,7 +1086,8 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
         .cursor(if dragging { Cursor::Grabbing } else { Cursor::Default })
         .on_drag(business_picker_drag)
         .on_wheel(business_picker_wheel)
-        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, tx: &mut rune::Tx| {
+            tx.instant();
             let count = s.picker_cards().len();
             let Some(p) = s.business_picker.as_mut() else { return false };
             let before = p.focus;

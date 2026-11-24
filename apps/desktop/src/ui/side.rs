@@ -2,7 +2,7 @@
 //! and a browser) with its widen and fold buttons on the right, over the tab
 //! in front. The browser is a native web view placed over its slot.
 
-use rune::{Cursor, El, ScrollSpec, col, row, text_input};
+use rune::{Cursor, El, ScrollSpec, col, el, row, text_input};
 use rune_kit::Kit;
 
 use crate::icons;
@@ -34,9 +34,41 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
         },
         SideTab::Page(crate::state::Page::Inbox) => super::pages::inbox_panel(s, t),
         SideTab::Page(crate::state::Page::Channels) => scrolled("side-connections", col().w_full().padding(20.0).child(super::channels::connections(s, t))),
+        SideTab::Page(crate::state::Page::Campaigns) => col()
+            .key("side-campaigns-stack")
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .child(
+                scrolled(
+                    "side-campaigns-page",
+                    col()
+                        .w_full()
+                        .px(16.0)
+                        .pt(12.0)
+                        .pb(16.0)
+                        .child(super::pages::view_page(s, t, crate::state::Page::Campaigns)),
+                ),
+            )
+            .child(el().key("side-campaigns-chat-rule").w_full().h(1.0).fill(t.border))
+            .child(
+                col()
+                    .key("side-campaigns-chat")
+                    .w_full()
+                    .h(320.0)
+                    .shrink()
+                    .fill(t.background)
+                    .child(super::agent::side_session(s, t, k)),
+            ),
         SideTab::Page(page) => scrolled("side-workspace-page", col().w_full().px(24.0).pt(16.0).pb(24.0).child(super::pages::view_page(s, t, *page))),
         SideTab::Files => files(s, t),
         SideTab::Changes => changes(s, t),
+        SideTab::Chat => col()
+            .key("side-chat-panel")
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .child(super::agent::side_session(s, t, k)),
     };
     // A page in the browser or an artifact preview runs to the foot: native WebKit
     // sits behind the app and the chat box floats over it.
@@ -121,6 +153,7 @@ fn tab_face(s: &App, item: &SideTab) -> (&'static rune::Icon, String) {
         SideTab::Page(page) => (&icons::PANEL_RIGHT, page.label().into()),
         SideTab::Files => (&icons::FOLDER, "Files".into()),
         SideTab::Changes => (&icons::GIT_COMPARE, "Changes".into()),
+        SideTab::Chat => (&icons::MESSAGES_SQUARE, "Side chat".into()),
         SideTab::Launcher => (&icons::PLUS, "New tab".into()),
         SideTab::Browser => (&icons::GLOBE, "Browser".into()),
     }
@@ -247,6 +280,7 @@ fn launcher(s: &App, t: &Theme) -> El {
             Launch::Files => (&icons::FOLDER, "Files", "Pages, drafts and documents from this chat"),
             Launch::Analytics => (&icons::NAV_ANALYTICS, "Analytics", "The business's numbers beside the chat"),
             Launch::Campaigns => (&icons::NAV_CAMPAIGNS, "Campaigns", "Briefs, deliverables and results beside the chat"),
+            Launch::Chat => (&icons::MESSAGES_SQUARE, "Side chat", "The same agent chat as the main session"),
         };
         let hover_key = format!("launch:{}", name.to_lowercase());
         // Hovered, its icon takes the periwinkle accent.
