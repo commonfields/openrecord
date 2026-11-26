@@ -11,6 +11,7 @@ import { AuthRepositoryLive, BusinessRepositoryLive } from "@openrecord/db"
 import { requireSession } from "./router.js"
 import { followupPolicyApi } from "./agent-followup-policy.js"
 import { claimFollowup } from "./agent-followups.js"
+import { AUTOMATIC_MODEL, ensureAutomaticFollowups } from "./automatic-followups.js"
 import { campaignFollowupToolSpecs, claimCampaignFollowup, deliverCampaignFollowup, milestoneMessage } from "./campaign-followups.js"
 import { draftMarketingCampaign } from "./campaign-agent.js"
 import { createArtifact } from "./artifacts.js"
@@ -101,6 +102,42 @@ suite("campaign follow-ups (disposable PostgreSQL)", () => {
     expect(JSON.stringify((await pool.query("SELECT messages FROM agent_conversations WHERE id=$1", [f.conversationId])).rows[0].messages)).toContain("The page is live")
   })
 
+  it("turns follow-ups on by itself for a business in use, delivers on the working model, and keeps a pause", async () => {
+    const f = await fixture(), idle = await fixture(), demo = await fixture()
+    await pool.query("UPDATE marketing_campaigns SET brief=jsonb_set(brief,'{reviewDate}',to_jsonb((current_date - 1)::text)) WHERE id=$1", [f.campaign.campaignId])
+    // Someone used the business: they sent the agent a request there. The demo business is sample data.
+    const used = (g: typeof f) => pool.query("INSERT INTO agent_request_jobs(request_id,account_id,user_id,business_id,conversation_id,payload,digest,status) VALUES($1,$2,$3,$4,$5,'{}','TEST','COMPLETED')",
+      [randomUUID(), g.accountId, g.userId, g.businessId, g.conversationId])
+    await used(f); await used(demo)
+    vi.stubEnv("OPENRECORD_DEMO_BUSINESSES", demo.businessId)
+    const policyOf = (businessId: string) => pool.query("SELECT id, enabled, automatic, provider, conversation_id FROM growth_investigation_wake_policies WHERE business_id=$1", [businessId]).then(r => r.rows)
+    // Other suites share the database: a pass covers at most twenty businesses.
+    for (let i = 0; i < 10 && !(await policyOf(f.businessId)).length; i++) await runtime.runPromise(ensureAutomaticFollowups)
+    const [policy] = await policyOf(f.businessId)
+    expect(policy).toMatchObject({ enabled: true, automatic: true, provider: AUTOMATIC_MODEL })
+    expect(policy.conversation_id).not.toBe(f.conversationId)
+    expect(await policyOf(idle.businessId)).toEqual([])
+    expect(await policyOf(demo.businessId)).toEqual([])
+    // Running again never adds a second policy.
+    await runtime.runPromise(ensureAutomaticFollowups)
+    expect(await policyOf(f.businessId)).toHaveLength(1)
+
+    const wake = await f.mine()
+    expect(wake).toMatchObject({ milestone: "REVIEW_DUE", automatic: true, conversation_id: policy.conversation_id })
+    // No pinned model: the reply commits on whichever model answered.
+    const responder: Responder<never> = () => Effect.succeed({ reply: "The review date passed; nothing is recorded yet.", citations: [], toolCalls: [], usage: [], provider: "claude", requestedModel: "sonnet" })
+    expect(await runtime.runPromise(deliverCampaignFollowup(wake!, responder) as Effect.Effect<string, never, never>)).toBe("Success")
+    expect(JSON.stringify((await pool.query("SELECT messages FROM agent_conversations WHERE id=$1", [policy.conversation_id])).rows[0].messages)).toContain("nothing is recorded yet")
+
+    // Off is off for the business, and stays off after its chat (and with it the policy) is gone.
+    const off = await web.handler(new Request(`http://localhost/api/businesses/${f.businessId}/agent/follow-ups`, { method: "PUT", headers: { "content-type": "application/json", cookie: `or_session=${f.cookie}` }, body: JSON.stringify({ enabled: false }) }))
+    expect(off.status).toBe(200)
+    expect((await policyOf(f.businessId))[0]).toMatchObject({ enabled: false })
+    await pool.query("DELETE FROM agent_conversations WHERE id=$1", [policy.conversation_id])
+    expect(await policyOf(f.businessId)).toEqual([])
+    await runtime.runPromise(ensureAutomaticFollowups)
+    expect(await policyOf(f.businessId)).toEqual([])
+  })
   it("stops when the person turns follow-ups off, and never wakes another account's conversation", async () => {
     const f = await fixture(), other = await fixture()
     await pool.query("UPDATE marketing_campaigns SET brief=jsonb_set(brief,'{reviewDate}',to_jsonb((current_date - 1)::text)) WHERE id=$1", [f.campaign.campaignId])

@@ -29,7 +29,7 @@ brief then shows that campaign's live state next to the investigation.
 | Opportunity observation and review | Implemented. Live checks, measurement plans and observed metric evaluations remain separate from operator KEEP, REVERT, EXTEND or INCONCLUSIVE decisions. | `growth_execution_live_checks`, `growth-measurement-routes.ts`, `growth-routes.ts` |
 | Campaign-bound outcome measurement | Implemented by 0083 for WEBSITE deliverables delivered through WordPress. Descriptive only. | `record_campaign_measurement`, `read_campaign_outcome`; see `docs/openrecord-agent-context.md` (M2) |
 | Keep, change or stop decision | Human only. The agent recommends and never saves it. | |
-| Continuing without a person in the chat | Missing. Wake-ups are opt-in and read-only. `/marketing` works only inside a turn. | |
+| Continuing without a person in the chat | Implemented by 0106 for these triggers. A finished setup queues the first campaign with its drafts. Approving or declining an initiative makes or revises the work. A business someone used in the last 30 days gets automatic follow-ups for waiting investigations and campaign milestones (page live, first inquiry, review date). These are read-only, at most one review a day, and run on whichever model works at the time. Turning follow-ups off is kept per business. Nothing publishes, sends or spends without approval. | `setup-campaign.ts`, `approved-initiative-enqueue.ts`, `automatic-followups.ts`, `agent_followup_pauses` |
 | Email and social sending, member assignment | Missing. | |
 
 ## Alternatives considered

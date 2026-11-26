@@ -9,6 +9,7 @@ import { AgentModelError } from "./agent-model.js"
 import { AgentWorkRetry, MAX_WORK_ATTEMPTS, claimAgentWork, enqueueAgentWork, executeAgentWork, retryDelaySeconds } from "./agent-work-queue.js"
 import { retryableTurnFailure } from "./unattended-agent.js"
 import { capabilityStats, rankCapabilities } from "./capabilities/discovery.js"
+import { writeSetupCampaignJob } from "./setup-campaign.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -97,6 +98,19 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     expect(await run(retryableTurnFailure(down, f.conversationId, since))).toBeNull()
     // Work saved before this attempt began is not this attempt's.
     expect(await run(retryableTurnFailure(down, f.conversationId, new Date(Date.now() + 60_000)))).toBe("MODEL_UNAVAILABLE")
+  })
+
+  it("starts the first campaign again after a provider outage, and gives up on the last attempt", async () => {
+    const f = await fixture()
+    const payload = { scope: { accountId: f.accountId, userId: f.userId, businessId: f.businessId }, setupId: randomUUID(), conversationId: f.conversationId, message: "TEST" }
+    let sent = 0
+    const down = () => { sent++; return Effect.fail(new AgentModelError({ reason: "UNAVAILABLE" })) }
+    const failure = async (finalAttempt: boolean) => (await run(writeSetupCampaignJob(payload, down, { finalAttempt }).pipe(Effect.flip))) as unknown
+    expect(await failure(false)).toMatchObject({ _tag: "AgentWorkRetry", reason: "MODEL_UNAVAILABLE" })
+    expect(await failure(true)).toBe("SETUP_CAMPAIGN_FAILED")
+    expect(sent).toBeGreaterThan(0)
+    // A turn that answered is done, whatever attempt it was.
+    await run(writeSetupCampaignJob(payload, () => Effect.succeed({ reply: "Saved" }), { finalAttempt: false }))
   })
 
   it("measures tools from this account's runs only, ignores the model's own mistakes, and lists unreliable ones last", async () => {

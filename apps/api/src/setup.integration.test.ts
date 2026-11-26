@@ -93,6 +93,15 @@ suite("agent-native setup (disposable TEST fixtures, no network)", () => {
     expect(result.rows.find(r => r.id === legacy.setup.id)).toMatchObject({ brief: null, opportunity_id: null })
     const count = await pool.query("SELECT count(*) FROM growth_opportunities WHERE business_id=$1", [first.setup.businessId])
     expect(Number(count.rows[0].count)).toBe(1)
+    // Finished setup hands over to the agent: one first-campaign job, in its own chat, once.
+    const jobs = await pool.query("SELECT business_id, status, payload FROM agent_work_jobs WHERE kind='SETUP_CAMPAIGN_WRITE' AND ref_id=ANY($1::uuid[])", [[first.setup.id, legacy.setup.id]])
+    expect(jobs.rows).toHaveLength(1)
+    expect(jobs.rows[0]).toMatchObject({ business_id: first.setup.businessId, status: "QUEUED" })
+    expect(jobs.rows[0].payload.message).toContain("«TEST Lumen Dental»")
+    expect(jobs.rows[0].payload.message).toContain("Nothing is published, sent or spent")
+    const chat = await pool.query("SELECT archived_at, last_reply->>'title' AS title FROM agent_conversations WHERE id=$1", [jobs.rows[0].payload.conversationId])
+    expect(chat.rows[0]).toMatchObject({ title: "Starting: TEST Lumen Dental" })
+    expect(chat.rows[0].archived_at).not.toBeNull()
   }, 120000)
 
   it("refuses anonymous, foreign and cross-site requests", async () => {

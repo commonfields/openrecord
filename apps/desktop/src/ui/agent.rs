@@ -2256,6 +2256,7 @@ fn followups_dialog(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
             let mut status = col().w_full().gap(6.0).child(label(
                 match at {
                     Location::Off => "Paused",
+                    _ if f.automatic() => "On for this business",
                     Location::Here => "Enabled in this chat",
                     Location::Elsewhere => "Enabled in another chat",
                 },
@@ -2263,7 +2264,11 @@ fn followups_dialog(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
                 t.foreground,
             ));
             if let Policy::Configured { enabled: true, provider, model, conversation_id, .. } = &f.policy {
-                status = status.child(row().gap(8.0).center_y().child(brands::mark(t, &crate::brands::model_brand(model, provider), 16.0)).child(label(model.clone(), type_::SM_13, t.muted_foreground)));
+                status = if f.automatic() {
+                    status.child(label("Turned on by OpenRecord. Each review uses whichever model is working at the time.", type_::SM_13, t.muted_foreground).wrap())
+                } else {
+                    status.child(row().gap(8.0).center_y().child(brands::mark(t, &crate::brands::model_brand(model, provider), 16.0)).child(label(model.clone(), type_::SM_13, t.muted_foreground)))
+                };
                 if at == Location::Elsewhere {
                     let id = conversation_id.clone();
                     status = status.child(label("Open the follow-up chat", type_::SM_13, t.foreground).key("followups-open-chat").role("link").cursor(Cursor::Pointer).on_press(move |s: &mut App| {
@@ -2275,7 +2280,11 @@ fn followups_dialog(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
             let l = &f.limits;
             status = status
                 .child(label(format!("At most {} review every 24 hours, with {} model steps, {} stored-record reads and a {}-minute limit.", l.wake_ups_per24_hours, l.model_steps, l.tool_calls, l.timeout_seconds / 60), type_::SM_13, t.muted_foreground).wrap())
-                .child(label("Read-only. No publishing, ad-budget changes, contacting customers or starting other agents. No provider fallback. The server and selected provider must be available.", type_::SM_13, t.muted_foreground).wrap());
+                .child(label(if f.automatic() {
+                    "Read-only. No publishing, ad-budget changes, contacting customers or starting other agents."
+                } else {
+                    "Read-only. No publishing, ad-budget changes, contacting customers or starting other agents. No provider fallback. The server and selected provider must be available."
+                }, type_::SM_13, t.muted_foreground).wrap());
             body = body.child(status);
             if let Some(e) = &s.followup_error {
                 body = body.child(label(e.clone(), type_::SM_13, t.wrong).wrap().live_region(LiveRegion::Polite));

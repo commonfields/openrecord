@@ -11,7 +11,9 @@ export type FollowupConfigure = typeof FollowupConfigure.Type
 export const FollowupPolicy = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("unconfigured") }),
   Schema.Struct({ kind: Schema.Literal("configured"), enabled: Schema.Boolean, grantId: Schema.UUID,
-    conversationId: Schema.UUID, selection: Schema.NullOr(HarnessSelection), provider: Name, model: Name, updatedAt: Schema.String }),
+    conversationId: Schema.UUID, selection: Schema.NullOr(HarnessSelection), provider: Name, model: Name, updatedAt: Schema.String,
+    /** Set up by OpenRecord, not granted: wakes run on whichever model works at the time. */
+    automatic: Schema.optional(Schema.Boolean) }),
 )
 export type FollowupPolicy = typeof FollowupPolicy.Type
 export const FollowupWakeReceipt = Schema.Struct({ id: Schema.UUID, noteId: Schema.UUID, conversationId: Schema.UUID,

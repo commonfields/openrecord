@@ -13,6 +13,7 @@ export const AgentWorkKind = Schema.Literal(
   "CAMPAIGN_FOLLOWUP_WRITE",
   "VISIBILITY_INVESTIGATION_WRITE",
   "HELPER_TASK_RUN",
+  "SETUP_CAMPAIGN_WRITE",
 )
 export type AgentWorkKind = typeof AgentWorkKind.Type
 
@@ -34,11 +35,11 @@ export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown, job: {
       }
       case "APPROVED_INITIATIVE_WRITE": {
         const m = yield* Effect.promise(() => import("./approved-initiative-turn.js"))
-        return yield* m.writeApprovedInitiativeJob(payload as ApprovedInitiativeWritePayload)
+        return yield* m.writeApprovedInitiativeJob(payload as ApprovedInitiativeWritePayload, { finalAttempt: job.finalAttempt ?? true })
       }
       case "DECLINED_INITIATIVE_WRITE": {
         const m = yield* Effect.promise(() => import("./approved-initiative-turn.js"))
-        return yield* m.writeDeclinedInitiativeJob(payload as ApprovedInitiativeWritePayload)
+        return yield* m.writeDeclinedInitiativeJob(payload as ApprovedInitiativeWritePayload, { finalAttempt: job.finalAttempt ?? true })
       }
       case "INVESTIGATION_FOLLOWUP_WRITE": {
         const m = yield* Effect.promise(() => import("./agent-followup-turn.js"))
@@ -51,6 +52,12 @@ export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown, job: {
       case "VISIBILITY_INVESTIGATION_WRITE": {
         const m = yield* Effect.promise(() => import("./visibility-investigation-turn.js"))
         return yield* m.writeVisibilityInvestigationJob(payload, job)
+      }
+      case "SETUP_CAMPAIGN_WRITE": {
+        const m = yield* Effect.promise(() => import("./setup-campaign.js"))
+        const s = yield* Effect.promise(() => import("./agent-sessions.js"))
+        return yield* m.writeSetupCampaignJob(payload as import("./setup-campaign.js").SetupCampaignPayload,
+          (scope, body) => s.sendSessionTurn(scope, body), { finalAttempt: job.finalAttempt ?? true })
       }
       case "HELPER_TASK_RUN": {
         const m = yield* Effect.promise(() => import("./agent-sessions.js"))

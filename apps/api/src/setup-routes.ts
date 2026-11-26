@@ -1,5 +1,6 @@
 import { HttpRouter } from "@effect/platform"
 import { PgClient } from "@effect/sql-pg"
+import type { SqlClient } from "@effect/sql"
 import { Effect, Option } from "effect"
 import { BusinessRepository, GrowthGa4Repository, GrowthRefused, GrowthRepository, RecordRefused, SearchConsoleRepository, SetupRefused, SetupRepository, setupKey, type Session, type SetupRow } from "@openrecord/db"
 import { SetupConfirmInput, SetupRevisionInput, SetupStartInput, decodeRouteId, hasSearchConsoleScope, type SetupView } from "@openrecord/contracts"
@@ -12,6 +13,7 @@ import { deriveChannelInventory, type ChannelFacts } from "./channels.js"
 import { loadProviderCatalog } from "./provider-catalog.js"
 import { assessSetup, firstInitiative, setupStep } from "./setup-plan.js"
 import { demoChannelFacts, isDemoBusiness } from "./demo-data.js"
+import { enqueueSetupCampaign } from "./setup-campaign.js"
 
 const STATUS: Record<SetupRefused["reason"], number> = {
   SetupNotFound: 404, SetupStale: 409, WebsiteInUse: 409, DiscoveryPending: 409, BriefRequired: 409, ChannelsRequired: 409, NotRetryable: 409, FactsManagedByRepository: 409, SetupComplete: 409,
@@ -73,6 +75,9 @@ export const proposeSetup = (session: Session, businessId: string, revision: num
       evidence: [{ type: "MODEL_SUGGESTION", note: "Suggested by OpenRecord setup from your brief and a public read of your homepage, using fixed rules. A hypothesis for your review: no impact is claimed." }],
     })
     yield* setups.linkOpportunity(row.id, opportunity.id)
+    // Setup is done: the agent starts the first campaign itself, queued with this commit and once per setup.
+    yield* enqueueSetupCampaign({ accountId: session.accountId, userId: session.userId, businessId }, row.id,
+      { businessName: row.brief.businessName, websiteUrl: row.websiteUrl, goal: profile.primaryGoal.statement ?? null })
     return { ...row, opportunityId: opportunity.id, revision: row.revision + 1 }
   }))
 })
@@ -107,7 +112,7 @@ export const setupApi = <D = never>(withSession: WithSession, drafts: SetupDraft
       if (!(yield* (yield* BusinessRepository).getScoped(session.accountId, businessId))) return yield* json(404, { _tag: "SetupRefused", reason: "SetupNotFound" })
       return yield* run(session, businessId)
     })).pipe(Effect.catchAll(failure))
-  const withRevision = (act: (session: Session, businessId: string, revision: number) => Effect.Effect<SetupRow, unknown, SetupRepository | GrowthRepository>) =>
+  const withRevision = (act: (session: Session, businessId: string, revision: number) => Effect.Effect<SetupRow, unknown, SetupRepository | GrowthRepository | SqlClient.SqlClient>) =>
     business((session, businessId) => Effect.gen(function*() {
       const input = decode(SetupRevisionInput, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" })
