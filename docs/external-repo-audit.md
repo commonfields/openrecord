@@ -106,3 +106,16 @@ first structural precondition.
 | Reject (import) | api-anything | Browser execution on hosted tenants, a catalog as a supply chain, outside M1 to M3 |
 | Reject (import) | ECC hooks, memory vault, installers | Executable hooks. A second memory system that is not an authorization boundary. |
 | Defer | Graph and memory frameworks, DSPy, Temporal | They need to beat structured SQL on OpenRecord whole-task evals first |
+
+## Tool discovery and durable orchestration
+
+This study used the treg snapshot at `8e402a0` and the T3 Code snapshot at `41d5875e`. OpenRecord implements these patterns with its own tool registry, PostgreSQL queue, and session services.
+
+| Upstream implementation | OpenRecord implementation |
+| --- | --- |
+| treg separates `catalog_search`, `catalog_get`, and calls in `src/treg/mcp.py`. Its directory exposes separate read and write calls. | In routed business chats, `find_capabilities` searches the eligible manifests by task and returns up to six matches with their cost and approval metadata. `tool_details` loads the input schema. The existing dispatcher checks tool arguments and workspace scope. [Discovery implementation](../apps/api/src/capabilities/discovery.ts) |
+| T3 Code commits the command and outbox effects in one transaction in `EventSink.ts`. `EffectWorker.ts` executes committed work and records its outcome. Provider work with an ambiguous interruption is retired. | An async helper and its job commit together. A worker can reclaim the job before execution starts. Helper completion can resume the parent conversation. A parent run receipt prevents replay after that continuation starts. [Session runtime](../apps/api/src/agent-sessions.ts), [work queue](../apps/api/src/agent-work-queue.ts) |
+
+An existing tracking approval authorizes the measurement. When a visibility drop opens an investigation, the scheduler commits the alert and its read-only agent job together. The worker can read the stored observations or compare the saved batches. Timed and campaign milestone follow-ups still require their existing consent. Publication and spending decisions stay with the operator. [Tracking scheduler](../apps/api/src/acquisition-schedule.ts), [visibility worker](../apps/api/src/visibility-investigation-turn.ts)
+
+Apply [migration 0102](../packages/db/migrations/0102_agent_work_helper_kind.sql) before restarting the API and agent workers. Upgrade the API and its workers together so every worker recognizes `HELPER_TASK_RUN`.

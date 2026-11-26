@@ -148,6 +148,9 @@ export const deliverCampaignFollowup = (wake: CampaignWake, respond: Responder<A
 })
 
 export const runDueCampaignFollowups = Effect.gen(function*() {
-  const wake = yield* claimCampaignFollowup
-  if (wake) yield* enqueueCampaignFollowup(wake)
+  const sql = yield* SqlClient.SqlClient
+  yield* sql.withTransaction(Effect.gen(function*() {
+    const wake = yield* claimCampaignFollowup
+    if (wake) yield* enqueueCampaignFollowup(wake)
+  }))
 })

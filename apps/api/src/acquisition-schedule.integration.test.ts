@@ -2,7 +2,7 @@
 // server starts on its own, and an alert when visibility drops. The worker is
 // simulated by saving Gemini-shaped answers, as in the AI Discovery tests.
 import { createHash, randomUUID } from "node:crypto"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { HttpApp, HttpRouter } from "@effect/platform"
 import { ConfigProvider, Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
@@ -12,6 +12,7 @@ import { requireSession } from "./router.js"
 import { acquisitionApi } from "./acquisition-routes.js"
 import { recordApi } from "./record-routes.js"
 import { alertQuestion, runCeiling, runScheduledTracking, trackingScheduleApi, visibilityDrops } from "./acquisition-schedule.js"
+import { claimAgentWork, executeAgentWork } from "./agent-work-queue.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -85,6 +86,16 @@ suite("scheduled AI-answer tracking (TEST fixtures only)", () => {
   it("runs on its own within the approved ceiling and alerts when answers stop naming the business", async () => {
     const a = await agency(), other = await agency()
     const businessId = await client(a.session)
+    await pool.query(`WITH metric AS (
+      INSERT INTO growth_metric_definitions(business_id, version, conversion_kind, label, source_kind, source_identity,
+        counting_semantics, unit, reporting_time_zone, created_by_user_id)
+      VALUES ($1, 1, 'LEAD', 'TEST Leads', 'OPERATOR_AGGREGATE_EXPORT', 'TEST CRM', 'EVENT_COUNT', 'COUNT', 'UTC', $2) RETURNING id
+    ), goal AS (
+      INSERT INTO growth_goals(business_id, version, statement, metric_definition_id, created_by_user_id)
+      SELECT $1, 1, 'Get more qualified leads', metric.id, $2 FROM metric RETURNING id
+    )
+    INSERT INTO growth_profiles(business_id, category, audience, value_proposition, primary_goal_id, updated_by_user_id)
+    SELECT $1, 'TEST support', 'TEST support leads', 'TEST help for support teams', goal.id, $2 FROM goal`, [businessId, a.user])
     const set = (await ok<{ set: { id: string; questions: unknown[] } }>(call("POST", `${base(businessId)}/question-sets`, a.session, setBody2()))).set
     const approve = (calls: number, headers: Record<string, string> = {}) => call("PUT", `${base(businessId)}/schedule`, a.session, { setId: set.id, cadence: "WEEKLY", samples: 4, acknowledgedMaxProviderCalls: calls }, headers)
     const ceiling = runCeiling(2, 4)
@@ -109,9 +120,54 @@ suite("scheduled AI-answer tracking (TEST fixtures only)", () => {
     const second = (await pool.query("SELECT last_batch_id FROM acq_schedules WHERE business_id = $1", [businessId])).rows[0].last_batch_id as string
     expect(second).not.toBe(first)
     await answerAll(businessId, second, "HelpHub is the best TEST support agent for small teams.")
-    await run(runScheduledTracking)
+    // Force the outbox insert to fail. The trigger and its investigation must
+    // also roll back, so the next tick can pick up the same signal.
+    await pool.query("ALTER TABLE agent_work_jobs ADD CONSTRAINT test_refuse_visibility CHECK (kind<>'VISIBILITY_INVESTIGATION_WRITE') NOT VALID")
+    try {
+      await run(runScheduledTracking)
+      expect((await pool.query("SELECT id FROM acq_alerts WHERE business_id=$1", [businessId])).rows).toEqual([])
+      expect((await pool.query("SELECT id FROM growth_investigations WHERE business_id=$1", [businessId])).rows).toEqual([])
+    } finally {
+      await pool.query("ALTER TABLE agent_work_jobs DROP CONSTRAINT test_refuse_visibility")
+    }
+    await Promise.all([run(runScheduledTracking), run(runScheduledTracking)])
     const view = await ok<{ alerts: Array<{ kind: string; before: { n: number; d: number }; after: { n: number; d: number }; investigationId: string | null }> }>(call("GET", `${base(businessId)}/schedule`, a.session))
-    expect(view.alerts).toEqual([expect.objectContaining({ kind: "BRAND_MENTIONS_DROPPED", before: { n: 8, d: 8 }, after: { n: 0, d: 8 }, investigationId: null })])
+    expect(view.alerts).toEqual([expect.objectContaining({ kind: "BRAND_MENTIONS_DROPPED", before: { n: 8, d: 8 }, after: { n: 0, d: 8 }, investigationId: expect.any(String) })])
+    const jobs = (await pool.query(`SELECT kind, status, ref_id, payload->>'message' AS message FROM agent_work_jobs WHERE business_id=$1`, [businessId])).rows
+    expect(jobs).toEqual([{ kind: "VISIBILITY_INVESTIGATION_WRITE", status: "QUEUED", ref_id: view.alerts[0]!.investigationId, message: expect.stringContaining(second) }])
+    expect(jobs[0].message).toContain(first)
+    expect((await pool.query("SELECT id FROM growth_investigation_wake_policies WHERE business_id=$1", [businessId])).rows).toEqual([])
+    await pool.query("UPDATE agent_work_jobs SET created_at=now()-interval '7 days' WHERE kind='VISIBILITY_INVESTIGATION_WRITE' AND ref_id=$1", [jobs[0].ref_id])
+    const job = await run(claimAgentWork)
+    expect(job).toMatchObject({ kind: "VISIBILITY_INVESTIGATION_WRITE", ref_id: jobs[0].ref_id })
+    if (!job) throw new Error("Missing visibility job")
+    const requests: Array<{ contents: unknown; tools: Array<{ functionDeclarations: Array<{ name: string }> }> }> = []
+    const modelConfig = ConfigProvider.fromMap(new Map([
+      ["AGENT_EXTERNAL_PROCESSING_ENABLED", "true"], ["AGENT_PROVIDER", "gemini"], ["AGENT_MODEL", "gemini-fixture"], ["AGENT_API_KEY", "TEST-only"],
+    ]))
+    vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
+      if (new URL(input).host !== "generativelanguage.googleapis.com") throw new Error("Unexpected network access")
+      requests.push(JSON.parse(String(init.body)))
+      const parts = requests.length === 1 ? [
+        { functionCall: { name: "read_investigation", args: { investigationId: jobs[0].ref_id } } },
+        { functionCall: { name: "compare_acquisition_batches", args: { beforeId: first, afterId: second } } },
+      ] : [{ text: "The recorded mention count fell. Check whether the drop repeats next period." }]
+      return Response.json({ candidates: [{ content: { role: "model", parts }, finishReason: "STOP" }] })
+    })
+    try {
+      await run(executeAgentWork(job).pipe(Effect.withConfigProvider(modelConfig)))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(requests).toHaveLength(2)
+    expect(requests[0]!.tools[0]!.functionDeclarations.map(tool => tool.name).sort()).toEqual([
+      "compare_acquisition_batches", "read_acquisition_citations", "read_competitor_appearances", "read_investigation", "read_research_evidence", "tool_details",
+    ])
+    expect(JSON.stringify(requests[1]!.contents)).toMatch(/Comparable batch counts read|Batches are not comparable/)
+    const delivered = (await pool.query(`SELECT j.status, c.messages FROM agent_work_jobs j
+      JOIN agent_conversations c ON c.id=(j.payload->>'conversationId')::uuid WHERE j.job_id=$1`, [job.job_id])).rows[0]
+    expect(delivered.status).toBe("COMPLETED")
+    expect(delivered.messages.at(-1)).toMatchObject({ role: "agent", text: expect.stringContaining("Check whether the drop repeats") })
     // Comparing again never repeats the alert.
     await run(runScheduledTracking)
     expect((await ok<{ alerts: unknown[] }>(call("GET", `${base(businessId)}/schedule`, a.session))).alerts).toHaveLength(1)

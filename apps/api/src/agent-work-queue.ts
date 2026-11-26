@@ -37,7 +37,7 @@ export const enqueueAgentWork = (input: {
   return inserted[0] ? String(inserted[0]["job_id"]) : null
 })
 
-export const claimAgentWork = Effect.gen(function*() {
+const claimWork = (helperOnly: boolean) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* reconcileAgentWork
   return yield* sql.withTransaction(Effect.gen(function*() {
@@ -45,7 +45,7 @@ export const claimAgentWork = Effect.gen(function*() {
     const running = (yield* sql`SELECT count(*)::int AS n FROM agent_work_jobs WHERE status='RUNNING'`)[0]
     if (Number(running?.["n"] ?? 0) >= 4) return null
     const row = (yield* sql<WorkJob>`SELECT j.* FROM agent_work_jobs j
-      WHERE j.status='QUEUED'
+      WHERE j.status='QUEUED' AND (${!helperOnly} OR j.kind='HELPER_TASK_RUN')
       ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1`)[0]
     if (!row) return null
     const claimId = randomUUID()
@@ -54,8 +54,9 @@ export const claimAgentWork = Effect.gen(function*() {
     return { ...row, claim_id: claimId }
   }))
 })
+export const claimAgentWork = claimWork(false)
 
-export const executeAgentWork = (job: WorkJob) => Effect.gen(function*() {
+export const executeAgentWork = (job: WorkJob, run = runAgentWorkJob) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const started = yield* sql`UPDATE agent_work_jobs SET execution_started_at=now()
     WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING' AND lease_until>now() AND execution_started_at IS NULL
@@ -75,14 +76,15 @@ export const executeAgentWork = (job: WorkJob) => Effect.gen(function*() {
   const work = Effect.gen(function*() {
     yield* active
     const kind = yield* Schema.decodeUnknown(AgentWorkKind)(job.kind)
-    return yield* runAgentWorkJob(kind, job.payload)
+    return yield* run(kind, job.payload, job)
   })
   const outcome = yield* Effect.raceFirst(work, heartbeat).pipe(Effect.exit)
   if (outcome._tag === "Success") {
     yield* sql`UPDATE agent_work_jobs SET status='COMPLETED', finished_at=now(), lease_until=NULL, claim_id=NULL
       WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   } else {
-    const reason = outcome.cause._tag === "Fail" ? String(outcome.cause.error).slice(0, 80) : "FAILED"
+    const reason = outcome.cause._tag === "Fail" && typeof outcome.cause.error === "string" && /^[A-Z_]{1,80}$/.test(outcome.cause.error)
+      ? outcome.cause.error : "FAILED"
     yield* sql`UPDATE agent_work_jobs SET status='FAILED', failure_reason=${reason}, finished_at=now(), lease_until=NULL, claim_id=NULL
       WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   }
@@ -96,10 +98,18 @@ export const runOneAgentWork = () =>
     return job !== null
   })
 
-export const agentWorkWorker = Effect.gen(function*() {
-  const job = yield* claimAgentWork
+const workLane = (helperOnly: boolean) => Effect.gen(function*() {
+  const job = yield* claimWork(helperOnly)
   if (job) yield* executeAgentWork(job)
+  else if (!helperOnly) {
+    const sessions = yield* Effect.promise(() => import("./agent-sessions.js"))
+    yield* sessions.recoverQueuedHelperParent
+  }
 }).pipe(
   Effect.catchAllCause(() => Effect.logWarning("agent work worker unavailable")),
   Effect.repeat(Schedule.spaced("1 second")),
 )
+
+// Keep the existing lane for scheduled work and let async helpers run in
+// parallel. The database enforces the shared four-job cap across replicas.
+export const agentWorkWorker = Effect.all([workLane(false), workLane(true), workLane(true)], { concurrency: 3 }).pipe(Effect.asVoid)

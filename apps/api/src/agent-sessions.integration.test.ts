@@ -11,6 +11,7 @@ import { cancelHarnessConversation } from "./harness-store.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { createSessions, type BaseResponder } from "./agent-sessions.js"
 import { MAX_SESSION_DEPTH } from "./agent-session-tools.js"
+import { claimAgentWork, executeAgentWork } from "./agent-work-queue.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -96,11 +97,35 @@ suite("sessions that work together (disposable PostgreSQL, scripted model, no li
     const sessions = createSessions(base(input => Effect.succeed(
       said(input, "TASK-C") ? text("Async result C")
       : said(input, "OpenRecord notice: results from the helper sessions") ? text("Synthesised C")
+      : said(input, "Thanks") ? text("You're welcome.")
       : answered(input) ? text("Started a helper.")
       : calls(["delegate_task", { title: "Background check", task: "TASK-C", mode: "async" }]))))
     const first = await run(sessions.sendTurn(scope, { message: "Start async", requestId: randomUUID(), revision: 0 }))
     const r = first._tag === "Right" ? first.right as unknown as Record<string, unknown> : {}
     expect(r["reply"]).toBe("Started a helper.")
+    const [queued] = await tasks(scope.businessId)
+    expect(queued).toMatchObject({ status: "RUNNING", mode: "async" })
+    await pool.query("UPDATE agent_work_jobs SET created_at=now()-interval '7 days' WHERE kind='HELPER_TASK_RUN' AND ref_id=$1", [queued.id])
+    const reserved = await runtime.runPromise(claimAgentWork)
+    expect(reserved).toMatchObject({ kind: "HELPER_TASK_RUN", ref_id: queued.id })
+    if (!reserved) throw new Error("Missing queued helper")
+    // A worker that claimed but never began may die. Another worker can claim it.
+    await pool.query("UPDATE agent_work_jobs SET lease_until=now()-interval '1 second' WHERE job_id=$1", [reserved.job_id])
+    const recovered = await runtime.runPromise(claimAgentWork)
+    expect(recovered).toMatchObject({ job_id: reserved.job_id })
+    if (!recovered) throw new Error("Missing recovered helper")
+    expect(recovered.claim_id).not.toBe(reserved.claim_id)
+    await runtime.runPromise(executeAgentWork(reserved, (_kind, payload, job) => sessions.runQueued(job, payload)))
+    // The parent can finish while persisting the task's wake marker fails.
+    await pool.query("ALTER TABLE agent_tasks ADD CONSTRAINT test_refuse_wake_marker CHECK (woke_parent_at IS NULL) NOT VALID")
+    try {
+      await runtime.runPromise(executeAgentWork(recovered, (_kind, payload, job) => sessions.runQueued(job, payload)))
+      expect((await tasks(scope.businessId))[0].woke_parent_at).toBeNull()
+    } finally {
+      await pool.query("ALTER TABLE agent_tasks DROP CONSTRAINT test_refuse_wake_marker")
+    }
+    await runtime.runPromise(sessions.wakeParent(scope, String(r["conversationId"])))
+    expect((await pool.query("SELECT status FROM agent_work_jobs WHERE job_id=$1", [reserved.job_id])).rows[0]).toEqual({ status: "COMPLETED" })
     const done = await until(async () => (await pool.query("SELECT messages FROM agent_conversations WHERE id=$1", [r["conversationId"]])).rows[0].messages as Array<Record<string, unknown>>,
       m => m.length >= 5)
     expect(done.map(m => [m["role"], (m["origin"] as { kind?: string } | undefined)?.kind ?? null])).toEqual([

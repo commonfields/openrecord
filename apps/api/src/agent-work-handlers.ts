@@ -3,7 +3,6 @@ import type { ApprovedInitiativeWritePayload } from "./approved-initiative-turn.
 import type { CampaignFollowupPayload, InvestigationFollowupPayload } from "./agent-followup-enqueue.js"
 import type { GrowthBriefWritePayload } from "./growth-brief.js"
 import type { SetupDraftWritePayload } from "./setup-draft.js"
-import type { VisibilityInvestigationPayload } from "./visibility-investigation-enqueue.js"
 
 export const AgentWorkKind = Schema.Literal(
   "GROWTH_BRIEF_WRITE",
@@ -13,11 +12,14 @@ export const AgentWorkKind = Schema.Literal(
   "INVESTIGATION_FOLLOWUP_WRITE",
   "CAMPAIGN_FOLLOWUP_WRITE",
   "VISIBILITY_INVESTIGATION_WRITE",
+  "HELPER_TASK_RUN",
 )
 export type AgentWorkKind = typeof AgentWorkKind.Type
 
 /** Dynamic imports avoid a load-time cycle through growth-brief → agent-sessions → agent-registry. */
-export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown) =>
+export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown, job: {
+  readonly account_id: string; readonly user_id: string; readonly business_id: string; readonly ref_id: string
+}) =>
   Effect.gen(function*() {
     switch (kind) {
       case "GROWTH_BRIEF_WRITE": {
@@ -46,7 +48,11 @@ export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown) =>
       }
       case "VISIBILITY_INVESTIGATION_WRITE": {
         const m = yield* Effect.promise(() => import("./visibility-investigation-turn.js"))
-        return yield* m.writeVisibilityInvestigationJob(payload as VisibilityInvestigationPayload)
+        return yield* m.writeVisibilityInvestigationJob(payload, job)
+      }
+      case "HELPER_TASK_RUN": {
+        const m = yield* Effect.promise(() => import("./agent-sessions.js"))
+        return yield* m.runQueuedHelper(job, payload)
       }
       default:
         return yield* Effect.die(`unknown agent work kind: ${kind}`)

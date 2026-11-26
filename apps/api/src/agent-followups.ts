@@ -116,16 +116,17 @@ export const deliverFollowup = (wake: FollowupWake, respond: Responder<AgentTool
   }, respond, wakeActive(wake), FOLLOWUP_LIMITS).pipe(Effect.exit)
   yield* sql`UPDATE growth_investigation_wakes SET status=${result._tag === "Success" ? "COMPLETED" : "FAILED"},finished_at=now()
     WHERE id=${wake.id} AND status='RUNNING'`
+  return result._tag
 })
 
 /** One wake per pass: an investigation's waiting note first, else a campaign milestone. Both share the person's daily budget. */
 export const runDueFollowups = Effect.gen(function*() {
-  const wake = yield* claimFollowup
-  if (wake) {
-    yield* enqueueInvestigationFollowup(wake)
-    return
-  }
-  yield* runDueCampaignFollowups
+  const sql = yield* SqlClient.SqlClient
+  yield* sql.withTransaction(Effect.gen(function*() {
+    const wake = yield* claimFollowup
+    if (wake) yield* enqueueInvestigationFollowup(wake)
+    else yield* runDueCampaignFollowups
+  }))
 })
 export const followupScheduler = runDueFollowups.pipe(
   // No raw provider/database errors, prompts, notes or credential-bearing URLs.

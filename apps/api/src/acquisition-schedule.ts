@@ -80,34 +80,45 @@ const openInvestigation = (scope: { accountId: string; userId: string; businessI
 /** Compares each schedule's newest finished run with the run before it, once. */
 const compareFinishedRuns = Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT business_id, account_id, approved_by_user_id, last_batch_id, previous_batch_id, alert_drop_points FROM acq_schedules
-    WHERE last_batch_id IS NOT NULL AND compared_batch_id IS DISTINCT FROM last_batch_id LIMIT 20`
-  for (const r of rows) {
-    const businessId = String(r["business_id"])
+  const rows = yield* sql`SELECT s.business_id, s.last_batch_id FROM acq_schedules s
+    JOIN businesses b ON b.id=s.business_id AND b.account_id=s.account_id AND b.archived_at IS NULL
+    JOIN account_users u ON u.account_id=s.account_id AND u.user_id=s.approved_by_user_id
+    WHERE s.last_batch_id IS NOT NULL AND s.compared_batch_id IS DISTINCT FROM s.last_batch_id LIMIT 20`
+  for (const candidate of rows) {
+    const businessId = String(candidate["business_id"])
     yield* Effect.gen(function*() {
+      // The repository opens its own repeatable-read transaction for evidence.
+      // Compare immutable finished batches, then fence the target schedule row.
       const snapshot = yield* (yield* AcquisitionRepository).snapshot(businessId)
       if (!snapshot) return
       const batches = acquisitionView(snapshot).batches
-      const last = batches.find(b => b.id === r["last_batch_id"])
+      const last = batches.find(b => b.id === candidate["last_batch_id"])
       if (!last || last.metrics.pending > 0) return
-      const previous = r["previous_batch_id"] ? batches.find(b => b.id === r["previous_batch_id"]) : undefined
-      const scope = { accountId: String(r["account_id"]), userId: String(r["approved_by_user_id"]), businessId }
-      for (const drop of previous && previous.metrics.pending === 0 ? visibilityDrops(previous.metrics, last.metrics, Number(r["alert_drop_points"])) : []) {
-        const saved = yield* sql`INSERT INTO acq_alerts(business_id, kind, before_batch_id, after_batch_id, before_n, before_d, after_n, after_d)
-          VALUES (${businessId}, ${drop.kind}, ${previous!.id}, ${last.id}, ${drop.before.n}, ${drop.before.d}, ${drop.after.n}, ${drop.after.d})
-          ON CONFLICT (after_batch_id, kind) DO NOTHING RETURNING id`
-        if (!saved[0]) continue
-        const investigationId = yield* openInvestigation(scope, drop, previous!.id, last.id).pipe(
-          Effect.catchAllCause(cause => log("tracking alert could not open an investigation", businessId, cause).pipe(Effect.as(null))))
-        if (investigationId) {
-          yield* sql`UPDATE acq_alerts SET investigation_id = ${investigationId} WHERE id = ${String(saved[0]["id"])}`
-          yield* enqueueVisibilityInvestigationWork(scope, investigationId, alertQuestion(drop)).pipe(
-            Effect.catchAllCause(cause => log("visibility investigation work could not be queued", businessId, cause).pipe(Effect.asVoid)),
-          )
+      yield* sql.withTransaction(Effect.gen(function*() {
+        const [r] = yield* sql`SELECT s.account_id, s.approved_by_user_id, s.previous_batch_id, s.alert_drop_points
+          FROM acq_schedules s JOIN businesses b ON b.id=s.business_id AND b.account_id=s.account_id AND b.archived_at IS NULL
+          JOIN account_users u ON u.account_id=s.account_id AND u.user_id=s.approved_by_user_id
+          WHERE s.business_id=${businessId} AND s.last_batch_id=${last.id} AND s.compared_batch_id IS DISTINCT FROM s.last_batch_id
+          FOR UPDATE OF s`
+        if (!r) return
+        const previous = batches.find(batch => batch.id === r["previous_batch_id"])
+        const scope = { accountId: String(r["account_id"]), userId: String(r["approved_by_user_id"]), businessId }
+        if (previous && previous.metrics.pending === 0) {
+          for (const drop of visibilityDrops(previous.metrics, last.metrics, Number(r["alert_drop_points"]))) {
+            const saved = yield* sql`INSERT INTO acq_alerts(business_id, kind, before_batch_id, after_batch_id, before_n, before_d, after_n, after_d)
+              VALUES (${businessId}, ${drop.kind}, ${previous.id}, ${last.id}, ${drop.before.n}, ${drop.before.d}, ${drop.after.n}, ${drop.after.d})
+              ON CONFLICT (after_batch_id, kind) DO NOTHING RETURNING id`
+            if (!saved[0]) continue
+            const investigationId = yield* openInvestigation(scope, drop, previous.id, last.id)
+            if (investigationId) {
+              yield* sql`UPDATE acq_alerts SET investigation_id = ${investigationId} WHERE id = ${String(saved[0]["id"])}`
+              yield* enqueueVisibilityInvestigationWork(scope, investigationId, alertNote(drop, previous.id, last.id))
+            }
+          }
         }
-      }
-      yield* sql`UPDATE acq_schedules SET compared_batch_id = ${last.id}, updated_at = now() WHERE business_id = ${businessId}`
-    }).pipe(Effect.catchAllCause(cause => log("tracking comparison failed", businessId, cause)))
+        yield* sql`UPDATE acq_schedules SET compared_batch_id = ${last.id}, updated_at = now() WHERE business_id = ${businessId}`
+      }))
+    }).pipe(Effect.catchAllCause(() => log("tracking comparison failed", businessId)))
   }
 })
 
@@ -117,6 +128,7 @@ const startDueRuns = Effect.gen(function*() {
   const surface = yield* RecordSurfaceConfig
   const due = yield* sql`UPDATE acq_schedules s SET lease_until = now() + interval '10 minutes', updated_at = now()
     WHERE s.business_id IN (SELECT business_id FROM acq_schedules WHERE enabled AND next_run_at <= now() AND (lease_until IS NULL OR lease_until < now())
+      AND compared_batch_id IS NOT DISTINCT FROM last_batch_id
       ORDER BY next_run_at LIMIT 5 FOR UPDATE SKIP LOCKED)
       AND EXISTS (SELECT 1 FROM account_users au WHERE au.account_id = s.account_id AND au.user_id = s.approved_by_user_id)
     RETURNING s.business_id, s.account_id, s.approved_by_user_id, s.set_id, s.cadence, s.samples, s.max_provider_calls, s.last_batch_id`

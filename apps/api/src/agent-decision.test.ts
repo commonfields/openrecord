@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
 import { agentDeclarations, runConversation } from "./agent.js"
-import { CORE_TOOLS, decideTurn, otherToolsNote, viewedArtifact } from "./agent-decision.js"
+import { CORE_TOOLS, decideTurn, viewedArtifact } from "./agent-decision.js"
 import type { AgentModel, ModelInput, ModelResponse } from "./agent-model.js"
 import { toolEffect } from "./agent-registry.js"
 import { memoryJournal } from "./agent-run.js"
@@ -74,12 +74,6 @@ describe("deciding a business turn (rules, no model)", () => {
     }
   })
 
-  it("names every undeclared tool in the instructions, so none is out of reach", () => {
-    const d = decideTurn("Write a landing page for agencies", agentDeclarations)
-    const note = otherToolsNote(d.tools!, agentDeclarations.map(t => t.name))
-    for (const t of agentDeclarations) if (!d.tools!.includes(t.name)) expect(note).toContain(t.name)
-    expect(note).toContain("tool_details")
-  })
 })
 
 describe("a decided turn in the run loop (deterministic fixtures, no live model)", () => {
@@ -109,6 +103,28 @@ describe("a decided turn in the run loop (deterministic fixtures, no live model)
     expect(names(requests[0]!)).toContain(TOOL_DETAILS.name)
     expect(names(requests[0]!).length).toBeLessThan(agentDeclarations.length)
     expect(names(requests[1]!)).toContain(outside)
+  })
+
+  it("finds an eligible capability by task, loads its schema and calls the existing dispatcher", async () => {
+    const tool = "prepare_wordpress_change"
+    const offered = agentDeclarations.filter(t => t.name !== "read_webflow_content")
+    const { model, requests } = recorded([
+      calls(["find_capabilities", { query: "prepare WordPress page change for approval" }]),
+      calls(["tool_details", { names: [tool, "read_webflow_content", "diagnose_marketing_problems"] }]),
+      calls([tool]),
+      text("Ready"),
+    ])
+    const dispatched: string[] = []
+    await Effect.runPromise(runConversation({ message: "Draft an email to agencies", history: [], model, tools: offered,
+      decision: { version: "fixture", intents: ["write"], tools: [], prefetch: [], expand: [] },
+      dispatch: name => { dispatched.push(name); return Effect.succeed(read) } }))
+    expect(names(requests[0]!)).toContain("find_capabilities")
+    expect(names(requests[0]!)).not.toContain(tool)
+    expect(JSON.stringify(requests[1]!.contents)).toContain(`"name":"${tool}"`)
+    expect(JSON.stringify(requests[1]!.contents)).not.toMatch(/read_webflow_content|diagnose_marketing_problems/)
+    expect(requests[2]!.tools).toContainEqual(agentDeclarations.find(t => t.name === tool))
+    expect(names(requests[2]!)).not.toContain("read_webflow_content")
+    expect(dispatched).toEqual([tool])
   })
 
   it("declares a writing turn's saves whole from the first step, so creating the piece needs no tool_details step", async () => {

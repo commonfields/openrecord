@@ -52,7 +52,7 @@ const toObservation = (r: Record<string, unknown>): Observation => ({
 
 type Reservation = { kind: "cached"; row: Observation } | { kind: "in_flight" } | { kind: "quota"; used: number } | { kind: "reserved"; id: string }
 /** Reuses today's saved observation for the same request, or reserves a new one within the daily quota. Serialised per business. */
-const reserve = (ctx: ToolContext, key: string, c: AnyCapability, subject: string, question: string, params: unknown) => Effect.gen(function*() {
+const reserve = (ctx: ToolContext, key: string, c: AnyCapability, subject: string, question: string, params: unknown, scheduled: boolean) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const done = (r: Reservation) => r
   return yield* sql.withTransaction(Effect.gen(function*() {
@@ -61,7 +61,8 @@ const reserve = (ctx: ToolContext, key: string, c: AnyCapability, subject: strin
     if (existing) {
       const row = toObservation(existing)
       if (row.status === "OBSERVED" || row.status === "NO_DATA") return done({ kind: "cached", row })
-      if (row.status === "PENDING" && Date.now() - new Date(existing["updated_at"] as string).getTime() < STALE_PENDING_MS) return done({ kind: "in_flight" })
+      if (row.status === "PENDING" && (scheduled || Date.now() - new Date(existing["updated_at"] as string).getTime() < STALE_PENDING_MS)) return done({ kind: "in_flight" })
+      if (scheduled) return done({ kind: "cached", row })
     }
     const used = Number((yield* sql`SELECT count(*)::int AS n FROM research_observations WHERE business_id = ${ctx.businessId} AND source <> 'TEAM_UPLOAD'
       AND created_at >= date_trunc('day', now(), 'UTC')`)[0]?.["n"] ?? 0)
@@ -113,7 +114,7 @@ const RunInput = Schema.Struct({
 })
 const answer = (status: string, summary: string, recovery: string, extra: Record<string, unknown> = {}): AgentToolResult => ({ summary, citations: [], data: { status, recovery, ...extra } })
 
-export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Effect.gen(function*() {
+export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type, scheduledRunAt?: string) => Effect.gen(function*() {
   yield* scoped(ctx.accountId, ctx.businessId)
   const c = capability(args.capability)
   if (!c) return answer("UNKNOWN_CAPABILITY", `No research capability ${args.capability}`, "Use one of the listed capabilities, or call find_research_capabilities.",
@@ -130,9 +131,12 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type) => Eff
   const params = { capability: c.id, input }
   // The same company written two ways (https://www.example.com, example.com) is the same request.
   const keyed = Object.fromEntries(Object.entries(input as Record<string, unknown>).map(([k, v]) => [k, typeof v !== "string" ? v : k === "domain" ? normalizeDomain(v) ?? v : k === "url" ? normalizeUrl(v) ?? v : v]))
-  const key = sha256(JSON.stringify(["research:v2", ctx.businessId, c.id, keyed, c.cache === "day" ? new Date().toISOString().slice(0, 10) : `${Date.now()}:${Math.random()}`]))
+  const period = scheduledRunAt === undefined
+    ? c.cache === "day" ? new Date().toISOString().slice(0, 10) : `${Date.now()}:${Math.random()}`
+    : `schedule:${scheduledRunAt}`
+  const key = sha256(JSON.stringify(["research:v2", ctx.businessId, c.id, keyed, period]))
   const question = args.question.trim()
-  const r = yield* reserve(ctx, key, c, subject, question, params)
+  const r = yield* reserve(ctx, key, c, subject, question, params, scheduledRunAt !== undefined)
   if (r.kind === "in_flight") return answer("IN_FLIGHT", `${c.title}: the same research is already running`, "Wait for it, then read it with read_research_evidence.")
   if (r.kind === "quota") return answer("QUOTA_REACHED", `${c.title}: today's research limit (${dailyRuns()} runs) is used up`, "Answer from research already saved (read_research_evidence) and say what was not checked.")
   let row: Observation, reused = false

@@ -13,17 +13,18 @@
 import { randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Cause, Effect, Exit, Schema } from "effect"
-import type { HarnessSelection } from "@openrecord/contracts"
+import { HarnessSelection } from "@openrecord/contracts"
 import { handleAgentMessage, type TurnExtension } from "./agent.js"
 import { AgentModelError, configuredAgentModel } from "./agent-model.js"
 import { AgentConversationRefused, sendConversation, type ConversationScope, type MessageOrigin, type Responder, type TurnContext } from "./agent-conversations.js"
 import type { AgentToolResult } from "./agent-tools.js"
+import { enqueueAgentWork } from "./agent-work-queue.js"
 import type { DecisionRef, TaskRef, TaskStatus } from "./agent-registry.js"
 import { harnessCatalog, resolveHarness } from "./harness-store.js"
 import { INVESTIGATION_MEMORY, SPECIALIST_COORDINATION } from "./marketing-specialists.js"
 import {
   DEFAULT_WAIT_SECONDS, DelegateTaskInput, ListSessionsInput, MAX_RUNNING_TASKS_PER_ACCOUNT, MAX_SESSION_DEPTH, MAX_TASKS_PER_RUN, MessageSessionInput,
-  NoInput, READ_ONLY_SESSION_TOOLS, ROLE_BRIEF, ReadSessionInput, SESSION_TOOL_DECLARATIONS, TaskInput, type SessionRole,
+  NoInput, READ_ONLY_SESSION_TOOLS, ROLE_BRIEF, ReadSessionInput, SESSION_ROLES, SESSION_TOOL_DECLARATIONS, TaskInput, type SessionRole,
 } from "./agent-session-tools.js"
 
 type BusinessScope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
@@ -58,7 +59,9 @@ const reconcile = (parentId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* sql`UPDATE agent_tasks t SET status = 'INTERRUPTED', failure_reason = 'INTERRUPTED', finished_at = now()
     FROM agent_conversations c WHERE c.id = t.child_conversation_id AND t.parent_conversation_id = ${parentId} AND t.status = 'RUNNING'
-      AND t.created_at < now() - interval '30 seconds' AND (c.lease_until IS NULL OR c.lease_until <= now())`
+      AND t.created_at < now() - interval '30 seconds' AND (c.lease_until IS NULL OR c.lease_until <= now())
+      AND NOT EXISTS (SELECT 1 FROM agent_work_jobs j WHERE j.kind='HELPER_TASK_RUN' AND j.ref_id=t.id
+        AND (j.status='QUEUED' OR (j.status='RUNNING' AND (j.execution_started_at IS NULL OR j.lease_until>now()))))`
 })
 
 const readTaskRow = (parentId: string, taskId: string) => Effect.gen(function*() {
@@ -75,8 +78,11 @@ export const cancelTaskTree = (taskIds: ReadonlyArray<string>) => Effect.gen(fun
   yield* sql`WITH RECURSIVE tree AS (
       SELECT id, child_conversation_id FROM agent_tasks WHERE id IN ${sql.in(taskIds)} AND status = 'RUNNING'
       UNION SELECT t.id, t.child_conversation_id FROM agent_tasks t JOIN tree ON t.parent_conversation_id = tree.child_conversation_id WHERE t.status = 'RUNNING'
-    ), released AS (UPDATE agent_conversations SET lease_id = NULL, lease_until = NULL WHERE id IN (SELECT child_conversation_id FROM tree) RETURNING id)
-    UPDATE agent_tasks SET status = 'CANCELLED', failure_reason = 'CANCELLED', finished_at = now() WHERE id IN (SELECT id FROM tree) AND status = 'RUNNING'`
+    ), released AS (UPDATE agent_conversations SET lease_id = NULL, lease_until = NULL WHERE id IN (SELECT child_conversation_id FROM tree) RETURNING id),
+    cancelled AS (UPDATE agent_tasks SET status='CANCELLED', failure_reason='CANCELLED', finished_at=now()
+      WHERE id IN (SELECT id FROM tree) AND child_conversation_id IN (SELECT id FROM released) AND status='RUNNING' RETURNING id)
+    UPDATE agent_work_jobs SET status='CANCELLED', failure_reason='CANCELLED', finished_at=now(), claim_id=NULL, lease_until=NULL
+    WHERE kind='HELPER_TASK_RUN' AND ref_id IN (SELECT id FROM cancelled) AND status IN ('QUEUED','RUNNING')`
 })
 
 const RESULT_BYTES = 15000
@@ -202,43 +208,105 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
   const wakeParent = (scope: BusinessScope, parentId: string): Effect.Effect<void, never, Ctx> => Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     const plan = yield* sql.withTransaction(Effect.gen(function*() {
-      const parent = yield* sql`SELECT revision, messages FROM agent_conversations WHERE id = ${parentId} AND account_id = ${scope.accountId} AND user_id = ${scope.userId}
-        AND business_id = ${scope.businessId} AND (lease_until IS NULL OR lease_until <= now()) FOR UPDATE`
+      const parent = yield* sql`SELECT c.revision, c.messages FROM agent_conversations c
+        JOIN account_users u ON u.account_id=c.account_id AND u.user_id=c.user_id
+        JOIN businesses b ON b.id=c.business_id AND b.account_id=c.account_id AND b.archived_at IS NULL
+        WHERE c.id=${parentId} AND c.account_id=${scope.accountId} AND c.user_id=${scope.userId} AND c.business_id=${scope.businessId}
+          AND c.expires_at>now() AND (c.lease_until IS NULL OR c.lease_until<=now()) FOR UPDATE OF c`
       if (!parent[0]) return null
       yield* reconcile(parentId)
       const running = yield* sql`SELECT 1 FROM agent_tasks WHERE parent_conversation_id = ${parentId} AND status = 'RUNNING' LIMIT 1`
       if (running.length) return null
-      const ready = yield* sql`UPDATE agent_tasks SET woke_parent_at = now() WHERE parent_conversation_id = ${parentId} AND delivered_at IS NULL
-        AND woke_parent_at IS NULL AND status IN ('COMPLETED','FAILED','INTERRUPTED') RETURNING id`
-      if (!ready.length) return null
+      const ready = yield* sql<{ id: string; request_id: string }>`SELECT id, request_id FROM agent_tasks
+        WHERE parent_conversation_id=${parentId} AND (mode='async' OR delivered_at IS NULL)
+          AND woke_parent_at IS NULL AND status IN ('COMPLETED','FAILED','INTERRUPTED') ORDER BY finished_at, id`
+      const [first] = ready
+      if (!first) return null
+      // The helper request ID is server-generated. Its reuse in the *parent*
+      // binds restart recovery to the same wake without sharing a child run.
+      const resumed = yield* sql`SELECT started_at FROM agent_runs WHERE conversation_id=${parentId} AND request_id=${first.request_id}
+        AND account_id=${scope.accountId} AND business_id=${scope.businessId} AND user_id=${scope.userId} ORDER BY started_at LIMIT 1`
+      if (resumed[0]) {
+        yield* sql`UPDATE agent_tasks SET woke_parent_at=now() WHERE parent_conversation_id=${parentId} AND woke_parent_at IS NULL
+          AND id IN ${sql.in(ready.map(t => t.id))} AND finished_at <= (SELECT min(started_at) FROM agent_runs
+            WHERE conversation_id=${parentId} AND request_id=${first.request_id})`
+        return null
+      }
       // The parent continues on the provider and model of its own last turn.
       const messages = (parent[0]["messages"] ?? []) as Array<{ role?: string; inference?: { instanceId?: string; requestedModel?: string; reasoningEffort?: HarnessSelection["reasoningEffort"] } }>
       const last = [...messages].reverse().find(m => m.role === "agent" && m.inference)?.inference
       const selection: HarnessSelection | undefined = last?.instanceId && last.requestedModel
         ? { instanceId: last.instanceId, model: last.requestedModel, ...(last.reasoningEffort ? { reasoningEffort: last.reasoningEffort } : {}) } : undefined
-      return { revision: Number(parent[0]["revision"]), selection }
+      return { revision: Number(parent[0]["revision"]), selection, requestId: first.request_id, taskIds: ready.map(t => t.id) }
     }))
     if (!plan) return
-    yield* sendConversation(scope, { message: WAKE_TEXT, requestId: randomUUID(), conversationId: parentId, revision: plan.revision, selection: plan.selection, origin: { kind: "wake" } }, sessionResponder)
-  }).pipe(Effect.catchAllCause(cause => Effect.logWarning("agent session wake failed").pipe(Effect.annotateLogs({ parent: parentId, cause: Cause.pretty(cause).slice(0, 500) }))))
+    const active = Effect.gen(function*() {
+      const rows = yield* sql`SELECT b.id FROM businesses b JOIN account_users u ON u.account_id=b.account_id
+        WHERE b.id=${scope.businessId} AND b.account_id=${scope.accountId} AND u.user_id=${scope.userId} AND b.archived_at IS NULL
+        FOR SHARE OF b, u`
+      if (!rows.length) return yield* Effect.fail(new AgentModelError({ reason: "CANCELLED" }))
+    }).pipe(Effect.mapError(error => error instanceof AgentModelError ? error : new AgentModelError({ reason: "UNAVAILABLE" })))
+    const respond: Responder<Ctx> = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
+      sessionResponder(accountId, userId, businessId, message, history, selection, active.pipe(Effect.andThen(assertActive)), journal, turn)
+    yield* active
+    yield* sendConversation(scope, { message: WAKE_TEXT, requestId: plan.requestId, conversationId: parentId,
+      revision: plan.revision, selection: plan.selection, origin: { kind: "wake" } }, respond, active)
+    yield* sql`UPDATE agent_tasks SET woke_parent_at=now() WHERE parent_conversation_id=${parentId} AND id IN ${sql.in(plan.taskIds)} AND woke_parent_at IS NULL`
+  }).pipe(Effect.catchAllCause(() => Effect.logWarning("agent session wake failed").pipe(Effect.annotateLogs({ parent: parentId }))))
 
   /** Runs one task's turn in its helper session, records the result, then lets the parent continue. */
   const runTask = (scope: BusinessScope, task: TaskRow, input: { readonly message: string; readonly revision: number; readonly selection: HarnessSelection | undefined; readonly requestId: string }) =>
     Effect.gen(function*() {
+      const sql = yield* SqlClient.SqlClient
+      const active = Effect.gen(function*() {
+        // Cancellation locks the child conversation before its task.
+        yield* sql`SELECT id FROM agent_conversations WHERE id=${task.sessionId} FOR UPDATE`
+        const rows = yield* sql`SELECT t.id FROM agent_tasks t
+          JOIN account_users u ON u.account_id=t.account_id AND u.user_id=t.user_id
+          JOIN businesses b ON b.id=t.business_id AND b.account_id=t.account_id AND b.archived_at IS NULL
+          WHERE t.id=${task.id} AND t.status='RUNNING' FOR SHARE OF t, u, b`
+        if (!rows.length) return yield* Effect.fail(new AgentModelError({ reason: "CANCELLED" }))
+      }).pipe(Effect.mapError(error => error instanceof AgentModelError ? error : new AgentModelError({ reason: "UNAVAILABLE" })))
       const origin: MessageOrigin = { kind: task.kind === "NEW" ? "task" : "message", fromSessionId: task.parentId, taskId: task.id, title: task.title }
-      const exit = yield* sendConversation(scope, { message: input.message, requestId: input.requestId, conversationId: task.sessionId, revision: input.revision, selection: input.selection, origin }, sessionResponder).pipe(Effect.exit)
+      const respond: Responder<Ctx> = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
+        sessionResponder(accountId, userId, businessId, message, history, selection, active.pipe(Effect.andThen(assertActive)), journal, turn)
+      const exit = yield* active.pipe(Effect.andThen(sendConversation(scope, { message: input.message, requestId: input.requestId,
+        conversationId: task.sessionId, revision: input.revision, selection: input.selection, origin }, respond, active)), Effect.exit)
       yield* finish(task.id, exit as Parameters<typeof finish>[1])
       yield* wakeParent(scope, task.parentId)
+      return Exit.isSuccess(exit) ? "COMPLETED" : "FAILED"
     })
 
+  const runQueued = (job: { readonly account_id: string; readonly user_id: string; readonly business_id: string; readonly ref_id: string }, payload: unknown) =>
+    Effect.gen(function*() {
+      const { revision } = yield* decode(Schema.Struct({ revision: Schema.Int.pipe(Schema.nonNegative()) }), payload)
+      const sql = yield* SqlClient.SqlClient
+      const [row] = yield* sql`SELECT * FROM agent_tasks WHERE id=${job.ref_id}
+        AND account_id=${job.account_id} AND user_id=${job.user_id} AND business_id=${job.business_id}
+        AND mode='async' AND status='RUNNING'`
+      if (!row) return yield* Effect.fail("HELPER_TASK_INACTIVE" as const)
+      const input = yield* Schema.decodeUnknown(Schema.Struct({
+        task: Schema.String, request_id: Schema.UUID, selection: Schema.NullOr(HarnessSelection),
+        role: Schema.Literal(...SESSION_ROLES),
+      }))(row)
+      const brief = ROLE_BRIEF[input.role]
+      const scope = { accountId: job.account_id, userId: job.user_id, businessId: job.business_id }
+      const status = yield* runTask(scope, toRow(row), { message: brief ? `${brief}\n\n${input.task}` : input.task,
+        revision, selection: input.selection ?? undefined, requestId: input.request_id })
+      if (status === "FAILED") return yield* Effect.fail("HELPER_TASK_FAILED" as const)
+    })
 
   /** Records a task and starts its helper turn in the background. A repeated
    * clientRequestId returns the task already recorded instead of starting another. */
   const startTask = (scope: BusinessScope, turn: TurnContext, input: StartInput) => Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     const started = yield* sql.withTransaction(Effect.gen(function*() {
-      // Serialise this session's delegations so limits and retries are exact.
-      yield* sql`SELECT id FROM agent_conversations WHERE id = ${turn.conversationId} FOR UPDATE`
+      // The running limit spans all sessions in the account.
+      yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`agent-tasks:${scope.accountId}`}, 0))`
+      const parent = yield* sql`SELECT c.id FROM agent_conversations c
+        JOIN agent_runs r ON r.conversation_id=c.id AND r.lease_id=c.lease_id AND r.id=${turn.runId}
+        WHERE c.id=${turn.conversationId} AND c.lease_until>now() AND r.status='RUNNING' FOR UPDATE OF c`
+      if (!parent.length) return yield* Effect.fail(new AgentModelError({ reason: "CANCELLED" }))
       const existing = yield* sql`SELECT * FROM agent_tasks WHERE parent_conversation_id = ${turn.conversationId} AND client_request_id = ${input.clientRequestId}`
       if (existing[0]) return { kind: "existing" as const, task: toRow(existing[0]) }
       const perRun = yield* sql`SELECT count(*)::int AS n FROM agent_tasks WHERE parent_run_id = ${turn.runId}`
@@ -268,9 +336,14 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
       const rows = yield* sql`INSERT INTO agent_tasks(account_id, user_id, business_id, parent_conversation_id, parent_run_id, child_conversation_id, kind, role, title, task, mode, selection, client_request_id, request_id)
         VALUES (${scope.accountId}, ${scope.userId}, ${scope.businessId}, ${turn.conversationId}, ${turn.runId}, ${sessionId}, ${input.kind}, ${input.role}, ${input.title}, ${input.task}, ${input.mode},
           ${input.selection ? JSON.stringify(input.selection) : null}::jsonb, ${input.clientRequestId}, ${requestId}) RETURNING *`
-      return { kind: "started" as const, task: toRow(rows[0]!), revision, requestId }
+      const task = toRow(rows[0]!)
+      if (input.mode === "async") {
+        const job = yield* enqueueAgentWork({ ...scope, kind: "HELPER_TASK_RUN", refId: task.id, payload: { revision } })
+        if (!job) return yield* Effect.fail(new AgentModelError({ reason: "UNAVAILABLE" }))
+      }
+      return { kind: "started" as const, task, revision, requestId }
     }))
-    if (started.kind === "started") {
+    if (started.kind === "started" && input.mode === "wait") {
       const brief = ROLE_BRIEF[input.role]
       yield* Effect.forkDaemon(runTask(scope, started.task, { message: brief ? `${brief}\n\n${input.task}` : input.task, revision: started.revision, selection: input.selection, requestId: started.requestId }))
     }
@@ -309,7 +382,8 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
           const input = yield* decode(MessageSessionInput, args)
           if (input.sessionId === turn.conversationId) return refused("Not sent: that is this session", "NOT_ALLOWED", "Answer in your own reply instead.")
           const sql = yield* SqlClient.SqlClient
-          const target = yield* sql`SELECT task_title, task_role FROM agent_conversations WHERE id = ${input.sessionId}`
+          const target = yield* sql`SELECT task_title, task_role FROM agent_conversations WHERE id=${input.sessionId}
+            AND account_id=${scope.accountId} AND user_id=${scope.userId} AND business_id=${scope.businessId}`
           const title = String(target[0]?.["task_title"] ?? "Follow-up").slice(0, 80)
           return yield* delegate(scope, turn, assertActive, { waitSeconds: input.waitSeconds, start: { kind: "MESSAGE", targetId: input.sessionId,
             role: (target[0]?.["task_role"] as SessionRole | null) ?? "general", title, task: input.message, mode: input.mode ?? "wait", selection: turn.selection, clientRequestId: input.clientRequestId ?? randomUUID() } })
@@ -354,9 +428,29 @@ export const createSessions = (base: BaseResponder = handleAgentMessage) => {
       return id ? Effect.forkDaemon(wakeParent({ ...scope, businessId: scope.businessId }, id)).pipe(Effect.asVoid) : Effect.void
     }))
 
-  return { responder: sessionResponder, sendTurn: sendSessionTurn, wakeParent, sessionExtension }
+  return { responder: sessionResponder, sendTurn: sendSessionTurn, wakeParent, sessionExtension, runQueued }
 }
 const production = createSessions()
 export const sessionResponder = production.responder
 export const sendSessionTurn = production.sendTurn
 export const wakeSessionParent = production.wakeParent
+export const runQueuedHelper = production.runQueued
+
+/** An idle worker can pick up a completion whose producer stopped before waking its parent. */
+export const recoverQueuedHelperParent = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const [parent] = yield* sql<{ id: string; account_id: string; business_id: string; user_id: string }>`SELECT p.id, p.account_id, p.business_id, p.user_id
+    FROM agent_tasks t
+    JOIN agent_work_jobs j ON j.ref_id=t.id AND j.kind='HELPER_TASK_RUN' AND j.status IN ('COMPLETED','FAILED','INTERRUPTED')
+    JOIN agent_conversations p ON p.id=t.parent_conversation_id AND p.expires_at>now() AND (p.lease_until IS NULL OR p.lease_until<=now())
+    JOIN businesses b ON b.id=p.business_id AND b.account_id=p.account_id AND b.archived_at IS NULL
+    JOIN account_users u ON u.account_id=p.account_id AND u.user_id=p.user_id
+    WHERE t.mode='async' AND t.woke_parent_at IS NULL AND t.status<>'CANCELLED'
+      AND NOT EXISTS (SELECT 1 FROM agent_tasks sibling JOIN agent_conversations child ON child.id=sibling.child_conversation_id
+        WHERE sibling.parent_conversation_id=p.id AND sibling.status='RUNNING'
+          AND (sibling.created_at >= now()-interval '30 seconds' OR child.lease_until>now()
+            OR EXISTS (SELECT 1 FROM agent_work_jobs work WHERE work.ref_id=sibling.id AND work.kind='HELPER_TASK_RUN'
+              AND work.status IN ('QUEUED','RUNNING'))))
+    ORDER BY t.created_at, t.id LIMIT 1`
+  if (parent) yield* wakeSessionParent({ accountId: parent.account_id, userId: parent.user_id, businessId: parent.business_id }, parent.id)
+})
