@@ -3,14 +3,14 @@ import { HarnessSelection } from "@openrecord/contracts"
 import { Effect, Schedule, Schema } from "effect"
 import { AGENT_SYSTEM, runConversation } from "./agent.js"
 import { sendConversation, type Responder } from "./agent-conversations.js"
-import { AgentModelError, configuredAgentModel, type AgentModel } from "./agent-model.js"
-import { harnessModel } from "./harness-model.js"
+import { AgentModelError, type AgentModel } from "./agent-model.js"
 import { AGENT_TOOL_SPECS, dispatchToolSpec } from "./agent-registry.js"
 import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
 import { loadResumeContext } from "./agent-resume.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
 import { enqueueInvestigationFollowup } from "./agent-followup-enqueue.js"
 import { runDueCampaignFollowups } from "./campaign-followups.js"
+import { automaticSelection, ensureAutomaticFollowups, followupModel } from "./automatic-followups.js"
 
 // Explicit allowlist: no network fetches, new measurements, proposals, memory
 // writes or delegation. Adding a registered tool does not add background powers.
@@ -22,7 +22,7 @@ const Wake = Schema.Struct({
   id: Schema.UUID, policy_id: Schema.UUID, grant_id: Schema.UUID, note_id: Schema.UUID,
   account_id: Schema.UUID, user_id: Schema.UUID, business_id: Schema.UUID, conversation_id: Schema.UUID,
   investigation_id: Schema.UUID, provider: Schema.String, model: Schema.String,
-  selection: Schema.NullOr(HarnessSelection), revision: Schema.NumberFromString,
+  selection: Schema.NullOr(HarnessSelection), revision: Schema.NumberFromString, automatic: Schema.Boolean,
 })
 export type FollowupWake = typeof Wake.Type
 
@@ -38,7 +38,7 @@ export const claimFollowup = Effect.gen(function*() {
           AND r.user_id=p.user_id AND r.business_id=p.business_id AND r.status='COMPLETED'
       ) THEN 'COMPLETED' ELSE 'INTERRUPTED' END, finished_at=now()
       WHERE w.status='RUNNING' AND w.deadline <= now()`
-    const due = yield* sql`SELECT p.id AS policy_id,p.grant_id,p.account_id,p.user_id,p.business_id,p.conversation_id,p.selection,p.provider,p.model,
+    const due = yield* sql`SELECT p.id AS policy_id,p.grant_id,p.account_id,p.user_id,p.business_id,p.conversation_id,p.selection,p.provider,p.model,p.automatic,
         n.id AS note_id,n.investigation_id,c.revision::text AS revision
       FROM growth_investigation_wake_policies p
       JOIN account_users u ON u.account_id=p.account_id AND u.user_id=p.user_id
@@ -82,14 +82,13 @@ const wakeActive = (wake: FollowupWake) => Effect.gen(function*() {
 }).pipe(Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason: "UNAVAILABLE" })))
 
 export const followupResponder = (wake: FollowupWake): Responder<AgentToolDeps> =>
-  (accountId, userId, businessId, message, history, _selection, assertActive, journal) => Effect.gen(function*() {
+  (accountId, userId, businessId, message, history, selection, assertActive, journal) => Effect.gen(function*() {
     if (accountId !== wake.account_id || userId !== wake.user_id || businessId !== wake.business_id) return yield* Effect.fail(new AgentModelError({ reason: "CANCELLED" }))
     const sqlContext = yield* Effect.context<SqlClient.SqlClient>()
     const services = yield* Effect.context<AgentToolDeps>()
     const guard = wakeActive(wake).pipe(Effect.andThen(assertActive))
     yield* guard
-    const picked = yield* (wake.selection ? harnessModel({ accountId, userId, businessId }, wake.selection) : configuredAgentModel)
-    if (picked.provider !== wake.provider || picked.requestedModel !== wake.model) return yield* Effect.fail(new AgentModelError({ reason: "UNAVAILABLE" }))
+    const picked = yield* followupModel({ accountId, userId, businessId }, wake, selection)
     const watcher = Effect.forever(guard.pipe(Effect.andThen(Effect.sleep("500 millis"))))
     const model: AgentModel = input => guard.pipe(Effect.andThen(Effect.raceFirst(picked.invoke(input), watcher)), Effect.provide(sqlContext))
     const tools = followupToolSpecs()
@@ -109,9 +108,12 @@ export const followupResponder = (wake: FollowupWake): Responder<AgentToolDeps> 
 
 export const deliverFollowup = (wake: FollowupWake, respond: Responder<AgentToolDeps> = followupResponder(wake)) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const result = yield* sendConversation({ accountId: wake.account_id, userId: wake.user_id, businessId: wake.business_id }, {
+  const scope = { accountId: wake.account_id, userId: wake.user_id, businessId: wake.business_id }
+  // An automatic policy runs on whichever model works now; a granted one on its own.
+  const selection = wake.automatic ? yield* automaticSelection(scope).pipe(Effect.orElseSucceed(() => undefined)) : wake.selection ?? undefined
+  const result = yield* sendConversation(scope, {
     conversationId: wake.conversation_id, revision: wake.revision, requestId: wake.id,
-    selection: wake.selection ?? undefined, origin: { kind: "wake", title: "Automatic follow-up" },
+    selection, origin: { kind: "wake", title: "Automatic follow-up" },
     message: `OpenRecord follow-up: reassess investigation ${wake.investigation_id}, waiting note ${wake.note_id}. A saved revisit time or proposal decision is ready for review. Read the current investigation and receipts. Report findings only; do not execute or replay any action.`,
   }, respond, wakeActive(wake), FOLLOWUP_LIMITS).pipe(Effect.exit)
   yield* sql`UPDATE growth_investigation_wakes SET status=${result._tag === "Success" ? "COMPLETED" : "FAILED"},finished_at=now()
@@ -122,6 +124,8 @@ export const deliverFollowup = (wake: FollowupWake, respond: Responder<AgentTool
 /** One wake per pass: an investigation's waiting note first, else a campaign milestone. Both share the person's daily budget. */
 export const runDueFollowups = Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
+  // Businesses in use get follow-ups without anyone switching them on.
+  yield* ensureAutomaticFollowups.pipe(Effect.catchAllCause(() => Effect.logWarning("automatic follow-ups could not be set up")))
   yield* sql.withTransaction(Effect.gen(function*() {
     const wake = yield* claimFollowup
     if (wake) yield* enqueueInvestigationFollowup(wake)

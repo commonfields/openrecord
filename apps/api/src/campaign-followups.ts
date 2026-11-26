@@ -16,12 +16,12 @@ import { HarnessSelection } from "@openrecord/contracts"
 import { Effect, Schema } from "effect"
 import { AGENT_SYSTEM, runConversation } from "./agent.js"
 import { sendConversation, type Responder } from "./agent-conversations.js"
-import { AgentModelError, configuredAgentModel, type AgentModel } from "./agent-model.js"
-import { harnessModel } from "./harness-model.js"
+import { AgentModelError, type AgentModel } from "./agent-model.js"
 import { AGENT_TOOL_SPECS, dispatchToolSpec } from "./agent-registry.js"
 import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
 import { enqueueCampaignFollowup } from "./agent-followup-enqueue.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
+import { automaticSelection, followupModel } from "./automatic-followups.js"
 
 /** Read-only, stored evidence only: no fetches, writes, proposals or delegation. */
 const READS = new Set(["read_marketing_campaigns", "read_campaign_delivery", "read_campaign_results", "read_campaign_runs", "read_campaign_outcome",
@@ -33,7 +33,7 @@ const Wake = Schema.Struct({
   id: Schema.UUID, policy_id: Schema.UUID, grant_id: Schema.UUID, account_id: Schema.UUID, user_id: Schema.UUID, business_id: Schema.UUID,
   conversation_id: Schema.UUID, campaign_id: Schema.UUID, campaign_title: Schema.String,
   milestone: Schema.Literal("PAGE_LIVE", "FIRST_INQUIRY", "REVIEW_DUE"), milestone_key: Schema.String,
-  provider: Schema.String, model: Schema.String, selection: Schema.NullOr(HarnessSelection), revision: Schema.NumberFromString,
+  provider: Schema.String, model: Schema.String, selection: Schema.NullOr(HarnessSelection), revision: Schema.NumberFromString, automatic: Schema.Boolean,
 })
 export type CampaignWake = typeof Wake.Type
 
@@ -75,7 +75,7 @@ export const claimCampaignFollowup = Effect.gen(function*() {
           WHERE c.brief->>'reviewDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND (c.brief->>'reviewDate')::date <= current_date
             AND (c.brief->>'reviewDate')::date > current_date - 14 AND c.brief->>'status' IN ('ACTIVE', 'DRAFT')
       )
-      SELECT p.id AS policy_id, p.grant_id, p.account_id, p.user_id, p.business_id, p.conversation_id, p.selection, p.provider, p.model,
+      SELECT p.id AS policy_id, p.grant_id, p.account_id, p.user_id, p.business_id, p.conversation_id, p.selection, p.provider, p.model, p.automatic,
         c.id AS campaign_id, c.brief->>'title' AS campaign_title, m.milestone, m.milestone_key, conv.revision::text AS revision
       FROM growth_investigation_wake_policies p
       JOIN account_users u ON u.account_id=p.account_id AND u.user_id=p.user_id
@@ -110,15 +110,14 @@ const wakeActive = (wake: CampaignWake) => Effect.gen(function*() {
 }).pipe(Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason: "UNAVAILABLE" })))
 
 export const campaignFollowupResponder = (wake: CampaignWake): Responder<AgentToolDeps> =>
-  (accountId, userId, businessId, message, history, _selection, assertActive, journal) => Effect.gen(function*() {
+  (accountId, userId, businessId, message, history, selection, assertActive, journal) => Effect.gen(function*() {
     if (accountId !== wake.account_id || userId !== wake.user_id || businessId !== wake.business_id) return yield* Effect.fail(new AgentModelError({ reason: "CANCELLED" }))
     const sqlContext = yield* Effect.context<SqlClient.SqlClient>()
     const services = yield* Effect.context<AgentToolDeps>()
     const guard = wakeActive(wake).pipe(Effect.andThen(assertActive))
     yield* guard
-    const picked = yield* (wake.selection ? harnessModel({ accountId, userId, businessId }, wake.selection) : configuredAgentModel)
-    // The model the person granted, never a fallback.
-    if (picked.provider !== wake.provider || picked.requestedModel !== wake.model) return yield* Effect.fail(new AgentModelError({ reason: "UNAVAILABLE" }))
+    // The model the person granted, never a fallback; an automatic policy's, the one that works now.
+    const picked = yield* followupModel({ accountId, userId, businessId }, wake, selection)
     const watcher = Effect.forever(guard.pipe(Effect.andThen(Effect.sleep("500 millis"))))
     const model: AgentModel = input => guard.pipe(Effect.andThen(Effect.raceFirst(picked.invoke(input), watcher)), Effect.provide(sqlContext))
     const tools = campaignFollowupToolSpecs()
@@ -138,9 +137,11 @@ export const campaignFollowupResponder = (wake: CampaignWake): Responder<AgentTo
 export const deliverCampaignFollowup = (wake: CampaignWake, respond: Responder<AgentToolDeps> = campaignFollowupResponder(wake)) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const title = wake.milestone === "PAGE_LIVE" ? "Campaign page is live" : wake.milestone === "FIRST_INQUIRY" ? "First campaign inquiry" : "Campaign review is due"
-  const result = yield* sendConversation({ accountId: wake.account_id, userId: wake.user_id, businessId: wake.business_id }, {
+  const scope = { accountId: wake.account_id, userId: wake.user_id, businessId: wake.business_id }
+  const selection = wake.automatic ? yield* automaticSelection(scope).pipe(Effect.orElseSucceed(() => undefined)) : wake.selection ?? undefined
+  const result = yield* sendConversation(scope, {
     conversationId: wake.conversation_id, revision: wake.revision, requestId: wake.id,
-    selection: wake.selection ?? undefined, origin: { kind: "wake", title },
+    selection, origin: { kind: "wake", title },
     message: milestoneMessage(wake),
   }, respond, wakeActive(wake), FOLLOWUP_LIMITS).pipe(Effect.exit)
   yield* sql`UPDATE campaign_wakes SET status=${result._tag === "Success" ? "COMPLETED" : "FAILED"}, finished_at=now() WHERE id=${wake.id} AND status='RUNNING'`

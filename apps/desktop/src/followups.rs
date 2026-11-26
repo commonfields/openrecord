@@ -21,6 +21,9 @@ pub enum Policy {
         selection: Option<Value>,
         provider: String,
         model: String,
+        /// Set up by OpenRecord: reviews run on whichever model works at the time.
+        #[serde(default)]
+        automatic: bool,
     },
 }
 
@@ -66,6 +69,11 @@ impl Followups {
             Policy::Configured { enabled: true, .. } => Location::Elsewhere,
             _ => Location::Off,
         }
+    }
+
+    /// Follow-ups OpenRecord turned on by itself, not granted for one model.
+    pub fn automatic(&self) -> bool {
+        matches!(self.policy, Policy::Configured { enabled: true, automatic: true, .. })
     }
 
     pub fn grant(&self) -> Option<&str> {

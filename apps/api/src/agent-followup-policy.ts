@@ -25,8 +25,12 @@ export const followupPolicyApi = (withSession: WithSession) => {
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE)
       if (!input.enabled) {
         yield* sql.withTransaction(Effect.gen(function*() {
+          // Off for the business: this person's policy and any automatic one, and it stays off
+          // (agent_followup_pauses) even after the chat a policy was bound to is gone.
           const policies = yield* sql`UPDATE growth_investigation_wake_policies SET enabled = false, grant_id = ${randomUUID()}, updated_at = now()
-            WHERE account_id = ${session.accountId} AND user_id = ${session.userId} AND business_id = ${businessId} RETURNING id`
+            WHERE account_id = ${session.accountId} AND business_id = ${businessId} AND (user_id = ${session.userId} OR automatic) RETURNING id`
+          yield* sql`INSERT INTO agent_followup_pauses(business_id, account_id, paused_by_user_id) VALUES (${businessId}, ${session.accountId}, ${session.userId})
+            ON CONFLICT (business_id) DO UPDATE SET paused_by_user_id = EXCLUDED.paused_by_user_id, paused_at = now()`
           for (const p of policies) {
             yield* sql`UPDATE growth_investigation_wakes SET status = 'CANCELLED', finished_at = now()
               WHERE policy_id = ${p["id"]} AND status = 'RUNNING'`
@@ -48,17 +52,21 @@ export const followupPolicyApi = (withSession: WithSession) => {
             WHERE account_id=${session.accountId} AND user_id=${session.userId} AND business_id=${businessId}
               AND grant_id IN (${input.expectedGrantId}::uuid, ${input.requestId}::uuid))
           ON CONFLICT(account_id,user_id,business_id) DO UPDATE SET enabled=true, conversation_id=EXCLUDED.conversation_id,
-            grant_id=EXCLUDED.grant_id, selection=EXCLUDED.selection, provider=EXCLUDED.provider, model=EXCLUDED.model, updated_at=now()
+            grant_id=EXCLUDED.grant_id, selection=EXCLUDED.selection, provider=EXCLUDED.provider, model=EXCLUDED.model, automatic=false, updated_at=now()
           WHERE (growth_investigation_wake_policies.grant_id = ${input.expectedGrantId}::uuid AND EXCLUDED.grant_id <> ${input.expectedGrantId}::uuid) OR
             (growth_investigation_wake_policies.grant_id = EXCLUDED.grant_id AND growth_investigation_wake_policies.enabled AND growth_investigation_wake_policies.conversation_id=EXCLUDED.conversation_id
              AND growth_investigation_wake_policies.selection IS NOT DISTINCT FROM EXCLUDED.selection
              AND growth_investigation_wake_policies.provider=EXCLUDED.provider AND growth_investigation_wake_policies.model=EXCLUDED.model)
           RETURNING id`
         if (!rows[0]) return yield* json(409, { _tag: "GrantRequestConflict" }, PRIVATE)
+        // The person's own choice replaces OpenRecord's: no pause, and no second automatic policy waking the same business.
+        yield* sql`DELETE FROM agent_followup_pauses WHERE business_id = ${businessId} AND account_id = ${session.accountId}`
+        yield* sql`UPDATE growth_investigation_wake_policies SET enabled = false, grant_id = ${randomUUID()}, updated_at = now()
+          WHERE account_id = ${session.accountId} AND business_id = ${businessId} AND automatic AND user_id <> ${session.userId}`
       }
     }
     const policies = yield* sql`SELECT jsonb_build_object('kind','configured','enabled',enabled,'grantId',grant_id,
-      'conversationId',conversation_id,'selection',selection,'provider',provider,'model',model,'updatedAt',updated_at) AS item FROM growth_investigation_wake_policies
+      'conversationId',conversation_id,'selection',selection,'provider',provider,'model',model,'automatic',automatic,'updatedAt',updated_at) AS item FROM growth_investigation_wake_policies
       WHERE account_id=${session.accountId} AND user_id=${session.userId} AND business_id=${businessId}`
     const wakes = yield* sql`SELECT jsonb_build_object('id',w.id,'noteId',w.note_id,'conversationId',w.conversation_id,
       'status',w.status,'startedAt',w.started_at,'finishedAt',w.finished_at) AS item FROM growth_investigation_wakes w
