@@ -7,7 +7,9 @@ import { randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Cause, Effect, Either, Schema } from "effect"
 import { SetupDraft } from "@openrecord/contracts"
-import { lastSelection, production, type BriefSender } from "./growth-brief.js"
+import { enqueueAgentWork } from "./agent-work-queue.js"
+import { production, type BriefSender } from "./growth-brief.js"
+import { sendUnattendedTurn } from "./unattended-agent.js"
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
 export type DraftState = { readonly status: "RUNNING" } | { readonly status: "FAILED" } | { readonly status: "READY"; readonly value: SetupDraft }
@@ -43,7 +45,11 @@ export const parseDraft = (reply: string): SetupDraft | null => {
 }
 
 /** The draft's state for a setup, starting it once the website has been read and before the brief is confirmed. */
-export const setupDraft = <R = Effect.Effect.Context<ReturnType<typeof production>>>(scope: Scope, setupId: string, sender: BriefSender<R> = production as unknown as BriefSender<R>) => Effect.gen(function*() {
+export const setupDraft = <R = Effect.Effect.Context<ReturnType<typeof production>>>(
+  scope: Scope, setupId: string,
+  sender: BriefSender<R> = production as unknown as BriefSender<R>,
+  opts?: { readonly inline?: boolean },
+) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   // A server restart can interrupt the detached writer. Two model turns can
   // each last nine minutes, so only settle drafts older than both turn limits.
@@ -64,16 +70,35 @@ export const setupDraft = <R = Effect.Effect.Context<ReturnType<typeof productio
     yield* sql`UPDATE business_setups SET draft_conversation_id = ${conversationId} WHERE id = ${setupId}`
     return true
   }))
-  if (claimed) yield* Effect.forkDaemon(writeDraft(scope, setupId, conversationId, String(row["website_url"]), sender))
+  if (claimed) {
+    const url = String(row["website_url"])
+    if (opts?.inline) yield* Effect.forkDaemon(writeDraft(scope, setupId, conversationId, url, sender))
+    else {
+      yield* enqueueAgentWork({
+        accountId: scope.accountId, userId: scope.userId, businessId: scope.businessId,
+        kind: "SETUP_DRAFT_WRITE", refId: setupId,
+        payload: { scope, setupId, conversationId, url } satisfies SetupDraftWritePayload,
+      })
+    }
+  }
   return { status: "RUNNING" } as DraftState
 })
 
+export type SetupDraftWritePayload = {
+  readonly scope: Scope
+  readonly setupId: string
+  readonly conversationId: string
+  readonly url: string
+}
+
+export const writeSetupDraftJob = (raw: SetupDraftWritePayload) =>
+  writeDraft(raw.scope, raw.setupId, raw.conversationId, raw.url, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof production>>>)
+
 const writeDraft = <R>(scope: Scope, setupId: string, conversationId: string, url: string, sender: BriefSender<R>) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const selection = yield* lastSelection(scope)
-  const send = (s: typeof selection) => sender(scope, { message: DRAFT_PROMPT(url), requestId: randomUUID(), conversationId, revision: 0, selection: s })
-  let result: Either.Either<unknown, unknown> = yield* send(selection).pipe(Effect.either)
-  if (Either.isLeft(result) && selection) result = yield* send(undefined).pipe(Effect.either)
+  let result: Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
+    message: DRAFT_PROMPT(url), requestId: randomUUID(), conversationId, revision: 0,
+  }).pipe(Effect.either)
   const reply = Either.isRight(result) ? (result.right as { reply?: unknown }).reply : null
   const draft = typeof reply === "string" ? parseDraft(reply) : null
   yield* draft

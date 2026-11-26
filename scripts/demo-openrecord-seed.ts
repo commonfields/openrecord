@@ -249,7 +249,7 @@ const main = async () => {
         { role: "user", text: ask },
         { role: "agent", text: reply, toolCalls: tools.map(([tool, summary]) => ({ tool, summary })), citations: [],
           activity: [{ kind: "thought", text: "Start from the goal and the latest answers, then what changed since last week.", ms: 4200 }, ...tools.map(([tool, text]) => ({ kind: "tool", tool, text }))],
-          durationMs: 18_000, inference: { provider: "anthropic", requestedModel: "claude-sonnet-5-5" } },
+          durationMs: 18_000, inference: { provider: "anthropic", requestedModel: "claude-sonnet-5-5", usage: [] } },
       ])
       // Only the newest chat is the current one; earlier chats are kept in history.
       await db.query(`INSERT INTO agent_conversations (account_id, business_id, user_id, messages, revision, last_reply, created_at, updated_at, expires_at, archived_at)

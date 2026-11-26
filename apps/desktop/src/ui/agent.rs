@@ -38,7 +38,8 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
     let side = layout == ChatLayout::Side;
     let column = if side { f32::MAX } else { s.prefs.chat_width.max() };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
-    if s.prefs.words_webview && !side {
+    // Beside Analytics the native transcript is off (`ui::view`), so this one is drawn.
+    if s.prefs.words_webview && !side && !s.side_shows_overview() {
         return words_webview(s, t, k, column, &business);
     }
     let messages = s.transcript();

@@ -9,6 +9,7 @@ import { AGENT_TOOL_SPECS, dispatchToolSpec } from "./agent-registry.js"
 import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
 import { loadResumeContext } from "./agent-resume.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
+import { enqueueInvestigationFollowup } from "./agent-followup-enqueue.js"
 import { runDueCampaignFollowups } from "./campaign-followups.js"
 
 // Explicit allowlist: no network fetches, new measurements, proposals, memory
@@ -120,7 +121,10 @@ export const deliverFollowup = (wake: FollowupWake, respond: Responder<AgentTool
 /** One wake per pass: an investigation's waiting note first, else a campaign milestone. Both share the person's daily budget. */
 export const runDueFollowups = Effect.gen(function*() {
   const wake = yield* claimFollowup
-  if (wake) return yield* deliverFollowup(wake)
+  if (wake) {
+    yield* enqueueInvestigationFollowup(wake)
+    return
+  }
   yield* runDueCampaignFollowups
 })
 export const followupScheduler = runDueFollowups.pipe(

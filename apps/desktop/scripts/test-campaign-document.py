@@ -37,7 +37,7 @@ def main():
     def document(nodes, keys):
         assert '/side-panel/' in keys['campaign-brief-editor']['path'], 'Editor replaced the main page'
         assert 'cp-edit-tab-0' not in keys, 'Old form navigation is still present'
-        assert all('cp-document-section-' + str(i) in keys for i in range(6)), 'Document lost a brief section'
+        assert all(k in keys for k in ['cp-describe-box', 'cp-essentials', 'cp-deliverables', 'cp-more-detail']), 'Document lost a part of the brief'
         x, _, width, _ = keys['side-panel']['rect']
         for n in nodes:
             if '/campaign-document/' not in n.get('path', '') or not n.get('key'):
@@ -68,10 +68,18 @@ def main():
     assert 'campaign-brief-editor' not in keys and 'side-panel' not in keys, 'Discard did not close document'
     nodes, _ = render('validation', 'campaigns', [{'t': .2, 'key': 'new-campaign'}, {'t': .7, 'key': 'cp-edit-save'}])
     assert any('Give this campaign a name' in n.get('text', '') for n in nodes), 'Unnamed brief bypassed validation'
-    _, keys = render('scroll', 'campaigns', [{'t': .2, 'key': 'new-campaign'},
+    _, keys = render('scroll', 'campaign-brief', [{'t': .2, 'key': 'brief-more'},
                       {'t': .8, 'type': 'scroll', 'key': 'campaign-document-scroll', 'dy': -1600, 'dur': .3}])
     assert abs(keys['cp-document-toolbar']['rect'][1] - baseline_toolbar[1]) < 1, 'Save toolbar scrolls away'
     assert keys['cp-edit-title']['rect'][1] < baseline_toolbar[1], 'Document did not scroll'
+    # Folded detail keeps every other field one press away.
+    _, keys = render('more', 'campaign-brief', [{'t': .3, 'key': 'brief-more'}], '1280x1400')
+    assert all('cp-edit-' + k in keys for k in ['hypothesis', 'trackingPlan', 'budget', 'nextMove']), 'More detail is missing fields'
+    _, keys = render('task-cycle', 'campaign-brief', [{'t': .3, 'key': 'cp-task-1-status'}, {'t': .6, 'key': 'cp-task-1-channel'}, {'t': .9, 'key': 'brief-add-task'}], '1280x1300')
+    assert keys['cp-task-1-status']['label'].startswith('In progress') and keys['cp-task-1-channel']['label'].startswith('Social'), 'Deliverable state or channel did not change'
+    assert 'cp-edit-task-2' in keys, 'Add deliverable did not add a row'
+    _, keys = render('fill-empty', 'campaign-brief', [])
+    assert not keys['brief-fill']['focusable'] and keys['brief-fill']['opacity'] < 1, 'Fill offered without a description'
     _, keys = render('detail', 'campaign', [])
     for i in range(6):
         assert keys['cp-phase-action-' + str(i)]['rect'][2] < keys['cp-phase-' + str(i)]['rect'][2] - 40, 'Work-loop button is stretched'

@@ -38,7 +38,8 @@ def main():
         assert '/panel/header/' not in agent['path'] and '/panel/' in agent['path'], 'Chat is outside the main panel'
         assert 'composer-input' in keys, 'Main chat composer missing'
         assert any(n.get('key') == 'send' for n in nodes), 'Prepared request was lost before the next frame'
-        assert 'side-composer-input' not in keys, 'A second composer rendered'
+        # Campaigns in the right panel carries the same chat under it (#205).
+        assert scene != 'overview-agent' or 'side-composer-input' not in keys, 'A second composer rendered'
         if close:
             assert 'side-panel' not in keys, 'Closing the source tab did not fold the panel'
         else:
@@ -48,7 +49,7 @@ def main():
                 assert '/side-panel/' in document['path'], 'Campaign brief is not in the right panel'
                 assert 'side-tab-1' in keys and 'cp-edit-title' in keys, 'Brief document tab missing'
             else:
-                source = next(n for n in nodes if n.get('key') == 'page-' + page)
+                source = next(n for n in nodes if n.get('key') == ('side-analytics' if page == 'overview' else 'page-' + page))
                 assert '/side-panel/' in source['path'], 'Source page is not in the right panel'
                 assert ('revenue-hero' in keys) if page == 'overview' else ('cp-back' in keys)
         print(name + ': main chat with source page tab verified', flush=True)

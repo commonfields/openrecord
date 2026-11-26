@@ -31,9 +31,11 @@ pub enum Reply {
     Facts(String, ApiResult<Vec<crate::api::Fact>>),
     Channels(String, ApiResult<Vec<Channel>>),
     Campaigns(String, ApiResult<Vec<Campaign>>),
+    CampaignTimeline(String, String, crate::api::CampaignTimeline),
     CampaignRuns(String, String, ApiResult<Vec<crate::api::CampaignRun>>),
     CampaignPublication(String, String, ApiResult<PublicationResult>),
     CampaignSaved { business: String, id: String, result: ApiResult<Campaign> },
+    BriefSuggested { business: String, id: String, result: ApiResult<serde_json::Value> },
     Conversation(String, ApiResult<Option<Conversation>>),
     /// A turn was accepted: the conversation it belongs to (new or existing).
     TurnQueued { business: String, conversation: String, request: String },
@@ -481,9 +483,21 @@ impl Net {
         });
     }
 
+    pub fn suggest_brief(&self, business: String, id: String, text: String, today: String, selection: Option<serde_json::Value>) {
+        self.spawn(move |c, send| {
+            let result = c.suggest_brief(&business, &text, &today, selection);
+            send(Reply::BriefSuggested { business, id, result });
+        });
+    }
+
     pub fn campaign_runs(&self, business: String, campaign: String) {
         self.spawn(move |c, send| {
             let result = c.campaign_runs(&business, &campaign);
+            // Best effort: an older server has no timeline, and the page draws the plan alone.
+            let timeline = c.campaign_timeline(&business, &campaign).ok();
+            if let Some(t) = timeline {
+                send(Reply::CampaignTimeline(business.clone(), campaign.clone(), t));
+            }
             send(Reply::CampaignRuns(business, campaign, result));
         });
     }

@@ -20,6 +20,7 @@ import { AgentModelError, configuredAgentModel, type AgentModel } from "./agent-
 import { harnessModel } from "./harness-model.js"
 import { AGENT_TOOL_SPECS, dispatchToolSpec } from "./agent-registry.js"
 import { AgentUnknownTool, type AgentToolDeps } from "./agent-tools.js"
+import { enqueueCampaignFollowup } from "./agent-followup-enqueue.js"
 import { FOLLOWUP_LIMITS } from "./agent-followup-policy.js"
 
 /** Read-only, stored evidence only: no fetches, writes, proposals or delegation. */
@@ -148,5 +149,5 @@ export const deliverCampaignFollowup = (wake: CampaignWake, respond: Responder<A
 
 export const runDueCampaignFollowups = Effect.gen(function*() {
   const wake = yield* claimCampaignFollowup
-  if (wake) yield* deliverCampaignFollowup(wake)
+  if (wake) yield* enqueueCampaignFollowup(wake)
 })

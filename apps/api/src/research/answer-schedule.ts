@@ -14,6 +14,7 @@ import { HttpRouter, type HttpServerResponse } from "@effect/platform"
 import { Cause, Effect, Option, Schedule, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import { dispatchInvestigation } from "../agent-investigation-tools.js"
+import { enqueueVisibilityInvestigationWork } from "../visibility-investigation-enqueue.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "../record-routes.js"
 import { AnswerEngines, liveEngines, type Engine } from "./answers.js"
 import { runResearch } from "./tools.js"
@@ -48,6 +49,8 @@ const openDropInvestigation = (scope: { accountId: string; userId: string; busin
   const investigationId = String((opened.data as { investigationId: unknown }).investigationId)
   yield* dispatchInvestigation(scope, "record_investigation_note", { investigationId, kind: "OBSERVATION",
     note: `Scheduled AI answer tracking: named in ${before.n} of ${before.d} answers in the previous run and ${after.n} of ${after.d} in the latest. Automatic name matching on a small sample; one run can be noise. Compare with read_research_evidence and ai.visibility before concluding anything.` })
+  yield* enqueueVisibilityInvestigationWork(scope, investigationId,
+    `AI answer tracking: named in ${before.n} of ${before.d} answers in the previous run and ${after.n} of ${after.d} in the latest`).pipe(Effect.ignore)
   return investigationId
 })
 

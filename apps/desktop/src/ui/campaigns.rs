@@ -487,6 +487,7 @@ fn detail(s: &App, t: &Theme, c: &Campaign) -> El {
         .child(row().child(back))
         .child(head)
         .child(strip)
+        .children(super::campaign_timeline::view(s, t, c))
         .child(campaign_loop(s, t, c))
         .child(kit::responsive_cols(s, vec![brief, measure]))
         .child(delivery(s, t, c))

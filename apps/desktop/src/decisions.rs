@@ -89,6 +89,11 @@ impl Decision {
         }
     }
 
+    /// Whether one key may approve it: nothing goes live and nothing is paid for.
+    pub fn quick_yes(&self) -> bool {
+        matches!(self.act, Act::Growth { .. } | Act::Review | Act::Strategy | Act::Draft)
+    }
+
     /// The approve call: method path and body.
     pub fn approve_call(&self, model: Option<&str>) -> (String, Value) {
         let b = crate::api::enc(&self.business_id);

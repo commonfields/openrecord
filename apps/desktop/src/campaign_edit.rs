@@ -238,6 +238,12 @@ pub struct Editor {
     pub busy: bool,
     pub error: Option<String>,
     initial: Value,
+    /// The person's own description, and the agent filling the lines from it.
+    pub describe: TextEdit,
+    pub suggesting: bool,
+    pub suggest_note: Option<String>,
+    /// "More detail" is unfolded.
+    pub more: bool,
 }
 impl Editor {
     pub fn new(business: String, saved: Option<&Campaign>) -> Self {
@@ -286,6 +292,10 @@ impl Editor {
             busy: false,
             error: None,
             initial: Value::Null,
+            describe: TextEdit::default(),
+            suggesting: false,
+            suggest_note: None,
+            more: false,
         };
         e.initial = e.value();
         e
@@ -320,13 +330,41 @@ impl Editor {
         v["tasks"] = Value::Array(self.tasks.iter().map(TaskEdit::value).collect());
         v
     }
+    /// Where a brief line is kept.
+    pub fn field(&self, key: &str) -> usize {
+        FIELDS.iter().position(|f| f.key == key).expect("known brief field")
+    }
+
+    /// Takes the agent's suggested lines into the empty ones; what the person wrote stays.
+    /// Returns how many lines and deliverables it filled.
+    pub fn take_suggestion(&mut self, brief: &Value) -> (usize, usize) {
+        let mut lines = 0;
+        for (i, f) in FIELDS.iter().enumerate() {
+            let suggested = brief[f.key].as_str().unwrap_or("").trim();
+            if !suggested.is_empty() && self.fields[i].text.trim().is_empty() && suggested.encode_utf16().count() <= f.max {
+                self.fields[i].replace_text(suggested);
+                lines += 1;
+            }
+        }
+        let mut added = 0;
+        for d in brief["deliverables"].as_array().into_iter().flatten() {
+            let title = d["title"].as_str().unwrap_or("").trim();
+            if title.is_empty() || self.tasks.len() >= 100 || self.tasks.iter().any(|t| t.title.text.trim().eq_ignore_ascii_case(title)) {
+                continue;
+            }
+            self.tasks.push(TaskEdit::new(json!({ "title": title, "channel": d["channel"].as_str().unwrap_or("OTHER") })));
+            added += 1;
+        }
+        (lines, added)
+    }
+
     pub fn dirty(&self) -> bool {
         self.value() != self.initial
     }
     pub fn validate(&self) -> Result<Value, String> {
         let v = self.value();
         if v["title"].as_str().unwrap_or("").trim().is_empty() {
-            return Err("Give this campaign a name in Goal & audience.".into());
+            return Err("Give this campaign a name.".into());
         }
         for (i, f) in FIELDS.iter().enumerate() {
             // The API schema counts UTF-16 code units.
@@ -411,6 +449,19 @@ impl App {
             self.open_campaign_document();
         }
     }
+    /// Sends the person's description to the agent for suggested lines; nothing is saved.
+    pub fn suggest_campaign_brief(&mut self) {
+        let selection = self.turn_selection();
+        let Some(e) = &mut self.campaign_editor else { return };
+        let text = e.describe.text.trim().to_string();
+        if e.busy || e.suggesting || text.is_empty() {
+            return;
+        }
+        e.suggesting = true;
+        e.suggest_note = None;
+        self.net.suggest_brief(e.business.clone(), e.id.clone(), text, crate::format::iso_date(crate::format::now()), selection);
+    }
+
     pub fn save_campaign_brief(&mut self) {
         let Some(e) = &mut self.campaign_editor else {
             return;
@@ -500,6 +551,22 @@ mod tests {
         app.campaign_editor = None;
         app.close_tab(&crate::side::SideTab::CampaignBrief);
         assert!(!app.side_shown());
+    }
+
+    #[test]
+    fn a_suggestion_fills_only_empty_lines_and_new_deliverables() {
+        let mut e = Editor::new("business".into(), None);
+        let goal = e.field("goal");
+        let audience = e.field("audience");
+        e.fields[goal].replace_text("My own goal");
+        e.tasks.push(TaskEdit::new(json!({ "title": "Landing page" })));
+        let (lines, added) = e.take_suggestion(&json!({ "goal": "Their goal", "audience": "Ops leads", "reviewDate": "2026-12-20",
+            "deliverables": [{ "title": "landing page", "channel": "WEBSITE" }, { "title": "Email", "channel": "EMAIL" }] }));
+        assert_eq!((lines, added), (2, 1));
+        assert_eq!(e.fields[goal].text, "My own goal");
+        assert_eq!(e.fields[audience].text, "Ops leads");
+        assert_eq!(e.tasks[1].channel, "EMAIL");
+        assert!(e.dirty());
     }
 
     #[test]

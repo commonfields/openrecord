@@ -7,6 +7,11 @@ import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolDef } from "./agent-tools.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 import { readCampaignRuns } from "./campaign-engine.js"
+import { campaignTimeline } from "./campaign-timeline.js"
+import { BriefSuggestInput, suggestBrief } from "./campaign-brief-suggest.js"
+import { configuredAgentModel, type AgentModel } from "./agent-model.js"
+import { harnessModel } from "./harness-model.js"
+import { HarnessSelection } from "@openrecord/contracts"
 
 const Save = Schema.Struct({ id: Schema.UUID, revision: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)), brief: CampaignBrief })
 const Read = Schema.Struct({})
@@ -99,6 +104,30 @@ export const campaignsApi = (withSession: WithSession) => {
       if (!(yield* sql`SELECT id FROM marketing_campaigns WHERE business_id=${id} AND id=${campaignId}`)[0]) return yield* json(404, { _tag: "NotFound" })
       const result = yield* readCampaignRuns({ accountId: session.accountId, businessId: id }, campaignId)
       return yield* json(200, result.data, PRIVATE)
+    }))),
+    HttpRouter.get("/api/businesses/:id/campaigns/:campaignId/timeline", scoped((session, id) => Effect.gen(function*() {
+      const { params } = yield* HttpRouter.RouteContext
+      const campaignId = params["campaignId"] ?? ""
+      if (decodeRouteId(campaignId)._tag === "Left") return yield* json(422, { _tag: "InvalidRequest" })
+      const sql = yield* SqlClient.SqlClient
+      if (!(yield* sql`SELECT id FROM marketing_campaigns WHERE business_id=${id} AND id=${campaignId}`)[0]) return yield* json(404, { _tag: "NotFound" })
+      return yield* json(200, yield* campaignTimeline(id, campaignId), PRIVATE)
+    }))),
+    // Suggested brief lines from the person's own words; nothing is saved.
+    HttpRouter.post("/api/businesses/:id/campaign-brief/suggest", scoped((session, id) => Effect.gen(function*() {
+      const input = decode(BriefSuggestInput, yield* readJson)
+      if (!input) return yield* json(422, { _tag: "InvalidRequest" })
+      const selection = input.selection === undefined || input.selection === null ? null : decode(HarnessSelection, input.selection)
+      if (input.selection != null && !selection) return yield* json(422, { _tag: "InvalidRequest" })
+      const pick: Effect.Effect<AgentModel, unknown, SqlClient.SqlClient> = selection
+        ? Effect.map(harnessModel({ accountId: session.accountId, userId: session.userId, businessId: id }, selection), m => m.invoke)
+        : Effect.map(configuredAgentModel, m => m.invoke)
+      const model = yield* Effect.either(pick)
+      if (model._tag === "Left") return yield* json(503, { _tag: "BriefModelUnavailable" }, PRIVATE)
+      const brief = yield* suggestBrief(model.right, input.text, input.today).pipe(Effect.either)
+      if (brief._tag === "Left") return yield* json(503, { _tag: "BriefModelUnavailable", reason: brief.left.reason }, PRIVATE)
+      if (!brief.right) return yield* json(502, { _tag: "BriefUnreadable" }, PRIVATE)
+      return yield* json(200, { brief: brief.right }, PRIVATE)
     }))),
     HttpRouter.post("/api/businesses/:id/campaign-runs/cancel", scoped((session, id) => Effect.gen(function*() {
       const input = decode(Schema.Struct({ runId: Schema.UUID }), yield* readJson)

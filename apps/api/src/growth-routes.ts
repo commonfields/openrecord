@@ -2,6 +2,7 @@ import { HttpRouter } from "@effect/platform"
 import { Effect } from "effect"
 import { BusinessRepository, GrowthRefused, GrowthRepository, type Session } from "@openrecord/db"
 import { CreateGrowthOpportunity, GrowthDecision, GrowthExecutionRecord, GrowthReview, GrowthProductInput, GrowthProfileUpdate, decodeRouteId } from "@openrecord/contracts"
+import { enqueueApprovedInitiativeWork } from "./approved-initiative-enqueue.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const failure = (e: unknown) => {
@@ -23,7 +24,15 @@ export const growthApi = (withSession: WithSession) => {
   const decision = (to: "APPROVED" | "CANCELLED") => client((session, businessId, id) => Effect.gen(function*() {
     const input = decode(GrowthDecision, yield* readJson)
     if (!input || !id) return yield* json(422, { _tag: "InvalidRequest" })
-    return yield* json(200, { opportunity: yield* (yield* GrowthRepository).decide(session, businessId, id, to, input) })
+    const opportunity = yield* (yield* GrowthRepository).decide(session, businessId, id, to, input)
+    if (to === "APPROVED") {
+      yield* enqueueApprovedInitiativeWork(session, businessId, opportunity).pipe(
+        Effect.catchAllCause(cause => Effect.logWarning("could not queue approved initiative work").pipe(
+          Effect.annotateLogs({ business: businessId, opportunity: id, cause: String(cause) }),
+        )),
+      )
+    }
+    return yield* json(200, { opportunity })
   }))
   return HttpRouter.empty.pipe(
     HttpRouter.post("/api/growth/products", operator(session => Effect.gen(function*() {

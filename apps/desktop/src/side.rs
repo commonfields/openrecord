@@ -165,10 +165,12 @@ impl App {
     }
 
     /// True when the side panel is showing the same workspace page as the main panel.
-    pub fn side_panel_duplicates_page(&self, page: Page) -> bool {
-        if !self.side.open {
+    /// Beside the chat there is no such page: `page` is only the last one shown there.
+    pub fn side_panel_duplicates_page(&self) -> bool {
+        if !self.side.open || self.view != View::Workspace {
             return false;
         }
+        let page = self.page;
         match self.side_tab() {
             SideTab::Analytics => page == Page::Overview,
             SideTab::Page(p) => p == page,
@@ -301,7 +303,9 @@ impl App {
             Launch::Changes => SideTab::Changes,
             Launch::Files => SideTab::Files,
             Launch::Analytics => {
-                if let (Some(id), crate::state::Load::Idle) = (self.active.clone(), &self.insights) {
+                // Like Campaigns, it opens beside the chat: a workspace page has no room for its tab.
+                self.show_view(View::Agent);
+                if let (Some(id), crate::state::Load::Idle | crate::state::Load::Failed(_)) = (self.active.clone(), &self.insights) {
                     self.insights = crate::state::Load::Loading;
                     self.net.insights(id, self.days);
                 }
@@ -1098,6 +1102,22 @@ mod tests {
     }
 
     #[test]
+    fn analytics_opens_beside_the_chat_whatever_page_was_last_shown() {
+        use crate::state::{Page, View};
+        for view in [View::Agent, View::Workspace] {
+            for page in [Page::Overview, Page::Inbox] {
+                let mut s = App::new();
+                crate::fixtures::agent(&mut s);
+                (s.view, s.page) = (view, page);
+                s.launch(super::Launch::Analytics);
+                assert_eq!(s.side_tab(), SideTab::Analytics);
+                assert!(s.side_shown() && s.side_shows_overview());
+                assert!(!s.side_panel_duplicates_page());
+            }
+        }
+    }
+
+    #[test]
     fn a_new_chat_keeps_its_panel_once_it_gets_an_id() {
         let mut s = App::new();
         crate::fixtures::agent(&mut s);
@@ -1111,5 +1131,21 @@ mod tests {
         s.chat_id = Some("c9".into());
         s.switch_side();
         assert_eq!(s.side_tab(), SideTab::Analytics);
+    }
+
+    #[test]
+    fn inbox_keys_open_the_decline_field_and_put_off_but_never_publish() {
+        let mut s = App::new();
+        crate::fixtures::inbox_wordpress(&mut s);
+        let mut tx = rune::Tx::default();
+        assert!(!s.inbox_key("y", &mut tx));
+        assert!(s.deciding.is_none());
+        assert!(s.inbox_key("s", &mut tx));
+        assert_eq!(s.decision.as_deref(), Some("AGENT_PROPOSAL:p1"));
+        assert!(!s.inbox_key("y", &mut tx));
+        assert!(s.inbox_key("n", &mut tx));
+        assert!(s.declining);
+        // While a reason is being typed, the keys are its letters.
+        assert!(!s.inbox_key("s", &mut tx));
     }
 }

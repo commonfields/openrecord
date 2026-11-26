@@ -452,6 +452,9 @@ pub struct App {
     pub campaign_contacts: Option<(String, String)>,
     pub campaign_run_id: Option<String>,
     pub campaign_runs: Load<Vec<crate::api::CampaignRun>>,
+    /// The timing of the campaign with this id, and its plot's measured width.
+    pub campaign_timeline: Option<(String, crate::api::CampaignTimeline)>,
+    pub campaign_plot_w: f32,
     /// The account pages: usage and its period, the businesses and clients
     /// lists, and the search and order those lists are in.
     pub usage: Load<crate::account::Usage>,
@@ -616,6 +619,9 @@ pub struct App {
 
     /// The decision open in the inbox (its `key`); the first one when unset.
     pub decision: Option<String>,
+    /// The agent's message is shown in place of the open decision, and the piece of approved work that is (its title).
+    pub inbox_message: bool,
+    pub inbox_work: Option<String>,
     /// The decline reason field is open for the open decision.
     pub declining: bool,
     pub decline_reason: TextEdit,
@@ -706,6 +712,8 @@ impl App {
             campaign_contacts: None,
             campaign_run_id: None,
             campaign_runs: Load::Idle,
+            campaign_timeline: None,
+            campaign_plot_w: 0.0,
             usage: Load::Idle,
             usage_days: 30,
             portfolio: Load::Idle,
@@ -811,6 +819,8 @@ impl App {
             rated: Default::default(),
             turn: Turn::Idle,
             decision: None,
+            inbox_message: false,
+            inbox_work: None,
             declining: false,
             decline_reason: TextEdit::new(""),
             deciding: None,
@@ -856,6 +866,30 @@ impl App {
         }
     }
 
+    /// Leaves the open decision waiting and opens the next one, round to the first.
+    pub fn later_decision(&mut self) {
+        let keys: Vec<String> = self.inbox().iter().map(|d| d.key.clone()).collect();
+        let Some(at) = self.open_decision().and_then(|d| keys.iter().position(|k| k == &d.key)) else { return };
+        if let Some(next) = keys.get((at + 1) % keys.len()).cloned() {
+            self.select_decision(&next);
+        }
+    }
+
+    /// Y, N and S in the Inbox: yes, no, later. True when the key did something.
+    pub fn inbox_key(&mut self, key: &str, tx: &mut Tx) -> bool {
+        if self.declining || self.deciding.is_some() {
+            return false;
+        }
+        let Some(quick) = self.open_decision().map(|d| d.quick_yes()) else { return false };
+        match key {
+            "y" | "Y" if quick => self.approve_decision(),
+            "n" | "N" => self.start_decline(tx),
+            "s" | "S" => self.later_decision(),
+            _ => return false,
+        }
+        true
+    }
+
     /// The decision open in the inbox.
     pub fn open_decision(&self) -> Option<&Decision> {
         let list = self.inbox();
@@ -885,6 +919,7 @@ impl App {
     pub fn select_decision(&mut self, key: &str) {
         if self.decision.as_deref() != Some(key) {
             self.decision = Some(key.to_string());
+            self.inbox_message = false;
             self.declining = false;
             self.decline_reason.clear();
         }
@@ -1087,6 +1122,7 @@ impl App {
         self.campaign_contacts = None;
         self.campaign_run_id = None;
         self.campaign_runs = Load::Idle;
+        self.campaign_timeline = None;
         self.answer = None;
         self.campaign_open = None;
         self.insights = Load::Idle;
@@ -1315,7 +1351,7 @@ impl App {
         self.list_query.clear();
         // A full-page Analytics view already paints every chart; folding the side
         // panel avoids laying the same Overview out twice and gives the page width.
-        if page == Page::Overview || self.side_panel_duplicates_page(page) {
+        if page == Page::Overview || self.side_panel_duplicates_page() {
             self.side.open = false;
         }
         self.load_page();
@@ -1352,6 +1388,11 @@ impl App {
             Page::Inbox => {
                 self.net.decisions();
                 self.load_models();
+                // The numbers on the card and the approved work under it.
+                if !matches!(self.insights, Load::Ready(_) | Load::Loading) {
+                    self.insights = Load::Loading;
+                    self.net.insights(id, self.days);
+                }
             }
             Page::Overview => {
                 self.overview = keep_or_load(&self.overview);
@@ -2760,6 +2801,8 @@ impl App {
             Reply::Facts(..) => {}
             Reply::Channels(b, r) if here(self, &b) => self.channels = to_load(self.failed(r)),
             Reply::Campaigns(b, r) if here(self, &b) => self.campaigns = to_load(self.failed(r)),
+            Reply::CampaignTimeline(b, id, t) if here(self, &b) => self.campaign_timeline = Some((id, t)),
+            Reply::CampaignTimeline(..) => {}
             Reply::CampaignRuns(b, id, r) if here(self, &b) && self.campaign_run_id.as_deref() == Some(id.as_str()) => self.campaign_runs = to_load(self.failed(r)),
             Reply::CampaignPublication(b, id, result) if here(self, &b) => {
                 match self.failed(result) {
@@ -2791,6 +2834,24 @@ impl App {
                             editor.error = Some(crate::campaign_edit::save_error(&e));
                         },
                     }
+                }
+            }
+            Reply::BriefSuggested { business, id, result } => {
+                if matches!(result, Err(ApiError::Unauthorized)) {
+                    self.signed_out(Some(ApiError::Unauthorized.message()));
+                } else if let Some(e) = self.campaign_editor.as_mut().filter(|e| e.id == id && e.business == business) {
+                    e.suggesting = false;
+                    e.suggest_note = Some(match result {
+                        Ok(brief) => match e.take_suggestion(&brief) {
+                            (0, 0) => "Nothing new to fill in. The lines you already wrote were kept.".into(),
+                            (l, 0) => format!("Filled {l} {}. Check them, then save.", if l == 1 { "line" } else { "lines" }),
+                            (0, d) => format!("Added {d} {}. Check them, then save.", if d == 1 { "deliverable" } else { "deliverables" }),
+                            (l, d) => format!("Filled {l} lines and added {d} {}. Check them, then save.", if d == 1 { "deliverable" } else { "deliverables" }),
+                        },
+                        Err(ApiError::Status(503, _)) => "The agent couldn't be reached. Pick a model in the chat, or fill in the lines yourself.".into(),
+                        Err(ApiError::Status(404, _)) => "This server can't fill in briefs yet. Fill in the lines yourself.".into(),
+                        Err(_) => "The agent's answer couldn't be read. Try again, or fill in the lines yourself.".into(),
+                    });
                 }
             }
             Reply::Usage(days, r) if days == self.usage_days => self.usage = to_load(self.failed(r)),
@@ -3059,8 +3120,6 @@ impl App {
             Reply::Decided { key, approved, result } => {
                 self.deciding = None;
                 let done = self.decisions.iter().find(|d| d.key == key).map(|d| d.done(approved));
-                // Approved work starts at once: the agent makes it in a chat of its own.
-                let work = if approved { self.decisions.iter().find(|d| d.key == key).and_then(|d| d.work_request().map(|r| (d.business_id.clone(), r))) } else { None };
                 match result {
                     Ok(()) => {
                         let list = self.inbox();
@@ -3076,11 +3135,6 @@ impl App {
                         self.net.decisions();
                         if let Some(b) = self.active.clone() {
                             self.net.proposals(b);
-                        }
-                        if let Some((business, request)) = work.filter(|_| matches!(self.turn, Turn::Idle)) {
-                            self.start_chat(Some(business));
-                            self.composer.replace_text(&request);
-                            self.send_message(tx);
                         }
                     }
                     Err(ApiError::Unauthorized) => self.signed_out(Some(ApiError::Unauthorized.message())),

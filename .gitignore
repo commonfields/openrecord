@@ -7,4 +7,7 @@ dist
 .env
 .vite
 backups/
+# Local reference clones (not product dependencies); see vendor/README.md
+/vendor/treg/
+/vendor/t3code/
 /apps/web/public/openrecord-bridge.mjs
