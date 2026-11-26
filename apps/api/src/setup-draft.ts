@@ -7,9 +7,9 @@ import { randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Cause, Effect, Either, Schema } from "effect"
 import { SetupDraft } from "@openrecord/contracts"
-import { enqueueAgentWork } from "./agent-work-queue.js"
+import { AgentWorkRetry, enqueueAgentWork, isWorkRetry } from "./agent-work-queue.js"
 import { production, type BriefSender } from "./growth-brief.js"
-import { sendUnattendedTurn } from "./unattended-agent.js"
+import { retryableTurnFailure, sendUnattendedTurn } from "./unattended-agent.js"
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
 export type DraftState = { readonly status: "RUNNING" } | { readonly status: "FAILED" } | { readonly status: "READY"; readonly value: SetupDraft }
@@ -91,20 +91,27 @@ export type SetupDraftWritePayload = {
   readonly url: string
 }
 
-export const writeSetupDraftJob = (raw: SetupDraftWritePayload) =>
-  writeDraft(raw.scope, raw.setupId, raw.conversationId, raw.url, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof production>>>)
+export const writeSetupDraftJob = (raw: SetupDraftWritePayload, tries: { readonly finalAttempt: boolean } = { finalAttempt: true }) =>
+  writeDraft(raw.scope, raw.setupId, raw.conversationId, raw.url, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof production>>>, tries)
 
-const writeDraft = <R>(scope: Scope, setupId: string, conversationId: string, url: string, sender: BriefSender<R>) => Effect.gen(function*() {
+const writeDraft = <R>(scope: Scope, setupId: string, conversationId: string, url: string, sender: BriefSender<R>,
+  tries: { readonly finalAttempt: boolean } = { finalAttempt: true }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  let result: Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
+  const since = new Date()
+  // Each attempt restarts the stale-draft clock (setupDraft settles drafts left RUNNING too long).
+  yield* sql`UPDATE business_setups SET draft_started_at = now() WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
+  const result: Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
     message: DRAFT_PROMPT(url), requestId: randomUUID(), conversationId, revision: 0,
   }).pipe(Effect.either)
+  // A new business has no chat yet, so a provider that is down or busy must not end its setup for good.
+  const retry = Either.isLeft(result) && !tries.finalAttempt ? yield* retryableTurnFailure(result.left, conversationId, since) : null
+  if (retry) return yield* Effect.fail(new AgentWorkRetry({ reason: retry }))
   const reply = Either.isRight(result) ? (result.right as { reply?: unknown }).reply : null
   const draft = typeof reply === "string" ? parseDraft(reply) : null
   yield* draft
     ? sql`UPDATE business_setups SET draft_status = 'READY', draft = ${JSON.stringify(draft)}::jsonb WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
     : sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`
-}).pipe(Effect.catchAllCause(cause => Effect.gen(function*() {
+}).pipe(Effect.catchAllCause(cause => isWorkRetry(cause) ? Effect.failCause(cause) : Effect.gen(function*() {
   yield* Effect.logWarning("setup draft failed").pipe(Effect.annotateLogs({ setup: setupId, cause: Cause.pretty(cause).slice(0, 400) }))
   const sql = yield* SqlClient.SqlClient
   yield* sql`UPDATE business_setups SET draft_status = 'FAILED' WHERE id = ${setupId} AND draft_conversation_id = ${conversationId} AND brief IS NULL AND draft_status = 'RUNNING'`

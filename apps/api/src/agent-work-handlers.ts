@@ -19,16 +19,18 @@ export type AgentWorkKind = typeof AgentWorkKind.Type
 /** Dynamic imports avoid a load-time cycle through growth-brief → agent-sessions → agent-registry. */
 export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown, job: {
   readonly account_id: string; readonly user_id: string; readonly business_id: string; readonly ref_id: string
+  /** Absent in direct calls, which then count as the last attempt. */
+  readonly attempt?: number; readonly finalAttempt?: boolean
 }) =>
   Effect.gen(function*() {
     switch (kind) {
       case "GROWTH_BRIEF_WRITE": {
         const m = yield* Effect.promise(() => import("./growth-brief.js"))
-        return yield* m.writeGrowthBriefJob(payload as GrowthBriefWritePayload)
+        return yield* m.writeGrowthBriefJob(payload as GrowthBriefWritePayload, { finalAttempt: job.finalAttempt ?? true })
       }
       case "SETUP_DRAFT_WRITE": {
         const m = yield* Effect.promise(() => import("./setup-draft.js"))
-        return yield* m.writeSetupDraftJob(payload as SetupDraftWritePayload)
+        return yield* m.writeSetupDraftJob(payload as SetupDraftWritePayload, { finalAttempt: job.finalAttempt ?? true })
       }
       case "APPROVED_INITIATIVE_WRITE": {
         const m = yield* Effect.promise(() => import("./approved-initiative-turn.js"))

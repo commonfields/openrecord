@@ -36,7 +36,9 @@ export interface Scorecard {
   readonly toolFailureRate: number
   /** Failed calls the model got wrong itself: a card that did not say enough to call its tool. */
   readonly invalidInputRate: number
-  readonly perRun: { readonly toolDetails: number; readonly compactions: number; readonly narrowed: number; readonly paced: number; readonly budgetExhausted: number; readonly recovered: number; readonly partial: number }
+  readonly perRun: { readonly toolDetails: number; readonly compactions: number; readonly narrowed: number; readonly paced: number; readonly budgetExhausted: number; readonly recovered: number; readonly partial: number
+    /** find_capabilities searches per run, and those that found nothing (absent in scorecards saved before 2026-11-26). */
+    readonly capabilitySearches?: number; readonly capabilityMisses?: number }
   readonly tokens: { readonly prompt: number; readonly cached: number; readonly output: number; readonly thought: number; readonly cachedShare: number | null }
 }
 
@@ -98,6 +100,8 @@ export const scoreRuns = (runs: ReadonlyArray<RecordedRun>): Scorecard => {
       narrowed: per(r => of(r, "MODEL_REQUESTED").filter(e => num(e.payload["toolsNarrowed"]) > 0).length), paced: per(r => actions(r, "PACED")),
       budgetExhausted: per(r => of(r, "TOOL_FAILED").filter(e => e.payload["code"] === "BUDGET_EXHAUSTED").length ? 1 : 0),
       recovered: per(r => actions(r, "ANSWER_RECOVERED")), partial: per(r => actions(r, "PARTIAL_FINDINGS_RETURNED")),
+      capabilitySearches: per(r => actions(r, "CAPABILITIES_FOUND") + actions(r, "CAPABILITIES_NOT_FOUND")),
+      capabilityMisses: per(r => actions(r, "CAPABILITIES_NOT_FOUND")),
     },
     tokens: { prompt, cached, output, thought, cachedShare: cachedKnown && prompt ? share(cached, prompt) : null },
   }
@@ -127,7 +131,8 @@ export const compare = (now: Scorecard, before?: Scorecard): ReadonlyArray<{ rea
     row("tool calls that failed", c => c.toolFailureRate, pct, false), row("tool calls with invalid input", c => c.invalidInputRate, pct, false),
     row("model steps, median", c => c.steps.p50, count, false), row("model steps, 90th percentile", c => c.steps.p90, count, false),
     row("seconds, median", c => c.durationMs.p50 / 1000, count, false), row("seconds, 90th percentile", c => c.durationMs.p90 / 1000, count, false),
-    row("tool_details calls per run", c => c.perRun.toolDetails, count, false), row("context shortened per run", c => c.perRun.compactions, count, false),
+    row("tool_details calls per run", c => c.perRun.toolDetails, count, false),
+    row("capability searches per run", c => c.perRun.capabilitySearches ?? 0, count, false), row("capability searches with no match per run", c => c.perRun.capabilityMisses ?? 0, count, false), row("context shortened per run", c => c.perRun.compactions, count, false),
     row("runs that used their whole budget", c => c.perRun.budgetExhausted, pct, false), row("answers recovered after a provider failure", c => c.perRun.recovered, pct, false),
     row("prompt tokens read from cache", c => c.tokens.cachedShare ?? 0, pct, true),
   ]

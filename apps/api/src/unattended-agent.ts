@@ -3,7 +3,6 @@
 import type { HarnessSelection } from "@openrecord/contracts"
 import { SqlClient } from "@effect/sql"
 import { Effect, Either } from "effect"
-import { AgentModelError } from "./agent-model.js"
 import { resolveUnattendedSelection } from "./harness-selection.js"
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
@@ -53,3 +52,22 @@ export const sendUnattendedTurn = <R>(scope: Scope, sender: UnattendedSender<R>,
     }
     return yield* send(undefined)
   })
+/** Model failures a later attempt can clear: the provider was down, slow or busy, or no model was ready. */
+const RETRYABLE_MODEL_FAILURES = new Set(["UNAVAILABLE", "RATE_LIMITED", "TIMEOUT", "UNCONFIGURED"])
+
+/**
+ * The retry reason for a failed unattended turn, or null when it must not run
+ * again. Only a passing model failure qualifies, and only when no run in the
+ * turn's own conversation since `since` completed a tool that saves, prepares
+ * or delegates: running again then cannot repeat work.
+ */
+export const retryableTurnFailure = (error: unknown, conversationId: string, since: Date) => Effect.gen(function*() {
+  if (!modelFailure(error)) return null
+  const reason = String((error as { reason?: unknown }).reason ?? "")
+  if (!RETRYABLE_MODEL_FAILURES.has(reason)) return null
+  const sql = yield* SqlClient.SqlClient
+  const wrote = yield* sql`SELECT 1 FROM agent_run_events e JOIN agent_runs r ON r.id=e.run_id
+    WHERE r.conversation_id=${conversationId} AND r.started_at>=${since} AND e.type='TOOL_COMPLETED'
+      AND coalesce(e.payload->>'effect','') <> 'read' LIMIT 1`
+  return wrote.length ? null : `MODEL_${reason}`
+})
