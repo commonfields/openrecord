@@ -123,7 +123,7 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     ])
     await runWith(other, Array.from({ length: 9 }, () => ({ tool: "read_proposals", effect: "read", ok: true })))
     const stats = await run(capabilityStats(f.accountId, ["read_proposals", "analyse_prompts", "read_results"]))
-    expect(stats.get("read_proposals")).toEqual({ calls: 6, succeeded: 1, medianSeconds: 3 })
+    expect(stats.get("read_proposals")).toMatchObject({ calls: 6, succeeded: 1, medianSeconds: 3, reported: 0 })
     expect(stats.get("analyse_prompts")).toMatchObject({ calls: 6, succeeded: 6 })
     expect(stats.has("read_results")).toBe(false)
     const ranked = rankCapabilities(["read_proposals", "analyse_prompts", "read_results"], stats)

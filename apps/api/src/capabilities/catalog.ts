@@ -55,6 +55,7 @@ const META: Readonly<Record<string, Meta>> = {
   read_research_evidence: { ns: "research", title: "Read saved research evidence", not: "Not for running new research (run_research).", evidence: ["none"] },
   read_research_credit: { ns: "research", title: "Read research credit and prices", not: "Not for ad spend (read_ad_performance).", evidence: ["none"] },
   research_timeline: { ns: "research", title: "Timeline of saved research", not: "Not for new research.", evidence: ["none"] },
+  tool_feedback: { ns: "work", title: "Report a missing capability or a poor tool result", not: "Not for facts.", evidence: ["note"] },
   read_decision_feedback: { ns: "work", title: "Read the owner's past decisions and reasons", not: "Not for pending drafts (read_proposals).", evidence: ["none"] },
   record_outcome_note: { ns: "measurement", title: "Save what changed after approved work", not: "Not for claiming cause, or for work before its outcome date.", evidence: ["note"] },
   list_connected_tools: { ns: "research", title: "List the team's connected tool servers", not: "Not for OpenRecord's own research capabilities (find_research_capabilities).", evidence: ["none"] },

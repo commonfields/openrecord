@@ -62,6 +62,11 @@ const claimWork = (helperOnly: boolean) => Effect.gen(function*() {
     if (Number(running?.["n"] ?? 0) >= 4) return null
     const row = (yield* sql<WorkJob>`SELECT j.* FROM agent_work_jobs j
       WHERE j.status='QUEUED' AND j.available_at<=now() AND (${!helperOnly} OR j.kind='HELPER_TASK_RUN')
+        -- One chat's work runs in order: a job waits while an older one for the same chat is queued
+        -- (waiting to retry included) or running, so a later step never overtakes an earlier one.
+        AND NOT EXISTS (SELECT 1 FROM agent_work_jobs older WHERE older.status IN ('QUEUED','RUNNING') AND older.job_id<>j.job_id
+          AND (older.created_at, older.job_id) < (j.created_at, j.job_id)
+          AND coalesce(older.payload->>'conversationId', older.payload->'wake'->>'conversation_id') = coalesce(j.payload->>'conversationId', j.payload->'wake'->>'conversation_id'))
       ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1`)[0]
     if (!row) return null
     const claimId = randomUUID()

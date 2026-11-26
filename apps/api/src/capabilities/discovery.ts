@@ -15,7 +15,9 @@ export const FIND_CAPABILITIES: ToolDeclaration = {
 }
 
 /** How a tool has worked in this account lately, from the run journal. Counts only. */
-export interface CapabilityStat { readonly calls: number; readonly succeeded: number; readonly medianSeconds: number | null }
+export interface CapabilityStat { readonly calls: number; readonly succeeded: number; readonly medianSeconds: number | null
+  /** Results the agent reported as wrong, empty, stale, beside the point or unusable (tool_feedback). */
+  readonly reported?: number }
 export type CapabilityStats = ReadonlyMap<string, CapabilityStat>
 
 /** Fewer calls than this say nothing about a tool. */
@@ -46,14 +48,21 @@ export const capabilityStats = (accountId: string, names: ReadonlyArray<string>)
     WHERE r.account_id=${accountId} AND r.started_at>now()-make_interval(days => ${STATS_DAYS})
       AND s.payload->>'tool' IN ${sql.in([...names])} AND coalesce(f.payload->>'code','') NOT IN ${sql.in(CALLER_FAULTS)}
     GROUP BY 1`
-  return new Map(rows.map(r => [String(r["tool"]), {
-    calls: Number(r["calls"]), succeeded: Number(r["succeeded"]),
-    medianSeconds: r["median"] === null || r["median"] === undefined ? null : Math.round(Number(r["median"]) * 10) / 10,
-  }])) as CapabilityStats
+  // A call that finished but whose result the agent reported as poor did not really work.
+  const reports = yield* sql`SELECT tool, count(*)::int AS n FROM agent_capability_signals
+    WHERE account_id=${accountId} AND kind='POOR_RESULT' AND tool IN ${sql.in([...names])} AND created_at>now()-make_interval(days => ${STATS_DAYS}) GROUP BY tool`
+  const reported = new Map(reports.map(r => [String(r["tool"]), Number(r["n"])]))
+  return new Map(rows.map(r => {
+    const tool = String(r["tool"]), n = reported.get(tool) ?? 0
+    return [tool, {
+      calls: Number(r["calls"]), succeeded: Math.max(0, Number(r["succeeded"]) - n), reported: n,
+      medianSeconds: r["median"] === null || r["median"] === undefined ? null : Math.round(Number(r["median"]) * 10) / 10,
+    }]
+  })) as CapabilityStats
 })
 
 const measured = (stat: CapabilityStat | undefined) => stat && stat.calls >= MIN_MEASURED_CALLS
-  ? { calls: stat.calls, successRate: Math.round((stat.succeeded / stat.calls) * 100) / 100, medianSeconds: stat.medianSeconds }
+  ? { calls: stat.calls, successRate: Math.round((stat.succeeded / stat.calls) * 100) / 100, medianSeconds: stat.medianSeconds, ...(stat.reported ? { reportedPoor: stat.reported } : {}) }
   : null
 
 /** The tools that fit a task, best fit first, for `rank` to order by how they have worked. */
@@ -91,4 +100,4 @@ export const findCapabilities = (query: string, offered: ReadonlyArray<ToolDecla
 /** What the model is told with the matches; an empty answer says so, so it stops searching. */
 export const capabilityNote = (found: number) => found
   ? "Best fit first; measured shows how each worked in this workspace over 30 days (null: too few calls to say). Use tool_details with a matching name to load its input schema."
-  : "No registered capability fits this task. Do not search again with other words: answer with what you have and say plainly what OpenRecord cannot do yet."
+  : "No registered capability fits this task, and it is saved as a request for the team. Do not search again with other words: answer with what you have and say plainly what OpenRecord cannot do yet."

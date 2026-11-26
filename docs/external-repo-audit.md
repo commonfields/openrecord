@@ -123,4 +123,14 @@ An existing tracking approval authorizes the measurement. When a visibility drop
 
 Apply [migration 0102](../packages/db/migrations/0102_agent_work_helper_kind.sql) and [migration 0103](../packages/db/migrations/0103_agent_retry_and_continuation.sql) before restarting the API and agent workers. Upgrade the API and its workers together so every worker recognizes `HELPER_TASK_RUN`, retries and continuations.
 
-Not adopted: T3 Code holds later effects for a thread back while an earlier one waits to retry. OpenRecord's retried jobs each own their record (a brief, a setup draft), so nothing later depends on their order. treg's judged search (a model call per query) is not used; matching stays deterministic.
+Added on 2026-11-27 ([migration 0107](../packages/db/migrations/0107_agent_resume_and_capability_signals.sql)):
+
+| Upstream implementation | OpenRecord implementation |
+| --- | --- |
+| T3 Code resumes a turn after the runtime request it waited on is answered. | When the owner approves or declines a card a chat saved (a page change, a publication, a campaign review, a strategy, an account action or a draft), that chat gets the next turn by itself as OpenRecord's message. Approved work is confirmed and carried on, and declined work is revised from the reason. A busy chat is tried again later. Growth initiatives keep their own make-and-revise work. [Decision resume](../apps/api/src/decision-resume.ts) |
+| T3 Code holds later effects for a thread back while an earlier one waits to retry. | A background job waits while an older job for the same chat is queued, waiting to retry or running. |
+| treg ranks the providers of one job by measured success, speed and price. | `find_research_capabilities` keeps fit order and moves a source that found usable data in under half of at least five recent runs here after the rest. Each source shows what it returned (found, no data, failed), its median time and its price per call on OpenRecord's account. [Research ranking](../apps/api/src/research/ranking.ts) |
+| treg's `catalog_request` turns a catalog gap into a request. | A search that finds nothing, in either catalog, is saved as a request. The agent can also record one with `tool_feedback` kind MISSING. The team reads them at `GET /api/businesses/:id/capability-signals`. |
+| treg's feedback and review on calls. | `tool_feedback` kinds WRONG, EMPTY, STALE and OFF_TOPIC report a poor result from a tool or research source. A report counts against its measured successes in this workspace, and the evidence itself is unchanged. [Capability signals](../apps/api/src/capability-signals.ts) |
+
+Not adopted: treg's judged search (a model call per query); matching stays deterministic. Approved WordPress, Webflow and account changes still run inside the approval request; moving them onto the job queue waits for the publishing changes in flight.

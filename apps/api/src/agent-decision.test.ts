@@ -135,11 +135,13 @@ describe("a decided turn in the run loop (deterministic fixtures, no live model)
     ])
     const events: Array<{ type: string; payload: Record<string, unknown> }> = []
     let first: ReadonlyArray<string> = []
+    const missed: string[] = []
     await Effect.runPromise(runConversation({ message: "Look into AI answers", history: [], model,
       decision: { version: "fixture", intents: ["visibility"], tools: [], prefetch: [], expand: [] },
       journal: { record: (type, payload) => Effect.sync(() => { events.push({ type, payload }) }) },
       // The first match failed in most of its recent calls here.
       capabilityStats: names => Effect.sync(() => { first = names; return new Map([[names[0]!, { calls: 8, succeeded: 1, medianSeconds: 2 }]]) }),
+      recordMissingCapability: query => Effect.sync(() => { missed.push(query) }),
       dispatch: () => Effect.succeed(read) }))
     const found = (step: number) => (requests[step]!.contents.at(-1)!.parts as Array<{ functionResponse?: { response: { capabilities: Array<{ name: string; measured: unknown }>; found: boolean; note: string } } }>)[0]!.functionResponse!.response
     expect(first.length).toBeGreaterThan(1)
@@ -149,6 +151,8 @@ describe("a decided turn in the run loop (deterministic fixtures, no live model)
     expect(found(2).note).toContain("Do not search again")
     expect(events.filter(e => e.type === "VERIFICATION").map(e => e.payload["action"])).toEqual(expect.arrayContaining(["CAPABILITIES_FOUND", "CAPABILITIES_NOT_FOUND"]))
     expect(events.find(e => e.payload["action"] === "CAPABILITIES_NOT_FOUND")!.payload["query"]).toBe("fly a drone to mars")
+    // The miss is saved as a request for the team; a search that found something is not.
+    expect(missed).toEqual(["fly a drone to mars"])
   })
 
   it("declares a writing turn's saves whole from the first step, so creating the piece needs no tool_details step", async () => {

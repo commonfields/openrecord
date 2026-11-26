@@ -30,6 +30,7 @@ import { dispatchWordPress, wordpressDeclarations } from "./wordpress.js"
 import { dispatchWebflow, webflowDeclarations } from "./webflow.js"
 import { dispatchMcpClient, mcpClientDeclarations } from "./mcp-client.js"
 import { decisionFeedbackDeclarations, dispatchDecisionFeedback } from "./decision-feedback.js"
+import { capabilitySignalDeclarations, dispatchCapabilitySignal } from "./capability-signals.js"
 import { campaignDraftDeclarations, draftMarketingCampaign } from "./campaign-agent.js"
 import { campaignRunDeclarations, dispatchCampaignRun } from "./campaign-engine.js"
 import { campaignOutcomeDeclarations, dispatchCampaignOutcome } from "./campaign-outcome.js"
@@ -115,6 +116,9 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
       run: (ctx, args) => dispatchResearch(ctx, declaration.name, args) }
   }),
   // The owner's verdicts and reasons; the outcome note is working memory, not a decision.
+  // Notes about OpenRecord's own tools: a request for a missing capability, or a poor result. Each call is its own note.
+  ...capabilitySignalDeclarations.map((declaration): AgentToolSpec => ({ declaration, effect: "record", replay: "deduplicated", scope: "general",
+    run: (ctx, args) => dispatchCapabilitySignal(ctx, declaration.name, args) })),
   ...decisionFeedbackDeclarations.map((declaration): AgentToolSpec => ({ declaration,
     effect: declaration.name === "record_outcome_note" ? "record" : "read", replay: declaration.name === "record_outcome_note" ? "deduplicated" : "safe", scope: "general",
     run: (ctx, args) => dispatchDecisionFeedback(ctx, declaration.name, args) })),

@@ -15,6 +15,7 @@ import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolResult } from "./agent-tools.js"
 import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
 import { enqueueDeclinedInitiativeWork } from "./approved-initiative-enqueue.js"
+import { enqueueDecisionResume } from "./decision-resume.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -48,6 +49,10 @@ export const decisionFeedbackApi = (withSession: WithSession) => {
           )),
         )
       }
+      // Any other card picks its chat back up: the turn that was waiting on this decision continues.
+      yield* enqueueDecisionResume({ accountId: s.accountId, businessId, kind: body.kind, itemId: body.itemId, approved: body.verdict === "APPROVED", title: body.title.trim(), reason }).pipe(
+        Effect.catchAllCause(cause => Effect.logWarning("could not queue the chat's next turn after a decision").pipe(
+          Effect.annotateLogs({ business: businessId, item: body.itemId, cause: String(cause).slice(0, 300) }))))
       return yield* json(200, { recorded: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "FeedbackUnavailable" })))),
   )

@@ -14,6 +14,7 @@ export const AgentWorkKind = Schema.Literal(
   "VISIBILITY_INVESTIGATION_WRITE",
   "HELPER_TASK_RUN",
   "SETUP_CAMPAIGN_WRITE",
+  "DECISION_RESUME_WRITE",
 )
 export type AgentWorkKind = typeof AgentWorkKind.Type
 
@@ -57,6 +58,12 @@ export const runAgentWorkJob = (kind: AgentWorkKind, payload: unknown, job: {
         const m = yield* Effect.promise(() => import("./setup-campaign.js"))
         const s = yield* Effect.promise(() => import("./agent-sessions.js"))
         return yield* m.writeSetupCampaignJob(payload as import("./setup-campaign.js").SetupCampaignPayload,
+          (scope, body) => s.sendSessionTurn(scope, body), { finalAttempt: job.finalAttempt ?? true })
+      }
+      case "DECISION_RESUME_WRITE": {
+        const m = yield* Effect.promise(() => import("./decision-resume.js"))
+        const s = yield* Effect.promise(() => import("./agent-sessions.js"))
+        return yield* m.writeDecisionResumeJob(payload as import("./decision-resume.js").DecisionResumePayload,
           (scope, body) => s.sendSessionTurn(scope, body), { finalAttempt: job.finalAttempt ?? true })
       }
       case "HELPER_TASK_RUN": {
