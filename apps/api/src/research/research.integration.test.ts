@@ -280,7 +280,19 @@ suite("research (disposable PostgreSQL)", () => {
       // The next run comes due and the answers stop naming the business: a 50-point drop on four answers each side.
       await pool.query("UPDATE ai_answer_schedules SET next_run_at = now() WHERE business_id = $1", [businessId])
       nameBusiness = false
+      // The observation survives a failed schedule commit. A retry must use it
+      // even after the scheduler lease expires.
+      await pool.query("ALTER TABLE ai_answer_schedules ADD CONSTRAINT test_refuse_answer_alert CHECK (last_alert IS NULL) NOT VALID")
+      try {
+        await Effect.runPromise(Effect.provide(runAnswerSchedules, layer) as Effect.Effect<void>)
+        expect(asked).toHaveLength(8)
+        expect((await pool.query("SELECT last_observation_id FROM ai_answer_schedules WHERE business_id=$1", [businessId])).rows[0].last_observation_id).toBe(first.last_observation_id)
+      } finally {
+        await pool.query("ALTER TABLE ai_answer_schedules DROP CONSTRAINT test_refuse_answer_alert")
+      }
+      await pool.query("UPDATE ai_answer_schedules SET lease_until=now()-interval '1 second' WHERE business_id=$1", [businessId])
       await Effect.runPromise(Effect.provide(runAnswerSchedules, layer) as Effect.Effect<void>)
+      expect(asked).toHaveLength(8)
       const second = (await pool.query("SELECT last_observation_id, previous_observation_id, last_alert FROM ai_answer_schedules WHERE business_id = $1", [businessId])).rows[0]
       expect(second.previous_observation_id).toBe(first.last_observation_id)
       expect(second.last_alert).toMatchObject({ before: { n: 2, d: 4 }, after: { n: 0, d: 4 }, investigationId: null })

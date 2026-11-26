@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { SqlClient } from "@effect/sql"
-import { Effect, Schedule, Schema } from "effect"
+import { Cause, Data, Effect, Option, Schedule, Schema } from "effect"
 import { AgentWorkKind, runAgentWorkJob } from "./agent-work-handlers.js"
 
 type WorkJob = {
@@ -13,6 +13,22 @@ type WorkJob = {
   payload: unknown
   claim_id: string
 }
+
+/**
+ * A handler fails with this only when the attempt saved nothing: no tool
+ * that writes ran, and the record it works on was left as it was. The job
+ * then runs again after a growing delay, up to MAX_WORK_ATTEMPTS. Any other
+ * failure after execution starts is final, so ambiguous work is never replayed.
+ */
+export class AgentWorkRetry extends Data.TaggedError("AgentWorkRetry")<{ readonly reason: string }> {}
+export const MAX_WORK_ATTEMPTS = 4
+/** One, three, then nine minutes. */
+export const retryDelaySeconds = (attempt: number) => Math.min(1800, 60 * 3 ** Math.max(0, attempt - 1))
+/** Which attempt this is, for handlers that settle their record only on the last one. */
+export interface WorkAttempt { readonly attempt: number; readonly finalAttempt: boolean }
+const isRetry = (e: unknown): e is AgentWorkRetry => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "AgentWorkRetry"
+/** True when a handler's failure asks for another attempt; handlers that catch everything let it through. */
+export const isWorkRetry = (cause: Cause.Cause<unknown>) => Option.exists(Cause.failureOption(cause), isRetry)
 
 export const reconcileAgentWork = Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -37,7 +53,7 @@ export const enqueueAgentWork = (input: {
   return inserted[0] ? String(inserted[0]["job_id"]) : null
 })
 
-export const claimAgentWork = Effect.gen(function*() {
+const claimWork = (helperOnly: boolean) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* reconcileAgentWork
   return yield* sql.withTransaction(Effect.gen(function*() {
@@ -45,7 +61,7 @@ export const claimAgentWork = Effect.gen(function*() {
     const running = (yield* sql`SELECT count(*)::int AS n FROM agent_work_jobs WHERE status='RUNNING'`)[0]
     if (Number(running?.["n"] ?? 0) >= 4) return null
     const row = (yield* sql<WorkJob>`SELECT j.* FROM agent_work_jobs j
-      WHERE j.status='QUEUED'
+      WHERE j.status='QUEUED' AND j.available_at<=now() AND (${!helperOnly} OR j.kind='HELPER_TASK_RUN')
       ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1`)[0]
     if (!row) return null
     const claimId = randomUUID()
@@ -54,13 +70,17 @@ export const claimAgentWork = Effect.gen(function*() {
     return { ...row, claim_id: claimId }
   }))
 })
+export const claimAgentWork = claimWork(false)
 
-export const executeAgentWork = (job: WorkJob) => Effect.gen(function*() {
+export const executeAgentWork = (job: WorkJob, run = runAgentWorkJob) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const started = yield* sql`UPDATE agent_work_jobs SET execution_started_at=now()
+  // A claim that never starts is not an attempt; only starting execution counts.
+  const started = yield* sql`UPDATE agent_work_jobs SET execution_started_at=now(), attempt_count=attempt_count+1
     WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING' AND lease_until>now() AND execution_started_at IS NULL
-    RETURNING job_id`
+    RETURNING attempt_count`
   if (!started[0]) return
+  const attempt = Number(started[0]["attempt_count"])
+  const tries: WorkAttempt = { attempt, finalAttempt: attempt >= MAX_WORK_ATTEMPTS }
   const active = Effect.gen(function*() {
     const rows = yield* sql`SELECT job_id FROM agent_work_jobs WHERE job_id=${job.job_id} AND claim_id=${job.claim_id}
       AND status='RUNNING' AND lease_until>now() FOR SHARE`
@@ -75,14 +95,20 @@ export const executeAgentWork = (job: WorkJob) => Effect.gen(function*() {
   const work = Effect.gen(function*() {
     yield* active
     const kind = yield* Schema.decodeUnknown(AgentWorkKind)(job.kind)
-    return yield* runAgentWorkJob(kind, job.payload)
+    return yield* run(kind, job.payload, { ...job, ...tries })
   })
   const outcome = yield* Effect.raceFirst(work, heartbeat).pipe(Effect.exit)
   if (outcome._tag === "Success") {
     yield* sql`UPDATE agent_work_jobs SET status='COMPLETED', finished_at=now(), lease_until=NULL, claim_id=NULL
       WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
+  } else if (outcome.cause._tag === "Fail" && isRetry(outcome.cause.error) && !tries.finalAttempt) {
+    const delay = retryDelaySeconds(attempt)
+    yield* sql`UPDATE agent_work_jobs SET status='QUEUED', failure_reason=${outcome.cause.error.reason.slice(0, 80)},
+        available_at=now()+make_interval(secs => ${delay}), claim_id=NULL, lease_until=NULL, started_at=NULL, execution_started_at=NULL
+      WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   } else {
-    const reason = outcome.cause._tag === "Fail" ? String(outcome.cause.error).slice(0, 80) : "FAILED"
+    const reason = outcome.cause._tag === "Fail" && isRetry(outcome.cause.error) ? outcome.cause.error.reason.slice(0, 80) : outcome.cause._tag === "Fail" && typeof outcome.cause.error === "string" && /^[A-Z_]{1,80}$/.test(outcome.cause.error)
+      ? outcome.cause.error : "FAILED"
     yield* sql`UPDATE agent_work_jobs SET status='FAILED', failure_reason=${reason}, finished_at=now(), lease_until=NULL, claim_id=NULL
       WHERE job_id=${job.job_id} AND claim_id=${job.claim_id} AND status='RUNNING'`
   }
@@ -96,10 +122,18 @@ export const runOneAgentWork = () =>
     return job !== null
   })
 
-export const agentWorkWorker = Effect.gen(function*() {
-  const job = yield* claimAgentWork
+const workLane = (helperOnly: boolean) => Effect.gen(function*() {
+  const job = yield* claimWork(helperOnly)
   if (job) yield* executeAgentWork(job)
+  else if (!helperOnly) {
+    const sessions = yield* Effect.promise(() => import("./agent-sessions.js"))
+    yield* sessions.recoverQueuedHelperParent
+  }
 }).pipe(
   Effect.catchAllCause(() => Effect.logWarning("agent work worker unavailable")),
   Effect.repeat(Schedule.spaced("1 second")),
 )
+
+// Keep the existing lane for scheduled work and let async helpers run in
+// parallel. The database enforces the shared four-job cap across replicas.
+export const agentWorkWorker = Effect.all([workLane(false), workLane(true), workLane(true)], { concurrency: 3 }).pipe(Effect.asVoid)

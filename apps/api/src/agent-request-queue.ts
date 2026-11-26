@@ -9,7 +9,45 @@ import { cancelHarnessConversation } from "./harness-store.js"
 
 export class AgentRequestRefused extends Data.TaggedError("AgentRequestRefused")<{ reason: "NOT_FOUND" | "CONFLICT" | "QUEUE_FULL" | "CONVERSATION_REQUIRED" }> {}
 const refuse = (reason: AgentRequestRefused["reason"]) => Effect.fail(new AgentRequestRefused({ reason }))
-type Job = { request_id: string; account_id: string; user_id: string; business_id: string | null; conversation_id: string; payload: unknown; claim_id: string }
+type Job = { request_id: string; account_id: string; user_id: string; business_id: string | null; conversation_id: string; payload: unknown; claim_id: string
+  readonly continues_request_id?: string | null }
+
+/** How many times one request may be continued after restarts, so a turn that keeps crashing stops. */
+export const MAX_CONTINUATIONS = 3
+const ORIGINAL_CHARS = 3200
+/** What a continued turn is told. Saved work survives a restart; what may have half-run must be checked, not repeated. */
+export const continuationMessage = (original: string) => `OpenRecord notice: your last turn on this request was cut short when OpenRecord restarted. The request was:
+«${original.slice(0, ORIGINAL_CHARS)}»
+Anything that turn saved is listed above and stays saved. Finish the request now. Before you save, prepare or propose anything, check whether it already exists (read_proposals, list_artifacts or the matching read) and never repeat what completed. Mention the restart in one short line at most.`
+const digestOf = (body: Record<string, unknown>) => createHash("sha256").update(JSON.stringify([body["message"], body["conversationId"], body["revision"], body["selection"] ?? null, body["style"] ?? null,
+  body["attachments"] ?? [], ...(body["surfaces"] ? [body["surfaces"]] : []), ...(body["viewing"] ? [body["viewing"]] : [])])).digest("hex")
+
+/**
+ * Queues the next turn of a request a restart interrupted, in the same chat
+ * with the same model, files and settings. Its message carries the original
+ * request and the rule to check before repeating anything. The chain stops
+ * after MAX_CONTINUATIONS, when the person left the account, or when the chat
+ * or business is gone. Call inside the transaction that marked it INTERRUPTED.
+ */
+const continueInterrupted = (requestId: string) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const prev = (yield* sql`SELECT j.account_id, j.user_id, j.business_id, j.conversation_id, j.payload, j.continuation_depth, c.revision
+    FROM agent_request_jobs j
+    JOIN agent_conversations c ON c.id=j.conversation_id AND c.account_id=j.account_id AND c.user_id=j.user_id AND c.expires_at>now()
+    JOIN account_users u ON u.account_id=j.account_id AND u.user_id=j.user_id
+    WHERE j.request_id=${requestId} AND j.status='INTERRUPTED' AND j.continuation_depth < ${MAX_CONTINUATIONS}
+      AND (j.business_id IS NULL OR EXISTS (SELECT 1 FROM businesses b WHERE b.id=j.business_id AND b.account_id=j.account_id AND b.archived_at IS NULL))`)[0]
+  if (!prev) return
+  const old = (prev["payload"] ?? {}) as Record<string, unknown>
+  const original = typeof old["originalMessage"] === "string" ? old["originalMessage"] : String(old["message"] ?? "")
+  const nextId = randomUUID()
+  const carried = Object.fromEntries(["selection", "style", "surfaces", "attachments", "viewing"].flatMap(k => old[k] === undefined ? [] : [[k, old[k]]]))
+  const body = { ...carried, message: continuationMessage(original), requestId: nextId, conversationId: String(prev["conversation_id"]),
+    revision: Number(prev["revision"]), originalMessage: original.slice(0, 4000) }
+  yield* sql`INSERT INTO agent_request_jobs(request_id,account_id,user_id,business_id,conversation_id,payload,digest,continues_request_id,continuation_depth)
+    VALUES (${nextId},${prev["account_id"]},${prev["user_id"]},${prev["business_id"]},${prev["conversation_id"]},${JSON.stringify(body)}::jsonb,${digestOf(body)},
+      ${requestId},${Number(prev["continuation_depth"]) + 1}) ON CONFLICT DO NOTHING`
+})
 
 /** Requeue only claims fenced before execution. Unknown execution is never replayed. */
 export const reconcileRequestJobs = Effect.gen(function*() {
@@ -25,9 +63,10 @@ export const reconcileRequestJobs = Effect.gen(function*() {
       result=CASE WHEN c.last_request_id=j.request_id THEN c.last_reply ELSE NULL END,
       failure_reason=CASE WHEN c.last_request_id=j.request_id THEN NULL ELSE 'INTERRUPTED' END,finished_at=now(),claim_id=NULL,lease_until=NULL
       FROM agent_conversations c WHERE c.id=j.conversation_id AND j.status='RUNNING' AND j.lease_until<=now()
-      RETURNING j.request_id,j.conversation_id`
+      RETURNING j.request_id,j.conversation_id,j.status`
     for (const job of expired) yield* sql`UPDATE agent_conversations c SET lease_id=NULL,lease_until=NULL
       WHERE c.id=${job["conversation_id"]} AND EXISTS(SELECT 1 FROM agent_runs r WHERE r.conversation_id=c.id AND r.request_id=${job["request_id"]} AND r.lease_id=c.lease_id)`
+    for (const job of expired) if (job["status"] === "INTERRUPTED") yield* continueInterrupted(String(job["request_id"]))
     yield* sql`UPDATE agent_request_jobs SET status='FAILED',failure_reason='QUEUE_EXPIRED',finished_at=now() WHERE status='QUEUED' AND expires_at<=now()`
   }))
 })
@@ -104,7 +143,9 @@ export const executeAgentRequest = <R>(job: Job, responder: Responder<R>) => Eff
   const work = Effect.gen(function*() {
     yield* active
     const body = yield* Schema.decodeUnknown(AgentMessageRequest)(job.payload)
-    return yield* sendConversation(scope,body,guarded,active)
+    // A continuation is OpenRecord's message, not the person's: marked so, and it starts no new helpers.
+    const origin = job.continues_request_id ? { origin: { kind: "wake" as const, title: "Continued after a restart" } } : {}
+    return yield* sendConversation(scope,{ ...body, ...origin },guarded,active)
   })
   const outcome = yield* Effect.raceFirst(work,heartbeat).pipe(Effect.exit)
   if (outcome._tag === "Success") {

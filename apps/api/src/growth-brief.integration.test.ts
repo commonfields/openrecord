@@ -42,7 +42,7 @@ suite("weekly growth brief (disposable PostgreSQL, fixture model)", () => {
     // The person last used a subscription model for this business.
     await pool.query(`INSERT INTO agent_conversations(account_id,business_id,user_id,messages) VALUES($1,$2,$3,$4::jsonb)`, [scope.accountId, scope.businessId, scope.userId,
       JSON.stringify([{ role: "user", text: "hi" }, { role: "agent", text: "hello", inference: { provider: "codex", requestedModel: "gpt-5", instanceId: "11111111-1111-4111-8111-111111111111", usage: [] } }])])
-    const calls: Array<{ selection: unknown; message: string; conversationId: string }> = []
+    const calls: Array<Parameters<BriefSender<never>>[1]> = []
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
     const sender: BriefSender<never> = (_scope, body) => Effect.gen(function*() {

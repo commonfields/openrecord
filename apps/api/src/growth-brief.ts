@@ -11,9 +11,9 @@ import { Cause, Effect, Schedule, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import { decodeRouteId, HarnessSelection } from "@openrecord/contracts"
 import { enqueueAgentRequest } from "./agent-request-queue.js"
-import { enqueueAgentWork } from "./agent-work-queue.js"
+import { AgentWorkRetry, enqueueAgentWork, isWorkRetry } from "./agent-work-queue.js"
 import { sendSessionTurn } from "./agent-sessions.js"
-import { sendUnattendedTurn, type UnattendedSender } from "./unattended-agent.js"
+import { retryableTurnFailure, sendUnattendedTurn, type UnattendedSender } from "./unattended-agent.js"
 import { businessWebsite } from "./agent-web-tools.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
@@ -75,6 +75,10 @@ export const startBrief = <R = Effect.Effect.Context<ReturnType<typeof sendSessi
   opts?: { readonly inline?: boolean },
 ) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
+  // A brief whose job was cut off mid-run (or that has no job left) would block every later one.
+  yield* sql`UPDATE growth_briefs b SET status = 'FAILED', failure = 'INTERRUPTED', finished_at = now()
+    WHERE b.business_id = ${scope.businessId} AND b.status = 'RUNNING' AND b.started_at < now() - interval '30 minutes'
+      AND NOT EXISTS (SELECT 1 FROM agent_work_jobs j WHERE j.kind = 'GROWTH_BRIEF_WRITE' AND j.ref_id = b.id AND j.status IN ('QUEUED', 'RUNNING'))`
   const running = yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND status = 'RUNNING'`
   if (running[0]) return toBrief(running[0])
   const now = new Date()
@@ -108,16 +112,22 @@ export type GrowthBriefWritePayload = {
   readonly day: string
 }
 
-export const writeGrowthBriefJob = (raw: GrowthBriefWritePayload) =>
-  writeBrief(raw.scope, raw.briefId, raw.conversationId, raw.day, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>>)
+export const writeGrowthBriefJob = (raw: GrowthBriefWritePayload, tries: { readonly finalAttempt: boolean } = { finalAttempt: true }) =>
+  writeBrief(raw.scope, raw.briefId, raw.conversationId, raw.day, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>>, tries)
 
-const writeBrief = <R>(scope: Scope, briefId: string, conversationId: string, day: string, sender: BriefSender<R>) => Effect.gen(function*() {
+const writeBrief = <R>(scope: Scope, briefId: string, conversationId: string, day: string, sender: BriefSender<R>,
+  tries: { readonly finalAttempt: boolean } = { finalAttempt: true }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
+  const since = new Date()
   const message = BRIEF_PROMPT(day)
-  let result: import("effect").Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
+  const result: import("effect").Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
     message, requestId: randomUUID(), conversationId, revision: 0,
   }).pipe(Effect.either)
   if (result._tag === "Left") {
+    // A provider that was down or busy before anything was saved: the brief stays
+    // RUNNING and the queue writes it again later, instead of waiting a week.
+    const retry = tries.finalAttempt ? null : yield* retryableTurnFailure(result.left, conversationId, since)
+    if (retry) return yield* Effect.fail(new AgentWorkRetry({ reason: retry }))
     const e = result.left as { _tag?: string; reason?: string }
     const failure = e._tag === "AgentModelError" ? `MODEL_${e.reason ?? "UNAVAILABLE"}` : "FAILED"
     yield* sql`UPDATE growth_briefs SET status = 'FAILED', failure = ${failure.slice(0, 40)}, finished_at = now() WHERE id = ${briefId}`
@@ -130,7 +140,7 @@ const writeBrief = <R>(scope: Scope, briefId: string, conversationId: string, da
         provider = ${typeof reply.provider === "string" ? reply.provider : null}, model = ${typeof reply.requestedModel === "string" ? reply.requestedModel : null}, finished_at = now() WHERE id = ${briefId}`
     : sql`UPDATE growth_briefs SET status = 'FAILED', failure = 'EMPTY', finished_at = now() WHERE id = ${briefId}`
 }).pipe(
-  Effect.catchAllCause(cause => Effect.gen(function*() {
+  Effect.catchAllCause(cause => isWorkRetry(cause) ? Effect.failCause(cause) : Effect.gen(function*() {
     yield* Effect.logWarning("growth brief failed").pipe(Effect.annotateLogs({ brief: briefId, cause: Cause.pretty(cause).slice(0, 500) }))
     const sql = yield* SqlClient.SqlClient
     yield* sql`UPDATE growth_briefs SET status = 'FAILED', failure = 'FAILED', finished_at = now() WHERE id = ${briefId} AND status = 'RUNNING'`

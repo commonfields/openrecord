@@ -15,8 +15,8 @@
 //                that step is spent on the work itself.
 //   3. tools     the turn declares the core tools, every read that takes no
 //                inputs (a line each), the intents' tools and the router's
-//                best matches. Every other registered tool stays
-//                reachable: its name is listed, and tool_details declares it.
+//                best matches. The model can search the remaining eligible
+//                capabilities and load their schemas on demand.
 //
 // Nothing here grants anything: dispatch checks every call as before, and a
 // request no rule recognises keeps every tool, as a turn did before.
@@ -170,14 +170,6 @@ export const decideTurn = (message: string, declarations: ReadonlyArray<ToolDecl
   // Registry order, so a routed turn reads like a full one.
   const expand = intents.flatMap(i => RULES[i].expand ?? []).filter(n => has.has(n))
   return { version: DECISION_VERSION, intents, tools: available.filter(n => wanted.has(n)), prefetch, expand }
-}
-
-/** Names the turn does not declare, for the instructions: any of them can still be used. */
-export const otherToolsNote = (declared: ReadonlyArray<string>, available: ReadonlyArray<string>) => {
-  const rest = available.filter(n => !declared.includes(n))
-  return rest.length
-    ? `\n\nThis turn declares the tools its request needs. These are also available; to use one, call tool_details with its name first: ${rest.join(", ")}.`
-    : ""
 }
 
 /**

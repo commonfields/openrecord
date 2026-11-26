@@ -23,7 +23,7 @@ suite("durable request submission and worker (no live model)",() => {
   const accounts:string[]=[]
   const run=<A,E>(fx:Effect.Effect<A,E,SqlClient.SqlClient>) => Effect.runPromise(fx.pipe(Effect.provide(repos)))
   beforeAll(async () => {
-    for (const name of ["0075_agent_request_queue.sql","0076_agent_worker_runtime.sql"]) {
+    for (const name of ["0075_agent_request_queue.sql","0076_agent_worker_runtime.sql","0103_agent_retry_and_continuation.sql"]) {
       await pool.query(readFileSync(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"))
     }
   })
@@ -119,7 +119,56 @@ suite("durable request submission and worker (no live model)",() => {
       const saved=(await pool.query("SELECT status,result FROM agent_request_jobs WHERE request_id=$1",[input.requestId])).rows[0]
       expect(saved.status).toBe(committed ? "COMPLETED" : "INTERRUPTED")
       if (committed) expect(saved.result.reply).toBe("Already committed")
-      expect(await run(claimAgentRequest)).toBeNull()
+      // Ambiguous work is never replayed as is; it continues as a new, marked request.
+      const next=await run(claimAgentRequest)
+      if (committed) expect(next).toBeNull()
+      else expect(next).toMatchObject({continues_request_id:input.requestId})
+    }
+  })
+  it("continues a request a restart cut short, in the same chat and marked as OpenRecord's, at most three times",async () => {
+    const f=await fixture(),input={...body(f.conversationId),style:"concise" as const}
+    await run(enqueueAgentRequest(f,input))
+    const interrupt=async () => {
+      const job=(await run(claimAgentRequest))!
+      await pool.query("UPDATE agent_request_jobs SET execution_started_at=now(),lease_until=now()-interval '1 minute' WHERE request_id=$1",[job.request_id])
+      await run(reconcileRequestJobs)
+      return job
+    }
+    const first=await interrupt()
+    const next=(await pool.query("SELECT request_id,payload,continuation_depth,status FROM agent_request_jobs WHERE continues_request_id=$1",[first.request_id])).rows[0]
+    expect(next).toMatchObject({continuation_depth:1,status:"QUEUED"})
+    expect(next.payload).toMatchObject({conversationId:f.conversationId,style:"concise",originalMessage:"Read saved campaign status",requestId:next.request_id})
+    expect(next.payload.message).toContain("«Read saved campaign status»")
+    // Reconciling again cannot fork the chain.
+    await run(reconcileRequestJobs)
+    expect((await pool.query("SELECT count(*)::int AS n FROM agent_request_jobs WHERE continues_request_id=$1",[first.request_id])).rows[0].n).toBe(1)
+    // The continuation answers in the same chat; its message is OpenRecord's, not the person's.
+    let asked=""
+    const capture:Responder<never>=(a,u,b,m,...rest) => { asked=m; return reply(a,u,b,m,...rest) }
+    const job=(await run(claimAgentRequest))!
+    await run(executeAgentRequest(job,capture))
+    expect(asked).toContain("never repeat what completed")
+    const messages=(await pool.query("SELECT messages FROM agent_conversations WHERE id=$1",[f.conversationId])).rows[0].messages as Array<{role:string;origin?:{kind:string;title?:string}}>
+    expect(messages.find(m => m.role==="user")?.origin).toEqual({kind:"wake",title:"Continued after a restart"})
+    // A turn that keeps being cut short stops after three continuations.
+    await run(enqueueAgentRequest(f,{...body(f.conversationId),revision:Number((await pool.query("SELECT revision FROM agent_conversations WHERE id=$1",[f.conversationId])).rows[0].revision)}))
+    const chain=[]
+    for (let i=0;i<4;i++) chain.push((await interrupt()).request_id)
+    const depths=(await pool.query("SELECT continuation_depth FROM agent_request_jobs WHERE request_id=ANY($1::uuid[]) ORDER BY continuation_depth",[chain])).rows.map(r => r.continuation_depth)
+    expect(depths).toEqual([0,1,2,3])
+    expect((await pool.query("SELECT count(*)::int AS n FROM agent_request_jobs WHERE continues_request_id=$1",[chain[3]])).rows[0].n).toBe(0)
+    expect(await run(claimAgentRequest)).toBeNull()
+  })
+  it("does not continue a request once its business is archived or its person left the account",async () => {
+    for (const gone of ["archived","left"]) {
+      const f=await fixture(),input=body(f.conversationId)
+      await run(enqueueAgentRequest(f,input)); await run(claimAgentRequest)
+      if (gone==="archived") await pool.query("UPDATE businesses SET archived_at=now() WHERE id=$1",[f.businessId])
+      else await pool.query("DELETE FROM account_users WHERE account_id=$1 AND user_id=$2",[f.accountId,f.userId])
+      await pool.query("UPDATE agent_request_jobs SET execution_started_at=now(),lease_until=now()-interval '1 minute' WHERE request_id=$1",[input.requestId])
+      await run(reconcileRequestJobs)
+      expect((await pool.query("SELECT status FROM agent_request_jobs WHERE request_id=$1",[input.requestId])).rows[0].status).toBe("INTERRUPTED")
+      expect((await pool.query("SELECT count(*)::int AS n FROM agent_request_jobs WHERE continues_request_id=$1",[input.requestId])).rows[0].n).toBe(0)
     }
   })
   it("requeues a clearly unstarted expired claim and fences its old worker",async () => {
