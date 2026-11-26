@@ -447,6 +447,49 @@ undeclared tools, and every save and prepared change is validated by its own
 schema on the server. `commandTools` and `narrowTools` stay as they were.
 The keyword router stays unwired.
 
+## Autonomous workflow architecture (2026-11-26)
+
+Two layers sit on top of the existing harness (durable runs, closed tool
+dispatch, approvals). Neither replaces tenancy or authority.
+
+### Control plane (when work runs)
+
+Business events should become **durable jobs**, not detached forks in the API
+process:
+
+| Piece | Role today | Next |
+| --- | --- | --- |
+| Chat turns | `agent_request_jobs` + worker | Keep |
+| Weekly brief, setup draft | `startBrief` / `setupDraft` enqueue `agent_work_jobs` | — |
+| Investigation and campaign follow-ups | Scheduler claims a wake, worker delivers the turn | — |
+| Visibility drop | After `open_investigation`, enqueue `VISIBILITY_INVESTIGATION_WRITE` | Default on without follow-up permission (read-only turn) |
+| Schedulers | Brief, setup, follow-up claimers enqueue; worker executes | Move remaining schedulers to enqueue-only |
+| Post-approval work | `APPROVED_INITIATIVE_WRITE` on approve (`growth-routes`) | Decline → `DECLINED_INITIATIVE_WRITE` via decision feedback |
+
+Job rules match chat jobs: claim with lease, mark execution started before
+model work, reconcile expired claims, never replay after execution starts.
+The standalone `agent:worker` and the API (when `AGENT_REQUEST_WORKER_ENABLED`)
+run **both** chat and work claim loops.
+
+**Model resolution for unattended turns** (`harness-selection.ts`,
+`unattended-agent.ts`): use the person's last subscription pick when it still
+resolves; else the same model on another ready bridge instance; else the first
+ready subscription; else the hosted model when configured. This mirrors the
+desktop chat stand-in behaviour (`apps/desktop/src/state.rs`).
+
+### Tool plane (what each step may call)
+
+M1.5 capability manifests stay the JIT tool surface: core reads plus
+`find_capabilities` / `load_capability`, credentials injected server-side,
+read versus propose enforced at dispatch. Wire when eval gates pass; do not
+load the full registry on background runs.
+
+### Default autonomy boundary
+
+Research, draft, revise, plan and prepare changes run without asking.
+Publish, send, spend and change approved facts stay on approval routes. Pause
+and daily run limits are account-scoped, not per-business permission toggles.
+
 ## M2 design: deliverable to outcome binding (approved 2026-11-09 with conditions, implemented locally)
 
 Target chain, every link a structured row and never prose: approved revision,

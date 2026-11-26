@@ -11,7 +11,9 @@ import { Cause, Effect, Schedule, Schema } from "effect"
 import { BusinessRepository, type Session } from "@openrecord/db"
 import { decodeRouteId, HarnessSelection } from "@openrecord/contracts"
 import { enqueueAgentRequest } from "./agent-request-queue.js"
+import { enqueueAgentWork } from "./agent-work-queue.js"
 import { sendSessionTurn } from "./agent-sessions.js"
+import { sendUnattendedTurn, type UnattendedSender } from "./unattended-agent.js"
 import { businessWebsite } from "./agent-web-tools.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
@@ -52,18 +54,11 @@ const toBrief = (r: Record<string, unknown>): Brief => ({
   startedAt: new Date(r["started_at"] as string).toISOString(), finishedAt: r["finished_at"] ? new Date(r["finished_at"] as string).toISOString() : null,
 })
 
-/** The model this person last used for this business, if any. */
-export const lastSelection = (scope: Scope) => Effect.gen(function*() {
-  const sql = yield* SqlClient.SqlClient
-  const rows = yield* sql`SELECT m->'inference' AS inference FROM agent_conversations c, jsonb_array_elements(c.messages) WITH ORDINALITY AS e(m, i)
-    WHERE c.account_id = ${scope.accountId} AND c.user_id = ${scope.userId} AND c.business_id = ${scope.businessId}
-      AND m->>'role' = 'agent' AND m->'inference' ? 'instanceId' ORDER BY c.updated_at DESC, i DESC LIMIT 1`
-  const inf = rows[0]?.["inference"] as { instanceId?: string; requestedModel?: string; reasoningEffort?: HarnessSelection["reasoningEffort"] } | undefined
-  return inf?.instanceId && inf.requestedModel ? { instanceId: inf.instanceId, model: inf.requestedModel, ...(inf.reasoningEffort ? { reasoningEffort: inf.reasoningEffort } : {}) } as HarnessSelection : undefined
-})
+/** @deprecated Use `lastChatSelection` from `unattended-agent.ts`. */
+export { lastChatSelection as lastSelection } from "./unattended-agent.js"
 
 /** Runs the brief's turn: the session runtime in production, a fixture in tests. */
-export type BriefSender<R> = (scope: Scope, body: { readonly message: string; readonly requestId: string; readonly conversationId: string; readonly revision: number; readonly selection: HarnessSelection | undefined }) => Effect.Effect<unknown, unknown, R>
+export type BriefSender<R> = UnattendedSender<R>
 export const production: BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>> = (scope, body) => sendSessionTurn(scope, body)
 
 const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
@@ -73,7 +68,12 @@ const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { month: "short", da
  * background. If one is already being written for this business, that one is
  * returned instead.
  */
-export const startBrief = <R = Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>>(scope: Scope, trigger: Brief["trigger"], sender: BriefSender<R> = production as unknown as BriefSender<R>) => Effect.gen(function*() {
+export const startBrief = <R = Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>>(
+  scope: Scope,
+  trigger: Brief["trigger"],
+  sender: BriefSender<R> = production as unknown as BriefSender<R>,
+  opts?: { readonly inline?: boolean },
+) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const running = yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND status = 'RUNNING'`
   if (running[0]) return toBrief(running[0])
@@ -89,18 +89,34 @@ export const startBrief = <R = Effect.Effect.Context<ReturnType<typeof sendSessi
   }))
   if (!inserted[0]) return toBrief((yield* sql`SELECT * FROM growth_briefs WHERE business_id = ${scope.businessId} AND status = 'RUNNING'`)[0]!)
   const brief = toBrief(inserted[0])
-  yield* Effect.forkDaemon(writeBrief(scope, brief.id, conversationId, now, sender))
+  const day = now.toISOString().slice(0, 10)
+  if (opts?.inline) yield* Effect.forkDaemon(writeBrief(scope, brief.id, conversationId, day, sender))
+  else {
+    yield* enqueueAgentWork({
+      accountId: scope.accountId, userId: scope.userId, businessId: scope.businessId,
+      kind: "GROWTH_BRIEF_WRITE", refId: brief.id,
+      payload: { scope, briefId: brief.id, conversationId, day } satisfies GrowthBriefWritePayload,
+    })
+  }
   return brief
 })
 
-const writeBrief = <R>(scope: Scope, briefId: string, conversationId: string, now: Date, sender: BriefSender<R>) => Effect.gen(function*() {
+export type GrowthBriefWritePayload = {
+  readonly scope: Scope
+  readonly briefId: string
+  readonly conversationId: string
+  readonly day: string
+}
+
+export const writeGrowthBriefJob = (raw: GrowthBriefWritePayload) =>
+  writeBrief(raw.scope, raw.briefId, raw.conversationId, raw.day, production as unknown as BriefSender<Effect.Effect.Context<ReturnType<typeof sendSessionTurn>>>)
+
+const writeBrief = <R>(scope: Scope, briefId: string, conversationId: string, day: string, sender: BriefSender<R>) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const message = BRIEF_PROMPT(now.toISOString().slice(0, 10))
-  const send = (selection: HarnessSelection | undefined) => sender(scope, { message, requestId: randomUUID(), conversationId, revision: 0, selection })
-  const selection = yield* lastSelection(scope)
-  // The person's own model first; the hosted model if that one is gone.
-  let result: import("effect").Either.Either<unknown, unknown> = yield* send(selection).pipe(Effect.either)
-  if (result._tag === "Left" && selection) result = yield* send(undefined).pipe(Effect.either)
+  const message = BRIEF_PROMPT(day)
+  let result: import("effect").Either.Either<unknown, unknown> = yield* sendUnattendedTurn(scope, sender, {
+    message, requestId: randomUUID(), conversationId, revision: 0,
+  }).pipe(Effect.either)
   if (result._tag === "Left") {
     const e = result.left as { _tag?: string; reason?: string }
     const failure = e._tag === "AgentModelError" ? `MODEL_${e.reason ?? "UNAVAILABLE"}` : "FAILED"

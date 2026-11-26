@@ -23,6 +23,7 @@ import { Cause, Config, Effect, Schedule, Schema } from "effect"
 import { ACQ_MAX_ATTEMPTS_PER_CHECK, AcquisitionRefused, AcquisitionRepository, acquisitionView, type BatchMetrics, type Session } from "@openrecord/db"
 import { RecordSurfaceConfig } from "@openrecord/config"
 import { dispatchInvestigation } from "./agent-investigation-tools.js"
+import { enqueueVisibilityInvestigationWork } from "./visibility-investigation-enqueue.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 export type Cadence = "DAILY" | "WEEKLY"
@@ -98,7 +99,12 @@ const compareFinishedRuns = Effect.gen(function*() {
         if (!saved[0]) continue
         const investigationId = yield* openInvestigation(scope, drop, previous!.id, last.id).pipe(
           Effect.catchAllCause(cause => log("tracking alert could not open an investigation", businessId, cause).pipe(Effect.as(null))))
-        if (investigationId) yield* sql`UPDATE acq_alerts SET investigation_id = ${investigationId} WHERE id = ${String(saved[0]["id"])}`
+        if (investigationId) {
+          yield* sql`UPDATE acq_alerts SET investigation_id = ${investigationId} WHERE id = ${String(saved[0]["id"])}`
+          yield* enqueueVisibilityInvestigationWork(scope, investigationId, alertQuestion(drop)).pipe(
+            Effect.catchAllCause(cause => log("visibility investigation work could not be queued", businessId, cause).pipe(Effect.asVoid)),
+          )
+        }
       }
       yield* sql`UPDATE acq_schedules SET compared_batch_id = ${last.id}, updated_at = now() WHERE business_id = ${businessId}`
     }).pipe(Effect.catchAllCause(cause => log("tracking comparison failed", businessId, cause)))

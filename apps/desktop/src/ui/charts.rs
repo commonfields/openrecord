@@ -143,7 +143,7 @@ fn nice_range(min: f64, max: f64) -> (f64, f64) {
 }
 
 /// Monotone cubic interpolation (d3's `curveMonotoneX`), sampled to a polyline.
-fn monotone(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
+pub fn monotone(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
     let n = pts.len();
     if n < 3 {
         return pts.to_vec();

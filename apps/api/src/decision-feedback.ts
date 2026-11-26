@@ -14,6 +14,7 @@ import { BusinessRepository, type Session } from "@openrecord/db"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolResult } from "./agent-tools.js"
 import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
+import { enqueueDeclinedInitiativeWork } from "./approved-initiative-enqueue.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -40,6 +41,13 @@ export const decisionFeedbackApi = (withSession: WithSession) => {
         VALUES (${s.accountId}, ${businessId}, ${body.kind}, ${body.itemId}, ${body.verdict}, ${body.title.trim()}, ${reason}, ${s.userId})
         ON CONFLICT (business_id, kind, item_id) DO UPDATE SET verdict = EXCLUDED.verdict, title = EXCLUDED.title, reason = COALESCE(EXCLUDED.reason, decision_feedback.reason),
           decided_by_user_id = EXCLUDED.decided_by_user_id, decided_at = now()`
+      if (body.kind === "GROWTH_OPPORTUNITY" && body.verdict === "REJECTED") {
+        yield* enqueueDeclinedInitiativeWork(s, businessId, body.itemId, body.title.trim(), reason).pipe(
+          Effect.catchAllCause(cause => Effect.logWarning("could not queue declined initiative work").pipe(
+            Effect.annotateLogs({ business: businessId, item: body.itemId, cause: String(cause) }),
+          )),
+        )
+      }
       return yield* json(200, { recorded: true })
     })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "FeedbackUnavailable" })))),
   )

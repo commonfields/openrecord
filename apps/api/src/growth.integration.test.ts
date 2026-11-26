@@ -82,6 +82,8 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     expect((await call("POST", `${f.path}/opportunities/${o.id}/approve`, f.cookie, { ...d, actor: "ASSISTANT" })).status).toBe(422)
     const approve = () => ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${o.id}/approve`, f.cookie, d))
     const [x, y] = await Promise.all([approve(), approve()]); expect(x).toEqual(y); expect(x.opportunity.status).toBe("APPROVED")
+    const work = (await pool.query<{ kind: string; status: string }>("SELECT kind, status FROM agent_work_jobs WHERE ref_id=$1", [o.id])).rows
+    expect(work).toEqual([{ kind: "APPROVED_INITIATIVE_WRITE", status: "QUEUED" }])
     expect((await call("POST", `${f.path}/opportunities/${o.id}/cancel`, f.cookie, { ...d, idempotencyKey: randomUUID() })).status).toBe(409)
     const discovered = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities`, f.cookie, { ...body, initialStatus: "DISCOVERED", idempotencyKey: randomUUID() }))
     const proposed = await ok<{ opportunity: GrowthOpportunity }>(call("POST", `${f.path}/opportunities/${discovered.opportunity.id}/propose`, f.cookie, { ...d, expectedStatus: "DISCOVERED", idempotencyKey: randomUUID() }))

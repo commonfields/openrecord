@@ -61,14 +61,14 @@ suite("setup draft (disposable PostgreSQL, fixture model)", () => {
     const pending = await setup("QUEUED")
     const calls: string[] = []
     const sender: BriefSender<never> = (_s, body) => Effect.sync(() => { calls.push(body.message); return { reply: reply() } })
-    expect(await run(setupDraft(pending.scope, pending.setupId, sender))).toBeUndefined()
+    expect(await run(setupDraft(pending.scope, pending.setupId, sender, { inline: true }))).toBeUndefined()
 
     const ready = await setup("DONE")
-    expect(await run(setupDraft(ready.scope, ready.setupId, sender))).toEqual({ status: "RUNNING" })
+    expect(await run(setupDraft(ready.scope, ready.setupId, sender, { inline: true }))).toEqual({ status: "RUNNING" })
     const done = await settle(ready.setupId)
     expect(done.draft_status).toBe("READY")
     expect(done.draft.goalStatement).toBe("More booked appointments")
-    expect(await run(setupDraft(ready.scope, ready.setupId, sender))).toMatchObject({ status: "READY", value: { conversionKind: "BOOKING" } })
+    expect(await run(setupDraft(ready.scope, ready.setupId, sender, { inline: true }))).toMatchObject({ status: "READY", value: { conversionKind: "BOOKING" } })
     expect(calls).toEqual([DRAFT_PROMPT("https://northstar.test")])
     const chat = (await pool.query("SELECT archived_at, last_reply->>'title' AS title FROM agent_conversations WHERE id=$1", [done.draft_conversation_id])).rows[0]
     expect(chat).toMatchObject({ title: "Setting up northstar.test" })
@@ -79,9 +79,9 @@ suite("setup draft (disposable PostgreSQL, fixture model)", () => {
     const s = await setup("DONE")
     let n = 0
     const sender: BriefSender<never> = () => Effect.sync(() => { n++; return { reply: "Sorry, the site was down." } })
-    await run(setupDraft(s.scope, s.setupId, sender))
+    await run(setupDraft(s.scope, s.setupId, sender, { inline: true }))
     expect((await settle(s.setupId)).draft_status).toBe("FAILED")
-    expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "FAILED" })
+    expect(await run(setupDraft(s.scope, s.setupId, sender, { inline: true }))).toEqual({ status: "FAILED" })
     expect(n).toBe(1)
   })
 
@@ -93,10 +93,10 @@ suite("setup draft (disposable PostgreSQL, fixture model)", () => {
     const answer = new Promise<{ reply: string }>(resolve => { release = resolve })
     let calls = 0
     const sender: BriefSender<never> = () => Effect.promise(() => { calls++; started(); return answer })
-    expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "RUNNING" })
+    expect(await run(setupDraft(s.scope, s.setupId, sender, { inline: true }))).toEqual({ status: "RUNNING" })
     await running
     await pool.query("UPDATE business_setups SET draft_started_at = now() - interval '26 minutes' WHERE id=$1", [s.setupId])
-    expect(await run(setupDraft(s.scope, s.setupId, sender))).toEqual({ status: "FAILED" })
+    expect(await run(setupDraft(s.scope, s.setupId, sender, { inline: true }))).toEqual({ status: "FAILED" })
     release({ reply: reply() })
     await new Promise(resolve => setTimeout(resolve, 100))
     const row = (await pool.query("SELECT draft_status, draft FROM business_setups WHERE id=$1", [s.setupId])).rows[0]

@@ -425,6 +425,32 @@ pub struct CampaignRunTask {
     pub next: String,
 }
 
+/// When one deliverable was added, started, waited on approval and finished; unrecorded moments are absent.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TaskTimes {
+    pub task_id: String,
+    pub added: Option<String>,
+    pub started: Option<String>,
+    pub waiting_from: Option<String>,
+    pub waiting_until: Option<String>,
+    pub finished: Option<String>,
+}
+
+/// A day of views and inquiries on the campaign's live pages.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+pub struct TimelineDay {
+    pub day: String,
+    pub views: f64,
+    pub inquiries: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+pub struct CampaignTimeline {
+    pub tasks: Vec<TaskTimes>,
+    pub days: Vec<TimelineDay>,
+}
+
 /// One deliverable of a campaign.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CampaignTask {
@@ -885,6 +911,20 @@ impl Client {
                     web: d.channel.as_deref().unwrap_or("WEBSITE") == "WEBSITE", task_id: Some(d.task_id), tracked_link: d.tracked_link, handoff: d.handoff.map(|h| h.status) }).collect() });
         }
         Ok(runs)
+    }
+
+    pub fn campaign_timeline(&self, business: &str, campaign: &str) -> ApiResult<CampaignTimeline> {
+        self.get(&format!("/api/businesses/{}/campaigns/{}/timeline", enc(business), enc(campaign)))
+    }
+
+    /// Suggested brief lines from the person's own words; the server saves nothing.
+    pub fn suggest_brief(&self, business: &str, text: &str, today: &str, selection: Option<Value>) -> ApiResult<Value> {
+        let mut body = json!({ "text": text, "today": today });
+        if let Some(sel) = selection {
+            body["selection"] = sel;
+        }
+        let v: Value = self.post(&format!("/api/businesses/{}/campaign-brief/suggest", enc(business)), body)?;
+        v.get("brief").cloned().filter(Value::is_object).ok_or_else(|| ApiError::Decode("missing brief".into()))
     }
 
     pub fn save_campaign(&self, business: &str, id: &str, revision: i64, brief: Value) -> ApiResult<Campaign> {

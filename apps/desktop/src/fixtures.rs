@@ -522,10 +522,25 @@ fn page(s: &mut App, page: Page) {
 
 pub fn inbox(s: &mut App) {
     page(s, Page::Inbox);
+    s.insights = Load::Ready(insights());
+}
+
+/// A long draft under a long title: the card keeps its size and the draft scrolls.
+pub fn inbox_long(s: &mut App) {
+    inbox(s);
+    if let Some(d) = s.decisions.first_mut() {
+        d.title = "Review buyer-question text. Acceptance does not freeze questions or assert authorization.".into();
+        d.label = "Buyer questions".into();
+        d.sections.clear();
+        let tags = ["category discovery", "problem solving", "alternatives"];
+        d.body = Some(std::iter::once("Proposed buyer questions".to_string())
+            .chain((1..=15).map(|i| format!("{i}. [{}] Which tools show a marketing team what assistants say about their company, and the pages they cite?", tags[(i - 1) / 5])))
+            .collect::<Vec<_>>().join("\n\n"));
+    }
 }
 
 pub fn inbox_wordpress(s: &mut App) {
-    page(s, Page::Inbox);
+    inbox(s);
     s.decision = Some("WORDPRESS_CHANGE:w1".into());
 }
 
@@ -979,6 +994,25 @@ pub fn campaign_open(s: &mut App) {
     }
     s.campaign_open = s.campaigns.ready().and_then(|l| l.first().map(|c| c.id.clone()));
     s.campaign_run_id = s.campaign_open.clone();
+    let on = |d: i64| ago(-d * 24 * 60);
+    let times = |title: &str, added: i64, started: Option<i64>, finished: Option<i64>| crate::api::TaskTimes {
+        task_id: format!("task-{title}"), added: on(added), started: started.and_then(on), finished: finished.and_then(on), ..Default::default()
+    };
+    let timeline = crate::api::CampaignTimeline {
+        tasks: vec![
+            times("Publish the pricing guide", -19, Some(-18), Some(-12)),
+            times("Update pricing facts on the site", -19, Some(-12), Some(-5)),
+            times("Email the trial list", -14, None, Some(-3)),
+            crate::api::TaskTimes { waiting_from: on(-2), ..times("Brand search ads with the new price", -9, Some(-6), None) },
+            times("LinkedIn carousel", -4, None, None),
+        ],
+        days: (0..13).map(|i| crate::api::TimelineDay {
+            day: crate::format::iso_date(crate::format::now() - (12 - i) * 86_400),
+            views: [12.0, 38.0, 64.0, 52.0, 31.0, 22.0, 27.0, 41.0, 46.0, 96.0, 71.0, 48.0, 39.0][i as usize],
+            inquiries: [0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 0.0, 2.0, 1.0, 4.0, 3.0, 1.0, 1.0][i as usize],
+        }).collect(),
+    };
+    s.campaign_timeline = s.campaign_open.clone().map(|id| (id, timeline));
     s.campaign_runs = Load::Ready(vec![crate::api::CampaignRun {
         campaign_revision: 4, status: "WAITING_FOR_APPROVAL".into(), stale: false,
         tasks: vec![crate::api::CampaignRunTask { title: "Pricing guide".into(), state: "WAITING_FOR_APPROVAL".into(), next: "Review the exact linked WordPress change before publication.".into(), ..Default::default() },
@@ -1330,6 +1364,10 @@ pub fn campaign_brief(s: &mut App) {
     s.edit_campaign(None);
     let e = s.campaign_editor.as_mut().unwrap();
     for (i,text) in ["Mid-market process audit", "Generate qualified demo requests from operations teams in four weeks", "Operations leaders at 50–500 person companies with manual handoffs", "Qualified demos recorded in the CRM", "18 qualified demos in the previous four weeks", "40 qualified demos in four weeks"].iter().enumerate() { e.fields[i].replace_text(*text); }
+    e.tasks = vec![
+        crate::campaign_edit::TaskEdit::new(json!({ "title": "Audit booking page", "owner": "Maya", "due": "2026-12-02", "channel": "WEBSITE", "status": "IN_PROGRESS" })),
+        crate::campaign_edit::TaskEdit::new(json!({ "title": "LinkedIn ads to ops leaders", "owner": "Sam", "due": "2026-12-05", "channel": "PAID", "status": "TODO" })),
+    ];
 }
 
 /// A confirmed weekly schedule and a saved edit, for composer controls.

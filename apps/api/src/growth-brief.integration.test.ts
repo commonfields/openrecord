@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Effect, ManagedRuntime, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
+import { AgentModelError } from "./agent-model.js"
 import { runDueBriefs, startBrief, BRIEF_PROMPT, type BriefSender } from "./growth-brief.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -44,15 +45,14 @@ suite("weekly growth brief (disposable PostgreSQL, fixture model)", () => {
     const calls: Array<{ selection: unknown; message: string; conversationId: string }> = []
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
-    const sender: BriefSender<never> = (_scope, body) => Effect.promise(async () => {
+    const sender: BriefSender<never> = (_scope, body) => Effect.gen(function*() {
       calls.push(body)
-      await gate
-      // The subscription is gone; the hosted model answers.
-      if (body.selection) throw new Error("instance unavailable")
+      yield* Effect.promise(() => gate)
+      if (body.selection) return yield* Effect.fail(new AgentModelError({ reason: "UNAVAILABLE" }))
       return { reply: "**What changed**\n- Clicks up 12%", decisions: [{ type: "GROWTH_OPPORTUNITY", id: randomUUID() }], provider: "gemini", requestedModel: "gemini-2.5-pro" }
-    }).pipe(Effect.catchAllDefect(e => Effect.fail(e)))
-    const first = await run(startBrief(scope, "MANUAL", sender))
-    const again = await run(startBrief(scope, "SCHEDULE", sender))
+    })
+    const first = await run(startBrief(scope, "MANUAL", sender, { inline: true }))
+    const again = await run(startBrief(scope, "SCHEDULE", sender, { inline: true }))
     expect(again.id).toBe(first.id)
     release()
     const done = await settled(first.id)
@@ -68,7 +68,7 @@ suite("weekly growth brief (disposable PostgreSQL, fixture model)", () => {
   it("records a failure as a code, and the schedule runs a due brief once and moves a week ahead", async () => {
     const scope = await setup()
     const failing: BriefSender<never> = () => Effect.fail({ _tag: "AgentModelError", reason: "UNCONFIGURED" })
-    const brief = await run(startBrief(scope, "MANUAL", failing))
+    const brief = await run(startBrief(scope, "MANUAL", failing, { inline: true }))
     expect(await settled(brief.id)).toMatchObject({ status: "FAILED", failure: "MODEL_UNCONFIGURED", text: null })
 
     await pool.query("INSERT INTO growth_brief_schedules(business_id,account_id,user_id,next_run_at) VALUES($1,$2,$3,now() - interval '1 minute')", [scope.businessId, scope.accountId, scope.userId])

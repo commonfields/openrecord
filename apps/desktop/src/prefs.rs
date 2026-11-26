@@ -80,8 +80,6 @@ pub struct Prefs {
     pub voice_input: bool,
     /// The sidebar's width when open, dragged from its edge (the web's 224 to 448).
     pub sidebar_width: f32,
-    /// The Inbox message list, resized independently of the workspace sidebar.
-    pub inbox_width: f32,
     /// Opened Inbox items on this device, scoped to server, account and business.
     pub inbox_read: std::collections::BTreeSet<String>,
     /// The share of the card beside the panel (an artifact or a helper session), in percent (30 to 70).
@@ -124,9 +122,6 @@ pub const ZOOM_DEFAULT: f32 = 0.9;
 pub const SIDEBAR_DEFAULT: f32 = 256.0;
 pub const SIDEBAR_MIN: f32 = 224.0;
 pub const SIDEBAR_MAX: f32 = 448.0;
-pub const INBOX_DEFAULT: f32 = 320.0;
-pub const INBOX_MIN: f32 = 240.0;
-pub const INBOX_MAX: f32 = 520.0;
 pub const HELPER_DEFAULT: f32 = 50.0;
 pub const ANSWER_DIALOG_DEFAULT_W: f32 = 1080.0;
 pub const ANSWER_DIALOG_DEFAULT_H: f32 = 760.0;
@@ -147,7 +142,6 @@ impl Default for Prefs {
             enter_to_send: true,
             voice_input: true,
             sidebar_width: SIDEBAR_DEFAULT,
-            inbox_width: INBOX_DEFAULT,
             inbox_read: Default::default(),
             helper_width: HELPER_DEFAULT,
             answer_dialog_width: ANSWER_DIALOG_DEFAULT_W,
@@ -193,10 +187,6 @@ impl Prefs {
     /// The sidebar's width, kept within the web's bounds.
     pub fn sidebar(&self) -> f32 {
         self.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
-    }
-
-    pub fn inbox(&self) -> f32 {
-        if self.inbox_width.is_finite() { self.inbox_width.clamp(INBOX_MIN, INBOX_MAX) } else { INBOX_DEFAULT }
     }
 
     /// The interface's zoom, kept within the steps.
@@ -301,21 +291,5 @@ mod tests {
         assert!(!saved.inbox_opened("server/account-a", "business-b", "proposal:1"));
         assert!(!saved.inbox_opened("other-server/account-a", "business-a", "proposal:1"));
         assert!(!saved.inbox_opened("server/account-a", "business-a", "proposal:2"));
-    }
-
-    #[test]
-    fn inbox_width_is_backward_compatible_bounded_and_saved() {
-        let mut p: Prefs = serde_json::from_str(r#"{"sidebar_width":300}"#).unwrap();
-        assert_eq!(p.inbox(), INBOX_DEFAULT);
-        p.inbox_width = 416.0;
-        let saved: Prefs = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
-        assert_eq!(saved.inbox(), 416.0);
-        assert_eq!(saved.sidebar(), 300.0);
-        p.inbox_width = f32::NAN;
-        assert_eq!(p.inbox(), INBOX_DEFAULT);
-        p.inbox_width = 1000.0;
-        assert_eq!(p.inbox(), INBOX_MAX);
-        p.inbox_width = 0.0;
-        assert_eq!(p.inbox(), INBOX_MIN);
     }
 }

@@ -4,6 +4,7 @@ mod account_pages;
 mod agent;
 mod artifacts;
 mod answer;
+mod campaign_timeline;
 mod campaigns;
 mod campaign_brief;
 mod channels;
@@ -19,6 +20,7 @@ mod kit;
 pub mod notices;
 mod overview;
 pub use overview::number as overview_number;
+pub(crate) mod inbox;
 mod pages;
 mod shell;
 pub use shell::{Resize, TITLEBAR, TRAFFIC_LIGHT_INSET};
@@ -233,7 +235,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // its tabs start past the traffic lights and the sidebar's buttons, 12
     // points after them as the header's breadcrumbs do (the card sits 8 in).
     let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 } else { 10.0 };
-    let side_card = (s.side_shown() && !s.side_panel_duplicates_page(s.page)).then(|| side::view(s, t, k, strip_lead));
+    let side_card = (s.side_shown() && !s.side_panel_duplicates_page()).then(|| side::view(s, t, k, strip_lead));
     let panel = col()
         .key("panel-column")
         .grow(1.0)

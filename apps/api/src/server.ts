@@ -11,6 +11,7 @@ import { trackingScheduler } from "./acquisition-schedule.js"
 import { answerScheduler } from "./research/answer-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
 import { agentRequestWorker } from "./agent-request-queue.js"
+import { agentWorkWorker } from "./agent-work-queue.js"
 import { withAgentWorkerRuntime } from "./agent-worker-runtime.js"
 import { setupScheduler } from "./setup-scheduler.js"
 import { connectionCheckScheduler } from "./connections.js"
@@ -43,7 +44,7 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     // Connection health: each connection is checked with one cheap read about twice a day.
     const ConnectionChecks = Layer.effectDiscard(Effect.forkDaemon(connectionCheckScheduler.pipe(Effect.delay("90 seconds"))))
     const AgentRequests = config.agentRequestWorkerEnabled
-      ? Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", agentRequestWorker)))
+      ? Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", Effect.all([agentRequestWorker, agentWorkWorker], { concurrency: "unbounded" }))))
       : Layer.empty
     const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking, Setup, ConnectionChecks, AgentRequests).pipe(
       Layer.provide(ReposProvided),

@@ -280,7 +280,6 @@ fn inbox_button(s: &App, t: &Theme) -> El {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resize {
     Sidebar,
-    Inbox,
     Helper,
     AnswerDialog,
 }

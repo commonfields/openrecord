@@ -82,6 +82,14 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.step_decision(if ev.key == rune::Key::Up { -1 } else { 1 });
         return true;
     }
+    // Y, N and S decide in the inbox, while nothing is open over it.
+    if s.settings.is_none() && s.view == state::View::Workspace && s.page == state::Page::Inbox && s.menu.is_none() && s.new_chat.is_none() && s.business_picker.is_none() && s.add_business.is_none() && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt {
+        if let rune::Key::Text(c) = &ev.key {
+            if s.inbox_key(c, tx) {
+                return true;
+            }
+        }
+    }
     // F (when no text field has the key) or ⌘K opens it, as on the web.
     if s.settings.is_none() && (ev.is_command('k') || (matches!(&ev.key, rune::Key::Text(c) if c == "f" || c == "F") && !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt)) {
         s.toggle_find(tx);
@@ -198,6 +206,7 @@ const SCENES: &[(&str, fn(&mut App))] = &[
     ("settings-agent", fixtures::settings_agent),
     ("settings-account", fixtures::settings_account),
     ("inbox", fixtures::inbox),
+    ("inbox-long", fixtures::inbox_long),
     ("inbox-wordpress", fixtures::inbox_wordpress),
     ("inbox-check", fixtures::inbox_check),
     ("inbox-decline", fixtures::inbox_decline),

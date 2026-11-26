@@ -110,6 +110,10 @@ can check but not install, since it is not inside an `.app`.
   dropped on the composer, and the microphone for macOS dictation. The agent's
   skills are chosen by the server for each turn, so the desktop gets them as
   the web does.
+- Campaign timing: an open campaign draws its deliverables on one scale of days
+  (planned, recorded work, late or waiting), with its live pages' views and
+  inquiries on the same days, from `/campaigns/:id/timeline`. Only recorded
+  moments are drawn; an older server leaves the due dates alone.
 - Artifacts: open a saved document beside its conversation in a split view.
   The document card aligns with the chat card, with an 8-point outer inset and gap.
   Markdown and HTML use the API's canonical browser preview document inside an
@@ -123,7 +127,9 @@ can check but not install, since it is not inside an `.app`.
   a system authorization sheet that returns to OpenRecord, without loading
   the web workspace. This requires API migration 0086. The one-use handoff is
   bound to the original live session and OAuth state and expires in ten minutes.
-- Pages: Inbox (approve or decline every kind of decision), Analytics
+- Pages: Inbox (the decision in front as a card on a stack, with the number it
+  bears on; Y, N and S answer yes, no or later, and Y is off for anything that
+  publishes or costs money; the approved work under way below), Analytics
   with all seven sections and their charts, Campaigns, AI answers (open a claim
   to see the answer, its sources and linked facts, record a verdict, and log
   actions) and Channels.
