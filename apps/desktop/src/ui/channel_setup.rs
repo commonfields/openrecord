@@ -24,6 +24,7 @@ pub fn view(s: &App, t: &Theme) -> El {
             label(
                 match p.kind {
                     Kind::WordPress => "WordPress",
+                    Kind::Webflow => "Webflow",
                     Kind::Stripe => "Stripe",
                     Kind::Google => "Google Search Console",
                     Kind::GoogleAds => "Google Ads",
@@ -90,13 +91,17 @@ pub fn view(s: &App, t: &Theme) -> El {
                 .child(label("WordPress username", type_::XS_MEDIUM, t.foreground))
                 .child(TextInput::new(&p.username).label("WordPress username").on_edit(|s: &mut App| &mut s.channel_setup.as_mut().unwrap().username).build(&k).w_full())
                 .child(label("Create an application password in your WordPress user profile. Use a user allowed to publish pages and posts.", type_::XS, t.muted_foreground).wrap());
+        } else if p.kind == Kind::Webflow {
+            body = body.child(label("In Webflow, open Site settings, then Apps & integrations, and generate a site API token with read and write access to Pages and CMS.", type_::XS, t.muted_foreground).wrap())
+                .child(label("Site ID (only if the token opens more than one site)", type_::XS_MEDIUM, t.foreground))
+                .child(TextInput::new(&p.site).label("Webflow site ID").placeholder("Leave empty for a site API token").on_edit(|s: &mut App| &mut s.channel_setup.as_mut().unwrap().site).build(&k).w_full());
         } else {
             body = body.child(label("Use a Stripe restricted key with read-only access to Charges. Full secret keys are refused.", type_::XS, t.muted_foreground).wrap());
         }
-        let name = if p.kind == Kind::WordPress {
-            "Application password"
-        } else {
-            "Restricted key"
+        let name = match p.kind {
+            Kind::WordPress => "Application password",
+            Kind::Webflow => "Site API token",
+            _ => "Restricted key",
         };
         body = body
             .child(label(name, type_::XS_MEDIUM, t.foreground))

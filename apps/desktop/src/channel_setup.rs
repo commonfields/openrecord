@@ -13,6 +13,7 @@ pub enum Kind {
     Meta,
     Stripe,
     WordPress,
+    Webflow,
 }
 impl Kind {
     pub fn from_key(key: &str) -> Option<Self> {
@@ -23,6 +24,7 @@ impl Kind {
             "meta" => Self::Meta,
             "revenue" => Self::Stripe,
             "wordpress" => Self::WordPress,
+            "webflow" => Self::Webflow,
             _ => return None,
         })
     }
@@ -34,6 +36,7 @@ impl Kind {
             Self::Meta => "meta",
             Self::Stripe => "revenue",
             Self::WordPress => "wordpress",
+            Self::Webflow => "webflow",
         }
     }
     pub fn path(self, business: &str) -> String {
@@ -42,11 +45,12 @@ impl Kind {
             Self::Google => format!("/api/growth/clients/{b}/search-console"),
             Self::Stripe => format!("/api/revenue/clients/{b}"),
             Self::WordPress => format!("/api/businesses/{b}/wordpress"),
+            Self::Webflow => format!("/api/businesses/{b}/webflow"),
             _ => format!("/api/ads/clients/{b}"),
         }
     }
     pub fn keyed(self) -> bool {
-        matches!(self, Self::Stripe | Self::WordPress)
+        matches!(self, Self::Stripe | Self::WordPress | Self::Webflow)
     }
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -255,6 +259,19 @@ impl Client {
                 &base,
                 json!({ "siteUrl": site, "username": username, "appPassword": secret }),
             )?,
+            // A token that opens several sites needs one named; the site ID field carries it.
+            Action::Save { site, secret, .. } if kind == Kind::Webflow => {
+                let mut body = json!({ "token": secret.trim() });
+                if !site.trim().is_empty() {
+                    body["siteId"] = json!(site.trim());
+                }
+                let r: Value = self.post(&base, body)?;
+                if let Some(sites) = r["chooseSite"].as_array().filter(|x| !x.is_empty()) {
+                    let names = sites.iter().map(|x| format!("{} ({})", text(x, "name"), text(x, "siteId"))).collect::<Vec<_>>().join(", ");
+                    return Err(crate::api::ApiError::Status(409, json!({ "reason": "ChooseSite", "sites": names }).to_string()));
+                }
+                r
+            }
             Action::Save { secret, .. } if kind == Kind::Stripe => {
                 self.post(&format!("{base}/stripe"), json!({ "key": secret }))?
             }
@@ -281,7 +298,7 @@ impl Client {
                 },
                 json!({}),
             )?,
-            Action::Disconnect if kind == Kind::WordPress => self.call("DELETE", &base, None)?,
+            Action::Disconnect if kind == Kind::WordPress || kind == Kind::Webflow => self.call("DELETE", &base, None)?,
             Action::Disconnect if kind == Kind::Stripe => {
                 self.post(&format!("{base}/stripe/disconnect"), json!({}))?
             }
@@ -374,6 +391,9 @@ pub fn error_message(error: &crate::api::ApiError) -> String {
             Some("SiteREST_UNAVAILABLE") => {
                 Some("The WordPress REST API is not available at this website.")
             }
+            Some("WebflowAUTH" | "WebflowUNAUTHORIZED" | "WebflowFORBIDDEN") => Some("Webflow refused this token. Create a new site API token and try again."),
+            Some("TokenMissingScope") => Some("This Webflow token can't read the site's pages and CMS. Create a site API token with Pages and CMS access (read and write)."),
+            Some("SiteNotFound") => Some("No Webflow site was found for this token, or the site ID doesn't match it."),
             Some("ProviderQuota") => {
                 Some("The provider's rate limit was reached. Try again later.")
             }
@@ -387,6 +407,10 @@ pub fn error_message(error: &crate::api::ApiError) -> String {
         };
         if let Some(copy) = copy {
             return copy.into();
+        }
+        if reason.as_deref() == Some("ChooseSite") {
+            let sites = serde_json::from_str::<Value>(body).ok().and_then(|v| v.get("sites").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            return format!("This token opens more than one Webflow site: {sites}. Paste the ID of the site for this business, then connect again.");
         }
     }
     error.message()

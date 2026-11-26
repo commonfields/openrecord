@@ -68,7 +68,13 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         crate::native_preview::browser_pass_through(s.native_view_clear());
     } else { crate::native_preview::browser_hide(); }
     // Overview beside the chat is heavy Rune UI; native markdown is enough while it is open.
-    if s.prefs.words_webview && s.chat_shown() && s.settings.is_none() && !s.side_shows_overview() {
+    if s.prefs.words_webview
+        && s.words_transcript_webview()
+        && s.words_rect.is_some()
+        && s.chat_shown()
+        && s.settings.is_none()
+        && !s.side_shows_overview()
+    {
         crate::words_pane::pass_through(s.native_view_clear());
         crate::words_pane::sync(s, s.prefs.dark(cx.system_dark()));
     } else {
@@ -183,7 +189,8 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // beside them (Find and the sidebar's), with the same 12-point gap the
     // buttons keep from the lights. The header itself starts 8 points in (the
     // panel's inset) and pads 20 points of its own.
-    let leading = if s.sidebar_open { 0.0 } else { (shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 - 20.0).max(0.0) };
+    let inset = shell::CANVAS_INSET;
+    let leading = if s.sidebar_open { 0.0 } else { (shell::collapsed_slot_end(titlebar_inset) + 12.0 - inset - 20.0).max(0.0) };
     let (content, trailing): (El, Option<El>) = match s.view {
         View::Agent if s.active.is_some() || s.general => (agent::view(s, t, k), None),
         View::Agent => (agent_boot(s, &t), None),
@@ -214,6 +221,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // The right panel's button sits at the header's right end while it is folded;
     // open, the panel carries its own.
     let trailing = if s.side_shown() { trailing } else { Some(row().gap(4.0).center_y().children(trailing).child(side::toggle(t, false))) };
+    // Same rim and float as the composer's "/" menu (`command-menu`), but the page fill stays `background`.
     let panel = shadows(
         col()
             .key("panel")
@@ -222,10 +230,11 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             .h_full()
             .radius(10.0)
             .fill(t.background)
+            .border(1.0, t.border)
             .clip_rounded(10.0)
             .child(shell::header(s, t, leading, trailing))
             .child(col().w_full().grow(1.0).min_h(0.0).child(content)),
-        &t.panel_shadow,
+        &t.control_shadow,
     );
     // The right panel: the artifact or helper and a browser, as tabs. Its share
     // is dragged from its left edge as the sidebar's width is; widened, it
@@ -233,18 +242,18 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     let wide = s.side_shown() && s.side.wide;
     // Widened with the sidebar folded, the panel reaches the window's left edge:
     // its tabs start past the traffic lights and the sidebar's buttons, 12
-    // points after them as the header's breadcrumbs do (the card sits 8 in).
-    let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - 8.0 } else { 10.0 };
+    // points after them as the header's breadcrumbs do (the card sits on the canvas inset).
+    let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - inset } else { 10.0 };
     let side_card = (s.side_shown() && !s.side_panel_duplicates_page()).then(|| side::view(s, t, k, strip_lead));
     let panel = col()
         .key("panel-column")
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .pt(8.0)
-        .pb(8.0)
-        .pr(if side_card.is_some() { 0.0 } else { 8.0 })
-        .pl(if s.sidebar_open || wide { 0.0 } else { 8.0 })
+        .pt(inset)
+        .pb(inset)
+        .pr(if side_card.is_some() { 0.0 } else { inset })
+        .pl(if s.sidebar_open || wide { 0.0 } else { inset })
         .opacity(if wide { 0.0 } else { 1.0 })
         .child(panel);
     // The rows around the panel are always there, so opening a card beside it
@@ -280,11 +289,11 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .min_w(w)
                 .motion(SPLIT)
                 .h_full()
-                .pt(8.0)
-                .pb(8.0)
-                // 4 points from the page beside it: the two read as one surface, split.
-                .pl(if wide && !s.sidebar_open { 8.0 } else if wide { 0.0 } else { 4.0 })
-                .pr(8.0)
+                .pt(inset)
+                .pb(inset)
+                // A strip of canvas between the main panel and the right card.
+                .pl(if wide && !s.sidebar_open { inset } else if wide { 0.0 } else { 4.0 })
+                .pr(inset)
                 .child(card)
                 .children((!wide).then(|| agent::side_edge("side"))),
         );

@@ -288,6 +288,8 @@ export const PrepareExecution = Schema.Struct({
   rationale: Text(2000),
   siteFindingId: Schema.NullOr(Schema.UUID),
   idempotencyKey: Schema.UUID,
+  /** The wrong AI answer (issue claim) this change fixes: its merge and live page record the fix and re-check the answer. */
+  claimId: Schema.optional(Schema.NullOr(Schema.UUID)),
 })
 export type PrepareExecution = typeof PrepareExecution.Type
 

@@ -4,7 +4,7 @@
 //! pages, then its chats, so nothing is behind a second set of tabs. Surfaces
 //! and tokens are the web's (`components/app-shell.tsx`).
 
-use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, TextStyle, col, el, row};
+use rune::{Align, Cursor, El, ScrollSpec, Side, Spring, col, el, row, text_input};
 
 use crate::api::ChatSummary;
 use crate::format;
@@ -15,6 +15,8 @@ use crate::theme::{Theme, shadows, type_};
 use crate::ui::widgets::{CONTROL, account_tile, count_badge, ico, icon_button, label, track_hover};
 
 pub const RAIL_WIDTH: f32 = 52.0;
+/// Gap between the sidebar-coloured canvas and the inset content panel on every exposed edge.
+pub const CANVAS_INSET: f32 = 10.0;
 /// Room above the business switcher for the traffic lights (matches their inset).
 pub const TITLEBAR: f32 = 48.0;
 /// macOS traffic lights: same inset from the window's top and left edges.
@@ -122,11 +124,12 @@ pub fn sidebar(s: &App, t: &Theme) -> El {
             .cursor(Cursor::Pointer)
             .hover(t.hover_tint)
             .motion(CONTROL)
-            .on_press(|s: &mut App| {
+            .on_press_tx(|s: &mut App, tx| {
                 if s.business_picker.is_some() {
                     s.close_business_picker();
                 } else {
                     s.open_business_picker();
+                    tx.focus("business-picker-search", false);
                 }
             });
         if open {
@@ -808,338 +811,201 @@ pub fn header(s: &App, t: &Theme, leading_inset: f32, trailing: Option<El>) -> E
     h
 }
 
-/// Moves the business deck one card per notch of scrolling, sideways or up and down.
-fn business_picker_wheel(s: &mut App, e: rune::WheelEvent, tx: &mut rune::Tx) -> bool {
-    if e.mods.cmd {
-        return false;
-    }
-    let count = s.picker_cards().len();
-    let Some(picker) = s.business_picker.as_mut() else {
-        return false;
-    };
-    const NOTCH: f32 = 40.0;
-    // A trackpad swipes sideways; a mouse wheel only turns up and down.
-    picker.scroll += if e.dx.abs() > e.dy.abs() { e.dx } else { e.dy };
-    let before = picker.focus;
-    while picker.scroll >= NOTCH {
-        picker.scroll -= NOTCH;
-        picker.focus = picker.focus.saturating_sub(1);
-    }
-    while picker.scroll <= -NOTCH {
-        picker.scroll += NOTCH;
-        picker.focus = (picker.focus + 1).min(count.saturating_sub(1));
-    }
-    if picker.focus != before {
-        crate::tick::detent();
-        tx.instant();
-    }
-    true
+fn picker_entries(s: &App) -> Vec<(usize, crate::state::PickerCard)> {
+    let q = s.business_picker.as_ref().map(|p| p.query.text.trim().to_lowercase()).unwrap_or_default();
+    s.picker_cards()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, c)| q.is_empty() || c.name.to_lowercase().contains(&q))
+        .collect()
 }
 
-/// How far a drag has to travel to bring the next card to the front.
-const DECK_STEP: f32 = 120.0;
-
-/// Dragging the deck with the pointer or a trackpad: the cards follow, and each
-/// `DECK_STEP` of travel brings the next one to the front; let go and they settle.
-fn business_picker_drag(s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx) {
-    let count = s.picker_cards().len();
-    let z = s.zoom().max(0.1);
-    let Some(p) = s.business_picker.as_mut() else { return };
-    match d.phase {
-        rune::Phase::Down => {
-            p.drag = 0.0;
-            p.drag_spent = 0.0;
-        }
-        rune::Phase::Move => {
-            let travel = d.dx / z;
-            let mut left = travel - p.drag_spent;
-            while left <= -DECK_STEP / 2.0 && p.focus + 1 < count {
-                p.focus += 1;
-                p.drag_spent -= DECK_STEP;
-                left += DECK_STEP;
-                crate::tick::detent();
-            }
-            while left >= DECK_STEP / 2.0 && p.focus > 0 {
-                p.focus -= 1;
-                p.drag_spent += DECK_STEP;
-                left -= DECK_STEP;
-                crate::tick::detent();
-            }
-            // Past either end the deck only gives a little.
-            let at_end = (left < 0.0 && p.focus + 1 >= count) || (left > 0.0 && p.focus == 0);
-            p.drag = if at_end { left * 0.3 } else { left };
-            tx.instant();
-        }
-        rune::Phase::Up => {
-            p.drag = 0.0;
-            p.drag_spent = 0.0;
-            tx.instant();
-        }
-    }
-}
-
-const DECK_W: f32 = 280.0;
-const DECK_H: f32 = 400.0;
-
-/// The four tones of a card's metal, light to dark, and whether it is a light
-/// metal that needs dark writing. The deck deals them in turn, so cards side by
-/// side never share one: black, the brand's blue, emerald, pearl white, and the
-/// business's own tile colour.
-fn deck_metal(t: &Theme, name: &str, index: usize) -> ([rune::Color; 4], bool) {
-    use crate::theme::hex;
-    use rune::Color;
-    match index % 5 {
-        0 => ([hex("#9da1ab"), hex("#3c3f47"), hex("#16171b"), hex("#040405")], false),
-        1 => ([hex("#8aa8ff"), hex("#4a6ff0"), hex("#1d3aa6"), hex("#071660")], false),
-        2 => ([hex("#86ecc6"), hex("#1fae7e"), hex("#0b6b4c"), hex("#03301f")], false),
-        3 => ([hex("#ffffff"), hex("#eef0f4"), hex("#cdd1d9"), hex("#a3a8b3")], true),
-        _ => {
-            let (c, _) = t.mark(name);
-            ([c.mix(Color::WHITE, 0.45), c.mix(Color::WHITE, 0.1), c.mix(Color::BLACK, 0.35), c.mix(Color::BLACK, 0.72)], false)
-        }
-    }
-}
-
-/// One card of the business deck: tall, in its own metal, with a sheen across
-/// it, a lit top edge and a deep shadow. Cards further back are dimmed by a shade over them
-/// and carry no writing.
-fn deck_card(t: &Theme, name: &str, note: Option<&str>, index: usize, count: usize, shade: f32, front: bool) -> El {
-    use rune::{Color, Shadow};
-    let (metal, pale) = deck_metal(t, name, index);
-    let ink = if pale { crate::theme::hex("#15171c") } else { Color::WHITE };
-    let quiet = ink.alpha(if pale { 0.55 } else { 0.66 });
-    let (band, angle): (f32, f32) = (0.42, 1.9);
-    let mut card = col()
-        .size(DECK_W, DECK_H)
-        .padding(22.0)
-        .radius(26.0)
-        .fill(metal[1])
-        .linear_gradient(2.35, [(0.0, metal[0]), (0.3, metal[1]), (0.66, metal[2]), (1.0, metal[3])])
-        .border(1.0, if pale { Color::BLACK.alpha(0.1) } else { Color::WHITE.alpha(0.2) })
-        .box_shadow(Shadow { x: 0.0, y: 24.0, blur: 48.0, spread: -8.0, color: Color::BLACK.alpha(if t.dark { 0.6 } else { 0.3 }), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 10.0, spread: 0.0, color: metal[3].alpha(0.35), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 1.5, blur: 1.0, spread: 0.0, color: Color::WHITE.alpha(0.45), inset: true })
-        .box_shadow(Shadow { x: 0.0, y: -2.0, blur: 6.0, spread: 0.0, color: Color::BLACK.alpha(0.25), inset: true })
-        .clip_rounded(26.0)
-        // The sheen: a band of light across the card.
+/// One business as the app's other lists draw a row: its name and a quiet note.
+fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, current: bool, on: bool) -> El {
+    row()
+        .w_full()
+        .min_h(44.0)
+        .px(10.0)
+        .gap(12.0)
+        .radius(6.0)
+        .center_y()
         .child(
-            el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .linear_gradient(angle, [
-                    (0.0, Color::WHITE.alpha(0.0)),
-                    ((band - 0.14).max(0.0), Color::WHITE.alpha(0.0)),
-                    (band, Color::WHITE.alpha(0.2)),
-                    ((band + 0.14).min(1.0), Color::WHITE.alpha(0.0)),
-                    (1.0, Color::WHITE.alpha(0.0)),
-                ])
-                .a11y_hidden(),
-        );
-    // Only the front card carries writing; the ones behind show their metal.
-    if front {
-        card = card
-            .child(row().w_full().justify_center().child(label("BUSINESS", TextStyle::new(11.0, 600.0).lh(14.0), quiet)))
-            .child(
-                col().w_full().grow(1.0).min_h(0.0).items_center().justify_center().gap(8.0)
-                    .child(label(name.to_string(), TextStyle::new(26.0, 700.0).lh(30.0), ink).wrap().max_w(DECK_W - 44.0))
-                    .children(note.map(|n| label(n.to_string(), TextStyle::new(13.0, 500.0).lh(16.0), quiet))),
-            )
-            .child(
-                row().w_full().center_y()
-                    .child(label(format!("{:02}", index + 1), type_::XS.mono(), quiet))
-                    .child(el().grow(1.0))
-                    .child(label(format!("of {:02}", count), type_::XS.mono(), quiet)),
-            );
-    }
-    if shade > 0.0 {
-        card = card.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK.alpha(shade)).a11y_hidden());
-    }
-    card
+            col().grow(1.0).min_w(0.0)
+                .child(label(card.name.clone(), type_::SM_MEDIUM, t.foreground).truncate())
+                .children(note.map(|n| label(n.to_string(), type_::XS, t.muted_foreground).truncate())),
+        )
+        .children(current.then(|| ico(&icons::CHECK, 14.0, t.muted_foreground)))
+        // The ↵ mark is always there, shown only on the highlighted row, so nothing shifts.
+        .child(row().size(14.0, 14.0).center().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(ico(&icons::CORNER_DOWN_LEFT, 14.0, t.muted_foreground)))
 }
 
-/// A round arrow beside the deck.
-fn deck_arrow(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, enabled: bool, step: i32) -> El {
-    let hk = format!("biz:{key}");
-    let mut b = row()
-        .key(key.to_string())
-        .size(40.0, 40.0)
-        .radius(20.0)
-        .center()
-        .fill(t.card)
-        .border(1.0, t.border)
-        .role("button")
-        .label(name.to_string())
-        .motion(CONTROL)
-        .child(ico(icon, 18.0, if enabled { t.foreground } else { t.muted_foreground.alpha(0.4) }));
-    if enabled {
-        b = b
-            .cursor(Cursor::Pointer)
-            .hover(t.accent)
-            .on_hover_change(track_hover(hk))
-            .on_press_tx(move |s: &mut App, tx| {
-                tx.instant();
-                let count = s.picker_cards().len();
-                if let Some(p) = &mut s.business_picker {
-                    let next = (p.focus as i32 + step).clamp(0, count.saturating_sub(1) as i32) as usize;
-                    if next != p.focus {
-                        p.focus = next;
-                        crate::tick::detent();
-                    }
-                }
-            });
-    }
-    shadows(b, &t.control_shadow)
+fn picker_kbd(t: &Theme, k: &str) -> El {
+    row().min_w(18.0).h(18.0).px(4.0).radius(4.0).center().fill(t.accent).border(1.0, t.border).child(label(k.to_string(), type_::XS2.lh(14.0), t.muted_foreground))
 }
 
-/// The business picker: the businesses as a deck of cards in the content panel,
-/// the one in focus upright in front and the rest tucked behind it to either
-/// side. Opened from the sidebar it switches business; from the composer's folder
-/// chip it starts a chat (with a general chat as the last card). Drag or swipe
-/// the deck, scroll, use the arrow keys or the round arrows to move through it;
-/// pressing the front card, or Return, picks it, and pressing a card behind
-/// brings it to the front.
+/// The businesses as a list in a Find-style floating panel.
 pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut Vec<El>) {
     let picker = s.business_picker.as_ref().expect("picker open");
     let close = |s: &mut App| s.close_business_picker();
-    let cards = s.picker_cards();
-    let count = cards.len();
-    let focus = picker.focus.min(count.saturating_sub(1));
     let chat = picker.mode == crate::state::PickerMode::Chat;
+    let entries = picker_entries(s);
+    let count = entries.len();
+    let focus = if count == 0 { 0 } else { picker.focus.min(count - 1) };
 
-    const SHOWN: i32 = 2;
-    const PEEK: f32 = 16.0;
-    let z = s.zoom().max(0.1);
-    let window_w = if s.window.0 > 0.0 { s.window.0 / z } else { 1280.0 };
-    let estimate = (window_w - if s.sidebar_open { s.prefs.sidebar() } else { 8.0 } - 8.0).max(DECK_W);
-    let panel_w = if picker.width > 0.0 { picker.width } else { estimate };
-    let mid = panel_w / 2.0 + picker.drag;
-    let row_h = DECK_H + 80.0;
-    let top = 30.0;
-    let dragging = picker.drag != 0.0;
-
-    let mut deck = el()
-        .key("business-picker-carousel")
+    let input = text_input(&picker.query, type_::SM)
+        .key("business-picker-search")
+        .placeholder("Search businesses", t.muted_foreground)
+        .label(if chat { "Choose what to chat about" } else { "Switch business" })
         .w_full()
-        .h(row_h)
-        .on_layout(|s: &mut App, r: [f32; 4]| {
-            if let Some(p) = &mut s.business_picker {
-                if (p.width - r[2]).abs() > 0.5 {
-                    p.width = r[2];
-                }
+        .color(t.foreground)
+        .on_edit(|s: &mut App| {
+            if let Some(p) = s.business_picker.as_mut() {
+                p.focus = 0;
+            }
+            &mut s.business_picker.as_mut().expect("picker open").query
+        })
+        .on_submit(|s: &mut App, _tx| {
+            let list = picker_entries(s);
+            if let Some(&(idx, _)) = list.get(s.business_picker.as_ref().map(|p| p.focus).unwrap_or(0)) {
+                s.pick_card(idx);
             }
         });
-    if cards.is_empty() {
-        deck = deck.child(col().w_full().h_full().center().child(label("No businesses yet. Set one up on the web.", type_::SM, t.muted_foreground)));
+    let field_hovered = s.row_hover.as_deref() == Some("business-picker:search");
+    let field = shadows(
+        crate::ui::widgets::highlight(
+            t,
+            row()
+                .key("business-picker-field")
+                .w_full()
+                .h(44.0)
+                .px(12.0)
+                .gap(10.0)
+                .radius(10.0)
+                .center_y()
+                .border(1.0, t.border)
+                .on_hover_change(track_hover("business-picker:search".into()))
+                .fill(if field_hovered { t.accent } else { t.popover })
+                .child(ico(&icons::SEARCH, 16.0, t.muted_foreground))
+                .child(col().grow(1.0).min_w(0.0).child(input))
+                .child(picker_kbd(t, "Esc")),
+            field_hovered,
+            false,
+        ),
+        &t.float_shadow,
+    );
+
+    let mut body = col().key("business-picker-list").w_full().padding(6.0).gap(2.0);
+    if entries.is_empty() {
+        body = body.child(label("No matching businesses.", type_::SM, t.muted_foreground).py(24.0));
     }
-    // Furthest cards first, so the front card is drawn last, on top.
-    let mut order: Vec<usize> = (0..count).filter(|i| (*i as i32 - focus as i32).abs() <= SHOWN).collect();
-    order.sort_by_key(|i| std::cmp::Reverse((*i as i32 - focus as i32).abs()));
-    for i in order {
-        let card = &cards[i];
-        let off = i as i32 - focus as i32;
-        let depth = off.unsigned_abs() as f32;
-        let side = off.signum() as f32;
-        let front = off == 0;
+    for (list_i, &(card_i, ref card)) in entries.iter().enumerate() {
+        let on = list_i == focus;
         let current = if chat {
-            match &card.id { Some(id) => !s.general && s.active.as_deref() == Some(id.as_str()), None => s.general }
+            match &card.id {
+                Some(id) => !s.general && s.active.as_deref() == Some(id.as_str()),
+                None => s.general,
+            }
         } else {
             card.id.as_deref() == s.active.as_deref()
         };
-        let note = if current { Some(if chat { "Chatting about this now" } else { "Current business" }) } else if card.sample { Some("Sample data") } else { None };
-        let face = deck_card(t, &card.name, note, i, count, (0.18 * depth).min(0.45), front);
+        let note = if current {
+            Some(if chat { "Chatting about this now" } else { "Current business" })
+        } else if card.sample {
+            Some("Sample data")
+        } else {
+            None
+        };
         let key = card.id.clone().unwrap_or_else(|| "general".into());
-        let slot = el()
+        let slot = business_row(t, card, note, current, on)
             .key(format!("business-card-{key}"))
-            .absolute(mid - DECK_W / 2.0 + side * (depth * PEEK + if front { 0.0 } else { 10.0 }), top)
-            .size(DECK_W, DECK_H)
-            .scale(1.0 - 0.05 * depth)
-            .rotate(side * 0.022 * depth)
-            .role("button")
+            .role("option")
             .label(card.name.clone())
-            .checked(current)
+            .checked(on)
             .cursor(Cursor::Pointer)
             .on_press_tx(move |s: &mut App, tx| {
                 tx.instant();
-                if front {
-                    s.pick_card(i);
-                } else if let Some(p) = &mut s.business_picker {
-                    p.focus = i;
-                    crate::tick::detent();
-                }
+                s.pick_card(card_i);
             })
-            .child(face);
-        deck = deck.child(slot);
-    }
-    if count > 1 {
-        // Each arrow sits just past the cards tucked on its side.
-        let reach = |n: usize| DECK_W / 2.0 + if n > 0 { SHOWN.min(n as i32) as f32 * PEEK + 10.0 } else { 0.0 } + 32.0;
-        let (left, right) = (reach(focus), reach(count - 1 - focus));
-        let base = panel_w / 2.0;
-        deck = deck
-            .child(el().key("business-prev-slot").absolute(base - left - 40.0, top + DECK_H / 2.0 - 20.0).child(deck_arrow(t, "business-prev", &icons::CHEVRON_LEFT, "Previous", focus > 0, -1)))
-            .child(el().key("business-next-slot").absolute(base + right, top + DECK_H / 2.0 - 20.0).child(deck_arrow(t, "business-next", &icons::CHEVRON_RIGHT, "Next", focus + 1 < count, 1)));
+            .on_hover_change(move |s: &mut App, inside, _tx| {
+                if inside && let Some(p) = s.business_picker.as_mut() {
+                    p.focus = list_i;
+                }
+            });
+        body = body.child(crate::ui::widgets::highlight(t, slot, on, false));
     }
 
-    let panel = deck
+    let footer = row()
+        .w_full()
+        .px(16.0)
+        .py(8.0)
+        .gap(12.0)
+        .center_y()
+        .border_sides([1.0, 0.0, 0.0, 0.0], t.border)
+        .child(row().gap(4.0).center_y().child(picker_kbd(t, "↑")).child(picker_kbd(t, "↓")).child(label("move", type_::XS11, t.muted_foreground)))
+        .child(row().gap(4.0).center_y().child(picker_kbd(t, "↵")).child(label("choose", type_::XS11, t.muted_foreground)))
+        .child(el().grow(1.0));
+
+    let list_card = shadows(
+        col()
+            .w_full()
+            .radius(10.0)
+            .fill(t.popover)
+            .border(1.0, t.border)
+            .clip_rounded(10.0)
+            .child(col().key("business-picker-scroll").w_full().max_h(448.0).child(body).scroll(ScrollSpec { stick_bottom: false }))
+            .child(footer),
+        &t.float_shadow,
+    );
+
+    let panel = col()
+        .key("business-picker-dialog")
         .role("dialog")
         .label(if chat { "Choose what to chat about" } else { "Switch business" })
+        .w_full()
+        .max_w(672.0)
+        .gap(6.0)
         .focusable(true)
-        .cursor(if dragging { Cursor::Grabbing } else { Cursor::Default })
-        .on_drag(business_picker_drag)
-        .on_wheel(business_picker_wheel)
-        .on_key(|s: &mut App, ev: &rune::KeyEvent, tx: &mut rune::Tx| {
-            tx.instant();
-            let count = s.picker_cards().len();
+        .focus_group()
+        .on_key(|s: &mut App, ev: &rune::KeyEvent, _tx| {
+            let list = picker_entries(s);
+            let n = list.len();
+            if n == 0 {
+                return false;
+            }
             let Some(p) = s.business_picker.as_mut() else { return false };
-            let before = p.focus;
+            let before = p.focus.min(n - 1);
             match ev.key {
-                rune::Key::Left | rune::Key::Up => p.focus = p.focus.saturating_sub(1),
-                rune::Key::Right | rune::Key::Down => p.focus = (p.focus + 1).min(count.saturating_sub(1)),
+                rune::Key::Up => p.focus = before.saturating_sub(1),
+                rune::Key::Down => p.focus = (before + 1).min(n - 1),
                 rune::Key::Enter => {
-                    let focus = p.focus;
-                    s.pick_card(focus);
+                    if let Some(&(idx, _)) = list.get(before) {
+                        s.pick_card(idx);
+                    }
                     return true;
                 }
                 _ => return false,
             }
-            if p.focus != before {
+            if p.focus.min(n - 1) != before {
                 crate::tick::detent();
             }
             true
         })
+        .child(field)
+        .child(list_card)
         .token_motion(k.motion.overlay)
         .modal(true, close)
         .modal_click_outside(true);
 
-    // Inside the content panel, clipped to its rounded card, so the ring comes in
-    // from the panel's left edge and never crosses the sidebar. The layer repeats
-    // the shell's layout (the sidebar's width, then the card's 8-point inset)
-    // instead of reading the panel's rectangle back.
     layer.push(
-        row()
+        col()
             .key("business-picker-layer")
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .children(s.sidebar_open.then(|| el().w(s.prefs.sidebar()).h_full()))
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .h_full()
-                    .pt(8.0)
-                    .pb(8.0)
-                    .pr(8.0)
-                    .pl(if s.sidebar_open { 0.0 } else { 8.0 })
-                    .child(
-                        col()
-                            .key("business-picker-area")
-                            .w_full()
-                            .h_full()
-                            .clip_rounded(10.0)
-                            .justify_center()
-                            .items_center()
-                            .child(panel),
-                    ),
-            ),
+            .pt(96.0)
+            .px(12.0)
+            .items_center()
+            .child(panel),
     );
 }
 

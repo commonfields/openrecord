@@ -80,7 +80,7 @@ export const prepareConnectedExecution = (session: Session, businessId: string, 
     const patchSha256 = executionPatchSha256({ actionKind: input.actionKind, owner: target.owner, repository: target.repository, baseBranch: target.baseBranch, baseCommitSha, filePath: input.filePath, liveUrl: input.liveUrl, beforeSha256, afterSha256 })
     const diff = unifiedDiff(input.filePath, diffLines(file.content, after))
     const plan = { targetId: target.id, actionKind: input.actionKind, actionValue: edit.kind === "REMOVE_NOINDEX_META" ? null : input.value ?? null, filePath: input.filePath, liveUrl: input.liveUrl, siteFindingId: input.siteFindingId, baseBranch: target.baseBranch, baseCommitSha,
-      baseBlobSha: file.blobSha, afterBlobSha: gitBlobSha(after), beforeSha256, afterSha256, patchSha256, afterContent: after, diff, rationale: input.rationale.trim(), idempotencyKey: input.idempotencyKey } as const
+      baseBlobSha: file.blobSha, afterBlobSha: gitBlobSha(after), beforeSha256, afterSha256, patchSha256, afterContent: after, diff, rationale: input.rationale.trim(), idempotencyKey: input.idempotencyKey, claimId: input.claimId ?? null } as const
     return yield* repo.prepare(session, businessId, opportunityId, fingerprint, plan, actor).pipe(
       // Two identical requests racing: the loser returns the winner's operation.
       // (The page guard can refuse the loser first, so that reason is a replay candidate too.)

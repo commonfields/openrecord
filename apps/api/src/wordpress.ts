@@ -16,6 +16,7 @@
 //   * the public page is fetched to see the change live (caches can delay it);
 //   * the previous values are kept, so a person can undo in one click (a new
 //     post goes back to draft, never deleted).
+import { followUpFix } from "./issue-fix.js"
 import { HttpRouter, HttpServerResponse } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
 import { Context, Data, Effect, JSONSchema, Option, Schema } from "effect"
@@ -108,6 +109,8 @@ export interface WordPressChange {
   readonly createdAt: string; readonly decidedAt: string | null
   /** When OpenRecord recorded the verified publication; set by the publish statement only. */
   readonly publishedAt: string | null
+  /** The wrong AI answer this change was made to fix, if any. */
+  readonly claimId: string | null
 }
 const toChange = (r: Record<string, unknown>): WordPressChange => ({
   id: String(r["id"]), kind: r["kind"] as ChangeKind, postType: r["post_type"] === "posts" ? "posts" : "pages",
@@ -118,6 +121,7 @@ const toChange = (r: Record<string, unknown>): WordPressChange => ({
   liveCheck: (r["live_check"] as WordPressChange["liveCheck"]) ?? null,
   createdAt: new Date(r["created_at"] as string).toISOString(), decidedAt: r["decided_at"] ? new Date(r["decided_at"] as string).toISOString() : null,
   publishedAt: r["published_at"] ? new Date(r["published_at"] as string).toISOString() : null,
+  claimId: (r["claim_id"] as string | null) ?? null,
 })
 export const listChanges = (accountId: string, businessId: string, status: string | null) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -143,6 +147,8 @@ export const Prepare = Schema.Struct({
   seoDescription: Schema.optional(Schema.String.pipe(Schema.maxLength(320))),
   faq: Schema.optional(Schema.Array(FaqItem).pipe(Schema.minItems(1), Schema.maxItems(10))),
   rationale: Schema.String.pipe(Schema.maxLength(2000), Schema.filter(s => s.trim().length > 0)),
+  /** The wrong AI answer (issue claim id) this change is meant to fix, if any. */
+  claimId: Schema.optional(Schema.UUID),
 })
 /** Prepares one exact change for a person to approve. Nothing is written to WordPress. */
 export const prepareChange = (scope: { accountId: string; userId: string; businessId: string }, input: typeof Prepare.Type, actor: "ASSISTANT" | "OPERATOR") => guarded(scope.businessId, Effect.gen(function*() {
@@ -153,12 +159,13 @@ export const prepareChange = (scope: { accountId: string; userId: string; busine
   if ("refused" in plan) return yield* refuse(plan.refused === "SEO_PLUGIN_MISSING" ? "SeoPluginMissing" : plan.refused === "NOTHING_TO_CHANGE" ? "NothingToChange" : "InvalidRequest")
   const key = changeKey(["wordpress-change-v1", scope.businessId, scope.userId, input.kind, input.postType, input.postId ?? null, plan.after, current?.modified ?? null])
   const sql = yield* SqlClient.SqlClient
+  if (input.claimId && !(yield* sql`SELECT 1 FROM candidate_claims WHERE id = ${input.claimId} AND business_id = ${scope.businessId}`)[0]) return yield* refuse("IssueNotFound")
   const rows = yield* sql`INSERT INTO wordpress_changes(business_id, account_id, kind, post_type, post_id, target_title, target_link, target_modified,
-      before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key, objective_goal_id)
+      before_values, after_values, rationale, status, proposed_by, created_by_user_id, request_key, objective_goal_id, claim_id)
     VALUES (${scope.businessId}, ${scope.accountId}, ${input.kind}, ${input.postType}, ${input.postId ?? null},
       ${(current?.title ?? input.title ?? "").slice(0, 300)}, ${current?.link ?? null}, ${current?.modified ?? null},
       ${JSON.stringify(plan.before)}::jsonb, ${JSON.stringify(plan.after)}::jsonb, ${input.rationale.trim()}, 'PROPOSED', ${actor}, ${scope.userId}, ${key},
-      (SELECT primary_goal_id FROM growth_profiles WHERE business_id = ${scope.businessId}))
+      (SELECT primary_goal_id FROM growth_profiles WHERE business_id = ${scope.businessId}), ${input.claimId ?? null})
     ON CONFLICT (business_id, request_key) DO UPDATE SET request_key = EXCLUDED.request_key RETURNING *`
   return toChange(rows[0]!)
 }))
@@ -222,7 +229,7 @@ export const undoChange = (session: Session, businessId: string, id: string) => 
 const Read = Schema.Struct({ postType: Schema.Literal("pages", "posts"), search: Schema.optional(Schema.String.pipe(Schema.maxLength(100))), postId: Schema.optional(Schema.Int.pipe(Schema.positive())) })
 export const wordpressDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "read_wordpress_content", description: "Read the business's connected WordPress site: list published pages or posts (optionally matching search), or read one by postId with its current title, body (block-editor markup) and SEO title and description. Use it before preparing a change; never guess IDs.", parametersJsonSchema: JSONSchema.make(Read) },
-  { name: "prepare_wordpress_change", description: "Prepare one exact change to the connected WordPress site for a person to approve; nothing is written until they approve it, then OpenRecord publishes it and checks it live. kind: UPDATE_COPY (new title and/or full body for postId; keep the existing block markup and change only what is needed), SET_SEO (seoTitle about 50 to 60 characters, seoDescription about 140 to 160; needs Yoast or Rank Math), ADD_FAQ (faq: up to 10 question and answer pairs appended to postId as an FAQ section with matching structured data), CREATE_POST (a new published post or page: title and body, no postId). Use only facts from approved business truth or the page itself. A page edited in WordPress after you prepare is refused at approval; prepare it again.", parametersJsonSchema: JSONSchema.make(Prepare) },
+  { name: "prepare_wordpress_change", description: "Prepare one exact change to the connected WordPress site for a person to approve; nothing is written until they approve it, then OpenRecord publishes it and checks it live. kind: UPDATE_COPY (new title and/or full body for postId; keep the existing block markup and change only what is needed), SET_SEO (seoTitle about 50 to 60 characters, seoDescription about 140 to 160; needs Yoast or Rank Math), ADD_FAQ (faq: up to 10 question and answer pairs appended to postId as an FAQ section with matching structured data), CREATE_POST (a new published post or page: title and body, no postId). Use only facts from approved business truth or the page itself. Fixing a wrong AI answer: pass its claimId. A page edited in WordPress after you prepare is refused at approval; prepare it again.", parametersJsonSchema: JSONSchema.make(Prepare) },
 ]
 export const dispatchWordPress = (ctx: ToolContext, name: string, raw: unknown) => Effect.gen(function*() {
   if (!(yield* (yield* BusinessRepository).getScoped(ctx.accountId, ctx.businessId))) return yield* Effect.fail(new AgentNotInScope())
@@ -299,8 +306,15 @@ export const wordpressApi = (withSession: WithSession) => {
       if (!change) return yield* refuse("ChangeNotFound")
       return yield* json(200, { change }, PRIVATE)
     }))),
-    HttpRouter.post(`${base}/changes/:changeId/approve`, business((session, businessId, params) =>
-      Effect.flatMap(publishChange(session, businessId, params["changeId"]!), r => json(200, r, PRIVATE)))),
+    HttpRouter.post(`${base}/changes/:changeId/approve`, business((session, businessId, params) => Effect.gen(function*() {
+      const published = yield* publishChange(session, businessId, params["changeId"]!)
+      const c = published.change
+      // A change made to fix a wrong AI answer records that fix and queues its re-check.
+      const fix = c && c.status === "PUBLISHED"
+        ? yield* followUpFix({ businessId, claimId: c.claimId, userId: session.userId, kind: c.kind, link: c.publishedLink, title: c.targetTitle, rationale: c.rationale, publishedAt: c.publishedAt })
+        : null
+      return yield* json(200, { ...published, fix }, PRIVATE)
+    }))),
     HttpRouter.post(`${base}/changes/:changeId/reject`, business((session, businessId, params) => Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient
       const done = yield* sql`UPDATE wordpress_changes SET status = 'REJECTED', decided_by_user_id = ${session.userId}, decided_at = now()

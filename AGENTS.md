@@ -90,5 +90,10 @@ Practical notes for running this checkout locally. Architecture lives in
   openrecord_dev`, then `DATABASE_URL=... pnpm db:migrate`, then
   `DATABASE_URL=... pnpm db:seed:demo` (creates the demo login
   `demo@northstar.test` / `password123` plus five demo companies).
+- Integration tests never run against `openrecord_dev`: they write TEST
+  accounts and queued agent work, which a running worker then spends model
+  calls on. The API, worker and db Vitest configs refuse it. Use
+  `scripts/test-db.sh <command>`, which creates a migrated throwaway database,
+  sets `TEST_DATABASE_URL` and `DATABASE_URL`, and drops it afterwards.
 - Do not run `docker system prune` / `docker volume prune` on this machine
   without checking: the volumes above hold the only copies of the dev data.

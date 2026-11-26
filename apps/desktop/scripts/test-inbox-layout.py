@@ -46,8 +46,7 @@ def main():
     assert 'Claude Sonnet 5.5' in texts, 'The sender model is missing'
     assert any(t.startswith('In “Next step for the pricing page') for t in texts), 'The chat it came from is missing'
     assert {'decision-chat', 'approve', 'decline', 'later', 'decision-numbers'} <= set(keys)
-    assert keys['inbox-read-GROWTH_OPPORTUNITY:o1']['label'] == 'Read', 'Visible decision not marked read'
-    assert keys['inbox-read-WORDPRESS_CHANGE:w1']['label'] == 'Unread', 'Unopened decision already read'
+    assert 'inbox-read-GROWTH_OPPORTUNITY:o1' not in keys, 'Inbox heading dots should not render'
     short = keys['decision-detail-GROWTH_OPPORTUNITY:o1']['rect']
     keys, _ = render('long', scene='inbox-long')
     assert abs(keys['decision-detail-GROWTH_OPPORTUNITY:o1']['rect'][3] - short[3]) < 1, 'A long decision changed the card size'
@@ -59,7 +58,6 @@ def main():
     tall = '1280x1800'
     keys, _ = render('selection', [{'t': .3, 'key': 'decision-WORDPRESS_CHANGE:w1'}], size=tall)
     assert 'decision-detail-WORDPRESS_CHANGE:w1' in keys, 'Selected decision did not open'
-    assert keys['inbox-read-WORDPRESS_CHANGE:w1']['label'] == 'Read', 'Opening did not mark it read'
     keys, _ = render('later', [{'t': .3, 'key': 'later'}], size=tall)
     assert 'decision-detail-WORDPRESS_CHANGE:w1' in keys, 'Later did not open the next decision'
     keys, nodes = render('work', [{'t': .3, 'key': 'work-1'}], size=tall)

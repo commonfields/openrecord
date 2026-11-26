@@ -112,13 +112,14 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
             .min_h(0.0)
             .radius(10.0)
             .fill(t.background)
+            .border(1.0, t.border)
             .clip_rounded(10.0)
             .role("complementary")
             .label("Side panel")
             .child(strip(s, t, &tab, lead))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body))
             .children(chat_box(s, t, &tab)),
-        &t.panel_shadow,
+        &t.control_shadow,
     )
 }
 
@@ -394,8 +395,22 @@ fn changes(s: &App, t: &Theme) -> El {
                     crate::changes::Line::Removed(_) => (a, r + 1),
                     _ => (a, r),
                 });
-                let head = if *from == 0 { format!("v{to}, the first version") } else { format!("v{from} to v{to}: {added} added, {removed} removed") };
-                let mut out = col().w_full().gap(1.0).px(12.0).pb(16.0).child(label(head, type_::XS_MEDIUM, t.muted_foreground).py(8.0));
+                let head = if *from == 0 {
+                    col().w_full().py(8.0).child(label(format!("v{to}, the first version"), type_::XS_MEDIUM, t.muted_foreground))
+                } else {
+                    row()
+                        .w_full()
+                        .py(8.0)
+                        .gap(4.0)
+                        .center_y()
+                        .flex_wrap()
+                        .child(label(format!("v{from} to v{to}:"), type_::XS_MEDIUM, t.muted_foreground))
+                        .child(label(format!("{added}"), type_::XS_MEDIUM.features("'tnum' 1"), t.supported))
+                        .child(label("added,", type_::XS_MEDIUM, t.muted_foreground))
+                        .child(label(format!("{removed}"), type_::XS_MEDIUM.features("'tnum' 1"), t.wrong))
+                        .child(label("removed", type_::XS_MEDIUM, t.muted_foreground))
+                };
+                let mut out = col().w_full().gap(1.0).px(12.0).pb(16.0).child(head);
                 // Unchanged runs fold to their first and last line, so the changes stand out.
                 let mut i = 0;
                 while i < lines.len() {

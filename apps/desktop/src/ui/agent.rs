@@ -39,7 +39,8 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
     let column = if side { f32::MAX } else { s.prefs.chat_width.max() };
     let business = s.active_business().map(|b| b.name.clone()).unwrap_or_else(|| "this business".into());
     // Beside Analytics the native transcript is off (`ui::view`), so this one is drawn.
-    if s.prefs.words_webview && !side && !s.side_shows_overview() {
+    // Words WKWebView needs a non-zero layout rect; native Rune transcript is the reliable default.
+    if s.prefs.words_webview && s.words_transcript_webview() && !side && !s.side_shows_overview() {
         return words_webview(s, t, k, column, &business);
     }
     let messages = s.transcript();
@@ -47,7 +48,15 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
     // Messages land where they belong: no rise and no glide, so opening a chat
     // or starting a turn never slides the column up the window. Another chat
     // crossfades in over the last one instead of blanking and popping.
-    let shown = s.conversation.ready().map(|c| c.id.as_str()).unwrap_or("none");
+    let shown = s
+        .chat_id
+        .as_deref()
+        .or_else(|| s.conversation.ready().map(|c| c.id.as_str()))
+        .unwrap_or(if matches!(s.turn, Turn::Working { .. } | Turn::Failed { .. }) {
+            "sending"
+        } else {
+            "none"
+        });
     let turns: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m.role == "user").map(|(i, _)| i).collect();
     let mut list = col()
         .key(format!("{}{shown}", if side { "side-messages-" } else { "messages-" }))
@@ -98,8 +107,7 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
         list = list.child(item);
     }
     match &s.turn {
-        Turn::Working { progress, started, stopping, .. } => {
-            list = list.child(live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping));
+        Turn::Working { progress, .. } => {
             // Questions it left while it carries on, answerable now.
             for b in &progress.blanks {
                 list = list.child(blank_card(s, t, b));
@@ -157,31 +165,31 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(if side { 10.0 } else { 16.0 });
 
-    // Only Home shows the empty start state; a new session opens on its transcript.
-    let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
-    let body = if !side && fresh && (s.home || s.general) {
-        start(s, t, &business)
-    } else {
-        let mut b = col()
-            .key(if side { "side-transcript-body" } else { "transcript-body" })
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .child(transcript);
-        if !side {
-            b = b.children(timeline_rail(s, t, shown, &messages, &turns));
-        }
-        b
-    };
+    let mut body = col()
+        .key(if side { "side-transcript-body" } else { "transcript-body" })
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .child(transcript);
+    if !side {
+        body = body.children(timeline_rail(s, t, shown, &messages, &turns));
+    }
     // A helper opened from here draws beside the panel, as an artifact does (`ui::workspace`).
-    let lit = !side && fresh && (s.home || s.general);
+    let lit = !side
+        && messages.is_empty()
+        && s.chat_id.is_none()
+        && matches!(s.conversation, Load::Idle)
+        && matches!(s.turn, Turn::Idle)
+        && (s.home || s.general);
     let slot = if side { ComposerSlot::Side } else { ComposerSlot::Main };
     col()
         .key(if side { "side-agent-session" } else { "agent" })
         .w_full()
+        .min_w(0.0)
         .h_full()
         .min_h(0.0)
         .children(if lit { window_light(s, t) } else { None })
+        .children(agent_working_status(s, t, k, side, column))
         .child(body)
         .child(composer(s, t, &business, slot, false))
 }
@@ -189,43 +197,43 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
 /// Agent chat with the transcript in `@pierre/words` (WKWebView); composer stays native Rune.
 fn words_webview(s: &App, t: &Theme, k: &Kit, column: f32, business: &str) -> El {
     let messages = s.transcript();
-    let fresh = messages.is_empty() && s.chat_id.is_none() && matches!(s.conversation, Load::Idle) && matches!(s.turn, Turn::Idle);
-    let body = if fresh && (s.home || s.general) {
-        start(s, t, business)
-    } else {
-        let mut stack = col().key("words-stack").w_full().grow(1.0).min_h(0.0);
-        stack = stack.child(
-            col()
-                .key("words-transcript-slot")
-                .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .on_layout(|s: &mut App, rect: [f32; 4]| s.words_rect = Some(rect))
-                .child(el().key("words-slot-spacer").w_full().h_full()),
-        );
-        if matches!(s.turn, Turn::Working { .. }) {
-            if let Turn::Working { progress, started, stopping, .. } = &s.turn {
-                stack = stack.child(
-                    live_trace(s, t, k, progress, started.elapsed().as_millis() as i64, *stopping)
-                        .pin(None, None, Some(8.0), Some(8.0)),
-                );
-            }
-        }
+    // Keep the transcript slot mounted so the Words webview always has a layout rect (never swap it for Home).
+    let stack = col().key("words-stack").w_full().grow(1.0).min_h(0.0).child(
         col()
-            .key("transcript-body")
+            .key("words-transcript-slot")
             .w_full()
             .grow(1.0)
             .min_h(0.0)
-            .items_center()
-            .child(col().w_full().max_w(column).grow(1.0).min_h(0.0).child(stack))
-    };
-    let lit = fresh && (s.home || s.general);
+            .child(el().key("words-slot-spacer").w_full().h_full()),
+    );
+    let body = col()
+        .key("transcript-body")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .on_layout(|s: &mut App, rect: [f32; 4]| s.words_rect = Some(rect))
+        .child(
+            col()
+                .w_full()
+                .max_w(column)
+                .grow(1.0)
+                .min_h(0.0)
+                .h_full()
+                .child(stack.w_full().h_full()),
+        );
+    let lit = messages.is_empty()
+        && s.chat_id.is_none()
+        && matches!(s.conversation, Load::Idle)
+        && matches!(s.turn, Turn::Idle)
+        && (s.home || s.general);
     col()
         .key("agent")
         .w_full()
+        .min_w(0.0)
         .h_full()
         .min_h(0.0)
         .children(if lit { window_light(s, t) } else { None })
+        .children(agent_working_status(s, t, k, false, column))
         .child(body)
         .child(composer(s, t, business, ComposerSlot::Main, false))
 }
@@ -868,6 +876,29 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
+/// Working status and step log at the top of the chat, not above the composer.
+fn agent_working_status(s: &App, t: &Theme, k: &Kit, side: bool, column: f32) -> Option<El> {
+    if side {
+        return None;
+    }
+    let Turn::Working { progress, started, stopping, .. } = &s.turn else {
+        return None;
+    };
+    let ms = started.elapsed().as_millis() as i64;
+    let width = s.prefs.chat_width.max().min(column);
+    Some(
+        col()
+            .key("agent-working-status")
+            .w_full()
+            .min_w(0.0)
+            .pt(12.0)
+            .pb(4.0)
+            .px(24.0)
+            .items_center()
+            .child(live_trace(s, t, k, progress, ms, *stopping).w_full().min_w(0.0).max_w(width)),
+    )
+}
+
 /// A turn still running: the loader turning beside "Thinking" (or "Working"
 /// once a tool runs) and a rolling timer; under it the step under way, which
 /// slides in each time it changes; and the steps already done, folded into one
@@ -1240,9 +1271,11 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
     let side = slot == ComposerSlot::Side;
     let text_state = if side { &s.side.composer } else { &s.composer };
     let working = matches!(s.turn, Turn::Working { .. });
-    let blocked = s.model_unavailable();
+    let blocked = !s.can_send_turn();
     let has_text = !text_state.text.trim().is_empty();
-    let placeholder = if blocked {
+    let placeholder = if blocked && matches!(s.catalog, Load::Loading) {
+        "Loading agent models…"
+    } else if blocked {
         "No agent model is available. Connect one in Settings, Agent"
     } else if working {
         "Add to what the agent is doing"
@@ -1480,10 +1513,7 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
     });
 
     // The web's `space-y-0.5`: queued messages, attached files, the box, then its options.
-    let mut stack = col().w_full().max_w(s.prefs.chat_width.max()).gap(2.0);
-    if !s.queued.is_empty() && !side {
-        stack = stack.child(queued(t, &s.queued));
-    }
+    let mut stack = col().w_full().min_w(0.0).max_w(s.prefs.chat_width.max()).gap(2.0);
     if !s.attachments.is_empty() {
         let mut files = row().gap(6.0).flex_wrap().mb(4.0).label("Attached files");
         for (j, a) in s.attachments.iter().enumerate() {
@@ -1495,15 +1525,32 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         stack = stack.child(label(e.clone(), type_::XS, t.wrong).px(12.0).wrap().live_region(LiveRegion::Polite));
     }
     stack = stack.children(ahead);
-    if !side {
-        if let Some(pills) = composer_pills(s, t) { stack = stack.child(pills); }
+    if !s.queued.is_empty() && !side {
+        stack = stack.child(
+            col()
+                .key("queued-composer-band")
+                .w_full()
+                .gap(4.0)
+                .child(label("Queued follow-ups", type_::XS2.lh(14.0), t.muted_foreground))
+                .child(queued(t, &s.queued)),
+        );
     }
-    // Beside the decisions stack when it would overlap the box, the composer centres in the room left.
-    col().w_full().items_center().pl(24.0).pr(24.0).pb(8.0).child(stack.child(field).child(options))
+    if !side {
+        if let Some(pills) = composer_pills(s, t) {
+            stack = stack.child(pills);
+        }
+    }
+    // Centred up to `chat_width`; still shrinks with the column when the side panel is open.
+    col()
+        .w_full()
+        .min_w(0.0)
+        .px(24.0)
+        .pb(8.0)
+        .items_center()
+        .child(stack.child(field.w_full().min_w(0.0)).child(options.w_full().min_w(0.0)))
 }
 
 fn composer_pills(s: &App, t: &Theme) -> Option<El> {
-    if s.general { return None; }
     let pill = |key: &str, title: String, icon: &'static rune::Icon| {
         row().key(key.to_string()).h(28.0).px(10.0).gap(6.0).radius(14.0).center_y()
             .border(1.0, t.border).fill(t.card).role("button").label(title.clone())
@@ -1523,10 +1570,52 @@ fn composer_pills(s: &App, t: &Theme) -> Option<El> {
     let changes = s.chat_artifacts();
     if !changes.is_empty() {
         count += 1;
-        pills = pills.child(pill("composer-changes", format!("Changes · {}", changes.len()), &icons::GIT_COMPARE)
-            .on_press(|s: &mut App| s.launch(crate::side::Launch::Changes)));
+        let (added, removed) = s.chat_change_totals();
+        let pending = s.artifact_diff_pending.len();
+        let mut chip = row()
+            .key("composer-changes")
+            .h(28.0)
+            .px(10.0)
+            .gap(6.0)
+            .radius(14.0)
+            .center_y()
+            .border(1.0, t.border)
+            .fill(t.card)
+            .role("button")
+            .focusable(true)
+            .cursor(Cursor::Pointer)
+            .hover(t.accent)
+            .child(ico(&icons::GIT_COMPARE, 14.0, t.muted_foreground))
+            .child(label("Changes", type_::XS, t.foreground));
+        let help = if added > 0 || removed > 0 {
+            format!("{added} added, {removed} removed in this chat")
+        } else if pending > 0 {
+            "Counting what changed…".into()
+        } else {
+            format!("{} in this chat", changes.len())
+        };
+        chip = chip.label(help);
+        if added > 0 {
+            chip = chip.child(label(format!("+{added}"), type_::XS.features("'tnum' 1"), t.supported));
+        }
+        if removed > 0 {
+            chip = chip.child(label(format!("−{removed}"), type_::XS.features("'tnum' 1"), t.wrong));
+        } else if added == 0 && removed == 0 && pending == 0 && changes.len() > 1 {
+            chip = chip.child(label(format!("· {}", changes.len()), type_::XS.features("'tnum' 1"), t.muted_foreground));
+        }
+        pills = pills.child(chip.on_press(|s: &mut App| s.launch(crate::side::Launch::Changes)));
     }
-    (count > 0).then_some(pills)
+    if !s.queued.is_empty() {
+        count += 1;
+        let n = s.queued.len();
+        let title = if n == 1 {
+            "Queued follow-up · 1".into()
+        } else {
+            format!("Queued follow-ups · {n}")
+        };
+        pills = pills.child(pill("composer-queued", title, &icons::CORNER_DOWN_RIGHT));
+    }
+  (count > 0).then_some(pills)
 }
 
 /// A file attached to a message: its name and length, removable before sending.

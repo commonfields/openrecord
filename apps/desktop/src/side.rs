@@ -521,7 +521,15 @@ impl App {
     /// front so the agent knows what it is about (an artifact goes with the turn). Queued behind a turn under way.
     pub fn send_side(&mut self, tx: &mut Tx) {
         let text = self.side.composer.text.trim().to_string();
-        if text.is_empty() || self.model_unavailable() {
+        if text.is_empty() {
+            return;
+        }
+        if !self.can_send_turn() {
+            self.send_blocked_notice();
+            return;
+        }
+        if self.chat_scope().is_none() {
+            self.notice = Some("Choose a business to chat about first.".into());
             return;
         }
         let about = match self.side_tab() {

@@ -71,6 +71,7 @@ pub enum Reply {
     Judged { claim: String, verdict: String, result: ApiResult<()> },
     /// An action was recorded for a claim (or the call failed).
     ActionRecorded { claim: String, result: ApiResult<()> },
+    Rechecked { claim: String, result: ApiResult<()> },
     /// A business's agent proposals, for the work pane.
     Proposals(String, ApiResult<Vec<crate::api::Proposal>>),
     /// A helper session opened beside the conversation.
@@ -351,6 +352,17 @@ impl Net {
             if ok {
                 send(Reply::Issues(business.clone(), c.issues(&business)));
                 send(Reply::Overview(business.clone(), c.overview(&business)));
+            }
+        });
+    }
+
+    pub fn recheck(&self, business: String, claim: String, intervention: Option<String>) {
+        self.spawn(move |c, send| {
+            let result = c.recheck(&business, &claim, intervention.as_deref());
+            let ok = result.is_ok();
+            send(Reply::Rechecked { claim: claim.clone(), result });
+            if ok {
+                send(Reply::Answer(business.clone(), claim.clone(), c.answer(&business, &claim)));
             }
         });
     }

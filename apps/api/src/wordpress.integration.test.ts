@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 // The WordPress connector end to end against an in-memory WordPress: connect
 // with a checked application password, the agent reads and prepares changes,
 // a person approves and OpenRecord publishes, verifies and undoes; a page
@@ -9,7 +10,7 @@ import { HttpApp } from "@effect/platform"
 import { Effect, Layer, Redacted } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
-import { AuthRepositoryLive } from "@openrecord/db"
+import { AuthRepositoryLive, ClaimRepositoryLive, InterventionBindingRepositoryLive, InterventionRepositoryLive, ObservationRepositoryLive, ProductReadRepositoryLive, ReobservationIntentRepositoryLive } from "@openrecord/db"
 import { AdsProvider, adsConfigFromEnv } from "@openrecord/ads"
 import type { HttpTransport } from "@openrecord/representation"
 import { RepoLayers, requireSession } from "./router.js"
@@ -73,7 +74,7 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     search: null, render: null, provider: null,
   }
   const config = adsConfigFromEnv({ ADS_PROVIDER_STAND_IN_URL: "http://127.0.0.1:9/", GA4_TOKEN_ENCRYPTION_KEYS: `k1:${Buffer.alloc(32, 7).toString("base64")}` })
-  const repos = Layer.mergeAll(RepoLayers.BusinessRepositoryLive, AuthRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
+  const repos = Layer.mergeAll(RepoLayers.BusinessRepositoryLive, AuthRepositoryLive, ClaimRepositoryLive, InterventionRepositoryLive, InterventionBindingRepositoryLive, ProductReadRepositoryLive, ObservationRepositoryLive, ReobservationIntentRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })))
   const layer = Layer.mergeAll(repos, Layer.succeed(AdsProvider, config), Layer.succeed(WordPressHttp, wp.transport), Layer.succeed(WebAccess, live))
   const web = HttpApp.toWebHandlerLayer(wordpressApi(r => Effect.flatMap(requireSession, ({ session }) => r(session))), layer)
   const tool = (ctx: { accountId: string; userId: string; businessId: string }, name: string, args: unknown) =>
@@ -154,5 +155,37 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     expect(newPost.status).toBe("publish")
     await f.call("POST", `/changes/${createdId}/undo`, {})
     expect(newPost.status).toBe("draft")
+  })
+
+  it("a change made to fix a wrong AI answer records the fix and queues its re-check once it is live", async () => {
+    const f = await fixture()
+    await f.call("POST", "", { siteUrl: "https://cueup.test/", username: "ana", appPassword: PASSWORD })
+    const question = String((await pool.query("INSERT INTO buyer_questions(business_id,prompt) VALUES($1,'Does Cueup play weddings?') RETURNING id", [f.businessId])).rows[0].id)
+    const run = String((await pool.query("INSERT INTO check_runs(business_id,question_id,provider,status) VALUES ($1,$2,'gemini','SUCCEEDED') RETURNING id", [f.businessId, question])).rows[0].id)
+    const raw = JSON.stringify({ answer: "Cueup does not play weddings.", fixture: randomUUID() }), digest = createHash("sha256").update(raw).digest("hex")
+    const evidence = String((await pool.query("INSERT INTO raw_evidence(digest,content_text) VALUES ($1,$2) RETURNING id", [digest, raw])).rows[0].id)
+    const observation = String((await pool.query(`INSERT INTO observations(business_id,check_run_id,provider,collected_at,answer_text,retrieval_mode,raw_evidence_id,raw_digest,synthetic)
+      VALUES ($1,$2,'gemini',now()-interval '1 day','Cueup does not play weddings.','unknown',$3,$4,false) RETURNING id`, [f.businessId, run, evidence, digest])).rows[0].id)
+    const claimId = String((await pool.query("INSERT INTO candidate_claims(business_id,observation_id,text) VALUES ($1,$2,'Does not play weddings') RETURNING id", [f.businessId, observation])).rows[0].id)
+    await pool.query("INSERT INTO human_judgments(business_id,claim_id,verdict) VALUES ($1,$2,'CONTRADICTED')", [f.businessId, claimId])
+
+    // Another business's issue cannot be named.
+    const other = await fixture()
+    const foreign = await tool(other.ctx, "prepare_wordpress_change", { kind: "UPDATE_COPY", postType: "pages", postId: 7, title: "x", rationale: "TEST", claimId })
+    expect(foreign._tag).toBe("Left")
+
+    const prepared = await tool(f.ctx, "prepare_wordpress_change", { kind: "UPDATE_COPY", postType: "pages", postId: 7, title: "Wedding DJs for every wedding", rationale: "TEST say we play weddings", claimId })
+    const changeId = (prepared as { right: { data: { wordpressChangeId: string } } }).right.data.wordpressChangeId
+    expect((await pool.query("SELECT claim_id FROM wordpress_changes WHERE id=$1", [changeId])).rows[0].claim_id).toBe(claimId)
+    // Nothing is recorded before the person approves.
+    expect((await pool.query("SELECT count(*)::int n FROM intervention_issues WHERE issue_id=$1", [claimId])).rows[0].n).toBe(0)
+
+    const approved = await (await f.call("POST", `/changes/${changeId}/approve`, {})).json() as { change: { status: string; claimId: string }; fix: { recorded: boolean; recheck: string; interventionId: string } }
+    expect(approved.change).toMatchObject({ status: "PUBLISHED", claimId })
+    expect(approved.fix).toMatchObject({ recorded: true, recheck: "QUEUED" })
+    const action = (await pool.query("SELECT i.type, i.target FROM interventions i JOIN intervention_issues ii ON ii.intervention_id=i.id WHERE ii.issue_id=$1", [claimId])).rows
+    expect(action).toEqual([{ type: "SOURCE_UPDATED", target: "https://cueup.test/pages/7/" }])
+    const intent = (await pool.query("SELECT intervention_id FROM reobservation_intents WHERE issue_id=$1", [claimId])).rows
+    expect(intent).toEqual([{ intervention_id: approved.fix.interventionId }])
   })
 })

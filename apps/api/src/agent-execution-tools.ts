@@ -15,6 +15,7 @@ const Prepare = Schema.Struct({
   liveUrl: PrepareExecution.fields.liveUrl,
   rationale: PrepareExecution.fields.rationale,
   siteFindingId: PrepareExecution.fields.siteFindingId,
+  claimId: PrepareExecution.fields.claimId,
 })
 const Read = Schema.Struct({ opportunityId: Schema.UUID })
 const Empty = Schema.Struct({})
@@ -22,13 +23,13 @@ const Empty = Schema.Struct({})
 /** The model cannot choose the request key: identical proposals from the same user replay safely. */
 const requestKey = (ctx: ToolContext, input: typeof Prepare.Type) => {
   const hash = createHash("sha256").update(JSON.stringify(["agent-connected-execution-v1", ctx.accountId, ctx.businessId, ctx.userId,
-    input.opportunityId, input.targetId, input.actionKind, input.value ?? null, input.filePath, input.liveUrl, input.rationale, input.siteFindingId])).digest("hex")
+    input.opportunityId, input.targetId, input.actionKind, input.value ?? null, input.filePath, input.liveUrl, input.rationale, input.siteFindingId, input.claimId ?? null])).digest("hex")
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`
 }
 
 export const executionDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "read_connected_execution_targets", description: "List this business's connected website repositories and allowed paths. A repository must be connected by an operator first.", parametersJsonSchema: JSONSchema.make(Empty) },
-  { name: "prepare_page_change", description: "Prepare one exact, reviewable change in a connected repository for an already approved initiative. For Markdown/MDX files use REPLACE_MARKDOWN with value {edits:[{find,replace}]}: each find must occur exactly once in the original source and edits must not overlap (at most 20 bounded replacements). Review MDX code and behavior explicitly; never treat a merge as deployment or business impact. For HTML only, actionKind and value: REMOVE_NOINDEX_META (no value); SET_TITLE {title}; SET_META_DESCRIPTION {description}; SET_CANONICAL {canonicalUrl} on the same site; ADD_JSON_LD {jsonLd} using approved facts or page evidence; SET_IMAGE_ALT {imageSrc,alt} for one exact image. Read the source first. The person must review the exact diff, authorize and dispatch it; this tool never approves, publishes or merges. Unknown, ambiguous or no-op edits are refused.", parametersJsonSchema: JSONSchema.make(Prepare) },
+  { name: "prepare_page_change", description: "Prepare one exact, reviewable change in a connected repository (any code site, e.g. Next.js or Astro) for an already approved initiative. Fixing a wrong AI answer: pass its claimId. For Markdown/MDX files use REPLACE_MARKDOWN with value {edits:[{find,replace}]}: each find must occur exactly once in the original source and edits must not overlap (at most 20 bounded replacements). Review MDX code and behavior explicitly; never treat a merge as deployment or business impact. For HTML only, actionKind and value: REMOVE_NOINDEX_META (no value); SET_TITLE {title}; SET_META_DESCRIPTION {description}; SET_CANONICAL {canonicalUrl} on the same site; ADD_JSON_LD {jsonLd} using approved facts or page evidence; SET_IMAGE_ALT {imageSrc,alt} for one exact image. Read the source first. The person must review the exact diff, authorize and dispatch it; this tool never approves, publishes or merges. Unknown, ambiguous or no-op edits are refused.", parametersJsonSchema: JSONSchema.make(Prepare) },
   { name: "read_connected_executions", description: "Read connected changes for an initiative, including current state, verified merge and live website observations. A prepared or approved change is not a completed change; a merge is not proof of a live change or business impact.", parametersJsonSchema: JSONSchema.make(Read) },
 ]
 
@@ -52,7 +53,7 @@ export const dispatchExecutionTool = (ctx: ToolContext, name: string, raw: unkno
   const input = yield* Schema.decodeUnknown(Prepare, { onExcessProperty: "error" })(raw)
   const operation = yield* prepareConnectedExecution({ accountId: ctx.accountId, userId: ctx.userId }, ctx.businessId, input.opportunityId,
     { targetId: input.targetId, actionKind: input.actionKind, ...(input.value ? { value: input.value } : {}), filePath: input.filePath, liveUrl: input.liveUrl,
-      rationale: input.rationale, siteFindingId: input.siteFindingId, idempotencyKey: requestKey(ctx, input) }, "ASSISTANT").pipe(
+      rationale: input.rationale, siteFindingId: input.siteFindingId, idempotencyKey: requestKey(ctx, input), ...(input.claimId ? { claimId: input.claimId } : {}) }, "ASSISTANT").pipe(
       Effect.provideService(GrowthExecutionRepository, repo))
   return { summary: "Exact page change prepared; human review and approval required", citations: [], data: {
     operationId: operation.id, opportunityId: input.opportunityId, state: operation.state, actionKind: operation.actionKind, filePath: operation.filePath, diff: operation.diff.slice(0, 4000),

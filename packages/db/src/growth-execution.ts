@@ -20,6 +20,7 @@ import {
 } from "@openrecord/contracts"
 import { decodeRow, type RowDecodeError } from "./row-codecs.js"
 import type { Session } from "./auth.js"
+import { ReobservationIntentRepository, ReobservationIntentRepositoryLive } from "./evidence.js"
 
 export class GrowthExecutionRefused extends Data.TaggedError("GrowthExecutionRefused")<{ readonly reason: string }> {}
 export type GrowthExecutionEffect<A> = Effect.Effect<A, SqlError | RowDecodeError | GrowthExecutionRefused>
@@ -72,6 +73,8 @@ export interface PreparedExecution {
   readonly baseBranch: string; readonly baseCommitSha: string; readonly baseBlobSha: string; readonly afterBlobSha: string
   readonly beforeSha256: string; readonly afterSha256: string; readonly patchSha256: string; readonly afterContent: string; readonly diff: string
   readonly rationale: string; readonly idempotencyKey: string
+  /** The wrong AI answer (issue claim) this change is meant to fix, if any. */
+  readonly claimId?: string | null
 }
 export type JobKind = "DISPATCH" | "RECONCILE" | "LIVE_CHECK"
 export interface ExecutionJob { readonly id: string; readonly operationId: string; readonly businessId: string; readonly kind: JobKind; readonly attemptCount: number }
@@ -215,10 +218,11 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       yield* member(session, businessId)
       const locked = yield* sql`SELECT id FROM growth_opportunities WHERE id=${opportunityId} AND business_id=${businessId} FOR UPDATE`
       if (!locked.length) return yield* refuse("OpportunityNotFound")
+      if (plan.claimId && !(yield* sql`SELECT 1 FROM candidate_claims WHERE id=${plan.claimId} AND business_id=${businessId}`).length) return yield* refuse("IssueNotFound")
       const inserted = yield* guard(sql`INSERT INTO growth_execution_operations(business_id,opportunity_id,target_id,action_kind,action_value,file_path,live_url,site_finding_id,base_branch,
-          base_commit_sha,base_blob_sha,after_blob_sha,before_sha256,after_sha256,patch_sha256,after_content,diff,rationale,proposed_by,created_by_user_id,request_key,request_fingerprint)
+          base_commit_sha,base_blob_sha,after_blob_sha,before_sha256,after_sha256,patch_sha256,after_content,diff,rationale,proposed_by,created_by_user_id,request_key,request_fingerprint,claim_id)
         VALUES(${businessId},${opportunityId},${plan.targetId},${plan.actionKind},${plan.actionValue === null ? null : JSON.stringify(plan.actionValue)}::jsonb,${plan.filePath},${plan.liveUrl},${plan.siteFindingId},${plan.baseBranch},${plan.baseCommitSha},${plan.baseBlobSha},
-          ${plan.afterBlobSha},${plan.beforeSha256},${plan.afterSha256},${plan.patchSha256},${plan.afterContent},${plan.diff},${plan.rationale},${actor},${session.userId},${plan.idempotencyKey},${fingerprint})
+          ${plan.afterBlobSha},${plan.beforeSha256},${plan.afterSha256},${plan.patchSha256},${plan.afterContent},${plan.diff},${plan.rationale},${actor},${session.userId},${plan.idempotencyKey},${fingerprint},${plan.claimId ?? null})
         RETURNING id`).pipe(Effect.catchIf((e): e is SqlError => (e as { cause?: { code?: string } }).cause?.code === "23505", () => refuse("IdempotencyConflict")))
       const id = String(inserted[0]!["id"])
       yield* append(id, businessId, 1, "PREPARED", actor, session.userId, "Exact change prepared for review", {}, null)
@@ -337,15 +341,35 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
           ${String(w[0]!["before_sha256"])},${String(w[0]!["after_sha256"])},'WEBSITE','SYSTEM_VERIFIED','GROWTH_DELIVERY',${operationId},'PR_MERGED') RETURNING id`)
       yield* guard(sql`INSERT INTO growth_initiative_actions(intervention_id,opportunity_id,business_id,request_key,created_by_user_id)
         VALUES(${receipt[0]!["id"] as string},${String(w[0]!["opportunity_id"])},${businessId},${operationId},${String(w[0]!["authorized_by"])})`)
+      // A change made to fix a wrong AI answer: the verified merge is that issue's fix.
+      yield* guard(sql`INSERT INTO intervention_issues(intervention_id,issue_id)
+        SELECT ${receipt[0]!["id"] as string}, o.claim_id FROM growth_execution_operations o
+        WHERE o.id=${operationId} AND o.business_id=${businessId} AND o.claim_id IS NOT NULL ON CONFLICT DO NOTHING`)
       yield* append(operationId, businessId, current.revision + 1, "VERIFIED", "EXECUTION_SYSTEM", null, "GitHub merge confirmed", { interventionId: receipt[0]!["id"], mergeCommitSha: evidence["mergeCommitSha"] }, null)
       return yield* read(businessId, operationId)
     })),
-    recordLiveCheck: (operationId, businessId, check) => sql.withTransaction(Effect.gen(function*() {
-      yield* lock(businessId, operationId)
-      const op = yield* read(businessId, operationId)
-      yield* guard(sql`INSERT INTO growth_execution_live_checks(operation_id,business_id,result,url,http_status,detail,body_digest)
-        VALUES(${operationId},${businessId},${check.result},${op.liveUrl},${check.httpStatus},${check.detail.slice(0, 500)},${check.bodyDigest})`)
-    })),
+    recordLiveCheck: (operationId, businessId, check) => Effect.gen(function*() {
+      yield* sql.withTransaction(Effect.gen(function*() {
+        yield* lock(businessId, operationId)
+        const op = yield* read(businessId, operationId)
+        yield* guard(sql`INSERT INTO growth_execution_live_checks(operation_id,business_id,result,url,http_status,detail,body_digest)
+          VALUES(${operationId},${businessId},${check.result},${op.liveUrl},${check.httpStatus},${check.detail.slice(0, 500)},${check.bodyDigest})`)
+      }))
+      if (check.result !== "CHANGE_OBSERVED") return
+      // The page now shows the fix for a wrong AI answer: ask the assistants again.
+      // Best effort: a re-check already waiting, or one that cannot be queued, never fails the live check.
+      const rows = yield* sql`SELECT o.claim_id, c.observation_id,
+          (SELECT e.detail->>'interventionId' FROM growth_execution_events e WHERE e.operation_id=o.id AND e.state='VERIFIED' ORDER BY e.revision DESC LIMIT 1) AS intervention_id,
+          (SELECT e.user_id FROM growth_execution_events e WHERE e.operation_id=o.id AND e.state='AUTHORIZED' ORDER BY e.revision DESC LIMIT 1) AS authorized_by
+        FROM growth_execution_operations o JOIN candidate_claims c ON c.id=o.claim_id AND c.business_id=o.business_id
+        WHERE o.id=${operationId} AND o.business_id=${businessId}`
+      const r = rows[0]
+      if (!r || !r["intervention_id"] || !r["authorized_by"]) return
+      yield* Effect.flatMap(ReobservationIntentRepository, intents => intents.enqueueReobservation({
+        businessId, issueId: String(r["claim_id"]), originalObservationId: String(r["observation_id"]),
+        interventionId: String(r["intervention_id"]), createdByUserId: String(r["authorized_by"]),
+      })).pipe(Effect.provide(ReobservationIntentRepositoryLive), Effect.provideService(PgClient.PgClient, sql), Effect.ignore)
+    }),
   } satisfies Context.Tag.Service<GrowthExecutionRepository>
 }))
 

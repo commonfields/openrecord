@@ -17,6 +17,8 @@ use crate::ui::widgets::{CONTROL, Variant, button, ico, label, track_hover};
 /// The column's width.
 const WIDTH: f32 = 720.0;
 const STRONG: TextStyle = TextStyle::new(15.0, 600.0).lh(20.0);
+/// Space below the panel header before the decision stack starts.
+const TOP_PAD: f32 = 56.0;
 
 pub fn view(s: &App, t: &Theme, in_panel: bool) -> El {
     let split = if s.split_w > 0.0 { s.split_w } else { 1000.0 };
@@ -33,16 +35,16 @@ pub fn view(s: &App, t: &Theme, in_panel: bool) -> El {
     let open = s.open_decision();
     let at = open.and_then(|d| items.iter().position(|x| x.key == d.key)).unwrap_or(0);
 
-    let mut page = col().key("inbox-column").w_full().max_w(WIDTH).child(heading(s, t, &items));
+    let mut page = col().key("inbox-column").w_full().max_w(WIDTH);
     match open {
         Some(d) => {
-            page = page.child(deciding_bar(t, d, items.len(), narrow)).child(stack(s, t, d, at, items.len(), narrow));
+            page = page.child(section(t, "Only you can decide", None, 0.0)).child(stack(s, t, d, at, items.len(), narrow));
             if items.len() > 1 {
                 let mut list = col().key("decision-list").w_full().gap(8.0);
                 for (i, d) in items.iter().enumerate().filter(|(i, _)| *i != at) {
                     list = list.child(waiting_row(s, t, d, i));
                 }
-                page = page.child(section(t, "Also waiting", None)).child(list);
+                page = page.child(section(t, "Also waiting", None, 32.0)).child(list);
             }
         }
         None => page = page.child(clear(t)),
@@ -62,73 +64,16 @@ pub fn view(s: &App, t: &Theme, in_panel: bool) -> El {
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .child(col().w_full().px(if narrow { 16.0 } else { 32.0 }).pt(24.0).pb(48.0).items_center().child(page))
+                .child(col().w_full().px(if narrow { 16.0 } else { 32.0 }).pt(TOP_PAD).pb(48.0).items_center().child(page))
                 .scroll(ScrollSpec { stick_bottom: false }),
         )
 }
 
-/// "3 decisions need you", with a ring for each: filled while it is unread.
-fn heading(s: &App, t: &Theme, items: &[&Decision]) -> El {
-    let n = items.len();
-    let title = match n {
-        0 => "Nothing is waiting on you".to_string(),
-        1 => "1 decision needs you".to_string(),
-        _ => format!("{n} decisions need you"),
-    };
-    let unread = items.iter().filter(|d| !s.decision_opened(d)).count();
-    let oldest = items.iter().filter_map(|d| d.created_at.as_deref()).min();
-    let about = match (n, unread) {
-        (0, _) => "When the agent needs your decision, it shows up here.".to_string(),
-        (_, 0) => "All read".to_string(),
-        (_, u) => format!("{u} unread"),
-    };
-    let about = match oldest.filter(|_| n > 1) {
-        Some(o) => format!("{about}, the oldest from {}", format::relative(Some(o), format::now())),
-        None => about,
-    };
-    let mut dots = row().gap(5.0).center_y();
-    for d in items.iter().take(8) {
-        let read = s.decision_opened(d);
-        dots = dots.child(
-            el().key(format!("inbox-read-{}", d.key))
-                .size(8.0, 8.0)
-                .radius(4.0)
-                .role("img")
-                .label(if read { "Read" } else { "Unread" })
-                .fill(if read { Color::TRANSPARENT } else { t.chart.primary })
-                .border(1.25, if read { t.muted_foreground.alpha(0.45) } else { t.chart.primary }),
-        );
-    }
-    col()
-        .w_full()
-        .px(6.0)
-        .gap(6.0)
-        .child(label(title, TextStyle::new(22.0, 600.0).lh(28.0), t.foreground).role("heading"))
-        .child(row().w_full().gap(10.0).center_y().children((n > 0).then_some(dots)).child(label(about, type_::SM, t.muted_foreground).truncate().min_w(0.0)))
-}
-
-fn section(t: &Theme, name: &str, right: Option<El>) -> El {
-    row().w_full().px(6.0).pt(32.0).pb(12.0).gap(14.0).center_y()
+fn section(t: &Theme, name: &str, right: Option<El>, top: f32) -> El {
+    row().w_full().px(6.0).pt(top).pb(12.0).gap(14.0).center_y()
         .child(label(name.to_string(), type_::SM_MEDIUM, t.foreground))
         .child(el().grow(1.0))
         .children(right)
-}
-
-/// A key and what it does.
-fn hint(t: &Theme, key: &str, what: &str) -> El {
-    row().gap(6.0).center_y()
-        .child(row().h(18.0).min_w(18.0).px(5.0).radius(5.0).center().fill(t.accent).child(label(key.to_string(), type_::XS11, t.foreground)))
-        .child(label(what.to_string(), type_::XS, t.muted_foreground))
-}
-
-fn deciding_bar(t: &Theme, d: &Decision, count: usize, narrow: bool) -> El {
-    let hints = (!narrow).then(|| {
-        row().gap(14.0).center_y()
-            .children(d.quick_yes().then(|| hint(t, "Y", "yes")))
-            .child(hint(t, "N", "no"))
-            .children((count > 1).then(|| hint(t, "S", "later")))
-    });
-    section(t, "Only you can decide", hints)
 }
 
 /// The open decision over the lower edges of up to two more.
@@ -437,7 +382,7 @@ fn number(s: &App, d: &Decision) -> Option<Number> {
         return None;
     }
     let i = s.insights.ready()?;
-    let site = matches!(d.act, Act::WordPress | Act::Publication { .. });
+    let site = matches!(d.act, Act::WordPress | Act::Webflow | Act::Publication { .. });
     if let (true, Source::Reports(list)) = (site, &i.search) {
         if let Some((r, m)) = list.first().and_then(|r| r.metrics.first().map(|m| (r, m))) {
             return Some(Number {
@@ -588,7 +533,7 @@ fn working(s: &App, t: &Theme) -> Option<El> {
     }
     Some(
         col().w_full()
-            .child(section(t, "Working on it", Some(label("What you approved", type_::XS, t.muted_foreground))))
+            .child(section(t, "Working on it", Some(label("What you approved", type_::XS, t.muted_foreground)), 32.0))
             .child(rows)
             .child(label("Each piece of work takes the same steps: proposed, approved, done, then reviewed.", type_::XS, t.muted_foreground).wrap().px(6.0).pt(12.0)),
     )
