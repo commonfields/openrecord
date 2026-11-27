@@ -342,6 +342,8 @@ fn spring_progress(seconds: f32) -> f32 {
 pub struct SidebarSlide {
     pub started: std::time::Instant,
     pub from: [Option<[f32; 4]>; 3],
+    /// The side panel widening or coming back: the chat keeps its width under it.
+    pub widening: bool,
 }
 
 /// What picking a business in the picker does.
@@ -1735,7 +1737,7 @@ impl App {
             self.split_w = (self.split_w + if self.sidebar_open { -w } else { w }).max(0.0);
         }
         if !self.prefs.reduce_motion {
-            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from });
+            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from, widening: false });
             tx.wake_after(std::time::Duration::ZERO);
         }
         tx.motion(SIDEBAR_SPRING);
@@ -1747,7 +1749,7 @@ impl App {
     /// panel around it.
     pub fn gliding(&self, pane: usize, to: [f32; 4]) -> [f32; 4] {
         match &self.sidebar_slide {
-            Some(SidebarSlide { started, from }) => match from[pane] {
+            Some(SidebarSlide { started, from, .. }) => match from[pane] {
                 Some(from) => {
                     let p = spring_progress(started.elapsed().as_secs_f32());
                     std::array::from_fn(|i| from[i] + (to[i] - from[i]) * p)
@@ -1767,7 +1769,7 @@ impl App {
         let from = [0, 1, 2].map(|i| from[i].map(|r| self.gliding(i, r)));
         self.side.wide = !self.side.wide;
         if !self.prefs.reduce_motion {
-            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from });
+            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from, widening: true });
             tx.wake_after(std::time::Duration::ZERO);
         }
         tx.motion(SIDEBAR_SPRING);

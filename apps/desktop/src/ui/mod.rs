@@ -245,6 +245,12 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // points after them as the header's breadcrumbs do (the card sits on the canvas inset).
     let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - inset } else { 10.0 };
     let side_card = (s.side_shown() && !s.side_panel_duplicates_page()).then(|| side::view(s, t, k, strip_lead));
+    // Widened, or on the way there and back, the chat keeps the width it has
+    // beside the panel and is clipped as the panel slides over it: shrinking
+    // with the column, its text wrapped tighter on every frame.
+    let holding = s.side_shown() && (wide || s.sidebar_slide.as_ref().is_some_and(|sl| sl.widening));
+    let held_w = (s.split_w - (s.split_w * s.prefs.helper() / 100.0).round() - if s.sidebar_open { 0.0 } else { inset }).max(0.0);
+    let panel = if holding && held_w > 0.0 { panel.w(held_w).min_w(held_w) } else { panel };
     let panel = col()
         .key("panel-column")
         .grow(1.0)
@@ -255,6 +261,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         .pr(if side_card.is_some() { 0.0 } else { inset })
         .pl(if s.sidebar_open || wide { 0.0 } else { inset })
         .opacity(if wide { 0.0 } else { 1.0 })
+        .clip_rounded(0.0)
         .child(panel);
     // The rows around the panel are always there, so opening a card beside it
     // or the agent pane only narrows it. Built only when needed, they would
