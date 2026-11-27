@@ -156,10 +156,12 @@ export const TREG_CAPABILITIES: ReadonlyArray<AnyCapability> = [
       if (!r.ok) return failed(r.failure)
       const receipt = r.headers["x-treg-original-cost-micro"] ?? r.headers["x-treg-cost-micro"]
       const charged = receipt && /^\d+$/.test(receipt) ? Number(receipt) : Number.NaN
+      const chargedMicro = Number.isSafeInteger(charged) ? charged : null
       // Long texts are shortened so one answer cannot crowd out the rest of the evidence.
       const answer = JSON.parse(JSON.stringify(r.json, (_k, v) => typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}…` : v)) as unknown
       return { status: "OBSERVED", findings: { endpointId: i.endpointId, answer },
-        coverage: { provider: "treg", endpoint: brief(row), charged: Number.isFinite(charged) ? `$${(charged / 1_000_000).toFixed(4)}` : "unknown", callId: r.headers["x-treg-call-id"] ?? null,
+        coverage: { provider: "treg", endpoint: brief(row), chargedMicro,
+          charged: chargedMicro === null ? "unknown" : `$${(chargedMicro / 1_000_000).toFixed(6)}`, callId: r.headers["x-treg-call-id"] ?? null,
           note: `${String(row["provider_display"] ?? row["provider"])}'s data through treg, billed to the team's treg balance. Estimates are that provider's, not OpenRecord's.` } } satisfies Observed
     }) },
 ]

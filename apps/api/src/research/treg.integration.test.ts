@@ -131,7 +131,7 @@ suite("treg catalog as a research source (disposable PostgreSQL, scripted treg)"
 
       // A data read runs through the relay with the token on the server only; its cost is saved with the answer.
       const r = await research("treg.call", news)
-      expect(r.right.data).toMatchObject({ status: "OBSERVED", source: "CONNECTED_ACCOUNT", coverage: { provider: "treg", charged: "$0.0050", callId: "call_1" } })
+      expect(r.right.data).toMatchObject({ status: "OBSERVED", source: "CONNECTED_ACCOUNT", coverage: { provider: "treg", charged: "$0.005000", chargedMicro: 5000, callId: "call_1" } })
       const relayed = sent.find(s => s.url.pathname === `/call/${news.endpointId}`)!
       expect(relayed.init.method).toBe("GET")
       expect(relayed.init.headers["x-treg-route-max-cost"]).toBe("0.25")
