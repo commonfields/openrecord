@@ -836,7 +836,7 @@ fn business_trend(s: &App, t: &Theme, card: &crate::state::PickerCard, on: bool)
     Some(row().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(crate::ui::inbox::sparkline(&n.days, tone, 96.0, 28.0)))
 }
 
-fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, current: bool, on: bool, trend: Option<El>) -> El {
+fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, trend: Option<El>) -> El {
     row()
         .w_full()
         .min_h(44.0)
@@ -849,11 +849,8 @@ fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, 
                 .child(label(card.name.clone(), type_::SM_MEDIUM, t.foreground).truncate())
                 .children(note.map(|n| label(n.to_string(), type_::XS, t.muted_foreground).truncate())),
         )
-        .children(current.then(|| ico(&icons::CHECK, 14.0, t.muted_foreground)))
-        // The trend line sits just left of the ↵ mark.
+        // The trend line, at the right end, shown only on the highlighted row.
         .children(trend)
-        // The ↵ mark is always there, shown only on the highlighted row, so nothing shifts.
-        .child(row().size(14.0, 14.0).center().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(ico(&icons::CORNER_DOWN_LEFT, 14.0, t.muted_foreground)))
 }
 
 fn picker_kbd(t: &Theme, k: &str) -> El {
@@ -933,7 +930,7 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
             None
         };
         let key = card.id.clone().unwrap_or_else(|| "general".into());
-        let slot = business_row(t, card, note, current, on, business_trend(s, t, card, on))
+        let slot = business_row(t, card, note, business_trend(s, t, card, on))
             .key(format!("business-card-{key}"))
             .role("option")
             .label(card.name.clone())
@@ -948,7 +945,7 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
                     p.focus = list_i;
                 }
             });
-        body = body.child(crate::ui::widgets::highlight(t, slot, on, false));
+        body = body.child(crate::ui::widgets::highlight(t, slot, on, current));
     }
 
     let footer = row()
