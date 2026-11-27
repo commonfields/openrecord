@@ -27,7 +27,10 @@ export const TREG_MAX_CALL_USD = () => {
   return Number.isFinite(n) && n > 0 && n <= 5 ? n : 0.25
 }
 const READ_KINDS = new Set(["data", "utility", "routed"])
-const UNBOUNDED_PRICING = ["table", "reserve", "settle", "usage", "reported_charge", "non_deferred_charge", "modifiers", "quantity", "call_fee", "worst_case"]
+// Currency, precision, and presentation fields describe the scalar USD
+// price. Any billing extension needs a separate review before we run it.
+const FIXED_PRICE_FIELDS = new Set(["type", "value", "currency", "per", "unit", "usd", "source", "source_url", "checked", "confidence", "note",
+  "display", "display_usd", "display_unit", "display_prefix", "display_suffix", "trial_calls_per_team_day", "bills_miss"])
 const ID = /^[a-z0-9][a-z0-9_.-]{2,199}$/
 
 const tregProvider = () => providerOf("treg")!
@@ -45,7 +48,7 @@ const ask = (token: string | null, req: { path: string; query?: Record<string, s
 
 const NOT_CONNECTED = (): Refused => refuse("NOT_CONNECTED", "treg is not connected for this business. The team can add its own treg token on the Channels page; until then these sources are unknown, not zero.")
 const failed = (failure: string): Refused => failure === "AUTH" ? refuse("RECONNECT_REQUIRED", "treg refused the business's token. Reconnect treg on the Channels page.")
-  : failure === "PAYMENT_REQUIRED" ? refuse("BALANCE_EXHAUSTED", "The team's treg balance does not cover this call. The team can top it up at treg.to.")
+  : failure === "PAYMENT_REQUIRED" ? refuse("PAYMENT_REQUIRED", "treg declined this charge. Check the team's balance or choose a cheaper read.")
   : failure === "RATE_LIMITED" ? refuse("RATE_LIMITED", "treg or the provider behind it is busy. Try again later.")
   : failure === "NOT_FOUND" ? refuse("UNKNOWN_ENDPOINT", "treg has no endpoint with that id. Search with treg.search and use an id it returns.")
   : refuse(failure, "treg did not answer this read.")
@@ -75,7 +78,7 @@ export const readable = (row: Row): string | null => {
   const usd = c?.["usd"], type = c?.["type"]
   if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return "treg lists no valid price for this endpoint."
   if (!c || (type !== "per_call" && type !== "per_success" && !(type === "free" && usd === 0))
-    || (type !== "free" && c["currency"] !== "USD") || UNBOUNDED_PRICING.some(field => c[field] != null))
+    || (type !== "free" && c["currency"] !== "USD") || Object.keys(c).some(field => c[field] != null && !FIXED_PRICE_FIELDS.has(field)))
     return "treg does not list a fixed maximum charge for one call."
   if (usd > TREG_MAX_CALL_USD()) return `Its listed charge exceeds the $${TREG_MAX_CALL_USD()} per-call ceiling.`
   return null

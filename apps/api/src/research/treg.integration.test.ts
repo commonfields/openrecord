@@ -36,6 +36,7 @@ const ENTRIES: Record<string, Record<string, unknown>> = {
   "pricey.web.backlinks.full": { id: "pricey.web.backlinks.full", provider: "pricey", name: "Full backlink export", method: "GET", kind: "data", cost: { usd: 3, type: "per_call", currency: "USD" } },
   "metered.web.backlinks.full": { id: "metered.web.backlinks.full", method: "GET", kind: "data", cost: { usd: 0.02, type: "per_result", currency: "USD" } },
   "write.web.disguised": { id: "write.web.disguised", method: "POST", kind: "data", cost: { usd: 0.02, type: "per_call", currency: "USD" } },
+  "metered.web.misses": { id: "metered.web.misses", method: "GET", kind: "data", cost: { usd: 0.02, type: "per_success", currency: "USD", miss_units: 50 } },
 }
 
 suite("treg catalog as a research source (disposable PostgreSQL, scripted treg)", () => {
@@ -143,14 +144,14 @@ suite("treg catalog as a research source (disposable PostgreSQL, scripted treg)"
       expect(JSON.stringify((await pool.query("SELECT findings, coverage, params FROM research_observations WHERE business_id = $1", [f.businessId])).rows)).not.toContain(TOKEN)
 
       // Actions, tools another team published and calls above the price ceiling are refused before any call.
-      for (const endpointId of ["postiz.social.publish", "someteam.backlinks", "pricey.web.backlinks.full", "metered.web.backlinks.full", "write.web.disguised"]) {
+      for (const endpointId of ["postiz.social.publish", "someteam.backlinks", "pricey.web.backlinks.full", "metered.web.backlinks.full", "write.web.disguised", "metered.web.misses"]) {
         const calls = sent.filter(s => s.url.pathname.startsWith("/call/")).length
         expect((await research("treg.call", { endpointId })).right.data).toMatchObject({ status: "NOT_A_READ" })
         expect(sent.filter(s => s.url.pathname.startsWith("/call/")).length).toBe(calls)
       }
       // An empty treg balance is said plainly.
       balanceLeft = false
-      expect((await research("treg.call", { ...news, query: { q: "other.test" } })).right.data).toMatchObject({ status: "BALANCE_EXHAUSTED" })
+      expect((await research("treg.call", { ...news, query: { q: "other.test" } })).right.data).toMatchObject({ status: "PAYMENT_REQUIRED" })
     } finally { await web.dispose() }
   })
 })
