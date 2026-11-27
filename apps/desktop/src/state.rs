@@ -1758,6 +1758,21 @@ impl App {
         }
     }
 
+    /// Widens the side panel over the chat, or brings it back. The page inside
+    /// glides on the panel's own spring, as it does when the sidebar folds:
+    /// placed at the end at once, it ran ahead of the tab strip and left the
+    /// window showing through until the strip caught up.
+    pub fn toggle_wide(&mut self, tx: &mut Tx) {
+        let from = [self.words_rect, self.preview_rect, self.side.browser.rect];
+        let from = [0, 1, 2].map(|i| from[i].map(|r| self.gliding(i, r)));
+        self.side.wide = !self.side.wide;
+        if !self.prefs.reduce_motion {
+            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from });
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        tx.motion(SIDEBAR_SPRING);
+    }
+
     fn enter_agent(&mut self) {
         self.view = View::Agent;
     }

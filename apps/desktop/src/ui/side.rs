@@ -235,7 +235,7 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .child(tabs)
         .child(
             icon_button(t, "side-wide", if wide { &icons::MINIMIZE_2 } else { &icons::MAXIMIZE_2 }, if wide { "Restore panel width" } else { "Expand panel" }, false)
-                .on_press(|s: &mut App| s.side.wide = !s.side.wide),
+                .on_press_tx(|s: &mut App, tx| s.toggle_wide(tx)),
         )
         .child(toggle(t, true))
 }

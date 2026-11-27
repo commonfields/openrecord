@@ -7,6 +7,7 @@ unsafe extern "C" {
     fn or_preview_keep(rects: *const f64, count: i32);
     fn or_preview_pass_through(on: i32);
     fn or_preview_page_light() -> i32;
+    fn or_preview_backdrop(r: f64, g: f64, b: f64);
     fn or_oauth_start(url: *const std::ffi::c_char);
     fn or_oauth_result() -> i32;
     fn or_oauth_cancel();
@@ -123,8 +124,10 @@ pub fn document(content: &str) -> String {
 pub fn show(content: &str, rect: [f32; 4], motion: bool) {
     #[cfg(target_os = "macos")]
     if let Ok(html) = std::ffi::CString::new(document(content)) {
+        let (r, g, b) = page_color(content);
         // SAFETY: called only by Rune's main-thread layout handler; C copies the string.
         unsafe {
+            or_preview_backdrop(f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0);
             or_preview_show(
                 html.as_ptr(),
                 rect[0] as f64,

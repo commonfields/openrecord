@@ -86,6 +86,17 @@ void or_preview_clear(void) {
     if (previewBox) [previewBox setHidden:YES];
 }
 
+// The page's own colour behind it: while WebKit lays the page out again at a
+// new width, the uncovered edge shows this rather than the window.
+static NSColor *previewBackdrop;
+void or_preview_backdrop(double r, double g, double b) {
+    previewBackdrop = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+    if (previewBox) previewBox.layer.backgroundColor = previewBackdrop.CGColor;
+    if (preview) {
+        if (@available(macOS 12.0, *)) preview.underPageBackgroundColor = previewBackdrop;
+    }
+}
+
 void or_preview_show(const char *html, double x, double y, double w, double h, int motion) {
     animate = motion != 0;
     NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;
@@ -115,6 +126,10 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
         previewBox.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
         previewBox.layer.masksToBounds = YES;
         if (browserPanel) previewBox.layer.backgroundColor = browserPanel.CGColor;
+    }
+    if (previewBackdrop) {
+        previewBox.layer.backgroundColor = previewBackdrop.CGColor;
+        if (@available(macOS 12.0, *)) preview.underPageBackgroundColor = previewBackdrop;
     }
     if (preview.superview != previewBox) { [preview removeFromSuperview]; [previewBox addSubview:preview]; }
     NSView *frameView = host.superview;
