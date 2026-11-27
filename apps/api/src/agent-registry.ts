@@ -9,6 +9,7 @@
 // That makes a retried or resumed run safe without trusting model input.
 import { Effect, Schema } from "effect"
 import { blankDeclaration, leaveBlank } from "./agent-blanks.js"
+import { planDeclaration, updatePlan } from "./agent-plan.js"
 import { campaignPublicationDeclarations, dispatchCampaignPublication } from "./campaign-publication.js"
 import { campaignResultsDeclarations, dispatchCampaignResults } from "./campaign-results.js"
 import { dispatchStrategy, strategyDeclarations } from "./marketing-strategy.js"
@@ -147,6 +148,8 @@ export const AGENT_TOOL_SPECS: ReadonlyArray<AgentToolSpec> = [
     effect: "read", replay: "safe", scope: "general", run: (ctx, args) => runAgentTool(ctx.accountId, ctx.businessId, t.name, args) })),
   // A question left for the person while the work carries on; it writes nothing.
   { declaration: blankDeclaration, effect: "read", replay: "safe", scope: "general", run: (_ctx, args) => leaveBlank(args) },
+  // The plan shown beside the work as a checklist; it writes nothing.
+  { declaration: planDeclaration, effect: "read", replay: "safe", scope: "general", run: (_ctx, args) => updatePlan(args) },
   { declaration: { name: "propose_check_run", description: "Prepare a REQUEST_CHECK proposal for a stored question. Never executes. Human approval and provider/model selection required.",
       parametersJsonSchema: { type: "object", properties: { questionId: { type: "string", format: "uuid" } }, required: ["questionId"], additionalProperties: false } },
     effect: "propose", replay: "deduplicated", scope: "general", run: proposeCheckRun },

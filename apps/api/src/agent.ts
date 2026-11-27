@@ -5,6 +5,7 @@ import type { AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent, type ModelResponse } from "./agent-model.js"
 import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
 import { LEAVE_BLANK, MAX_BLANKS_PER_REPLY, blankOf, type BlankRef } from "./agent-blanks.js"
+import { UPDATE_PLAN, planOf, type PlanRef } from "./agent-plan.js"
 import type { HarnessSelection } from "@openrecord/contracts"
 import { harnessModel } from "./harness-model.js"
 import { resolveHarness } from "./harness-store.js"
@@ -218,6 +219,8 @@ export const runConversation = (input: {
   const notesRead: string[] = []
   // Questions left for the person while the work carried on.
   const blanks: BlankRef[] = []
+  // The latest plan the model showed; each update replaces the whole list.
+  let plan: PlanRef | undefined
   const startedAt = Date.now()
   const deadline = input.deadline ?? startedAt + EXECUTION_LIMITS.runMs
   const evidenceForAnswer: { tool: string; summary: string; excerpt: string }[] = []
@@ -375,7 +378,7 @@ export const runConversation = (input: {
       const outcome: RunOutcome = gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED"
       yield* journal.record("VERIFICATION", { passed: gaps.length === 0, missing, gaps, outcome })
       return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks), artifacts: mergeArtifacts(artifacts),
-        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}),
+        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}), ...(plan ? { plan } : {}),
         context: { historyChars: built.historyChars, budgetChars: built.budgetChars, verbatim: built.verbatimMessages, compacted: built.compactedMessages, omitted: built.omittedMessages } }
     }
     // The model ignored the final notice; the run cannot end with an answer.
@@ -481,7 +484,9 @@ export const runConversation = (input: {
       artifacts.push(...(result.right.artifacts ?? []))
       const blank = call.name === LEAVE_BLANK && blanks.length < MAX_BLANKS_PER_REPLY ? blankOf(result.right) : undefined
       if (blank) blanks.push(blank)
-      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary, ...(blank ? { blank } : {}),
+      const shown = call.name === UPDATE_PLAN ? planOf(result.right) : undefined
+      if (shown) plan = shown
+      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary, ...(blank ? { blank } : {}), ...(shown ? { plan: shown } : {}),
         citations: result.right.citations.slice(0, 20).map(c => ({ kind: c.kind, id: c.id, text: c.text.slice(0, 140) })),
         ...(effect === "propose" || effect === "record" ? { receipt: proposalReceipt(result.right) } : {}),
         ...(result.right.artifacts?.length ? { artifacts: result.right.artifacts } : {}),

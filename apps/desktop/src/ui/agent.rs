@@ -108,6 +108,10 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
     }
     match &s.turn {
         Turn::Working { progress, .. } => {
+            // The steps it is following, ticking off as they finish.
+            if let Some(plan) = &progress.plan {
+                list = list.child(plan_card(t, "plan-live", plan, true));
+            }
             // Questions it left while it carries on, answerable now.
             for b in &progress.blanks {
                 list = list.child(blank_card(s, t, b));
@@ -571,6 +575,47 @@ fn prose(t: &Theme, k: &Kit) -> MarkdownStyle {
 /// pick, and the answer it assumes until one is picked. Picking one while the
 /// agent works reaches it at its next step; afterwards it asks it to update
 /// what it made. "Other" types an answer of the person's own.
+/// The agent's plan as a checklist: done steps ticked, the one under way
+/// marked, the rest waiting. `live` while the turn still works.
+fn plan_card(t: &Theme, key: &str, plan: &chat::Plan, live: bool) -> El {
+    let done = plan.done();
+    let mut card = col()
+        .key(key.to_string())
+        .w_full()
+        .gap(6.0)
+        .padding(12.0)
+        .radius(10.0)
+        .border(1.0, t.border)
+        .live_region(LiveRegion::Polite)
+        .child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(ico(&icons::LIST_CHECKS, 14.0, t.muted_foreground))
+                .child(label(if live { "Plan" } else { "Plan followed" }, type_::XS_MEDIUM, t.foreground))
+                .child(label(format!("{done} of {} done", plan.steps.len()), type_::XS11, t.muted_foreground)),
+        );
+    for (j, st) in plan.steps.iter().enumerate() {
+        let (icon, color, text_color) = match st.status.as_str() {
+            "completed" => (&icons::CHECK, t.muted_foreground, t.muted_foreground),
+            "in_progress" if live => (&icons::LOADER, t.foreground, t.foreground),
+            _ => (&icons::CIRCLE_DASHED, t.muted_foreground, t.muted_foreground),
+        };
+        card = card.child(
+            row()
+                .key(format!("{key}-{j}"))
+                .gap(8.0)
+                .items_start()
+                .child(el().pt(1.0).child(ico(icon, 14.0, color)))
+                .child(label(st.step.clone(), type_::XS, text_color).wrap().grow(1.0).min_w(0.0)),
+        );
+    }
+    if let Some(n) = plan.note.as_ref().filter(|n| !n.trim().is_empty()) {
+        card = card.child(label(n.clone(), type_::XS11, t.muted_foreground).wrap());
+    }
+    card
+}
+
 fn blank_card(s: &App, t: &Theme, b: &chat::Blank) -> El {
     let answer = s.blank_answer(b);
     let mut choices = row().gap(6.0).flex_wrap().center_y();
@@ -718,6 +763,9 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     }
     let mut body = col().w_full().gap(6.0);
     body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
+    if let Some(plan) = m.plan.as_ref().filter(|p| !p.steps.is_empty()) {
+        body = body.child(plan_card(t, &format!("plan-{i}"), plan, false));
+    }
     let muted = m.run.as_ref().is_some_and(|r| r.status != "COMPLETED" && !r.status.is_empty());
     // Markdown (Pierre / rune-kit — native sibling of `@pierre/words` on web), with ```chart
     // blocks as charts. A fresh reply streams the full text with a 180ms fade; tap to settle.

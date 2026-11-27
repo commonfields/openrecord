@@ -103,6 +103,9 @@ pub struct Message {
     /// Questions the run left for the person, with what it assumed.
     #[serde(default)]
     pub blanks: Vec<crate::chat::Blank>,
+    /// The plan the run showed, as it stood at the end.
+    #[serde(default)]
+    pub plan: Option<crate::chat::Plan>,
     #[serde(default)]
     pub context: Option<crate::chat::ContextUse>,
 }
@@ -125,6 +128,7 @@ impl Message {
             attachments: Vec::new(),
             notes: Vec::new(),
             blanks: Vec::new(),
+            plan: None,
             context: None,
         }
     }
