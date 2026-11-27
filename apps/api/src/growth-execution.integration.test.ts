@@ -283,6 +283,19 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
     expect(cancel).toEqual({ status: 409, reason: "ExecutionUnresolved" })
   })
 
+  it("refuses approval from an Inbox card after the change is declined", async () => {
+    const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
+    const { operation } = await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, prepareBody(t)))
+    const path = `${s.base}/connected-executions/${operation.id}`
+    await s.ok(s.call(s.a, "POST", `${path}/cancel`, {
+      expectedRevision: operation.revision, reason: "TEST declined", idempotencyKey: randomUUID(),
+    }))
+    expect(await s.refusal(s.call(s.a, "POST", `${path}/approve`, {
+      reviewedPatchSha256: operation.patchSha256, expectedRevision: operation.revision, reason: "TEST stale approval", idempotencyKey: randomUUID(),
+    }))).toEqual({ status: 409, reason: "StaleExecution" })
+    expect(s.provider.fixture.writes).toEqual([])
+  })
+
   it("waits in the Inbox until approved there: one approval authorizes the reviewed change and queues its pull request", async () => {
     const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
     const op = (await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, prepareBody(t)))).operation
@@ -296,6 +309,8 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
     expect(done.state).toBe("DISPATCHING")
     // A replay of the same approval changes nothing and queues no second pull request.
     expect((await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", path, body))).operation.state).toBe("DISPATCHING")
+    expect(await s.refusal(s.call(s.a, "POST", path, { ...body, reviewedPatchSha256: "0".repeat(64) }))).toEqual({ status: 409, reason: "PatchMismatch" })
+    expect(await s.refusal(s.call(s.a, "POST", path, { ...body, idempotencyKey: randomUUID() }))).toEqual({ status: 409, reason: "StaleExecution" })
     expect(Number((await pool.query("SELECT count(*) FROM growth_execution_jobs WHERE operation_id=$1 AND kind='DISPATCH'", [op.id])).rows[0].count)).toBe(1)
     expect(await waiting()).toEqual([])
     expect(s.provider.fixture.writes).toEqual([])

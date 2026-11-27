@@ -3,7 +3,6 @@
 // request can reach none of them: only a signed-in account member can connect a
 // repository, review an exact change, authorize it and dispatch it. Provider
 // credentials come from server configuration and never leave the process.
-import { createHash } from "node:crypto"
 import { HttpRouter } from "@effect/platform"
 import { Effect, Option } from "effect"
 import {
@@ -42,11 +41,6 @@ const providerRefusal = (e: unknown) => {
     case "CONFLICT": case "INVALID": return new GrowthExecutionRefused({ reason: "ProviderRejected" })
     default: return new GrowthExecutionRefused({ reason: "ProviderUnavailable" })
   }
-}
-/** A request key derived from another, so one person's request maps to the same follow-up move on replay. */
-const derivedKey = (seed: string) => {
-  const h = createHash("sha256").update(seed).digest("hex")
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 const robotsNoindex = /<meta\s+[^>]*name=["']robots["'][^>]*noindex/i
 
@@ -147,7 +141,6 @@ export const growthExecutionApi = (withSession: WithSession) => {
       return yield* json(200, { operation: yield* repo.dispatch(session, businessId, operationId, input) }, PRIVATE_HEADERS)
     }))),
     // The Inbox's one decision: authorize exactly the reviewed change, then open its pull request.
-    // Both moves are the person's; a replay of the same request replays both.
     HttpRouter.post(`${base}/connected-executions/:operationId/approve`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
       const input = decode(AuthorizeExecution, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
@@ -156,10 +149,7 @@ export const growthExecutionApi = (withSession: WithSession) => {
       const gh = yield* gitHubConfig
       if (!executionRepositoryPermitted(gh.allowed, current.owner, current.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
       if (!gh.transport) return yield* refuse("ExecutionNotConfigured")
-      const authorized = current.state === "PREPARED" ? yield* repo.authorize(session, businessId, operationId, input) : current
-      if (authorized.state !== "AUTHORIZED") return yield* json(200, { operation: authorized }, PRIVATE_HEADERS)
-      return yield* json(200, { operation: yield* repo.dispatch(session, businessId, operationId,
-        { expectedRevision: authorized.revision, idempotencyKey: derivedKey(`dispatch:${input.idempotencyKey}`) }) }, PRIVATE_HEADERS)
+      return yield* json(200, { operation: yield* repo.approve(session, businessId, operationId, input) }, PRIVATE_HEADERS)
     }))),
     HttpRouter.post(`${base}/connected-executions/:operationId/cancel`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
       const input = decode(CancelExecution, yield* readJson)
