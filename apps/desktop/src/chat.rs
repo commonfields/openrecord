@@ -548,6 +548,13 @@ pub fn feedforward(text: &str, business: Option<&str>, files: usize, style: crat
     out
 }
 
+/// The cards a paused turn waits on; it carries on once every one is decided.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct Waiting {
+    #[serde(default, rename = "itemIds")]
+    pub item_ids: Vec<String>,
+}
+
 /// One step of the agent's plan.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PlanStep {

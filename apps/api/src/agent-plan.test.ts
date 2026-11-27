@@ -6,7 +6,7 @@ import { memoryJournal } from "./agent-run.js"
 import { updatePlan } from "./agent-plan.js"
 
 const text = (value: string): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ text: value }] }, finishReason: "STOP" }] })
-const call = (name: string, args: unknown): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name, args } }] }, finishReason: "STOP" }] })
+const call = (name: string, args: Record<string, unknown>): ModelResponse => ({ candidates: [{ content: { role: "model", parts: [{ functionCall: { name, args } }] }, finishReason: "STOP" }] })
 
 describe("a visible plan", () => {
   it("shows the plan at once, ticks steps off as the run updates it, and keeps the last one on the reply", async () => {

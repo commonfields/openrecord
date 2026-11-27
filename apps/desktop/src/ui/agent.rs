@@ -809,6 +809,22 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     if !m.decisions.is_empty() {
         body = body.children(decisions(s, t, i, &m.decisions));
     }
+    // A turn paused for these decisions picks up from exactly here once they are all made.
+    if let Some(w) = m.waiting.as_ref().filter(|w| !w.item_ids.is_empty()) {
+        // Still open while it is in the inbox.
+        let open = w.item_ids.iter().filter(|id| s.decisions.iter().any(|d| d.key.rsplit(':').next() == Some(id.as_str()))).count();
+        let note = if open == 0 { "Decided. The agent continues from here.".to_string() }
+            else if w.item_ids.len() == 1 { "Paused for your decision above. The agent continues from here once you decide.".to_string() }
+            else { format!("Paused for your decisions above, {open} of {} still open. The agent continues from here once you decide them all.", w.item_ids.len()) };
+        body = body.child(
+            row()
+                .key(format!("waiting-{i}"))
+                .gap(6.0)
+                .center_y()
+                .child(ico(&icons::CORNER_DOWN_RIGHT, 12.0, t.muted_foreground))
+                .child(label(note, type_::XS11, t.muted_foreground).wrap()),
+        );
+    }
     c.child(body).child(reply_actions(s, t, i, &m.text))
 }
 

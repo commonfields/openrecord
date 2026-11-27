@@ -106,6 +106,9 @@ pub struct Message {
     /// The plan the run showed, as it stood at the end.
     #[serde(default)]
     pub plan: Option<crate::chat::Plan>,
+    /// Set when the turn paused for the owner's decision on these cards.
+    #[serde(default)]
+    pub waiting: Option<crate::chat::Waiting>,
     #[serde(default)]
     pub context: Option<crate::chat::ContextUse>,
 }
@@ -129,6 +132,7 @@ impl Message {
             notes: Vec::new(),
             blanks: Vec::new(),
             plan: None,
+            waiting: None,
             context: None,
         }
     }
