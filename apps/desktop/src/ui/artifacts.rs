@@ -5,7 +5,8 @@ use crate::{
     state::{App, Load},
     theme::{Theme, type_},
 };
-use rune::{El, col, row};
+use crate::page_shot::ShotPhase;
+use rune::{El, Transition, col, el, row};
 
 pub fn view(s: &App, t: &Theme) -> El {
     let Some(p) = s.front_artifact() else { return col() };
@@ -31,5 +32,26 @@ pub fn view(s: &App, t: &Theme) -> El {
             // Where it rests; the page itself is moved every frame (`ui::follow_drawn`).
             s.preview_rect = Some(r);
         });
+    // While the panel moves, a picture of the page stands in for it (`page_shot`):
+    // drawn by the app, it travels with the tabs frame for frame. It sits at the
+    // size the page had, from the top left, on the page's own colour.
+    let slot = match s.page_shot.as_ref().filter(|shot| shot.phase != ShotPhase::Asked && shot.artifact == p.id) {
+        Some(shot) => {
+            let fading = shot.phase == ShotPhase::Fading;
+            slot.child(
+                col()
+                    .key("artifact-shot")
+                    .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                    .fill(shot.color)
+                    .clip_rounded(0.0)
+                    .transition(Transition::none())
+                    .opacity(if fading { 0.0 } else { 1.0 })
+                    // The panel's spring while it moves, so it keeps to its slot; then the fade.
+                    .motion(if fading { crate::page_shot::FADE } else { crate::state::SIDEBAR_SPRING })
+                    .child(el().w(shot.size[0]).h(shot.size[1]).min_w(shot.size[0]).min_h(shot.size[1]).pixels(&shot.pixels)),
+            )
+        }
+        None => slot,
+    };
     pane.child(slot)
 }

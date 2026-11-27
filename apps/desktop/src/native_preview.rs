@@ -8,6 +8,11 @@ unsafe extern "C" {
     fn or_preview_pass_through(on: i32);
     fn or_preview_page_light() -> i32;
     fn or_preview_place(x: f64, y: f64, w: f64, h: f64);
+    fn or_preview_conceal(on: i32);
+    fn or_preview_painted() -> i32;
+    fn or_preview_snapshot() -> i32;
+    fn or_preview_snapshot_state(data: *mut *const u8, w: *mut i32, h: *mut i32, pw: *mut f64, ph: *mut f64) -> i32;
+    fn or_preview_snapshot_done();
     fn or_preview_backdrop(r: f64, g: f64, b: f64);
     fn or_oauth_start(url: *const std::ffi::c_char);
     fn or_oauth_result() -> i32;
@@ -131,6 +136,67 @@ pub fn place(rect: [f32; 4]) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = rect;
+}
+
+/// Hides the artifact page while the app draws its picture in its place, or shows it again.
+pub fn conceal(on: bool) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_preview_conceal(i32::from(on));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
+/// Whether the artifact page has painted its document.
+pub fn painted() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_preview_painted() != 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
+/// Starts a picture of the artifact page as it shows now; false when there is no page to take.
+pub fn snapshot() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_preview_snapshot() != 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
+/// A picture of the page: RGBA rows top first, its size in pixels and in points.
+pub struct Shot {
+    pub rgba: Vec<u8>,
+    pub px: [u32; 2],
+    pub size: [f32; 2],
+}
+
+/// The picture `snapshot` asked for: `Ok(Some)` once it is ready (taken, so a
+/// second call has none), `Ok(None)` while it is on its way, `Err` when there is none.
+pub fn snapshot_take() -> Result<Option<Shot>, ()> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let (mut data, mut w, mut h, mut pw, mut ph) = (std::ptr::null(), 0, 0, 0.0, 0.0);
+        match or_preview_snapshot_state(&mut data, &mut w, &mut h, &mut pw, &mut ph) {
+            1 => Ok(None),
+            2 if !data.is_null() && w > 0 && h > 0 => {
+                // SAFETY: C keeps `w * h * 4` bytes at `data` until `or_preview_snapshot_done`.
+                let rgba = std::slice::from_raw_parts(data, w as usize * h as usize * 4).to_vec();
+                or_preview_snapshot_done();
+                Ok(Some(Shot { rgba, px: [w as u32, h as u32], size: [pw as f32, ph as f32] }))
+            }
+            _ => {
+                or_preview_snapshot_done();
+                Err(())
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err(())
 }
 
 pub fn show(content: &str, rect: [f32; 4], motion: bool) {

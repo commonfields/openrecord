@@ -10,6 +10,7 @@ mod account;
 mod artifacts;
 mod backdrop;
 mod native_preview;
+mod page_shot;
 mod api;
 mod brand_marks;
 mod brands;
@@ -132,7 +133,7 @@ fn on_key(s: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
     // ⌥⌘B folds the right panel; the key can arrive as "∫" with Option held.
     if ev.mods.alt && (ev.is_command('b') || ev.is_command('∫')) {
-        s.toggle_side();
+        s.toggle_side_smooth(tx);
         return true;
     }
     if ev.is_command('b') {

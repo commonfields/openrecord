@@ -18,7 +18,7 @@ pub fn toggle(t: &Theme, open: bool) -> El {
     // for one button and it flew across the window when the panel opened.
     icon_button(t, if open { "side-toggle-panel" } else { "side-toggle" }, &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false)
         .motion(crate::state::SIDEBAR_SPRING)
-        .on_press(|s: &mut App| s.toggle_side())
+        .on_press_tx(|s: &mut App, tx| s.toggle_side_smooth(tx))
 }
 
 pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
@@ -241,7 +241,7 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .child(
             icon_button(t, "side-wide", if wide { &icons::MINIMIZE_2 } else { &icons::MAXIMIZE_2 }, if wide { "Restore panel width" } else { "Expand panel" }, false)
                 .motion(crate::state::SIDEBAR_SPRING)
-                .on_press(|s: &mut App| s.side.wide = !s.side.wide),
+                .on_press_tx(|s: &mut App, tx| s.toggle_wide(tx)),
         )
         .child(toggle(t, true))
 }

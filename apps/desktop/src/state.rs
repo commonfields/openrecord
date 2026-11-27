@@ -441,6 +441,10 @@ pub struct App {
     /// Skip split springs for one layout after dock/collapse so the right panel does not ease.
     /// The sidebar folding or unfolding, while it moves (`SidebarSlide`).
     pub sidebar_slide: Option<SidebarSlide>,
+    /// A picture of the artifact page moving in its place (`page_shot`).
+    pub page_shot: Option<crate::page_shot::PageShot>,
+    /// The picture the panel last folded with, for its way back.
+    pub last_shot: Option<crate::page_shot::PageShot>,
     pub menu: Option<Menu>,
     /// The business switcher: archived businesses (for restoring), whether they
     /// show, and whether "Archive" is waiting for its second press.
@@ -715,6 +719,8 @@ impl App {
             sidebar_open: true,
             sidebar_peek: false,
             sidebar_slide: None,
+            page_shot: None,
+            last_shot: None,
             menu: None,
             archived_businesses: Vec::new(),
             show_archived_businesses: false,
@@ -2759,6 +2765,7 @@ impl App {
         } else {
             self.notice_track = None;
         }
+        changed |= self.poll_page_shot(tx);
         // Native panes are placed by hand each frame while the sidebar slides.
         if let Some(slide) = &self.sidebar_slide {
             if slide.started.elapsed().as_secs_f32() > SIDEBAR_SPRING.duration * 2.0 {

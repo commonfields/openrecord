@@ -53,13 +53,48 @@ pub(crate) fn kit(t: &Theme) -> Kit {
 /// After each drawn frame: the artifact page goes where its slot was drawn,
 /// through the panel's springs and its slide in and out, so the page and its
 /// tab strip move as one. Once the slot is gone, the page goes too.
+///
+/// The page's new frame reaches the screen a frame after the app's, so it is
+/// placed over both this frame's slot and the next one's (one frame further
+/// on the same velocity, never past where the slot rests): wherever the slot
+/// is drawn when the page lands, the page covers it and no window shows at its
+/// leading edge. What sticks out is under the strip or the chat.
 pub fn follow_drawn(rt: &rune::Runtime<App>) {
+    thread_local! { static LAST: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) }; }
     let s = &rt.state;
     match rt.presented("artifact-html") {
-        Some((r, _)) if r[2] > 1.0 && r[3] > 1.0 && (s.preview_visible() || !s.side_shown()) => crate::native_preview::place(r),
-        None if !s.side_shown() => crate::native_preview::clear(),
+        // While its picture moves in its place the page stays where it was, hidden (`page_shot`).
+        Some(_) if s.page_shot_moving() => {}
+        Some((r, _)) if r[2] > 1.0 && r[3] > 1.0 && (s.preview_visible() || !s.side_shown()) => {
+            let last = LAST.with(|c| c.replace(Some(r)));
+            crate::native_preview::place(ahead(r, last, s.preview_rect));
+        }
+        None if !s.side_shown() => {
+            LAST.with(|c| c.set(None));
+            crate::native_preview::clear()
+        }
         _ => {}
     }
+}
+
+/// `r` widened to also cover where it will be a frame later, from its last
+/// step, held within the rect it rests at. Edges, not sizes, so a panel that
+/// grows leftwards keeps its right edge.
+fn ahead(r: [f32; 4], last: Option<[f32; 4]>, rest: Option<[f32; 4]>) -> [f32; 4] {
+    let edges = |a: [f32; 4]| [a[0], a[1], a[0] + a[2], a[1] + a[3]];
+    let now = edges(r);
+    let (Some(last), Some(rest)) = (last.map(edges), rest.map(edges)) else { return r };
+    let mut lo = now;
+    let mut hi = now;
+    for i in 0..4 {
+        let next = now[i] + (now[i] - last[i]);
+        // Never past the resting edge: the springs here do not overshoot.
+        let next = if rest[i] >= now[i] { next.clamp(now[i], rest[i]) } else { next.clamp(rest[i], now[i]) };
+        lo[i] = now[i].min(next);
+        hi[i] = now[i].max(next);
+    }
+    // Outermost edges of the two: the left and top from the lower, right and bottom from the higher.
+    [lo[0], lo[1], hi[2] - lo[0], hi[3] - lo[1]]
 }
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
