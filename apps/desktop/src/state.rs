@@ -339,6 +339,9 @@ fn spring_progress(seconds: f32) -> f32 {
 }
 
 /// The sidebar on the move: when it started, and where each native pane was drawn.
+/// How long the side panel's layout holds no spring after it is widened or brought back.
+pub const WIDE_SNAP: std::time::Duration = std::time::Duration::from_millis(250);
+
 pub struct SidebarSlide {
     pub started: std::time::Instant,
     pub from: [Option<[f32; 4]>; 3],
@@ -528,6 +531,8 @@ pub struct App {
     pub composer_widths: [f32; 2],
     pub save_playbook: Option<SavePlaybook>,
     pub undo: Option<UndoTurn>,
+    /// When the side panel was last widened or brought back (`toggle_wide`).
+    pub wide_snap: Option<std::time::Instant>,
     pub share: Option<ShareChat>,
     /// Automatic follow-ups for the business on screen, and their dialog.
     pub followups: Load<crate::followups::Followups>,
@@ -805,6 +810,7 @@ impl App {
             composer_widths: [0.0; 2],
             save_playbook: None,
             undo: None,
+            wide_snap: None,
             share: None,
             open_logs: Default::default(),
             open_sources: Default::default(),
@@ -1760,19 +1766,19 @@ impl App {
         }
     }
 
-    /// Widens the side panel over the chat, or brings it back. The page inside
-    /// glides on the panel's own spring, as it does when the sidebar folds:
-    /// placed at the end at once, it ran ahead of the tab strip and left the
-    /// window showing through until the strip caught up.
+    /// Widens the side panel over the chat, or brings it back, in one frame.
+    /// The page inside is a native view that cannot follow the app's spring
+    /// frame for frame, so an animated change left the tab strip and the page
+    /// out of step; changed at once, they stay together.
     pub fn toggle_wide(&mut self, tx: &mut Tx) {
-        let from = [self.words_rect, self.preview_rect, self.side.browser.rect];
-        let from = [0, 1, 2].map(|i| from[i].map(|r| self.gliding(i, r)));
         self.side.wide = !self.side.wide;
-        if !self.prefs.reduce_motion {
-            self.sidebar_slide = Some(SidebarSlide { started: std::time::Instant::now(), from, widening: true });
-            tx.wake_after(std::time::Duration::ZERO);
-        }
-        tx.motion(SIDEBAR_SPRING);
+        self.wide_snap = Some(std::time::Instant::now());
+        tx.wake_after(WIDE_SNAP);
+    }
+
+    /// Whether the side panel's width is changing at once this moment (`toggle_wide`).
+    pub fn wide_snapping(&self) -> bool {
+        self.wide_snap.is_some_and(|at| at.elapsed() < WIDE_SNAP)
     }
 
     fn enter_agent(&mut self) {

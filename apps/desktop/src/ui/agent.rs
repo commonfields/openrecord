@@ -4,7 +4,7 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Color, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune::{Align, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
 use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle};
 
 use crate::api::Message;
@@ -1507,7 +1507,8 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         .items_end()
         .radius(COMPOSER_PILL)
         .border(1.0, t.border)
-        .fill(if float_on_page { Color::TRANSPARENT } else { t.card })
+        // Solid over a page too: text read through it was hard to follow.
+        .fill(t.card)
         // Files dropped on the box are attached, as on the web.
         .on_drop_files(|s: &mut App, paths, _tx| {
             for p in paths {
@@ -1517,7 +1518,7 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         .child(plus)
         .child(col().grow(1.0).min_w(0.0).self_center().px(2.0).child(input))
         .child(trailing);
-    let field = if float_on_page { field_row } else { shadows(field_row, &t.control_shadow) };
+    let field = shadows(field_row, &t.control_shadow);
 
     // "Chat options" under the box: the business on the left; follow-ups, the
     // memory meter, the model and reasoning on the right, 12 points apart.

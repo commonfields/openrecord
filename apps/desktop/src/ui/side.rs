@@ -227,7 +227,7 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .w_full()
         .h(48.0)
         .pl(lead)
-        .motion(super::widgets::CONTROL)
+        .motion(if s.wide_snapping() { rune::Spring::NONE } else { super::widgets::CONTROL })
         .pr(10.0)
         .gap(4.0)
         .center_y()

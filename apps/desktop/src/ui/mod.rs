@@ -240,6 +240,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // is dragged from its left edge as the sidebar's width is; widened, it
     // takes the whole split and the page steps aside.
     let wide = s.side_shown() && s.side.wide;
+    let split_spring = if s.wide_snapping() { rune::Spring::NONE } else { SPLIT };
     // Widened with the sidebar folded, the panel reaches the window's left edge:
     // its tabs start past the traffic lights and the sidebar's buttons, 12
     // points after them as the header's breadcrumbs do (the card sits on the canvas inset).
@@ -248,7 +249,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // Widened, or on the way there and back, the chat keeps the width it has
     // beside the panel and is clipped as the panel slides over it: shrinking
     // with the column, its text wrapped tighter on every frame.
-    let holding = s.side_shown() && (wide || s.sidebar_slide.as_ref().is_some_and(|sl| sl.widening));
+    let holding = s.side_shown() && (wide || s.wide_snapping());
     let held_w = (s.split_w - (s.split_w * s.prefs.helper() / 100.0).round() - if s.sidebar_open { 0.0 } else { inset }).max(0.0);
     let panel = if holding && held_w > 0.0 { panel.w(held_w).min_w(held_w) } else { panel };
     let panel = col()
@@ -270,13 +271,14 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         .key("side-split")
         // Its own spring: the root's is none (themes swap at once), and inheriting
         // that landed the split mid-slide on the first commit after a change.
-        .motion(SPLIT)
+        // Widening the side panel changes it at once (`App::toggle_wide`).
+        .motion(split_spring)
         .grow(1.0)
         .min_w(0.0)
         .h_full()
         // Layout units already: the zoom scales the whole drawn tree, not its layout.
         .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
-        .child(panel.w(0.0).motion(SPLIT));
+        .child(panel.w(0.0).motion(split_spring));
     if let Some(card) = side_card {
         let w = if s.split_w <= 0.0 {
             0.0
@@ -294,7 +296,7 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
                 .grow(if w > 0.0 { 0.0 } else { 1.0 })
                 // Held at its share: without it the panel's content outweighs it.
                 .min_w(w)
-                .motion(SPLIT)
+                .motion(split_spring)
                 .h_full()
                 .pt(inset)
                 .pb(inset)
