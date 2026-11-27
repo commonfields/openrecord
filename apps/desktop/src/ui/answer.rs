@@ -408,7 +408,7 @@ fn body(s: &App, t: &Theme, k: &rune_kit::Kit, a: &AnswerView, d: &AnswerDetail)
         .child(note_field(t, "verdict-notes", &a.notes, &placeholder, |s| &mut s.answer.as_mut().expect("answer open").notes))
         .child(fact_picker(t, k, a, &d.facts));
 
-    let mut c = col().key("answer-body").w_full().padding(24.0).gap(24.0).child(said).child(rate).child(correct);
+    let mut c = col().key("answer-body").w_full().padding(24.0).gap(24.0).child(said).child(rate).child(correct).children(fix_loop(s, t, a, d));
     if let Some(e) = &a.error {
         c = c.child(label(e.clone(), type_::SM_13, t.wrong).wrap().key("verdict-error").live_region(rune::LiveRegion::Polite));
     }
@@ -460,9 +460,80 @@ fn note_field(t: &Theme, key: &str, edit: &TextEdit, hint: &str, access: fn(&mut
 }
 
 /// Ask the agent, at the left; Cancel and Save at the right.
+fn action_name(kind: &str) -> &'static str {
+    match kind {
+        "SOURCE_PUBLISHED" => "Published a new page",
+        "SOURCE_UPDATED" => "Updated a page",
+        "STRUCTURED_DATA_UPDATED" => "Added structured data",
+        "THIRD_PARTY_CORRECTION_REQUESTED" => "Asked another site to correct it",
+        "KNOWLEDGE_BASE_UPDATED" => "Updated the knowledge base",
+        _ => "Recorded a fix",
+    }
+}
+
+/// After a wrong answer: the latest fix, its re-check, and what the assistant says now
+/// beside what it said before. Shown once the answer is rated wrong or a fix exists.
+fn fix_loop(s: &App, t: &Theme, a: &AnswerView, d: &AnswerDetail) -> Option<El> {
+    let wrong = matches!(d.issue.verdict.as_deref(), Some("CONTRADICTED" | "PARTIAL"));
+    let fix = d.fix.clone().unwrap_or_default();
+    if !wrong && d.actions.is_empty() && fix.reobservation_attempts.is_empty() {
+        return None;
+    }
+    let now = crate::format::now();
+    let when = |iso: &Option<String>| crate::format::relative(iso.as_deref(), now);
+    let step = |key: &str, done: bool, title: String, detail: Option<String>| {
+        row().key(key.to_string()).w_full().gap(12.0).items_start()
+            .child(row().size(20.0, 20.0).radius(10.0).center().fill(if done { t.supported_soft } else { t.accent })
+                .child(if done { ico(&icons::CHECK, 12.0, t.supported) } else { el().size(6.0, 6.0).radius(3.0).fill(t.muted_foreground.alpha(0.5)) }))
+            .child(col().grow(1.0).min_w(0.0).gap(2.0)
+                .child(label(title, type_::SM_13, t.foreground).wrap())
+                .children(detail.map(|x| label(x, type_::XS, t.muted_foreground).wrap())))
+    };
+    let latest = d.actions.iter().max_by(|x, y| x.performed_at.cmp(&y.performed_at));
+    let fixed = match latest {
+        Some(x) => step("fix-step-action", true, format!("{} {}", action_name(&x.kind), when(&x.performed_at)), (!x.target.is_empty()).then(|| x.target.clone())),
+        None => step("fix-step-action", false, "No fix recorded yet".into(), Some("When a page change for this answer is approved and goes live, it is recorded here and the answer is checked again.".into())),
+    };
+    let attempt = fix.latest_attempt();
+    let checked = match attempt.map(|x| x.state.as_str()) {
+        Some("COMPLETED") => step("fix-step-recheck", true, format!("Checked again {}", when(&attempt.unwrap().completed_at)), None),
+        Some("FAILED") => step("fix-step-recheck", false, "The re-check didn't finish".into(), attempt.unwrap().failure_detail_safe.clone()),
+        Some(_) => step("fix-step-recheck", false, format!("Re-check waiting, queued {}", when(&attempt.unwrap().queued_at)), Some("Runs when the check worker picks it up.".into())),
+        None => step("fix-step-recheck", false, "Not checked again yet".into(), None),
+    };
+    let mut c = col().key("answer-fix-loop").w_full().gap(12.0)
+        .child(row().w_full().gap(8.0).center_y()
+            .child(label("Fix and re-check", type_::SM_MEDIUM, t.foreground).grow(1.0))
+            .child({
+                let busy = a.rechecking || fix.checking();
+                let b = button(t, "answer-recheck", if a.rechecking { "Queuing…" } else if fix.checking() { "Re-check waiting" } else { "Re-check now" }, Variant::Outline).disabled(busy);
+                if busy { b.opacity(0.6).cursor(Cursor::Default) } else { b.on_press(|s: &mut App| s.recheck_answer()) }
+            }))
+        .child(fixed)
+        .child(checked);
+    if let Some(cmp) = &fix.latest_comparison {
+        let side = |key: &str, name: String, text: &str, fill: Color| {
+            col().key(key.to_string()).w(0.0).grow(1.0).min_w(200.0).px(12.0).py(10.0).gap(4.0).radius(8.0).fill(fill)
+                .child(label(name, type_::XS2, t.muted_foreground))
+                .child(label(if text.is_empty() { "The answer text was not kept.".to_string() } else { text.to_string() }, type_::SM_13, t.foreground).wrap().selectable(true))
+        };
+        let at = |x: &crate::api::LoopSide| if x.collected_at.is_empty() { String::new() } else { format!(", {}", crate::format::relative(Some(&x.collected_at), now)) };
+        c = c
+            .child(label(cmp.display_copy.clone(), type_::SM_MEDIUM, t.foreground).key("fix-result"))
+            .child(row().w_full().gap(10.0).flex_wrap().items_stretch()
+                .child(side("fix-before", format!("Before{}", at(&cmp.before)), &cmp.before.answer_text, t.accent.alpha(0.7)))
+                .child(side("fix-after", format!("After{}", at(&cmp.after)), &cmp.after.answer_text, t.supported_soft)))
+            .children((!cmp.comparability_explanation.is_empty()).then(|| label(cmp.comparability_explanation.clone(), type_::XS, t.muted_foreground).wrap()))
+            .child(label("This shows what changed in the answer, not why it changed.", type_::XS, t.muted_foreground).wrap());
+    }
+    let _ = s;
+    Some(c)
+}
+
 fn footer(t: &Theme, a: &AnswerView, d: &AnswerDetail) -> El {
     let claim = d.issue.claim_text.clone();
-    let request = format!("An AI assistant said \"{claim}\" about us. Work out why it says this, which of our sources would correct it, and prepare the fix for me to approve.");
+    let id = d.issue.claim_id.clone();
+    let request = format!("An AI assistant said \"{claim}\" about us. Work out why it says this, which of our sources would correct it, and prepare the fix for me to approve. If the fix is a change to our website, pass claimId {id} so that publishing it records the fix and checks the answer again.");
     let ready = a.verdict.is_some() && !a.judging;
     let save = button(t, "verdict-record", if a.judging { "Saving…" } else { "Save" }, Variant::Primary).disabled(!ready);
     row()

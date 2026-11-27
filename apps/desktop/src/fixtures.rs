@@ -1079,7 +1079,17 @@ pub fn ai_answer(s: &mut App) {
     a.verdict = Some("CONTRADICTED");
     a.facts.insert("f2".into());
     a.notes = rune::TextEdit::new(issue.notes.clone().unwrap_or_default());
-    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions });
+    let side = |text: &str, days: i64| crate::api::LoopSide { answer_text: text.into(), collected_at: ago(60 * 24 * days).unwrap_or_default(), provider: "openai".into() };
+    let fix = crate::api::FixLoop {
+        reobservation_attempts: vec![crate::api::LoopAttempt { intervention_id: Some("a1".into()), state: "COMPLETED".into(), queued_at: ago(60), completed_at: ago(50), failure_detail_safe: None }],
+        latest_comparison: Some(crate::api::LoopComparison {
+            before: side("Northstar does not integrate with Salesforce. Teams usually export CSV files instead.", 6),
+            after: side("Northstar integrates with Salesforce, HubSpot and Slack, according to its integrations page.", 0),
+            display_copy: "AI answer changed afterward".into(),
+            comparability_explanation: "Same question, assistant and model before and after.".into(),
+        }),
+    };
+    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions, fix: Some(fix) });
     s.answer = Some(a);
 }
 
@@ -1092,7 +1102,7 @@ pub fn ai_answer_review(s: &mut App) {
     a.verdict = Some("INSUFFICIENT_EVIDENCE");
     a.facts.insert("f1".into());
     a.recording = true;
-    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions: vec![] });
+    a.detail = Load::Ready(crate::api::AnswerDetail { issue, facts: answer_facts(), actions: vec![], fix: None });
     s.answer = Some(a);
 }
 

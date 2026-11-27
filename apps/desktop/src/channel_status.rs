@@ -142,6 +142,7 @@ impl Client {
         let ads = quiet(self.get(&format!("/api/ads/clients/{id}")))?;
         let revenue = quiet(self.get(&format!("/api/revenue/clients/{id}")))?;
         let wp = quiet(self.get(&format!("/api/businesses/{id}/wordpress")))?;
+        let wf = quiet(self.get(&format!("/api/businesses/{id}/webflow")))?;
         let mut st = Status::default();
         st.measure.push(sc.as_ref().map(read_search_console).unwrap_or_else(|| unknown("google", "search-console", "Google Search Console", "See which Google searches bring people to your site.")));
         st.ads = ads.as_ref().map(read_ads).unwrap_or_else(|| vec![unknown("ads", "google_ads", "Ads and Google listing", "Ads and Google listing status could not load.")]);
@@ -159,6 +160,14 @@ impl Client {
                 Row { key: "wordpress", mark: "wordpress", title: "WordPress", purpose: "Improve pages and publish posts, with your approval for each change.", identity, state: Some(state) }
             }
             None => unknown("wordpress", "wordpress", "WordPress", "Improve pages and publish posts, with your approval for each change."),
+        });
+        const WEBFLOW: &str = "Improve page titles and descriptions, and CMS posts, with your approval for each change.";
+        st.website.push(match &wf {
+            Some(v) => {
+                let (state, identity) = keyed(v, "siteName");
+                Row { key: "webflow", mark: "webflow", title: "Webflow", purpose: WEBFLOW, identity, state: Some(state) }
+            }
+            None => unknown("webflow", "webflow", "Webflow", WEBFLOW),
         });
         Ok(st)
     }

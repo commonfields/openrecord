@@ -330,6 +330,58 @@ pub struct AnswerDetail {
     /// The business's active approved facts.
     pub facts: Vec<Fact>,
     pub actions: Vec<Intervention>,
+    /// What happened after a fix: the re-checks and the latest before and after.
+    pub fix: Option<FixLoop>,
+}
+
+/// One side of a before/after comparison: what an assistant answered, and when.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoopSide {
+    pub answer_text: String,
+    pub collected_at: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoopComparison {
+    pub before: LoopSide,
+    pub after: LoopSide,
+    /// The server's own words for what was observed; never a claim about why.
+    pub display_copy: String,
+    pub comparability_explanation: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoopAttempt {
+    pub intervention_id: Option<String>,
+    /// QUEUED, RUNNING, FINALIZING, FAILED or COMPLETED.
+    pub state: String,
+    pub queued_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub failure_detail_safe: Option<String>,
+}
+
+/// The issue loop (`/issues/:id/loop`): re-check attempts and the latest comparison.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FixLoop {
+    pub reobservation_attempts: Vec<LoopAttempt>,
+    pub latest_comparison: Option<LoopComparison>,
+}
+
+impl FixLoop {
+    /// The newest re-check, by when it was queued.
+    pub fn latest_attempt(&self) -> Option<&LoopAttempt> {
+        self.reobservation_attempts.iter().max_by(|a, b| a.queued_at.cmp(&b.queued_at))
+    }
+
+    /// A re-check is waiting or running, so another would be refused.
+    pub fn checking(&self) -> bool {
+        self.reobservation_attempts.iter().any(|a| matches!(a.state.as_str(), "QUEUED" | "RUNNING" | "FINALIZING"))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -791,7 +843,14 @@ impl Client {
         let complete = facts.is_ok() && actions.is_ok();
         let facts = facts.map(|f| f.facts.into_iter().filter(|f| f.status == "ACTIVE").collect()).unwrap_or_default();
         let actions = actions.map(|a| a.interventions).unwrap_or_default();
-        Ok((AnswerDetail { issue, facts, actions }, complete))
+        #[derive(Deserialize)]
+        struct L {
+            #[serde(rename = "loop")]
+            fix: FixLoop,
+        }
+        // Best effort, as the facts are: the claim shows without it.
+        let fix = self.get::<L>(&format!("/api/businesses/{}/issues/{}/loop", enc(business), enc(claim))).ok().map(|l| l.fix);
+        Ok((AnswerDetail { issue, facts, actions, fix }, complete))
     }
 
     /// The playbooks the "/" menu offers: built-in ones and the account's own.
@@ -868,6 +927,13 @@ impl Client {
     /// Records a reviewer's verdict on a claim, linked to the facts it touches.
     pub fn judge(&self, claim: &str, verdict: &str, facts: &[String], notes: Option<&str>) -> ApiResult<()> {
         self.post::<Value>("/api/judgments", json!({ "claimId": claim, "verdict": verdict, "factIds": facts, "notes": notes })).map(|_| ())
+    }
+
+    /// Asks the assistants the same question again, tied to the latest recorded fix.
+    pub fn recheck(&self, business: &str, claim: &str, intervention: Option<&str>) -> ApiResult<()> {
+        let path = format!("/api/businesses/{}/issues/{}/reobservations", enc(business), enc(claim));
+        let body = match intervention { Some(id) => json!({ "interventionId": id }), None => json!({}) };
+        self.post::<Value>(&path, body).map(|_| ())
     }
 
     /// Logs an action taken for an issue.
@@ -1379,7 +1445,7 @@ mod server_tests {
 pub fn turn_failure(reason: &str) -> Option<&'static str> {
     Some(match reason {
         "PAYMENT_REQUIRED" => "The hosted model's provider account has run out of credit or billing. Add billing for it, or pick your own model under the chat box.",
-        "UNCONFIGURED" => "The hosted model isn't set up on this server. Pick your own model under the chat box.",
+        "UNCONFIGURED" => "No agent model was ready for this message. Pick one under the chat box, or connect a provider in Settings → Agent.",
         "UNAVAILABLE" => "The model didn't answer. Try again, or pick another model under the chat box.",
         "RATE_LIMITED" => "The model is limiting requests right now. Try again in a minute.",
         "TIMEOUT" => "The model took too long to answer. Try again, or ask for one part at a time.",

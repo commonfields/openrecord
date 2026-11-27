@@ -17,6 +17,8 @@ pub enum Act {
     Growth { status: String, revision: i64 },
     /// A prepared WordPress change: approving publishes it.
     WordPress,
+    /// A prepared Webflow change: approving publishes it.
+    Webflow,
     /// A Google Business Profile or Google Ads change: approving carries it out.
     Account,
     /// A private draft the agent saved: accepting keeps it, nothing is sent.
@@ -107,6 +109,7 @@ impl Decision {
                 json!({ "expectedStatus": status, "expectedRevision": revision, "idempotencyKey": crate::api::uuid(), "reason": "Approved in OpenRecord" }),
             ),
             Act::WordPress => (format!("/api/businesses/{b}/wordpress/changes/{id}/approve"), json!({})),
+            Act::Webflow => (format!("/api/businesses/{b}/webflow/changes/{id}/approve"), json!({})),
             Act::Account => (format!("/api/businesses/{b}/account-actions/{id}/approve"), json!({})),
             Act::Draft => (format!("/api/businesses/{b}/agent/proposals/{id}/approve"), json!({ "draftOnly": true })),
             Act::Acquisition { cost, .. } => (
@@ -139,6 +142,7 @@ impl Decision {
                 )
             }
             Act::WordPress => (format!("/api/businesses/{b}/wordpress/changes/{id}/reject"), json!({})),
+            Act::Webflow => (format!("/api/businesses/{b}/webflow/changes/{id}/reject"), json!({})),
             Act::Account => (format!("/api/businesses/{b}/account-actions/{id}/reject"), json!({})),
             Act::Draft | Act::Acquisition { .. } | Act::Check => (format!("/api/businesses/{b}/agent/proposals/{id}/reject"), json!({})),
         }
@@ -181,6 +185,7 @@ impl Decision {
             (Act::Review, true) => "Recorded the campaign review.",
             (Act::Strategy, true) => "This is now the strategy every campaign follows.",
             (Act::WordPress, true) => "Published to WordPress.",
+            (Act::Webflow, true) => "Published to Webflow.",
             (Act::Account, true) if self.approve.contains("post") => "Reply posted.",
             (Act::Account, true) => "Change made in Google Ads.",
             (Act::Draft, true) => "Draft accepted.",
@@ -448,6 +453,54 @@ pub fn parse(v: &Value) -> Option<Decision> {
                 return None;
             }
         }
+        "WEBFLOW_CHANGE" => {
+            let c = v.get("change")?;
+            d.id = s(c, "id");
+            let ck = s(c, "kind");
+            let target = s(c, "targetTitle");
+            let empty = Value::Null;
+            let after = c.get("after").unwrap_or(&empty);
+            let before = c.get("before").unwrap_or(&empty);
+            d.label = "Website change".into();
+            d.title = match ck.as_str() {
+                "SET_PAGE_SEO" => format!("Search title and description: {target}"),
+                "CREATE_CMS_ITEM" => format!("New post: {target}"),
+                _ => format!("Website change: {target}"),
+            };
+            d.summary = s(c, "rationale");
+            if let Some(seo) = after.get("seo") {
+                for (key, name) in [("title", "Search title"), ("description", "Search description")] {
+                    if let Some(text) = opt(seo, key) {
+                        d.sections.push(Section { label: name.into(), before: before.get("seo").map(|b| s(b, key)), text });
+                    }
+                }
+            }
+            if let Some(Value::Object(fields)) = after.get("fieldData") {
+                for (k, val) in fields {
+                    let text = val.as_str().map(plain).unwrap_or_default();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    let old = (ck != "CREATE_CMS_ITEM").then(|| before.get("fieldData").map(|b| plain(&s(b, k)))).flatten();
+                    let mut name = k.replace('-', " ");
+                    if let Some(f) = name.get_mut(0..1) {
+                        f.make_ascii_uppercase();
+                    }
+                    d.sections.push(Section { label: name, before: old, text: clip(text, 1200) });
+                }
+            }
+            if let Some(link) = opt(c, "targetLink") {
+                d.sections.push(sec("Page", link));
+            }
+            d.note = Some("Approving publishes this to your Webflow site. You can undo it afterwards.".into());
+            d.act = Act::Webflow;
+            d.approve = "Approve and publish".into();
+            d.feedback_title = d.title.clone();
+            d.feedback_kind = "WEBFLOW_CHANGE";
+            if s(c, "status") != "PROPOSED" {
+                return None;
+            }
+        }
         "ACCOUNT_ACTION" => {
             let a = v.get("action")?;
             d.id = s(a, "id");
@@ -586,6 +639,23 @@ mod tests {
 
     fn item(kind: &str, field: &str, body: Value) -> Value {
         json!({ "type": kind, "business": { "id": "b1", "name": "Cueup" }, "createdAt": "2026-11-10T00:00:00Z", field: body })
+    }
+
+    #[test]
+    fn a_webflow_change_waits_in_the_inbox_and_approves_through_webflow() {
+        let v = json!({ "type": "WEBFLOW_CHANGE", "business": { "id": "b1", "name": "Cueup" }, "createdAt": "2026-11-26T10:00:00Z",
+            "change": { "id": "wf1", "kind": "SET_PAGE_SEO", "status": "PROPOSED", "targetTitle": "Pricing", "targetLink": "https://cueup.test/pricing", "rationale": "State the real price",
+                "before": { "seo": { "title": "Pricing", "description": "" } }, "after": { "seo": { "description": "Plans from $9 a month" } } } });
+        let d = parse(&v).expect("a pending Webflow change is a decision");
+        assert_eq!(d.act, Act::Webflow);
+        assert_eq!(d.sections[0].label, "Search description");
+        assert_eq!(d.sections[0].text, "Plans from $9 a month");
+        assert_eq!(d.approve_call(None).0, "/api/businesses/b1/webflow/changes/wf1/approve");
+        assert_eq!(d.decline_call(None).0, "/api/businesses/b1/webflow/changes/wf1/reject");
+        assert!(!d.quick_yes(), "publishing is never one key away");
+        let mut done = v.clone();
+        done["change"]["status"] = json!("PUBLISHED");
+        assert!(parse(&done).is_none());
     }
 
     #[test]

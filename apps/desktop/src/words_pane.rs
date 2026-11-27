@@ -77,9 +77,12 @@ pub fn sync(s: &App, dark: bool) {
     #[cfg(target_os = "macos")]
     {
         let Some(rect) = s.words_rect else {
-            hide();
+            // Layout may not have run yet; do not tear down an existing pane.
             return;
         };
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return;
+        }
         if !s.chat_shown() || s.settings.is_some() || !s.prefs.words_webview {
             hide();
             return;

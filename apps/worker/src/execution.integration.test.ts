@@ -2,7 +2,7 @@
 // in-memory stand-in) and a stub live-site transport. Passing here is
 // MOCK_ADAPTER_PASS: it shows the modeled provider behavior, not a live
 // provider. TEST fixtures only; no network.
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
@@ -476,5 +476,35 @@ suite("connected execution runner against a fixture provider (MOCK_ADAPTER_PASS,
     const op = await get(f, d.op)
     const text = JSON.stringify([op.events, op.evidence])
     expect(text).not.toMatch(/bearer|ghp_|github_pat|authorization|token/i)
+  })
+
+  it("a merged pull request made to fix a wrong AI answer becomes that answer's fix, and the live page queues its re-check", async () => {
+    const f = await fixture()
+    const question = String((await pool.query("INSERT INTO buyer_questions(business_id,prompt) VALUES($1,'Can I see Salon prices online?') RETURNING id", [f.businessId])).rows[0].id)
+    const runRow = String((await pool.query("INSERT INTO check_runs(business_id,question_id,provider,status) VALUES ($1,$2,'gemini','SUCCEEDED') RETURNING id", [f.businessId, question])).rows[0].id)
+    const raw = JSON.stringify({ answer: "Salon does not publish prices.", fixture: randomUUID() }), digest = createHash("sha256").update(raw).digest("hex")
+    const evidence = String((await pool.query("INSERT INTO raw_evidence(digest,content_text) VALUES ($1,$2) RETURNING id", [digest, raw])).rows[0].id)
+    const observation = String((await pool.query(`INSERT INTO observations(business_id,check_run_id,provider,collected_at,answer_text,retrieval_mode,raw_evidence_id,raw_digest,synthetic)
+      VALUES ($1,$2,'gemini',now()-interval '1 day','Salon does not publish prices.','unknown',$3,$4,false) RETURNING id`, [f.businessId, runRow, evidence, digest])).rows[0].id)
+    const claimId = String((await pool.query("INSERT INTO candidate_claims(business_id,observation_id,text) VALUES ($1,$2,'Does not publish prices') RETURNING id", [f.businessId, observation])).rows[0].id)
+
+    // Another business's answer cannot be named.
+    const other = await fixture()
+    await expect(authorized(other, undefined, { claimId })).rejects.toMatchObject({ reason: "IssueNotFound" })
+
+    const { op: queued } = await dispatched(f, { claimId })
+    const runner = await runnerFor(f, [queued.id], { live: liveSite(AFTER) })
+    await runner.once()
+    f.gh.merge(1, { mergedAt: "2026-10-20T09:30:00.000Z" })
+    let op = await settle(f, queued, runner, o => o.state === "VERIFIED")
+    expect(op.state).toBe("VERIFIED")
+    // The verified merge is the answer's fix.
+    const linked = (await pool.query("SELECT i.verification_claim FROM interventions i JOIN intervention_issues ii ON ii.intervention_id=i.id WHERE ii.issue_id=$1", [claimId])).rows
+    expect(linked).toEqual([{ verification_claim: "PR_MERGED" }])
+    // The live page shows the change: the assistants are asked again, once.
+    op = await settle(f, op, runner, o => o.liveChecks.some(c => c.result === "CHANGE_OBSERVED"))
+    expect(op.liveChecks[0]?.result).toBe("CHANGE_OBSERVED")
+    const intents = (await pool.query("SELECT intervention_id FROM reobservation_intents WHERE issue_id=$1", [claimId])).rows
+    expect(intents).toEqual([{ intervention_id: op.receipt!.interventionId }])
   })
 })

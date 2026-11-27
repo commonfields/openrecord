@@ -85,6 +85,14 @@ fn strip_tags(html: &str) -> String {
 /// The lines of `old` and `new` in order, each the same, added or removed
 /// (a longest common subsequence). Very long texts compare their ends only
 /// past what they share at the start and the end.
+pub fn line_diff_counts(lines: &[Line]) -> (usize, usize) {
+    lines.iter().fold((0, 0), |(a, r), l| match l {
+        Line::Added(_) => (a + 1, r),
+        Line::Removed(_) => (a, r + 1),
+        _ => (a, r),
+    })
+}
+
 pub fn diff(old: &[String], new: &[String]) -> Vec<Line> {
     let head = old.iter().zip(new).take_while(|(a, b)| a == b).count();
     let tail = old[head..].iter().rev().zip(new[head..].iter().rev()).take_while(|(a, b)| a == b).count();
@@ -157,7 +165,46 @@ impl App {
         self.net.artifact_diff(business, id.into());
     }
 
+    fn artifact_stat_key(id: &str, version: i64) -> String {
+        format!("{id}:{version}")
+    }
+
+    /// Line add/remove totals for every artifact in the open chat (for the composer Changes pill).
+    pub fn chat_change_totals(&self) -> (usize, usize) {
+        self.chat_artifacts().iter().fold((0, 0), |(added, removed), art| {
+            let key = Self::artifact_stat_key(&art.id, art.version);
+            if let Some(&(a, r)) = self.artifact_line_stats.get(&key) {
+                (added + a, removed + r)
+            } else {
+                (added, removed)
+            }
+        })
+    }
+
+    pub fn queue_artifact_diff_stats(&mut self) {
+        let Some(business) = self.active.clone() else { return };
+        for r in self.chat_artifacts() {
+            let key = Self::artifact_stat_key(&r.id, r.version);
+            if self.artifact_line_stats.contains_key(&key) || self.artifact_diff_pending.contains(&key) {
+                continue;
+            }
+            self.artifact_diff_pending.insert(key);
+            self.net.artifact_diff(business.clone(), r.id.clone());
+        }
+    }
+
+    pub fn clear_artifact_diff_stats(&mut self) {
+        self.artifact_line_stats.clear();
+        self.artifact_diff_pending.clear();
+    }
+
     pub fn diff_loaded(&mut self, id: &str, result: Result<(u32, u32, Vec<Line>), String>) {
+        let version = self.chat_artifacts().iter().find(|a| a.id == id).map(|a| a.version).unwrap_or(1);
+        let key = Self::artifact_stat_key(id, version);
+        self.artifact_diff_pending.remove(&key);
+        if let Ok((_, _, lines)) = &result {
+            self.artifact_line_stats.insert(key, line_diff_counts(lines));
+        }
         if let Some(d) = self.side.diff.as_mut().filter(|d| d.id == id) {
             d.lines = match result {
                 Ok(x) => Load::Ready(x),

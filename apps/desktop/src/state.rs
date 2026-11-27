@@ -260,6 +260,8 @@ pub struct AnswerView {
     pub action_notes: TextEdit,
     pub saving_action: bool,
     pub action_error: Option<String>,
+    /// A re-check request is on its way.
+    pub rechecking: bool,
 }
 
 impl AnswerView {
@@ -284,6 +286,7 @@ impl AnswerView {
             action_notes: TextEdit::new(""),
             saving_action: false,
             action_error: None,
+            rechecking: false,
         }
     }
 }
@@ -328,7 +331,7 @@ pub struct SidebarSlide {
     pub from: [Option<[f32; 4]>; 3],
 }
 
-/// What picking a card in the business deck does.
+/// What picking a business in the picker does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerMode {
     /// From the sidebar: switch to that business.
@@ -337,28 +340,21 @@ pub enum PickerMode {
     Chat,
 }
 
-/// The business picker: a deck of cards in the content panel.
+/// The business picker: the businesses as a searchable list in a floating panel.
 pub struct BusinessPicker {
     pub mode: PickerMode,
-    /// The card in front.
+    /// The highlighted card in the filtered list.
     pub focus: usize,
-    /// Scrolling not yet turned into a notch, in points.
-    pub scroll: f32,
-    /// The deck's width as last laid out, so the front card sits in its middle.
-    pub width: f32,
-    /// While the deck is dragged: how far the cards follow the pointer, and how
-    /// much of the drag has already been spent moving to another card.
-    pub drag: f32,
-    pub drag_spent: f32,
+    pub query: rune::TextEdit,
 }
 
 impl BusinessPicker {
     fn new(mode: PickerMode, focus: usize) -> Self {
-        BusinessPicker { mode, focus, scroll: 0.0, width: 0.0, drag: 0.0, drag_spent: 0.0 }
+        BusinessPicker { mode, focus, query: rune::TextEdit::default() }
     }
 }
 
-/// One card in the business deck: the business it picks (`None` is a general chat),
+/// One row in the business picker list: the business it picks (`None` is a general chat),
 /// its name, and whether its numbers are sample data.
 pub struct PickerCard {
     pub id: Option<String>,
@@ -547,6 +543,9 @@ pub struct App {
     pub preview_rect: Option<[f32; 4]>,
     /// The agent transcript slot for `@pierre/words` in a WKWebView.
     pub words_rect: Option<[f32; 4]>,
+    /// Lines added and removed per artifact, for the Changes pill above the composer.
+    pub artifact_line_stats: std::collections::HashMap<String, (usize, usize)>,
+    pub artifact_diff_pending: std::collections::HashSet<String>,
     /// The chat on screen has no business: a general chat (`/api/agent`).
     pub general: bool,
     /// "Start a new chat", while it is open.
@@ -761,6 +760,8 @@ impl App {
             side: Default::default(),
             preview_rect: None,
             words_rect: None,
+            artifact_line_stats: Default::default(),
+            artifact_diff_pending: Default::default(),
             settle_next: false,
             syncing: false,
             synced_at: std::time::Instant::now(),
@@ -1058,7 +1059,7 @@ impl App {
         self.business_picker = Some(BusinessPicker::new(PickerMode::Switch, focus));
     }
 
-    /// The composer's folder chip: the same deck, to choose what the next chat is about.
+    /// The composer's folder chip: same picker, to choose what the next chat is about.
     pub fn open_chat_picker(&mut self) {
         self.menu = None;
         let focus = if self.general {
@@ -1069,7 +1070,7 @@ impl App {
         self.business_picker = Some(BusinessPicker::new(PickerMode::Chat, focus));
     }
 
-    /// The cards in the open deck: the businesses, and a general chat when choosing a chat.
+    /// Cards shown in the picker: businesses, plus general chat in Chat mode.
     pub fn picker_cards(&self) -> Vec<PickerCard> {
         let mut cards: Vec<PickerCard> = self.businesses.iter().map(|b| PickerCard { id: Some(b.id.clone()), name: b.name.clone(), sample: b.sample }).collect();
         if self.business_picker.as_ref().is_some_and(|p| p.mode == PickerMode::Chat) {
@@ -1078,7 +1079,7 @@ impl App {
         cards
     }
 
-    /// Acts on the card in front: switches business, or starts the chat.
+    /// Chooses a card: switches business, or starts the chat.
     pub fn pick_card(&mut self, index: usize) {
         let Some(p) = &self.business_picker else { return };
         let mode = p.mode;
@@ -1630,6 +1631,19 @@ impl App {
 
     /// Starts a fresh main chat with a request ready to send. The originating
     /// business page stays open as a tab beside it; no request is sent here.
+    /// Asks for a re-check of the open AI answer, tied to its latest recorded fix.
+    pub fn recheck_answer(&mut self) {
+        let Some(business) = self.active.clone() else { return };
+        let Some(a) = self.answer.as_mut() else { return };
+        if a.rechecking {
+            return;
+        }
+        let latest = a.detail.ready().and_then(|d| d.actions.iter().max_by(|x, y| x.performed_at.cmp(&y.performed_at)).map(|x| x.id.clone()));
+        a.rechecking = true;
+        a.error = None;
+        self.net.recheck(business, a.claim.clone(), latest);
+    }
+
     pub fn ask_agent(&mut self, request: &str) {
         let origin = if self.view == View::Workspace {
             Some(self.page)
@@ -1651,6 +1665,15 @@ impl App {
 
     pub fn chat_shown(&self) -> bool {
         self.view == View::Agent && (self.active.is_some() || self.general)
+    }
+
+    /// Whether the main chat draws its transcript in the Words WKWebView (macOS only).
+    /// Off unless the pref is on and `OPENRECORD_WORDS_TRANSCRIPT=1` is set; native Rune markdown is the default.
+    pub fn words_transcript_webview(&self) -> bool {
+        if !cfg!(target_os = "macos") || !self.prefs.words_webview {
+            return false;
+        }
+        matches!(std::env::var("OPENRECORD_WORDS_TRANSCRIPT"), Ok(v) if v == "1")
     }
 
     /// How large the interface draws: everything inside the window is laid out in
@@ -1737,6 +1760,7 @@ impl App {
         self.enter_agent();
         self.general = false;
         self.chat_id = None;
+        self.clear_artifact_diff_stats();
         // Each chat keeps its own panel; a new chat's opens closed.
         self.switch_side();
         self.conversation = Load::Idle;
@@ -1753,6 +1777,7 @@ impl App {
         self.general = chat.business_id.is_none();
         self.enter_agent();
         self.chat_id = Some(chat.id.clone());
+        self.clear_artifact_diff_stats();
         // What was open beside the last chat stays with it; this chat's comes back.
         self.switch_side();
         self.turn = Turn::Idle;
@@ -1796,6 +1821,27 @@ impl App {
         }
     }
 
+    /// Whether a turn can be queued: catalog resolved, a model chosen, and harness picks include `selection`.
+    pub fn can_send_turn(&self) -> bool {
+        if self.model_unavailable() {
+            return false;
+        }
+        let Some(m) = self.chosen_model() else {
+            return false;
+        };
+        m.value == "hosted" || self.turn_selection().is_some()
+    }
+
+    pub(crate) fn send_blocked_notice(&mut self) {
+        self.notice = Some(if matches!(self.catalog, Load::Loading) {
+            "Agent models are still loading. Try again in a moment.".into()
+        } else if self.model_unavailable() {
+            "No agent model is available. Connect one in Settings → Agent, or pick a model under the chat box.".into()
+        } else {
+            "Pick an agent model under the chat box before sending.".into()
+        });
+    }
+
     /// The effort the next turn asks for: the one picked for this model, if it still offers it.
     pub fn reasoning_effort(&self) -> Option<&str> {
         let m = self.chosen_model()?;
@@ -1813,6 +1859,12 @@ impl App {
 
     /// The turn's `selection`: the model, with its reasoning effort when one is picked.
     pub fn turn_selection(&self) -> Option<serde_json::Value> {
+        // Before the model list arrives, the saved pick still names the model: a turn
+        // sent in that moment must not fall back to the hosted model, which may not exist.
+        if self.catalog.ready().is_none() {
+            let (instance, model) = self.agent_model.as_deref()?.split_once(':')?;
+            return Some(serde_json::json!({ "instanceId": instance, "model": model }));
+        }
         let mut sel = self.chosen_model()?.selection()?;
         if let Some(e) = self.reasoning_effort() {
             sel["reasoningEffort"] = serde_json::json!(e);
@@ -2062,7 +2114,15 @@ impl App {
 
     pub fn send_message(&mut self, tx: &mut Tx) {
         let text = self.composer.text.trim().to_string();
-        if text.is_empty() || self.model_unavailable() {
+        if text.is_empty() {
+            return;
+        }
+        if !self.can_send_turn() {
+            self.send_blocked_notice();
+            return;
+        }
+        if self.chat_scope().is_none() {
+            self.notice = Some("Choose a business to chat about first.".into());
             return;
         }
         self.composer.clear();
@@ -2551,6 +2611,7 @@ impl App {
         };
         // The live steps' open lines belong to the turn before.
         self.open_logs.retain(|(i, _)| *i != usize::MAX);
+        self.home = false;
         self.turn = Turn::Working { message: text.clone(), request: None, progress: Default::default(), started: std::time::Instant::now(), stopping: false };
         let out = crate::chat::Outgoing { message: text, selection: self.turn_selection(), attachments: std::mem::take(&mut self.attachments), style: Some(self.prefs.response_style.key().to_string()), viewing: self.viewing_artifacts() };
         self.attach_error = None;
@@ -2910,6 +2971,7 @@ impl App {
                             }
                         }
                         self.conversation = Load::Ready(c);
+                        self.queue_artifact_diff_stats();
                         tx.instant();
                         tx.scroll_to_bottom("transcript");
                         // The reply is in and the revision current: the next queued message goes.
@@ -2931,6 +2993,7 @@ impl App {
                     self.switch_side();
                     self.turn = Turn::Idle;
                     self.conversation = Load::Ready(c);
+                    self.queue_artifact_diff_stats();
                     tx.settle();
                     tx.scroll_to_bottom("transcript");
                     tx.focus("composer-input", false);
@@ -3213,6 +3276,18 @@ impl App {
                     }
                 }
             }
+            Reply::Rechecked { claim, result } => {
+                let r = self.failed(result);
+                if let Some(a) = self.answer.as_mut().filter(|a| a.claim == claim) {
+                    a.rechecking = false;
+                    match r {
+                        Ok(()) => self.notice = Some("Re-check queued. The assistants are asked the same question again, and the new answer shows here beside the old one.".into()),
+                        Err(e) if e.is_empty() => {}
+                        Err(e) if e.contains("already") => self.notice = Some("A re-check is already waiting for this answer.".into()),
+                        Err(e) => a.error = Some(format!("Couldn't queue the re-check. {e}")),
+                    }
+                }
+            }
             Reply::ActionRecorded { claim, result } => {
                 let r = self.failed(result);
                 let business = self.active.clone();
@@ -3325,6 +3400,7 @@ impl App {
                             if new { self.adopt_side(); }
                             self.home = false;
                             self.conversation = Load::Ready(control.conversation);
+                            self.queue_artifact_diff_stats();
                             self.turn = Turn::Working { message: control.message, request: Some(control.request), progress: Default::default(), started: std::time::Instant::now(), stopping: false };
                             tx.scroll_to_bottom("transcript");
                         }
@@ -3516,5 +3592,40 @@ mod model_fallback_tests {
         assert!(s.model_stand_in().is_none());
         let none = with("cx:gpt-6.1-terra", serde_json::json!({ "instances": [] }));
         assert!(none.model_unavailable());
+    }
+
+    #[test]
+    fn a_recheck_is_asked_once_and_names_the_latest_fix() {
+        let mut s = App::new();
+        crate::fixtures::ai_answer(&mut s);
+        s.active = Some("b-northstar".into());
+        s.recheck_answer();
+        assert!(s.answer.as_ref().unwrap().rechecking);
+        // A second press while the first is on its way does nothing.
+        s.recheck_answer();
+        assert!(s.answer.as_ref().unwrap().rechecking);
+        let fix = s.answer.as_ref().unwrap().detail.ready().unwrap().fix.clone().unwrap();
+        assert!(!fix.checking());
+        assert_eq!(fix.latest_attempt().unwrap().state, "COMPLETED");
+    }
+
+    #[test]
+    fn a_turn_sent_before_the_model_list_arrives_keeps_the_saved_pick() {
+        let mut s = App::new();
+        s.catalog = Load::Loading;
+        s.agent_model = Some("i1:gpt-6.1-terra".into());
+        assert_eq!(s.turn_selection(), Some(serde_json::json!({ "instanceId": "i1", "model": "gpt-6.1-terra" })));
+        s.agent_model = Some("hosted".into());
+        assert_eq!(s.turn_selection(), None);
+    }
+
+    #[test]
+    fn send_waits_for_the_catalog_and_a_resolvable_model() {
+        let mut s = App::new();
+        s.agent_model = Some("cl:opus".into());
+        s.catalog = Load::Loading;
+        assert!(!s.can_send_turn());
+        s.catalog = Load::Ready(crate::chat::model_options(&serde_json::json!({ "instances": [instance("cl", "claude", "ready", &["opus"])] })));
+        assert!(s.can_send_turn());
     }
 }

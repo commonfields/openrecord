@@ -112,7 +112,7 @@ pub struct Prefs {
 }
 
 fn default_words_webview() -> bool {
-    cfg!(target_os = "macos")
+    false
 }
 
 /// The zoom steps ⌘+ and ⌘− move through, and where ⌘0 returns.
