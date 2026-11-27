@@ -26,7 +26,7 @@ export type DecisionResumePayload = {
 }
 
 /** Kinds a chat card can carry, other than growth initiatives. */
-export const RESUMED_KINDS = new Set(["CAMPAIGN_PUBLICATION", "CAMPAIGN_REVIEW", "MARKETING_STRATEGY", "AGENT_PROPOSAL", "AGENT_DRAFT", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "ACCOUNT_ACTION"])
+export const RESUMED_KINDS = new Set(["CAMPAIGN_PUBLICATION", "CAMPAIGN_REVIEW", "MARKETING_STRATEGY", "AGENT_PROPOSAL", "AGENT_DRAFT", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "GITHUB_CHANGE", "ACCOUNT_ACTION"])
 
 const cut = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n)
 

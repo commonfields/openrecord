@@ -89,6 +89,8 @@ export class GrowthExecutionRepository extends Context.Tag("GrowthExecutionRepos
   readonly targets: (accountId: string, businessId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionTarget>>
   readonly connectTarget: (session: Session, businessId: string, input: ConnectExecutionTarget) => GrowthExecutionEffect<ExecutionTarget>
   readonly list: (accountId: string, businessId: string, opportunityId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionOperation>>
+  /** Changes prepared for review and not yet approved or cancelled, across the business's initiatives (newest first). */
+  readonly awaitingApproval: (accountId: string, businessId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionOperation>>
   readonly get: (accountId: string, businessId: string, operationId: string) => GrowthExecutionEffect<ExecutionOperation>
   /** Replays by request key when the request is identical; a different request under the key is refused. */
   readonly findPrepared: (session: Session, businessId: string, opportunityId: string, fingerprint: string, idempotencyKey: string) => GrowthExecutionEffect<ExecutionOperation | null>
@@ -198,6 +200,13 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       yield* ids(businessId, opportunityId)
       yield* scope(accountId, businessId)
       const rows = yield* sql`SELECT document FROM growth_execution_documents WHERE business_id=${businessId} AND opportunity_id=${opportunityId} ORDER BY created_at DESC LIMIT 20`
+      return (yield* Effect.forEach(rows, r => decodeRow(OperationDoc, "growth_execution_documents", r["document"]))) as ExecutionOperation[]
+    }),
+    awaitingApproval: (accountId, businessId) => Effect.gen(function*() {
+      yield* ids(businessId)
+      yield* scope(accountId, businessId)
+      const rows = yield* sql`SELECT d.document FROM growth_execution_documents d JOIN growth_execution_operations o ON o.id=d.id
+        WHERE d.business_id=${businessId} AND growth_execution_state(o.id)='PREPARED' ORDER BY d.created_at DESC LIMIT 20`
       return (yield* Effect.forEach(rows, r => decodeRow(OperationDoc, "growth_execution_documents", r["document"]))) as ExecutionOperation[]
     }),
     get: (accountId, businessId, operationId) => Effect.gen(function*() {

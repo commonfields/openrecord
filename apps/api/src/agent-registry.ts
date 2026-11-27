@@ -283,7 +283,7 @@ export const isRunFailure = (e: unknown): e is AgentModelError => e instanceof A
 
 /** Something a person decides on, created by a proposal tool. The chat renders
  * each one as an approval card on the reply that created it. */
-export interface DecisionRef { readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "MARKETING_STRATEGY" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
+export interface DecisionRef { readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "MARKETING_STRATEGY" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "GITHUB_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): DecisionRef[] => [
   ...(typeof receipt["publicationId"] === "string" && UUID.test(receipt["publicationId"]) ? [{ type: "CAMPAIGN_PUBLICATION" as const, id: receipt["publicationId"] }] : []),
@@ -293,6 +293,7 @@ export const decisionRefs = (receipt: Readonly<Record<string, unknown>>): Decisi
   ...(typeof receipt["opportunityId"] === "string" && UUID.test(receipt["opportunityId"]) ? [{ type: "GROWTH_OPPORTUNITY" as const, id: receipt["opportunityId"] }] : []),
   ...(typeof receipt["wordpressChangeId"] === "string" && UUID.test(receipt["wordpressChangeId"]) ? [{ type: "WORDPRESS_CHANGE" as const, id: receipt["wordpressChangeId"] }] : []),
   ...(typeof receipt["webflowChangeId"] === "string" && UUID.test(receipt["webflowChangeId"]) ? [{ type: "WEBFLOW_CHANGE" as const, id: receipt["webflowChangeId"] }] : []),
+  ...(typeof receipt["githubChangeId"] === "string" && UUID.test(receipt["githubChangeId"]) ? [{ type: "GITHUB_CHANGE" as const, id: receipt["githubChangeId"] }] : []),
   ...(typeof receipt["accountActionId"] === "string" && UUID.test(receipt["accountActionId"]) ? [{ type: "ACCOUNT_ACTION" as const, id: receipt["accountActionId"] }] : []),
 ]
 /** A task another session ran for this one. The chat renders it as a card linking to that session. */

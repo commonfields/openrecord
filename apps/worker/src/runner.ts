@@ -54,6 +54,20 @@ const WorkerConfig = Config.all({
   pollIntervalMs: Config.integer("WORKER_POLL_MS").pipe(Config.withDefault(1000), Config.validate({ message: "poll interval must be 1..60000 milliseconds", validation: n => n > 0 && n <= 60000 })),
 })
 
+/** The AI-check loop alone: its repositories and answer providers. */
+export const buildCheckLive = (databaseUrl: Redacted.Redacted<string>) => {
+  const PgLive = PgClient.layer({ url: databaseUrl })
+  return CheckRunnerLive.pipe(Layer.provide(checkProviders()), Layer.provide(checkRepos()), Layer.provide(PgLive))
+}
+const checkRepos = () => Layer.mergeAll(
+  AssayRepositoryLive, CheckRunRepositoryLive, ObservationRepositoryLive, ProviderAttemptEvidenceRepositoryLive, QuestionRepositoryLive, FactRepositoryLive, ProductReadRepositoryLive,
+)
+const checkProviders = () => {
+  const GatewayLive = NineRouterProviderLive.pipe(Layer.provide(NineRouterSettingsLive), Layer.provide(NodeHttpClient.layer))
+  const GeminiLive = GeminiProviderLive.pipe(Layer.provide(GeminiSettingsLive), Layer.provide(NodeHttpClient.layer))
+  return ProviderRegistryLive.pipe(Layer.provide(Layer.mergeAll(MockProviderLive, GatewayLive, GeminiLive)))
+}
+
 const buildRunnerLive = (databaseUrl: Redacted.Redacted<string>) => {
   const PgLive = PgClient.layer({ url: databaseUrl })
   const Repos = Layer.mergeAll(

@@ -70,7 +70,8 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
       "read_representations", "read_open_issues", "read_issue", "read_observation", "draft_source_action", "read_discovery_scopes",
       "research_timeline", "read_research_credit", "list_connected_tools", "call_connected_tool",
       // Fixing a wrong answer on the business's own site, whichever kind it is.
-      "read_wordpress_content", "prepare_wordpress_change", "read_webflow_content", "prepare_webflow_change", "read_connected_execution_targets", "prepare_page_change"],
+      "read_wordpress_content", "prepare_wordpress_change", "read_webflow_content", "prepare_webflow_change", "read_connected_execution_targets", "prepare_page_change",
+      "read_growth_goal", "propose_growth_opportunity", "read_growth_opportunities"],
     prefetch: ["read_competitors", "read_business_truth", "read_research_evidence", "read_growth_goal", "read_acquisition_citations"],
   },
   write: {
