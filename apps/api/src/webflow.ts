@@ -35,6 +35,7 @@ import type { ToolContext, ToolDeclaration } from "./agent-registry.js"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
 import { webAccess } from "./web-access.js"
 import { followUpFix } from "./issue-fix.js"
+import { enqueueChangePublish, runChangePublishNow } from "./change-publish.js"
 import {
   TEXT_TYPES, WF_ID, WfError, changeKey, hasUnpublishedEdits, liveBase, planItemCreate, planItemUpdate, planPageSeo, storedItem, storedPage,
   toCollection, toItem, toPage, toSite, wfRequest, type ChangeKind, type WfValues,
@@ -238,34 +239,74 @@ const publishPageSeo = (token: string, c: Connection, pageId: string, seo: NonNu
   return check
 })
 
-/** Publishes an approved change exactly once, attributed to the approver. */
-export const publishWebflowChange = (session: Session, businessId: string, id: string) => guarded(businessId, Effect.gen(function*() {
+/** Moves an approved change to PUBLISHING and queues its publish, in one transaction. The job id comes back. */
+export const approveWebflowChange = (session: Session, businessId: string, id: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const claimed = (yield* sql`UPDATE webflow_changes SET status = 'PUBLISHING', decided_by_user_id = ${session.userId}, decided_at = now()
-    WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING *`)[0]
-  if (!claimed) return yield* refuse("ChangeNotPending")
-  const change = toChange(claimed)
-  const target = claimed["target_updated"] as string | null
+  return yield* sql.withTransaction(Effect.gen(function*() {
+    const claimed = (yield* sql`UPDATE webflow_changes SET status = 'PUBLISHING', decided_by_user_id = ${session.userId}, decided_at = now()
+      WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING id`)[0]
+    if (!claimed) return yield* refuse("ChangeNotPending")
+    return yield* enqueueChangePublish({ system: "WEBFLOW", accountId: session.accountId, userId: session.userId, businessId, changeId: id })
+  }))
+})
+
+/**
+ * Publishes a change that is PUBLISHING, reading Webflow before it writes so
+ * that running it again after an interruption never writes twice. Page SEO or
+ * a live item that already holds the approved values is recorded as
+ * published; one edited since it was prepared is refused; page SEO written but
+ * not yet live is put back and reported, so nothing waits unseen; a new item an
+ * earlier attempt may have created is adopted when found, or reported as
+ * unknown, never created twice. The publication and the AI-answer fix
+ * follow-up are recorded once.
+ */
+export const carryOutWebflowChange = (accountId: string, businessId: string, id: string) => guarded(businessId, Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const row = (yield* sql`SELECT * FROM webflow_changes WHERE id = ${id} AND account_id = ${accountId} AND business_id = ${businessId}`)[0]
+  if (!row || row["status"] !== "PUBLISHING") return { change: yield* changeOf(accountId, businessId, id), fix: null }
+  const change = toChange(row)
+  const target = row["target_updated"] as string | null
   const outcome = yield* Effect.gen(function*() {
-    const { connection, token } = yield* siteFor(session.accountId, businessId)
+    const { connection, token } = yield* siteFor(accountId, businessId)
     if (change.kind === "SET_PAGE_SEO") {
       const page = yield* readPage(token, change.pageId!)
+      const link = page.collectionId ? null : pageLink(connection, page.publishedPath)
+      if (storedPage(page, { seo: change.after.seo ?? {} })) {
+        // An earlier attempt wrote it. Live only when the site holds nothing unpublished since and
+        // the live page does not show the old values (a check that cannot read the page decides nothing).
+        const site = yield* readSite(token, connection.siteId)
+        const live = yield* liveCheck(link, change.after)
+        if (!hasUnpublishedEdits(site.lastUpdated, site.lastPublished) && live.observed !== false) return { itemId: null, link, live }
+        yield* request(token, "PUT", `/pages/${page.id}`, { seo: { title: change.before.seo?.title ?? page.seoTitle, description: change.before.seo?.description ?? page.seoDescription } }).pipe(Effect.ignore)
+        return yield* refuse("PublishInterrupted")
+      }
       if (page.lastUpdated !== target) return yield* refuse("ChangedSincePrepared")
       if (page.draft) return yield* refuse("PageIsDraft")
       const written = yield* publishPageSeo(token, connection, page.id, change.after.seo ?? {})
-      const link = written.collectionId ? null : pageLink(connection, written.publishedPath)
-      return { itemId: null, link, live: yield* liveCheck(link, change.after) }
+      const writtenLink = written.collectionId ? null : pageLink(connection, written.publishedPath)
+      return { itemId: null, link: writtenLink, live: yield* liveCheck(writtenLink, change.after) }
     }
     const collection = yield* readCollection(token, change.collectionId!)
     const write = (e: WebflowRefused) => new WebflowRefused({ reason: e.reason === "WebflowFORBIDDEN" ? "TokenCannotPublish" : e.reason })
     let itemId: string
     if (change.kind === "UPDATE_CMS_ITEM") {
-      const item = yield* readItem(token, collection.id, change.itemId!)
-      if (item.lastUpdated !== target) return yield* refuse("ChangedSincePrepared")
-      if (hasUnpublishedEdits(item.lastUpdated, item.lastPublished)) return yield* refuse("ItemHasUnpublishedEdits")
-      yield* request(token, "PATCH", `/collections/${collection.id}/items/${item.id}/live`, { fieldData: change.after.fieldData }).pipe(Effect.mapError(write))
-      itemId = item.id
+      const live = yield* readItem(token, collection.id, change.itemId!, true).pipe(Effect.option)
+      if (live._tag === "Some" && storedItem(live.value, change.after, collection)) itemId = live.value.id
+      else {
+        const item = yield* readItem(token, collection.id, change.itemId!)
+        if (item.lastUpdated !== target) return yield* refuse("ChangedSincePrepared")
+        if (hasUnpublishedEdits(item.lastUpdated, item.lastPublished)) return yield* refuse("ItemHasUnpublishedEdits")
+        yield* request(token, "PATCH", `/collections/${collection.id}/items/${item.id}/live`, { fieldData: change.after.fieldData }).pipe(Effect.mapError(write))
+        itemId = item.id
+      }
+    } else if (row["write_attempted_at"]) {
+      // An earlier attempt sent the new item: adopt it if it is live, never create a second one.
+      const listed = (yield* request(token, "GET", `/collections/${collection.id}/items/live?limit=100`)) as { items?: unknown }
+      const found = (Array.isArray(listed.items) ? listed.items : []).map(toItem).find(i => storedItem(i, change.after, collection))
+      if (!found) return yield* refuse("OutcomeUnknown")
+      itemId = found.id
     } else {
+      yield* sql`UPDATE webflow_changes SET write_attempted_at = now() WHERE id = ${id} AND status = 'PUBLISHING'`
       const created = toItem(yield* request(token, "POST", `/collections/${collection.id}/items/live`, { isArchived: false, isDraft: false, fieldData: change.after.fieldData }).pipe(Effect.mapError(write)))
       itemId = created.id
     }
@@ -277,7 +318,13 @@ export const publishWebflowChange = (session: Session, businessId: string, id: s
   // The publication record and its time are one statement; published_at is never taken from input.
   yield* sql`UPDATE webflow_changes SET status = 'PUBLISHED', published_at = now(), published_item_id = ${outcome.itemId}, published_link = ${outcome.link},
     live_check = ${JSON.stringify(outcome.live)}::jsonb WHERE id = ${id} AND status = 'PUBLISHING'`
-  return { change: yield* changeOf(session.accountId, businessId, id) }
+  const c = yield* changeOf(accountId, businessId, id)
+  // A change made to fix a wrong AI answer records that fix and queues its re-check, as WordPress does.
+  const userId = row["decided_by_user_id"] ? String(row["decided_by_user_id"]) : null
+  const fix = c && c.status === "PUBLISHED" && userId
+    ? yield* followUpFix({ businessId, claimId: c.claimId, userId, kind: c.kind, link: c.publishedLink ?? c.targetLink, title: c.targetTitle, rationale: c.rationale, publishedAt: c.publishedAt })
+    : null
+  return { change: c, fix }
 }))
 
 /** Puts the previous values back live: a new item is unpublished, never deleted. */
@@ -399,13 +446,13 @@ export const webflowApi = (withSession: WithSession) => {
       return yield* json(200, { change }, PRIVATE)
     }))),
     HttpRouter.post(`${base}/changes/:changeId/approve`, business((session, businessId, params) => Effect.gen(function*() {
-      const published = yield* publishWebflowChange(session, businessId, params["changeId"]!)
-      const c = published.change
-      // A change made to fix a wrong AI answer records that fix and queues its re-check, as WordPress does.
-      const fix = c && c.status === "PUBLISHED"
-        ? yield* followUpFix({ businessId, claimId: c.claimId, userId: session.userId, kind: c.kind, link: c.publishedLink ?? c.targetLink, title: c.targetTitle, rationale: c.rationale, publishedAt: c.publishedAt })
-        : null
-      return yield* json(200, { ...published, fix }, PRIVATE)
+      // Approval and its publish job commit together; the job then runs at once, here.
+      const job = yield* approveWebflowChange(session, businessId, params["changeId"]!)
+      const done = job ? yield* runChangePublishNow(job, carryOutWebflowChange(session.accountId, businessId, params["changeId"]!)) : null
+      const change = yield* changeOf(session.accountId, businessId, params["changeId"]!)
+      if (change?.status === "FAILED") return yield* refuse(change.failure ?? "PublishFailed")
+      // Still PUBLISHING only when a worker has it; it finishes there.
+      return yield* json(200, { change, fix: done?.fix ?? null }, PRIVATE)
     }))),
     HttpRouter.post(`${base}/changes/:changeId/reject`, business((session, businessId, params) => Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient

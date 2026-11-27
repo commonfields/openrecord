@@ -133,4 +133,10 @@ Added on 2026-11-27 ([migration 0107](../packages/db/migrations/0107_agent_resum
 | treg's `catalog_request` turns a catalog gap into a request. | A search that finds nothing, in either catalog, is saved as a request. The agent can also record one with `tool_feedback` kind MISSING. The team reads them at `GET /api/businesses/:id/capability-signals`. |
 | treg's feedback and review on calls. | `tool_feedback` kinds WRONG, EMPTY, STALE and OFF_TOPIC report a poor result from a tool or research source. A report counts against its measured successes in this workspace, and the evidence itself is unchanged. [Capability signals](../apps/api/src/capability-signals.ts) |
 
-Not adopted: treg's judged search (a model call per query); matching stays deterministic. Approved WordPress, Webflow and account changes still run inside the approval request; moving them onto the job queue waits for the publishing changes in flight.
+Added on 2026-11-27 ([migration 0108](../packages/db/migrations/0108_durable_change_publish.sql)):
+
+| Upstream implementation | OpenRecord implementation |
+| --- | --- |
+| T3 Code's outbox effects read the provider's state before they act, so a replay after a crash reaches the same result (`EffectWorker.ts`, `RestartContinuation.ts`). | Approving a WordPress or Webflow change moves it to PUBLISHING and queues `CHANGE_PUBLISH_WRITE` in one transaction. The job then runs at once in the same request, so the person sees the result. A publish cut off part way goes back on the queue after its lease and finishes from what the site holds. A post or live item that already has the approved values is recorded, not written again. One edited since it was prepared is refused. A new post or item an earlier attempt sent is adopted when found and reported as `OutcomeUnknown` when not, never created twice. Webflow page SEO written but not live is put back and reported. The AI-answer fix follow-up runs once, on the step that publishes. [Publish job](../apps/api/src/change-publish.ts) |
+
+Not adopted: treg's judged search (a model call per query); matching stays deterministic. Account actions (Google review replies, Google Ads changes) still run inside the approval request.

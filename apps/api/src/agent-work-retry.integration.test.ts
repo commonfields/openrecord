@@ -6,7 +6,7 @@ import { PgClient } from "@effect/sql-pg"
 import type { SqlClient } from "@effect/sql"
 import pg from "pg"
 import { AgentModelError } from "./agent-model.js"
-import { AgentWorkRetry, MAX_WORK_ATTEMPTS, claimAgentWork, enqueueAgentWork, executeAgentWork, retryDelaySeconds } from "./agent-work-queue.js"
+import { AgentWorkRetry, MAX_WORK_ATTEMPTS, claimAgentWork, enqueueAgentWork, executeAgentWorkWith, retryDelaySeconds } from "./agent-work-queue.js"
 import { retryableTurnFailure } from "./unattended-agent.js"
 import { capabilityStats, rankCapabilities } from "./capabilities/discovery.js"
 import { writeSetupCampaignJob } from "./setup-campaign.js"
@@ -60,7 +60,7 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     for (let attempt = 1; attempt <= MAX_WORK_ATTEMPTS; attempt++) {
       const claimed = await run(claimAgentWork)
       expect(claimed?.job_id).toBe(id)
-      await run(executeAgentWork(claimed!, failing))
+      await run(executeAgentWorkWith(claimed!, failing))
       const row = await job(id)
       expect(row.attempt_count).toBe(attempt)
       expect(row.failure_reason).toBe("MODEL_UNAVAILABLE")
@@ -79,7 +79,7 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     const f = await fixture()
     const id = await run(enqueueAgentWork({ ...f, kind: "GROWTH_BRIEF_WRITE", refId: randomUUID(), payload: {} }))
     const claimed = await run(claimAgentWork)
-    await run(executeAgentWork(claimed!, () => Effect.fail("HELPER_TASK_FAILED" as const)))
+    await run(executeAgentWorkWith(claimed!, () => Effect.fail("HELPER_TASK_FAILED" as const)))
     expect(await job(id!)).toMatchObject({ status: "FAILED", attempt_count: 1, failure_reason: "HELPER_TASK_FAILED" })
     expect(await run(claimAgentWork)).toBeNull()
   })

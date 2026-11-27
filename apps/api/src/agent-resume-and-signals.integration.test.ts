@@ -14,7 +14,7 @@ import { requireSession } from "./router.js"
 import { decisionFeedbackApi } from "./decision-feedback.js"
 import { decisionResumeMessage, writeDecisionResumeJob } from "./decision-resume.js"
 import { capabilitySignalsApi, dispatchCapabilitySignal } from "./capability-signals.js"
-import { claimAgentWork, enqueueAgentWork, executeAgentWork, AgentWorkRetry } from "./agent-work-queue.js"
+import { claimAgentWork, enqueueAgentWork, executeAgentWorkWith, AgentWorkRetry } from "./agent-work-queue.js"
 import { AgentConversationRefused } from "./agent-conversations.js"
 import { capabilityStats } from "./capabilities/discovery.js"
 import { measuredResearch, rankResearch, researchStats } from "./research/ranking.js"
@@ -92,7 +92,7 @@ suite("chat resume, ordered work and capability signals (disposable PostgreSQL, 
     expect(b?.job_id).toBe(elsewhere)
     expect(await claim()).toBeNull()
     // The first asks to run again later: still queued, so the second keeps waiting.
-    await run(executeAgentWork(a!, () => Effect.fail(new AgentWorkRetry({ reason: "CHAT_BUSY" }))))
+    await run(executeAgentWorkWith(a!, () => Effect.fail(new AgentWorkRetry({ reason: "CHAT_BUSY" }))))
     expect((await pool.query("SELECT status FROM agent_work_jobs WHERE job_id=$1", [first])).rows[0].status).toBe("QUEUED")
     expect(await claim()).toBeNull()
     // Once the first has finished, the second comes up.

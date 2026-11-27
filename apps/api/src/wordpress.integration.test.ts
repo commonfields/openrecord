@@ -16,7 +16,8 @@ import type { HttpTransport } from "@openrecord/representation"
 import { RepoLayers, requireSession } from "./router.js"
 import { WebAccess, type WebAccessService } from "./web-access.js"
 import { dispatchToolSpec } from "./agent-registry.js"
-import { WordPressHttp, wordpressApi } from "./wordpress.js"
+import { WordPressHttp, approveChange, carryOutChange, wordpressApi } from "./wordpress.js"
+import { claimAgentWorkById, executeAgentWorkWith, reconcileAgentWork } from "./agent-work-queue.js"
 import { seedObjective } from "./objective-work.test-support.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -25,7 +26,7 @@ const PASSWORD = "abcd efgh ijkl mnop qrst uvwx"
 
 /** An in-memory WordPress site with Yoast, one page, and switches for the edge cases. */
 function fakeWordPress() {
-  const state = { acceptSeoMeta: true, nextId: 100,
+  const state = { acceptSeoMeta: true, nextId: 100, writes: 0,
     posts: new Map<string, { id: number; title: string; content: string; meta: Record<string, string>; modified: string; status: string; type: string }>() }
   state.posts.set("pages/7", { id: 7, title: "Wedding DJs", content: "<p>Book a DJ.</p>", meta: { _yoast_wpseo_title: "", _yoast_wpseo_metadesc: "" }, modified: "2026-10-01T00:00:00", status: "publish", type: "pages" })
   const view = (p: { id: number; title: string; content: string; meta: Record<string, string>; modified: string; status: string; type: string }) =>
@@ -43,6 +44,7 @@ function fakeWordPress() {
         const p = state.posts.get(`${one[1]}/${one[2]}`)
         if (!p) return reply(404, {})
         if (init.method === "POST") {
+          state.writes++
           const b = JSON.parse(init.body ?? "{}") as { title?: string; content?: string; meta?: Record<string, string>; status?: string }
           if (b.title !== undefined) p.title = b.title
           if (b.content !== undefined) p.content = b.content
@@ -53,11 +55,13 @@ function fakeWordPress() {
         return reply(200, view(p))
       }
       if (list && init.method === "POST") {
+        state.writes++
         const b = JSON.parse(init.body ?? "{}") as { title: string; content: string; status: string }
         const p = { id: state.nextId++, title: b.title, content: b.content, meta: {}, modified: "2026-10-31T00:00:00", status: b.status, type: list[1]! }
         state.posts.set(`${list[1]}/${p.id}`, p)
         return reply(201, view(p))
       }
+      if (list && u.searchParams.get("context") === "edit") return reply(200, [...state.posts.values()].filter(p => p.type === list[1]).map(view))
       if (list) return reply(200, [...state.posts.values()].filter(p => p.type === list[1]).map(p => ({ id: p.id, title: { rendered: p.title }, link: `https://cueup.test/${p.type}/${p.id}/`, modified_gmt: p.modified })))
       return reply(404, {})
     },
@@ -187,5 +191,61 @@ suite("WordPress connector (in-memory WordPress, no network)", () => {
     expect(action).toEqual([{ type: "SOURCE_UPDATED", target: "https://cueup.test/pages/7/" }])
     const intent = (await pool.query("SELECT intervention_id FROM reobservation_intents WHERE issue_id=$1", [claimId])).rows
     expect(intent).toEqual([{ intervention_id: approved.fix.interventionId }])
+  })
+
+  it("finishes a publish cut off part way from what the site holds, and never writes twice", async () => {
+    const f = await fixture()
+    await f.call("POST", "", { siteUrl: "https://cueup.test/", username: "ana", appPassword: PASSWORD })
+    wp.state.posts.set("pages/8", { id: 8, title: "Pricing", content: "<p>Plans.</p>", meta: {}, modified: "2026-10-02T00:00:00", status: "publish", type: "pages" })
+    const session = { accountId: f.accountId, userId: f.userId }
+    const run = <A, E>(fx: Effect.Effect<A, E, unknown>) => Effect.runPromise((fx as Effect.Effect<A, E, never>).pipe(Effect.provide(layer)))
+    const prepare = async (args: Record<string, unknown>) => ((await tool(f.ctx, "prepare_wordpress_change", args)) as { right: { data: { wordpressChangeId: string } } }).right.data.wordpressChangeId
+    const status = async (id: string) => (await pool.query("SELECT status, failure, published_post_id::int AS published_post_id FROM wordpress_changes WHERE id=$1", [id])).rows[0]
+    /** The worker's run of a queued publish job after a restart. */
+    const resume = async (job: string, id: string) => {
+      const claimed = await run(claimAgentWorkById(job))
+      if (!claimed) throw new Error("publish job not queued")
+      await run(executeAgentWorkWith(claimed, () => carryOutChange(f.accountId, f.businessId, id)))
+    }
+
+    // The process stopped after WordPress took the write but before it was recorded.
+    const update = await prepare({ kind: "UPDATE_COPY", postType: "pages", postId: 8, title: "Pricing and plans", rationale: "TEST clearer title" })
+    const job = (await run(approveChange(session, f.businessId, update)))!
+    expect(await status(update)).toMatchObject({ status: "PUBLISHING" })
+    Object.assign(wp.state.posts.get("pages/8")!, { title: "Pricing and plans", modified: "2026-11-27T00:00:00" })
+    const before = wp.state.writes
+    await resume(job, update)
+    expect(await status(update)).toMatchObject({ status: "PUBLISHED", published_post_id: 8 })
+    expect(wp.state.writes).toBe(before)
+
+    // A new post an earlier attempt sent is adopted, never created a second time.
+    const created = await prepare({ kind: "CREATE_POST", postType: "posts", title: "Hiring a DJ for a small wedding", content: "<p>Short guide.</p>", rationale: "TEST post" })
+    const createJob = (await run(approveChange(session, f.businessId, created)))!
+    await pool.query("UPDATE wordpress_changes SET write_attempted_at=now() WHERE id=$1", [created])
+    wp.state.posts.set("posts/300", { id: 300, title: "Hiring a DJ for a small wedding", content: "<p>Short guide.</p>", meta: {}, modified: "2026-11-27T00:00:00", status: "publish", type: "posts" })
+    const beforeCreate = wp.state.writes
+    await resume(createJob, created)
+    expect(await status(created)).toMatchObject({ status: "PUBLISHED", published_post_id: 300 })
+    expect(wp.state.writes).toBe(beforeCreate)
+    expect([...wp.state.posts.values()].filter(p => p.title === "Hiring a DJ for a small wedding")).toHaveLength(1)
+
+    // One that cannot be found is reported as unknown, and nothing is created.
+    const lost = await prepare({ kind: "CREATE_POST", postType: "posts", title: "A post that never arrived", content: "<p>Lost.</p>", rationale: "TEST post" })
+    const lostJob = (await run(approveChange(session, f.businessId, lost)))!
+    await pool.query("UPDATE wordpress_changes SET write_attempted_at=now() WHERE id=$1", [lost])
+    await resume(lostJob, lost)
+    expect(await status(lost)).toMatchObject({ status: "FAILED", failure: "OutcomeUnknown" })
+    expect([...wp.state.posts.values()].some(p => p.title === "A post that never arrived")).toBe(false)
+
+    // A publish job cut off mid-run goes back on the queue instead of being left interrupted.
+    const cut = await prepare({ kind: "UPDATE_COPY", postType: "pages", postId: 8, title: "Plans and pricing", rationale: "TEST another title" })
+    const cutJob = (await run(approveChange(session, f.businessId, cut)))!
+    await run(claimAgentWorkById(cutJob))
+    await pool.query("UPDATE agent_work_jobs SET execution_started_at=now(), attempt_count=1, lease_until=now()-interval '1 second' WHERE job_id=$1", [cutJob])
+    await run(reconcileAgentWork)
+    expect((await pool.query("SELECT status, execution_started_at FROM agent_work_jobs WHERE job_id=$1", [cutJob])).rows[0]).toEqual({ status: "QUEUED", execution_started_at: null })
+    await resume(cutJob, cut)
+    expect(await status(cut)).toMatchObject({ status: "PUBLISHED" })
+    expect(wp.state.posts.get("pages/8")!.title).toBe("Plans and pricing")
   })
 })
