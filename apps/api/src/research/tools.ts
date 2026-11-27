@@ -13,6 +13,8 @@
 // input, status, findings, coverage, date), reused on the same day when the
 // capability allows it, and bounded by a daily run quota per business.
 // Retrieved content is untrusted data; it never changes what the agent may do.
+import { recordMissingCapability } from "../capability-signals.js"
+import { measuredResearch, priceUsd, rankResearch, researchStats, type ResearchStats } from "./ranking.js"
 import { createHash } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Effect, JSONSchema, Schema } from "effect"
@@ -175,10 +177,20 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type, schedu
 const FindInput = Schema.Struct({ need: Schema.String.pipe(Schema.minLength(2), Schema.maxLength(300)), platform: Schema.optional(Schema.String.pipe(Schema.maxLength(40))) })
 export const findResearch = (ctx: ToolContext, args: typeof FindInput.Type) => Effect.gen(function*() {
   yield* scoped(ctx.accountId, ctx.businessId)
-  const found = findCapabilities(args.need, args.platform, 8)
-  const rows = yield* Effect.forEach(found, c => Effect.map(availabilityOf(c, ctx), a => ({ ...describe(c), available: a === null, ...(a ? { unavailableBecause: a } : {}) })))
-  return { summary: `${rows.length} research capabilit${rows.length === 1 ? "y" : "ies"} for “${args.need.slice(0, 60)}”`, citations: [],
-    data: { capabilities: rows, platforms: [...new Set(CAPABILITIES.map(c => c.platform))], note: "Run one with run_research: capability id, the input object matching its schema, and the question it answers." } } satisfies AgentToolResult
+  const matched = findCapabilities(args.need, args.platform, 8)
+  // How each source has worked here: one that mostly found nothing usable moves after the rest.
+  const stats = yield* researchStats(ctx.accountId, matched.map(c => c.id)).pipe(Effect.orElseSucceed(() => new Map() as ResearchStats))
+  const found = rankResearch(matched, stats)
+  const rows = yield* Effect.forEach(found, c => Effect.map(availabilityOf(c, ctx), a => {
+    const price = priceUsd(c.id)
+    return { ...describe(c), available: a === null, ...(a ? { unavailableBecause: a } : {}), measured: measuredResearch(stats.get(c.id)), ...(price !== null ? { priceUsd: price } : {}) }
+  }))
+  if (!rows.length) yield* recordMissingCapability(ctx, args.need, "SEARCH_MISS")
+  return { summary: rows.length ? `${rows.length} research capabilit${rows.length === 1 ? "y" : "ies"} for “${args.need.slice(0, 60)}”` : `No research capability for “${args.need.slice(0, 60)}”`, citations: [],
+    data: { capabilities: rows, found: rows.length > 0, platforms: [...new Set(CAPABILITIES.map(c => c.platform))],
+      note: rows.length
+        ? "Best fit first. measured shows what each source returned in this workspace over 30 days (null: too few runs to say); priceUsd is the cost per call on OpenRecord's account. Where several fit, prefer the one that has found data here, then the cheaper. Run one with run_research: capability id, the input object matching its schema, and the question it answers."
+        : "Nothing in the research catalog fits, and it is saved as a request for the team. Do not search again with other words: answer with what you have and say plainly what is unknown." } } satisfies AgentToolResult
 })
 
 // ---------------------------------------------------------------- saved research and timeline

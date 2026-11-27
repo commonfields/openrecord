@@ -27,6 +27,8 @@ export const ROUTING_CASES: ReadonlyArray<RoutingCaseDef> = [
   { id: "research-find", task: "Find a research capability for backlinks of a domain", expect: ["find_research_capabilities"] },
   { id: "research-evidence", task: "What research evidence have we already saved?", expect: ["read_research_evidence"] },
   { id: "research-credit", task: "How much research credit is left and what do calls cost?", expect: ["read_research_credit"] },
+  { id: "capability-request", task: "OpenRecord cannot read TikTok ad spend; ask the team to add it", expect: ["tool_feedback"] },
+  { id: "tool-result-report", task: "The search performance tool returned stale numbers; report the bad result", expect: ["tool_feedback"] },
   { id: "decision-feedback", task: "Which ideas did the owner reject before and why?", expect: ["read_decision_feedback"] },
   { id: "outcome-note", task: "Record the outcome of the approved FAQ change after its outcome date", expect: ["record_outcome_note"] },
   { id: "wordpress-read", task: "Read the pages on our WordPress site", expect: ["read_wordpress_content"] },

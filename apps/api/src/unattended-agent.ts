@@ -24,6 +24,8 @@ export type UnattendedBody = {
   readonly conversationId: string
   readonly revision: number
   readonly selection?: HarnessSelection | undefined
+  /** Marks the turn as OpenRecord's in the chat, not the person's. */
+  readonly origin?: { readonly kind: "wake"; readonly title: string } | undefined
 }
 
 export type UnattendedSender<R> = (scope: Scope, body: UnattendedBody) => Effect.Effect<unknown, unknown, R>
