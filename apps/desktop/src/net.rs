@@ -48,6 +48,9 @@ pub enum Reply {
     ArchivedChats(ApiResult<Vec<ChatSummary>>),
     Identity(ApiResult<crate::settings::Identity>),
     Memory(String, ApiResult<Vec<crate::settings::Note>>),
+    ResearchSpend(String, ApiResult<crate::settings::ResearchSpend>),
+    /// A saved limit: the business, and the result.
+    ResearchBudgetSaved(String, ApiResult<crate::settings::ResearchBudget>),
     Providers(ApiResult<crate::settings::Catalog>),
     Pairing(ApiResult<crate::settings::Pairing>),
     /// A settings change failed; what to tell the person.
@@ -584,6 +587,20 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.memory(&business);
             send(Reply::Memory(business, r));
+        });
+    }
+
+    pub fn research_spend(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.research_spend(&business);
+            send(Reply::ResearchSpend(business, r));
+        });
+    }
+
+    pub fn set_research_budget(&self, business: String, limit_micro: Option<i64>) {
+        self.spawn(move |c, send| {
+            let r = c.set_research_budget(&business, limit_micro);
+            send(Reply::ResearchBudgetSaved(business, r));
         });
     }
 

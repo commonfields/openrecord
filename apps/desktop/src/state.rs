@@ -610,6 +610,11 @@ pub struct App {
     pub memory: Load<Vec<crate::settings::Note>>,
     pub memory_kind: usize,
     pub memory_text: TextEdit,
+    /// The business's research spending and monthly limit, and the limit box.
+    pub research_spend: Load<crate::settings::ResearchSpend>,
+    pub research_limit: TextEdit,
+    pub research_limit_busy: bool,
+    pub research_limit_error: Option<String>,
     pub providers: Load<crate::settings::Catalog>,
     pub open_models: std::collections::BTreeSet<String>,
     pub pairing: Load<crate::settings::Pairing>,
@@ -820,6 +825,10 @@ impl App {
             memory: Load::Idle,
             memory_kind: 0,
             memory_text: TextEdit::new(""),
+            research_spend: Load::Idle,
+            research_limit: TextEdit::new(""),
+            research_limit_busy: false,
+            research_limit_error: None,
             providers: Load::Idle,
             open_models: Default::default(),
             pairing: Load::Idle,
@@ -1927,7 +1936,10 @@ impl App {
                 self.net.providers();
                 if let Some(b) = self.active.clone() {
                     self.memory = keep_or_load(&self.memory);
-                    self.net.memory(b);
+                    self.net.memory(b.clone());
+                    self.research_spend = keep_or_load(&self.research_spend);
+                    self.research_limit_error = None;
+                    self.net.research_spend(b);
                 }
             }
             _ => {}
@@ -1954,6 +1966,22 @@ impl App {
     pub fn set_pref(&mut self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
         f(&mut self.prefs);
         self.prefs.save();
+    }
+
+    /// Saves the monthly research limit typed in settings; an empty box removes it.
+    pub fn save_research_limit(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        if self.research_limit_busy {
+            return;
+        }
+        match crate::settings::parse_limit(&self.research_limit.text) {
+            Ok(limit) => {
+                self.research_limit_busy = true;
+                self.research_limit_error = None;
+                self.net.set_research_budget(b, limit);
+            }
+            Err(e) => self.research_limit_error = Some(e.into()),
+        }
     }
 
     pub fn add_memory(&mut self) {
@@ -3121,6 +3149,31 @@ impl App {
             Reply::Identity(r) => self.identity = to_load(self.failed(r)),
             Reply::Memory(b, r) if here(self, &b) => self.memory = to_load(self.failed(r)),
             Reply::Memory(..) => {}
+            Reply::ResearchSpend(b, r) if here(self, &b) => {
+                let r = to_load(self.failed(r));
+                if let Load::Ready(spend) = &r {
+                    self.research_limit.replace_text(&spend.budget.limit_micro.map(|m| format!("{:.2}", m as f64 / 1_000_000.0)).unwrap_or_default());
+                }
+                self.research_spend = r;
+            }
+            Reply::ResearchSpend(..) => {}
+            Reply::ResearchBudgetSaved(b, r) if here(self, &b) => {
+                self.research_limit_busy = false;
+                match self.failed(r) {
+                    Ok(budget) => {
+                        if let Load::Ready(spend) = &mut self.research_spend {
+                            spend.budget = budget.clone();
+                        }
+                        self.research_limit.replace_text(&budget.limit_micro.map(|m| format!("{:.2}", m as f64 / 1_000_000.0)).unwrap_or_default());
+                        self.notice = Some(match budget.limit_micro {
+                            Some(m) => format!("Monthly research limit set to {}.", crate::settings::dollars(m)),
+                            None => "Monthly research limit removed.".into(),
+                        });
+                    }
+                    Err(e) => self.research_limit_error = Some(if e.is_empty() { "Couldn't save the limit. Try again.".into() } else { e }),
+                }
+            }
+            Reply::ResearchBudgetSaved(..) => self.research_limit_busy = false,
             Reply::Providers(r) => {
                 let r = self.failed(r);
                 // A failed refresh keeps the list it had and says it may be stale.
