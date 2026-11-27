@@ -159,12 +159,13 @@ suite("durable request submission and worker (no live model)",() => {
     expect((await pool.query("SELECT count(*)::int AS n FROM agent_request_jobs WHERE continues_request_id=$1",[chain[3]])).rows[0].n).toBe(0)
     expect(await run(claimAgentRequest)).toBeNull()
   })
-  it("does not continue a request once its business is archived or its person left the account",async () => {
-    for (const gone of ["archived","left"]) {
+  it("does not continue a request once its business is archived, its person left the account or they archived the chat",async () => {
+    for (const gone of ["archived","left","chat archived"]) {
       const f=await fixture(),input=body(f.conversationId)
       await run(enqueueAgentRequest(f,input)); await run(claimAgentRequest)
       if (gone==="archived") await pool.query("UPDATE businesses SET archived_at=now() WHERE id=$1",[f.businessId])
-      else await pool.query("DELETE FROM account_users WHERE account_id=$1 AND user_id=$2",[f.accountId,f.userId])
+      else if (gone==="left") await pool.query("DELETE FROM account_users WHERE account_id=$1 AND user_id=$2",[f.accountId,f.userId])
+      else await pool.query("UPDATE agent_conversations SET user_archived_at=now() WHERE id=$1",[f.conversationId])
       await pool.query("UPDATE agent_request_jobs SET execution_started_at=now(),lease_until=now()-interval '1 minute' WHERE request_id=$1",[input.requestId])
       await run(reconcileRequestJobs)
       expect((await pool.query("SELECT status FROM agent_request_jobs WHERE request_id=$1",[input.requestId])).rows[0].status).toBe("INTERRUPTED")

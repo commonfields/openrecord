@@ -26,14 +26,15 @@ const digestOf = (body: Record<string, unknown>) => createHash("sha256").update(
  * Queues the next turn of a request a restart interrupted, in the same chat
  * with the same model, files and settings. Its message carries the original
  * request and the rule to check before repeating anything. The chain stops
- * after MAX_CONTINUATIONS, when the person left the account, or when the chat
+ * after MAX_CONTINUATIONS, when the person left the account or archived the chat, or when the chat
  * or business is gone. Call inside the transaction that marked it INTERRUPTED.
  */
 const continueInterrupted = (requestId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const prev = (yield* sql`SELECT j.account_id, j.user_id, j.business_id, j.conversation_id, j.payload, j.continuation_depth, c.revision
     FROM agent_request_jobs j
-    JOIN agent_conversations c ON c.id=j.conversation_id AND c.account_id=j.account_id AND c.user_id=j.user_id AND c.expires_at>now()
+    -- A chat the person archived is set aside: it is not continued.
+    JOIN agent_conversations c ON c.id=j.conversation_id AND c.account_id=j.account_id AND c.user_id=j.user_id AND c.expires_at>now() AND c.user_archived_at IS NULL
     JOIN account_users u ON u.account_id=j.account_id AND u.user_id=j.user_id
     WHERE j.request_id=${requestId} AND j.status='INTERRUPTED' AND j.continuation_depth < ${MAX_CONTINUATIONS}
       AND (j.business_id IS NULL OR EXISTS (SELECT 1 FROM businesses b WHERE b.id=j.business_id AND b.account_id=j.account_id AND b.archived_at IS NULL))`)[0]
