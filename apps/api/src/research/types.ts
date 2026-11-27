@@ -27,6 +27,7 @@ export interface RunContext {
   readonly accountId: string; readonly userId: string; readonly businessId: string
   readonly net: ResearchNetService
   readonly now: Date
+  readonly observationId?: string
 }
 
 export interface Capability<I = unknown> {

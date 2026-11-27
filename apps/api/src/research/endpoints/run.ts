@@ -30,7 +30,7 @@ const context = (businessId: string, providerId: string) => `research:${business
 const transport = Effect.map(Effect.serviceOption(ResearchHttp), Option.getOrUndefined)
 
 /** The business's decrypted credential for a provider, or null. */
-const credentialFor = (businessId: string, providerId: string) => Effect.gen(function*() {
+export const credentialFor = (businessId: string, providerId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const r = (yield* sql`SELECT credential_ciphertext FROM research_connections WHERE business_id = ${businessId} AND provider = ${providerId} AND status = 'ACTIVE'`)[0]
   const cipher = (yield* adsConfig).cipher
@@ -72,6 +72,7 @@ const FAILURES: Readonly<Record<CallFailure, string>> = {
   AUTH: "The provider refused the business's credential. Reconnect it on the Channels page.", FORBIDDEN: "The provider refused this read for the connected account (permission, plan or quota).",
   NOT_FOUND: "Not found at the provider.", RATE_LIMITED: "The provider's rate limit was reached. Try again later.", REDIRECTED: "The provider redirected the request; OpenRecord does not follow redirects here.",
   INVALID_REQUEST: "The provider refused the request parameters.", UNAVAILABLE: "The provider did not answer.", MALFORMED: "The provider's answer could not be read.",
+  PAYMENT_REQUIRED: "The business's account with this provider has no balance left for this call.",
   NOT_CONFIGURED: "This provider needs server settings that are not configured (for example a declared contact).",
 }
 

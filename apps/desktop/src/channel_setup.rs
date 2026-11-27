@@ -14,6 +14,8 @@ pub enum Kind {
     Stripe,
     WordPress,
     Webflow,
+    /// The treg tool catalog: the business's own treg token, stored as a research connection.
+    Treg,
 }
 impl Kind {
     pub fn from_key(key: &str) -> Option<Self> {
@@ -25,6 +27,7 @@ impl Kind {
             "revenue" => Self::Stripe,
             "wordpress" => Self::WordPress,
             "webflow" => Self::Webflow,
+            "treg" => Self::Treg,
             _ => return None,
         })
     }
@@ -37,6 +40,7 @@ impl Kind {
             Self::Stripe => "revenue",
             Self::WordPress => "wordpress",
             Self::Webflow => "webflow",
+            Self::Treg => "treg",
         }
     }
     pub fn path(self, business: &str) -> String {
@@ -46,11 +50,12 @@ impl Kind {
             Self::Stripe => format!("/api/revenue/clients/{b}"),
             Self::WordPress => format!("/api/businesses/{b}/wordpress"),
             Self::Webflow => format!("/api/businesses/{b}/webflow"),
+            Self::Treg => format!("/api/businesses/{b}/research-connections"),
             _ => format!("/api/ads/clients/{b}"),
         }
     }
     pub fn keyed(self) -> bool {
-        matches!(self, Self::Stripe | Self::WordPress | Self::Webflow)
+        matches!(self, Self::Stripe | Self::WordPress | Self::Webflow | Self::Treg)
     }
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +113,14 @@ impl Client {
     pub fn channel_detail(&self, business: &str, kind: Kind) -> ApiResult<Detail> {
         let path = kind.path(business);
         let status: Value = self.get(&path)?;
+        // treg is one of the business's research connections: available when the server can store credentials.
+        if kind == Kind::Treg {
+            let providers = items(&status, "providers");
+            let entry = providers.iter().find(|p| p["id"] == "treg");
+            let configured = status["available"] == true && entry.is_some();
+            let connected = entry.is_some_and(|p| p["connected"] == true);
+            return Ok(Detail { configured, connected, choices: Vec::new(), warning: None });
+        }
         let configured = if kind.keyed() || kind == Kind::Google {
             status["configured"].as_bool().unwrap_or(false)
         } else {
@@ -272,6 +285,9 @@ impl Client {
                 }
                 r
             }
+            Action::Save { secret, .. } if kind == Kind::Treg => {
+                self.call("PUT", &format!("{base}/treg"), Some(json!({ "credential": secret.trim() })))?
+            }
             Action::Save { secret, .. } if kind == Kind::Stripe => {
                 self.post(&format!("{base}/stripe"), json!({ "key": secret }))?
             }
@@ -299,6 +315,7 @@ impl Client {
                 json!({}),
             )?,
             Action::Disconnect if kind == Kind::WordPress || kind == Kind::Webflow => self.call("DELETE", &base, None)?,
+            Action::Disconnect if kind == Kind::Treg => self.call("DELETE", &format!("{base}/treg"), None)?,
             Action::Disconnect if kind == Kind::Stripe => {
                 self.post(&format!("{base}/stripe/disconnect"), json!({}))?
             }
@@ -371,7 +388,7 @@ pub fn error_message(error: &crate::api::ApiError) -> String {
     if let crate::api::ApiError::Status(_, body) = error {
         let reason = serde_json::from_str::<Value>(body)
             .ok()
-            .and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_string));
+            .and_then(|v| v.get("reason").or_else(|| v.get("_tag")).and_then(Value::as_str).map(str::to_string));
         let copy = match reason.as_deref() {
             Some("SecretKeyRefused" | "NotARestrictedKey") => Some(
                 "Use a Stripe restricted read-only key beginning with rk_live_ or rk_test_. Full secret keys are refused.",
@@ -394,6 +411,7 @@ pub fn error_message(error: &crate::api::ApiError) -> String {
             Some("WebflowAUTH" | "WebflowUNAUTHORIZED" | "WebflowFORBIDDEN") => Some("Webflow refused this token. Create a new site API token and try again."),
             Some("TokenMissingScope") => Some("This Webflow token can't read the site's pages and CMS. Create a site API token with Pages and CMS access (read and write)."),
             Some("SiteNotFound") => Some("No Webflow site was found for this token, or the site ID doesn't match it."),
+            Some("CredentialFormat") => Some("That doesn't look like a treg API token. It starts with treg_. Create one at treg.to and paste it here."),
             Some("ProviderQuota") => {
                 Some("The provider's rate limit was reached. Try again later.")
             }

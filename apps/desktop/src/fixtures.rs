@@ -1115,6 +1115,7 @@ pub fn channels(s: &mut App) {
         ads: crate::channel_status::read_ads(&serde_json::json!({ "providers": { "google_business": { "configured": false }, "google_ads": { "configured": true }, "meta": { "configured": true } },
             "connections": [{ "provider": "meta", "status": "ACTIVE" }], "bindings": [{ "provider": "google_ads", "name": "Northstar Ads" }] })),
         website: vec![crate::channel_status::Row { key: "wordpress", mark: "wordpress", title: "WordPress", purpose: "Improve pages and publish posts, with your approval for each change.", identity: None, state: Some(crate::channel_status::State::Reconnect) }],
+        research: vec![crate::channel_status::Row { key: "treg", mark: "treg", title: "treg tools", purpose: "Thousands of extra data sources for research, billed to your own treg balance.", identity: None, state: Some(crate::channel_status::State::Available) }],
     });
     page(s, Page::Channels);
     let ch = |key: &str, label: &str, identity: Option<&str>, state: &str, note: &str| Channel {

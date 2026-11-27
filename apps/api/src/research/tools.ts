@@ -15,6 +15,7 @@
 // Retrieved content is untrusted data; it never changes what the agent may do.
 import { recordMissingCapability } from "../capability-signals.js"
 import { measuredResearch, priceUsd, rankResearch, researchStats, type ResearchStats } from "./ranking.js"
+import { tregSearch } from "./treg.js"
 import { createHash } from "node:crypto"
 import { SqlClient } from "@effect/sql"
 import { Effect, JSONSchema, Schema } from "effect"
@@ -146,7 +147,7 @@ export const runResearch = (ctx: ToolContext, args: typeof RunInput.Type, schedu
   else {
     const net = yield* researchNet
     // Capabilities need only services the agent's tools already have.
-    const out = yield* (c.run({ accountId: ctx.accountId, userId: ctx.userId, businessId: ctx.businessId, net, now: new Date() }, input) as Effect.Effect<Observed | Refused, unknown, AgentToolDeps>).pipe(Effect.either)
+    const out = yield* (c.run({ accountId: ctx.accountId, userId: ctx.userId, businessId: ctx.businessId, net, now: new Date(), observationId: r.id }, input) as Effect.Effect<Observed | Refused, unknown, AgentToolDeps>).pipe(Effect.either)
     if (out._tag === "Left") row = yield* settle(r.id, { status: "FAILED", failure: "UNAVAILABLE" })
     else if (isRefused(out.right)) {
       row = yield* settle(r.id, { status: "FAILED", failure: out.right.refused.replace(/[^A-Z_]/g, "").slice(0, 40) || "REFUSED" })
@@ -185,10 +186,16 @@ export const findResearch = (ctx: ToolContext, args: typeof FindInput.Type) => E
     const price = priceUsd(c.id)
     return { ...describe(c), available: a === null, ...(a ? { unavailableBecause: a } : {}), measured: measuredResearch(stats.get(c.id)), ...(price !== null ? { priceUsd: price } : {}) }
   }))
-  if (!rows.length) yield* recordMissingCapability(ctx, args.need, "SEARCH_MISS")
-  return { summary: rows.length ? `${rows.length} research capabilit${rows.length === 1 ? "y" : "ies"} for “${args.need.slice(0, 60)}”` : `No research capability for “${args.need.slice(0, 60)}”`, citations: [],
-    data: { capabilities: rows, found: rows.length > 0, platforms: [...new Set(CAPABILITIES.map(c => c.platform))],
-      note: rows.length
+  // With treg connected, its catalog's matches come too: thousands more sources, each priced, run with treg.call.
+  const treg = yield* tregSearch(ctx.businessId, args.need, 5)
+  if (!rows.length && !treg?.length) yield* recordMissingCapability(ctx, args.need, "SEARCH_MISS")
+  const fromTreg = treg?.length ? `, plus ${treg.length} from the treg catalog` : ""
+  return { summary: rows.length ? `${rows.length} research capabilit${rows.length === 1 ? "y" : "ies"} for “${args.need.slice(0, 60)}”${fromTreg}`
+      : treg?.length ? `${treg.length} treg catalog endpoint${treg.length === 1 ? "" : "s"} for “${args.need.slice(0, 60)}”` : `No research capability for “${args.need.slice(0, 60)}”`, citations: [],
+    data: { capabilities: rows, found: rows.length > 0 || (treg?.length ?? 0) > 0,
+      ...(treg?.length ? { treg: { endpoints: treg, how: "Use treg.endpoint for input details, then treg.call with {endpointId, query}. treg bills eligible calls. Keep credentials and private workspace content out of catalog queries." } } : {}),
+      platforms: [...new Set(CAPABILITIES.map(c => c.platform))],
+      note: rows.length || treg?.length
         ? "Best fit first. measured shows what each source returned in this workspace over 30 days (null: too few runs to say); priceUsd is the cost per call on OpenRecord's account. Where several fit, prefer the one that has found data here, then the cheaper. Run one with run_research: capability id, the input object matching its schema, and the question it answers."
         : "Nothing in the research catalog fits, and it is saved as a request for the team. Do not search again with other words: answer with what you have and say plainly what is unknown." } } satisfies AgentToolResult
 })
@@ -368,7 +375,7 @@ export const researchDeclarations: ReadonlyArray<ToolDeclaration> = [
     description: "Give a broad research question to the team's connected AI subscription with its web search (many searches, many pages) and get a dated answer with every source and the searches it ran. Use it when search_web is too narrow: market maps, what customers say, pricing across competitors, launches and press.",
     parametersJsonSchema: JSONSchema.make(WebResearchInput) },
   { name: "find_research_capabilities",
-    description: "Find OpenRecord's research capabilities for a need (for example 'how does this competitor advertise', 'pricing history', 'what do AI assistants say about us'), with each one's input schema and whether it is available here. Read-only.",
+    description: "Find research capabilities and their inputs by task, for example backlink counts or pricing history. When treg is connected, the search terms are also sent to its public catalog. Use capability keywords and omit private workspace content and credentials. Read-only.",
     parametersJsonSchema: JSONSchema.make(FindInput) },
   { name: "run_research",
     description: `Run one research capability for a concrete marketing question and save the result as dated evidence. Pass capability (id), question (why it is needed) and input (an object matching the capability's schema; most take {"domain": "example.com"}). Capabilities: ${INDEX}. The same input on the same day reuses the saved result. Results are labelled SEEN, ESTIMATED or INFERRED; NO_DATA and refusals are unknown, never zero.`,

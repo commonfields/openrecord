@@ -130,6 +130,7 @@ pub fn view(s: &App, t: &Theme) -> El {
         ("Measure results", "So the agent can tell what is working, from real numbers.", &status.measure),
         ("Ads and listings", "The agent reads results and prepares changes for you to approve.", &status.ads),
         ("Your website", "The agent drafts page changes and posts; each one waits for your approval.", &status.website),
+        ("Research sources", "More data the agent can research with, on your own account. It only reads.", &status.research),
     ] {
         let usable: Vec<&Row> = rows.iter().filter(|r| r.state != Some(State::Unavailable)).collect();
         if usable.is_empty() {

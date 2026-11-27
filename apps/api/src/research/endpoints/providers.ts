@@ -9,6 +9,13 @@ import { BUSINESS_PROVIDERS } from "./defs-business.js"
 const contact = (env: NodeJS.ProcessEnv) => env["RESEARCH_CONTACT"]?.trim() || null
 
 const HAND_WRITTEN: ReadonlyArray<Provider> = [
+  // treg (treg.to): a catalog of thousands of third-party data APIs behind one relay, billed per call to
+  // the team's own treg balance. OpenRecord calls it as a service with the business's token; it does not
+  // embed or copy treg. Only data reads are run (research/treg.ts).
+  { id: "treg", name: "treg tool catalog (your own treg account)", hosts: ["treg.to"], auth: { kind: "api_key", in: "header", name: "X-Treg-Token" }, paid: true,
+    connect: { how: "Sign in at treg.to, create an API token for your team, and paste it. Each call is billed to your team's treg balance at the price treg lists, usually a fraction of a cent.",
+      url: "https://treg.to/app", format: /^treg_[A-Za-z0-9_-]{30,80}$/, example: "treg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+    note: "Third-party data through treg's relay, billed to the business's own treg balance at treg's listed price. Each answer is that provider's data as it was on the date shown; estimates are the provider's, not OpenRecord's." },
   { id: "apple", name: "Apple App Store and Podcasts (public lookup)", hosts: ["itunes.apple.com"], auth: { kind: "none" },
     note: "Apple's public search and lookup: listings, ratings counts and recent reviews as Apple shows them. Ratings are for the country asked." },
   { id: "github", name: "GitHub", hosts: ["api.github.com"], auth: { kind: "bearer", optional: true },

@@ -140,3 +140,13 @@ Added on 2026-11-27 ([migration 0108](../packages/db/migrations/0108_durable_cha
 | T3 Code's outbox effects read the provider's state before they act, so a replay after a crash reaches the same result (`EffectWorker.ts`, `RestartContinuation.ts`). | Approving a WordPress or Webflow change moves it to PUBLISHING and queues `CHANGE_PUBLISH_WRITE` in one transaction. The job then runs at once in the same request, so the person sees the result. A publish cut off part way goes back on the queue after its lease and finishes from what the site holds. A post or live item that already has the approved values is recorded, not written again. One edited since it was prepared is refused. A new post or item an earlier attempt sent is adopted when found and reported as `OutcomeUnknown` when not, never created twice. Webflow page SEO written but not live is put back and reported. The AI-answer fix follow-up runs once, on the step that publishes. [Publish job](../apps/api/src/change-publish.ts) |
 
 Not adopted: treg's judged search (a model call per query); matching stays deterministic. Account actions (Google review replies, Google Ads changes) still run inside the approval request.
+
+## treg as a connected service (2026-11-27)
+
+OpenRecord uses treg's hosted catalog and relay. Each business supplies its own treg team token for relay calls. [treg API reference](https://treg.to/docs)
+
+- In desktop **Channels**, select **Research sources**, then **treg tools**. The server encrypts the token and sends it to treg.to for relay calls.
+- `find_research_capabilities` includes treg matches for connected businesses. `treg.endpoint` reads the public catalog entry and shows the documented inputs, price, and eligibility.
+- `treg.call` rechecks the public catalog entry before dispatch. Eligible endpoints are GET reads with free or fixed USD pricing within `TREG_MAX_CALL_USD`, which defaults to $0.25. The server uses the research observation ID for relay idempotency and stores the returned charge and call receipt with the evidence.
+
+[treg source](../apps/api/src/research/treg.ts)

@@ -34,11 +34,13 @@ pub struct Status {
     pub measure: Vec<Row>,
     pub ads: Vec<Row>,
     pub website: Vec<Row>,
+    /// Extra research sources the business connects with its own account.
+    pub research: Vec<Row>,
 }
 
 impl Status {
     pub fn rows(&self) -> impl Iterator<Item = &Row> {
-        self.measure.iter().chain(self.ads.iter()).chain(self.website.iter())
+        self.measure.iter().chain(self.ads.iter()).chain(self.website.iter()).chain(self.research.iter())
     }
 }
 
@@ -57,6 +59,18 @@ fn list<'a>(v: &'a Value, k: &str) -> &'a [Value] {
 /// "sc-domain:example.com" or "https://example.com/" as the site's name.
 fn site(url: &str) -> String {
     url.trim_start_matches("sc-domain:").trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string()
+}
+
+/// The API must advertise treg and support storing a team token.
+fn read_treg(v: &Value) -> State {
+    if !b(v, "available") {
+        return State::Unavailable;
+    }
+    match list(v, "providers").iter().find(|p| s(p, "id") == "treg") {
+        Some(p) if b(p, "connected") => State::Connected,
+        Some(_) => State::Available,
+        None => State::Unavailable,
+    }
 }
 
 /// A key-based account (Stripe, WordPress): connected, revoked, or not yet.
@@ -143,6 +157,7 @@ impl Client {
         let revenue = quiet(self.get(&format!("/api/revenue/clients/{id}")))?;
         let wp = quiet(self.get(&format!("/api/businesses/{id}/wordpress")))?;
         let wf = quiet(self.get(&format!("/api/businesses/{id}/webflow")))?;
+        let research = quiet(self.get(&format!("/api/businesses/{id}/research-connections")))?;
         let mut st = Status::default();
         st.measure.push(sc.as_ref().map(read_search_console).unwrap_or_else(|| unknown("google", "search-console", "Google Search Console", "See which Google searches bring people to your site.")));
         st.ads = ads.as_ref().map(read_ads).unwrap_or_else(|| vec![unknown("ads", "google_ads", "Ads and Google listing", "Ads and Google listing status could not load.")]);
@@ -169,6 +184,11 @@ impl Client {
             }
             None => unknown("webflow", "webflow", "Webflow", WEBFLOW),
         });
+        const TREG: &str = "Thousands of extra data sources for research, billed to your own treg balance.";
+        st.research.push(match &research {
+            Some(v) => Row { key: "treg", mark: "treg", title: "treg tools", purpose: TREG, identity: None, state: Some(read_treg(v)) },
+            None => unknown("treg", "treg", "treg tools", TREG),
+        });
         Ok(st)
     }
 }
@@ -188,5 +208,9 @@ mod tests {
             "connections": [{ "provider": "meta", "status": "REAUTHORIZATION_REQUIRED" }], "bindings": [{ "provider": "google_ads", "name": "Acme" }] }));
         assert_eq!(ads.iter().map(|r| r.state).collect::<Vec<_>>(), vec![Some(State::Unavailable), Some(State::Connected), Some(State::Reconnect)]);
         assert_eq!(keyed(&json!({ "configured": true, "connection": { "status": "REVOKED" } }), "displayName").0, State::Reconnect);
+        assert_eq!(read_treg(&json!({ "available": true, "providers": [{ "id": "treg", "connected": true }] })), State::Connected);
+        assert_eq!(read_treg(&json!({ "available": true, "providers": [{ "id": "treg", "connected": false }] })), State::Available);
+        assert_eq!(read_treg(&json!({ "available": false, "providers": [] })), State::Unavailable);
+        assert_eq!(read_treg(&json!({ "available": true, "providers": [] })), State::Unavailable);
     }
 }

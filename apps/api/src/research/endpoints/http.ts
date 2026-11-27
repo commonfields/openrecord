@@ -5,8 +5,9 @@
 import { isForbiddenIp, readCapped, defaultTransport, type HttpTransport } from "@openrecord/representation"
 import { ACCOUNT_HOST, type Provider, type Request } from "./types.js"
 
-export type CallFailure = "NOT_ALLOWED" | "NOT_PUBLIC" | "AUTH" | "FORBIDDEN" | "NOT_FOUND" | "RATE_LIMITED" | "REDIRECTED" | "INVALID_REQUEST" | "UNAVAILABLE" | "MALFORMED" | "NOT_CONFIGURED"
-export type CallResult = { readonly ok: true; readonly json: unknown } | { readonly ok: false; readonly failure: CallFailure; readonly retryAfterS: number | null }
+export type CallFailure = "NOT_ALLOWED" | "NOT_PUBLIC" | "AUTH" | "FORBIDDEN" | "NOT_FOUND" | "RATE_LIMITED" | "REDIRECTED" | "INVALID_REQUEST" | "UNAVAILABLE" | "MALFORMED" | "NOT_CONFIGURED" | "PAYMENT_REQUIRED"
+/** headers: the provider's response headers, lower-cased (a relay reports what a call cost there). */
+export type CallResult = { readonly ok: true; readonly json: unknown; readonly headers: Readonly<Record<string, string>> } | { readonly ok: false; readonly failure: CallFailure; readonly retryAfterS: number | null }
 
 const MAX_RESPONSE = 6_000_000
 const fail = (failure: CallFailure, retryAfterS: number | null = null): CallResult => ({ ok: false, failure, retryAfterS })
@@ -77,13 +78,15 @@ export async function send(provider: Provider, prepared: { url: string; method: 
   const retryAfterS = Number.isFinite(retry) && retry >= 0 ? Math.min(Math.ceil(retry), 3600) : null
   if (res.status >= 300 && res.status < 400) return fail("REDIRECTED")
   if (res.status === 401) return fail("AUTH")
+  if (res.status === 402) return fail("PAYMENT_REQUIRED")
   if (res.status === 403) return fail("FORBIDDEN")
   if (res.status === 404) return fail("NOT_FOUND")
   if (res.status === 429) return fail("RATE_LIMITED", retryAfterS)
   if (res.status === 400 || res.status === 422) return fail("INVALID_REQUEST")
   if (res.status < 200 || res.status >= 300) return fail("UNAVAILABLE")
   if (read.truncated) return fail("MALFORMED")
-  try { return { ok: true, json: JSON.parse(Buffer.from(read.bytes).toString("utf8")) } } catch { return fail("MALFORMED") }
+  const headers = Object.fromEntries(Object.entries(res.headers ?? {}).map(([k, v]) => [k.toLowerCase(), Array.isArray(v) ? v.join(", ") : String(v)]))
+  try { return { ok: true, json: JSON.parse(Buffer.from(read.bytes).toString("utf8")), headers } } catch { return fail("MALFORMED") }
 }
 
 /** Client credentials grant: exchanges "id:secret" for a short-lived token. */

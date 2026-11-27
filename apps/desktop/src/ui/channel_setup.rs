@@ -25,6 +25,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                 match p.kind {
                     Kind::WordPress => "WordPress",
                     Kind::Webflow => "Webflow",
+                    Kind::Treg => "treg tools",
                     Kind::Stripe => "Stripe",
                     Kind::Google => "Google Search Console",
                     Kind::GoogleAds => "Google Ads",
@@ -95,12 +96,15 @@ pub fn view(s: &App, t: &Theme) -> El {
             body = body.child(label("In Webflow, open Site settings, then Apps & integrations, and generate a site API token with read and write access to Pages and CMS.", type_::XS, t.muted_foreground).wrap())
                 .child(label("Site ID (only if the token opens more than one site)", type_::XS_MEDIUM, t.foreground))
                 .child(TextInput::new(&p.site).label("Webflow site ID").placeholder("Leave empty for a site API token").on_edit(|s: &mut App| &mut s.channel_setup.as_mut().unwrap().site).build(&k).w_full());
+        } else if p.kind == Kind::Treg {
+            body = body.child(label("Create a team API token at treg.to and paste it here. OpenRecord sends catalog searches and read requests to treg. Eligible reads can charge your team's treg balance at the listed rate.", type_::XS, t.muted_foreground).wrap());
         } else {
             body = body.child(label("Use a Stripe restricted key with read-only access to Charges. Full secret keys are refused.", type_::XS, t.muted_foreground).wrap());
         }
         let name = match p.kind {
             Kind::WordPress => "Application password",
             Kind::Webflow => "Site API token",
+            Kind::Treg => "treg API token",
             _ => "Restricted key",
         };
         body = body
