@@ -16,7 +16,9 @@ const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promp
 // The run that produced an agent message: its outcome, or how it stopped.
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })
-const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "ACCOUNT_ACTION"), id: Schema.UUID })
+// Every card type a reply can carry (DecisionRef in agent-registry.ts); a chat
+// holding one this schema did not list could not be opened.
+const DecisionRef = Schema.Struct({ type: Schema.Literal("CAMPAIGN_PUBLICATION", "CAMPAIGN_REVIEW", "MARKETING_STRATEGY", "AGENT_PROPOSAL", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "ACCOUNT_ACTION"), id: Schema.UUID })
 const TaskStatus = Schema.Literal("RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED")
 const TaskRef = Schema.Struct({ id: Schema.UUID, sessionId: Schema.UUID, title: Schema.String, role: Schema.String, status: TaskStatus, model: Schema.optional(Schema.String) })
 // A message another session sent: a task it asked for, a follow-up,

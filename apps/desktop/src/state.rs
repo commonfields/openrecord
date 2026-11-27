@@ -292,6 +292,19 @@ impl AnswerView {
 }
 
 /// The "Save as playbook" dialog.
+/// Undoing the chat from one of the person's messages, while it asks to confirm.
+pub struct UndoTurn {
+    /// The message's place in the chat, and the chat it was in.
+    pub index: usize,
+    pub conversation: String,
+    pub revision: i64,
+    pub text: String,
+    /// Kept across a retried click, so the server undoes once.
+    pub request: String,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
 pub struct SavePlaybook {
     pub title: TextEdit,
     /// The command; empty means the title's slug.
@@ -512,6 +525,7 @@ pub struct App {
     pub composer_slot: ComposerSlot,
     pub composer_widths: [f32; 2],
     pub save_playbook: Option<SavePlaybook>,
+    pub undo: Option<UndoTurn>,
     pub share: Option<ShareChat>,
     /// Automatic follow-ups for the business on screen, and their dialog.
     pub followups: Load<crate::followups::Followups>,
@@ -783,6 +797,7 @@ impl App {
             composer_slot: ComposerSlot::Main,
             composer_widths: [0.0; 2],
             save_playbook: None,
+            undo: None,
             share: None,
             open_logs: Default::default(),
             open_sources: Default::default(),
@@ -2544,6 +2559,33 @@ impl App {
     }
 
     /// Asks the question behind the latest reply again.
+    /// Asks to undo the chat from the person's message `i`.
+    pub fn ask_undo(&mut self, i: usize) {
+        if matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let Some(c) = self.conversation.ready() else { return };
+        if self.chat_id.as_deref() != Some(c.id.as_str()) {
+            return;
+        }
+        let Some(m) = c.messages.get(i) else { return };
+        if m.role != "user" || m.origin.is_some() {
+            return;
+        }
+        self.undo = Some(UndoTurn { index: i, conversation: c.id.clone(), revision: c.revision, text: m.text.clone(), request: crate::api::uuid(), busy: false, error: None });
+    }
+
+    pub fn confirm_undo(&mut self) {
+        let Some(scope) = self.chat_scope() else { return };
+        let Some(u) = &mut self.undo else { return };
+        if u.busy || matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        u.busy = true;
+        u.error = None;
+        self.net.rollback(scope, u.conversation.clone(), u.index, u.revision, u.request.clone(), u.text.clone());
+    }
+
     /// Carries the chat up to message `i` into a new chat and opens it there;
     /// the original stays as it was in the history.
     pub fn branch_reply(&mut self, i: usize) {
@@ -2985,6 +3027,57 @@ impl App {
                     // A background look that failed keeps the chat on screen; the next one tries again.
                     Err(_) if self.conversation.ready().is_some_and(|o| Some(&o.id) == self.chat_id.as_ref()) => {}
                     Err(e) => self.conversation = Load::Failed(e),
+                }
+            }
+            Reply::RolledBack(b, text, r) if self.chat_scope().as_deref() == Some(b.as_str()) => {
+                let busy = matches!(&r, Err(ApiError::Status(409, body)) if body.contains("\"BUSY\""));
+                let stale = matches!(&r, Err(ApiError::Status(409, body)) if body.contains("\"STALE\""));
+                match self.failed(r) {
+                    Ok((c, rollback)) => {
+                        self.undo = None;
+                        // Pieces it archived close; ones it put back read again.
+                        for a in &rollback.archived_artifacts {
+                            self.close_tab(&crate::side::SideTab::Artifact(a.id.clone()));
+                        }
+                        for a in &rollback.restored_artifacts {
+                            if self.artifacts.iter().any(|p| p.id == a.id) {
+                                self.net.artifact(b.clone(), a.id.clone(), None);
+                            }
+                        }
+                        if self.chat_id.as_deref() == Some(c.id.as_str()) {
+                            self.turn = Turn::Idle;
+                            self.conversation = Load::Ready(c);
+                            // The undone message comes back to the box, to change and send again.
+                            if self.composer.text.trim().is_empty() {
+                                self.composer.replace_text(&text);
+                            }
+                            tx.settle();
+                            tx.scroll_to_bottom("transcript");
+                            tx.focus("composer-input", false);
+                        }
+                        self.notice = Some(rollback.summary());
+                    }
+                    Err(e) => {
+                        let message = if busy {
+                            "The agent is still working in this chat. Undo once it finishes.".to_string()
+                        } else if stale {
+                            "This chat changed since you opened it. Look at it again, then undo.".to_string()
+                        } else if e.is_empty() {
+                            "Couldn't undo the chat. Try again.".to_string()
+                        } else {
+                            e
+                        };
+                        if stale {
+                            self.undo = None;
+                            self.notice = Some(message);
+                            if let Some(id) = self.chat_id.clone() {
+                                self.net.conversation(b.clone(), id);
+                            }
+                        } else if let Some(u) = &mut self.undo {
+                            u.busy = false;
+                            u.error = Some(message);
+                        }
+                    }
                 }
             }
             Reply::Branched(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
@@ -3465,6 +3558,7 @@ impl App {
             | Reply::CampaignRuns(..)
             | Reply::Conversation(..)
             | Reply::Branched(..)
+            | Reply::RolledBack(..)
             | Reply::TurnQueued { .. } => {}
         }
     }

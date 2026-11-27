@@ -689,7 +689,27 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         if !m.text.is_empty() {
             c = c.child(user_bubble(s, t, &m.text));
         }
-        c = c.child(copy_button(s, t, i, &m.text));
+        let mut acts = row().gap(2.0).center_y().child(copy_button(s, t, i, &m.text));
+        // The person's own message can undo the chat from there.
+        if m.origin.is_none() && s.chat_id.is_some() && !matches!(s.turn, Turn::Working { .. }) {
+            acts = acts.child(
+                row()
+                    .key(format!("undo-{i}"))
+                    .size(24.0, 24.0)
+                    .radius(6.0)
+                    .center()
+                    .role("button")
+                    .label("Undo from here")
+                    .help("Undo from here")
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .group_opacity(0.0, 1.0)
+                    .child(ico(&icons::UNDO_2, 14.0, t.muted_foreground))
+                    .on_press(move |s: &mut App| s.ask_undo(i)),
+            );
+        }
+        c = c.child(acts);
         // What the person added while that turn worked, as sent.
         for note in &m.notes {
             c = c.child(user_bubble(s, t, note)).child(label("Sent while the agent worked", type_::XS11, t.muted_foreground));
@@ -2254,6 +2274,47 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
     if s.followups_open {
         followups_dialog(s, t, k, layer);
     }
+    if let Some(u) = &s.undo {
+        undo_dialog(t, k, u, layer);
+    }
+}
+
+/// Confirms undoing the chat from one of the person's messages.
+fn undo_dialog(t: &Theme, k: &Kit, u: &crate::state::UndoTurn, layer: &mut Vec<El>) {
+    let undo = crate::ui::widgets::button(t, "undo-confirm", if u.busy { "Undoing…" } else { "Undo" }, crate::ui::widgets::Variant::Primary);
+    let undo = if u.busy { undo.opacity(0.5).cursor(Cursor::Default) } else { undo.on_press(|s: &mut App| s.confirm_undo()) };
+    let quoted: String = u.text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+    let mut body = col()
+        .w_full()
+        .px(16.0)
+        .pb(16.0)
+        .gap(10.0)
+        .child(label(format!("«{quoted}» and everything after it leave this chat. The message comes back to the box so you can change it and send it again."), type_::SM_13, t.foreground).wrap())
+        .child(label("Changes, proposals and drafts those turns saved that you haven't decided are withdrawn. Pieces they wrote go back to how they were, unless someone edited them since. Helpers they started stop.", type_::SM_13, t.muted_foreground).wrap())
+        .child(label("Anything you already approved or published stays as it is. Research and notes the agent saved stay too.", type_::SM_13, t.muted_foreground).wrap());
+    if let Some(e) = &u.error {
+        body = body.child(label(e.clone(), type_::XS, t.wrong).wrap().live_region(LiveRegion::Polite));
+    }
+    body = body.child(
+        row()
+            .w_full()
+            .gap(8.0)
+            .child(el().grow(1.0))
+            .child(crate::ui::widgets::button(t, "undo-cancel", "Cancel", crate::ui::widgets::Variant::Outline).on_press(|s: &mut App| s.undo = None))
+            .child(undo),
+    );
+    Dialog::new("undo-turn", "Undo from here")
+        .description("Take the chat back to before this message.")
+        .width(460.0)
+        .fit()
+        .open(true)
+        .child(body)
+        .on_close(|s: &mut App| {
+            if s.undo.as_ref().is_some_and(|u| !u.busy) {
+                s.undo = None;
+            }
+        })
+        .build(k, layer);
 }
 
 /// Quick actions aligned with the message box.

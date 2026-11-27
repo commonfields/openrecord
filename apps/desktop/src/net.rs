@@ -24,6 +24,8 @@ pub enum Reply {
     Notice(String),
     Chats(ApiResult<Vec<ChatSummary>>),
     Branched(String, ApiResult<crate::api::Conversation>),
+    /// A chat undone from one of the person's messages: the business, that message's text, and the result.
+    RolledBack(String, String, ApiResult<(crate::api::Conversation, crate::api::Rollback)>),
     Decisions(ApiResult<Vec<Decision>>),
     Overview(String, ApiResult<Overview>),
     Issues(String, ApiResult<Vec<Issue>>),
@@ -239,6 +241,17 @@ impl Net {
             send(Reply::Businesses(c.businesses()));
             send(Reply::Chats(c.chats()));
             send(Reply::Decisions(c.decisions()));
+        });
+    }
+
+    /// Undoes a chat from message `from`, then refreshes the inbox and history,
+    /// since cards it withdrew leave the inbox too.
+    pub fn rollback(&self, business: String, conversation: String, from: usize, revision: i64, request: String, text: String) {
+        self.spawn(move |c, send| {
+            let r = c.rollback_conversation(&business, &conversation, from, revision, &request);
+            send(Reply::RolledBack(business, text, r));
+            send(Reply::Decisions(c.decisions()));
+            send(Reply::Chats(c.chats()));
         });
     }
 
