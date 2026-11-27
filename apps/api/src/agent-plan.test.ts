@@ -12,9 +12,9 @@ describe("a visible plan", () => {
   it("shows the plan at once, ticks steps off as the run updates it, and keeps the last one on the reply", async () => {
     const { events, journal } = memoryJournal()
     const responses = [
-      call("update_plan", { steps: [{ step: "Read the pricing page", status: "in_progress" }, { step: "Draft the FAQ", status: "pending" }] }),
-      call("update_plan", { steps: [{ step: "Read the pricing page", status: "completed" }, { step: "Draft the FAQ", status: "in_progress" }] }),
-      call("update_plan", { steps: [{ step: "Read the pricing page", status: "completed" }, { step: "Draft the FAQ", status: "completed" }] }),
+      call("update_plan", { steps: ["Read the pricing page", "Draft the FAQ"], done: 0 }),
+      call("update_plan", { steps: ["Read the pricing page", "Draft the FAQ"], done: 1 }),
+      call("update_plan", { steps: ["Read the pricing page", "Draft the FAQ"], done: 2 }),
       text("The FAQ is drafted."),
     ]
     const answer = await Effect.runPromise(runConversation({ message: "Write a pricing FAQ", history: [], journal,
@@ -26,9 +26,9 @@ describe("a visible plan", () => {
     expect(answer.plan?.steps.map(s => s.status)).toEqual(["completed", "completed"])
   })
 
-  it("refuses two steps in progress at once and an empty plan", async () => {
-    await expect(Effect.runPromise(updatePlan({ steps: [{ step: "One", status: "in_progress" }, { step: "Two", status: "in_progress" }] }))).rejects.toBeDefined()
-    await expect(Effect.runPromise(updatePlan({ steps: [] }))).rejects.toBeDefined()
-    await expect(Effect.runPromise(updatePlan({ steps: [{ step: "One", status: "done" }] }))).rejects.toBeDefined()
+  it("refuses more done than steps and an empty plan", async () => {
+    await expect(Effect.runPromise(updatePlan({ steps: ["One", "Two"], done: 3 }))).rejects.toBeDefined()
+    await expect(Effect.runPromise(updatePlan({ steps: [], done: 0 }))).rejects.toBeDefined()
+    await expect(Effect.runPromise(updatePlan({ steps: [{ step: "One" }], done: 0 }))).rejects.toBeDefined()
   })
 })

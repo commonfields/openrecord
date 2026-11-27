@@ -4,7 +4,7 @@
 // as they run; the final plan stays on the reply. Each call replaces the whole
 // plan, as a to-do list the model keeps. Nothing is written: this is a read
 // with no side effect, so it never needs approval and is free to repeat.
-import { Effect, JSONSchema, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import type { ToolDeclaration } from "./agent-registry.js"
 import { AgentInvalidInput, type AgentToolResult } from "./agent-tools.js"
 
@@ -12,13 +12,11 @@ export const UPDATE_PLAN = "update_plan"
 export const MAX_PLAN_STEPS = 8
 
 const Status = Schema.Literal("pending", "in_progress", "completed")
-const Step = Schema.Struct({
-  step: Schema.String.pipe(Schema.trimmed(), Schema.minLength(2), Schema.maxLength(120)),
-  status: Status,
-})
+// Compact on the request: the steps in order, and how many are finished. The
+// first unfinished one is in progress unless every step is done.
 const Plan = Schema.Struct({
-  steps: Schema.Array(Step).pipe(Schema.minItems(1), Schema.maxItems(MAX_PLAN_STEPS)),
-  note: Schema.optional(Schema.String.pipe(Schema.trimmed(), Schema.maxLength(200))),
+  steps: Schema.Array(Schema.String.pipe(Schema.trimmed(), Schema.minLength(2), Schema.maxLength(120))).pipe(Schema.minItems(1), Schema.maxItems(MAX_PLAN_STEPS)),
+  done: Schema.Int.pipe(Schema.between(0, MAX_PLAN_STEPS)),
 })
 export type PlanStep = { readonly step: string; readonly status: typeof Status.Type }
 /** The plan as the client draws it. */
@@ -26,18 +24,17 @@ export interface PlanRef { readonly steps: ReadonlyArray<PlanStep>; readonly not
 
 export const planDeclaration: ToolDeclaration = {
   name: UPDATE_PLAN,
-  description: `Show the person your plan for this request as a short checklist, and keep it current. Call it first, before other tools, when the work takes several steps: more than two tool calls, research before a recommendation, or more than one piece of work. Give 2 to ${MAX_PLAN_STEPS} steps in a few plain words each, in order, with the first one in_progress and the rest pending. Call it again with the whole list whenever a step finishes or the plan changes: mark finished steps completed and the next one in_progress, at most one in_progress at a time. Mark every step completed (or drop the ones you no longer need) before your final answer. Skip it for a quick question or one read. It writes nothing and needs no approval.`,
-  parametersJsonSchema: JSONSchema.make(Plan),
+  description: "Show your plan as a checklist: steps in order and done, how many are finished. Call it first for work with several steps, again as each finishes, and with all done before answering.",
+  // Written by hand: the generated schema would double the card every request carries.
+  parametersJsonSchema: { type: "object", properties: { steps: { type: "array", items: { type: "string" } }, done: { type: "integer" } }, required: ["steps", "done"] },
 }
 
 export const updatePlan = (args: unknown) => Schema.decodeUnknown(Plan, { onExcessProperty: "error" })(args).pipe(
-  // At most one step in progress; more is reported to the model as invalid input.
-  Effect.filterOrFail(p => p.steps.filter(s => s.status === "in_progress").length <= 1, () => new AgentInvalidInput({ tool: UPDATE_PLAN })),
+  Effect.filterOrFail(p => p.done <= p.steps.length, () => new AgentInvalidInput({ tool: UPDATE_PLAN })),
   Effect.map((p): AgentToolResult => {
-    const plan: PlanRef = { steps: p.steps.map(s => ({ step: s.step, status: s.status })), ...(p.note ? { note: p.note } : {}) }
-    const done = plan.steps.filter(s => s.status === "completed").length
-    const current = plan.steps.find(s => s.status === "in_progress")
-    return { summary: `Plan: ${done} of ${plan.steps.length} done${current ? `, now ${current.step}` : ""}`, citations: [],
+    const plan: PlanRef = { steps: p.steps.map((step, i) => ({ step, status: i < p.done ? "completed" : i === p.done ? "in_progress" : "pending" })) }
+    const current = p.steps[p.done]
+    return { summary: `Plan: ${p.done} of ${p.steps.length} done${current ? `, now ${current}` : ""}`, citations: [],
       data: { plan, note: "Shown to the person as a checklist. Carry on with the step in progress; update the plan when it finishes." } }
   }))
 
