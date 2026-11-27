@@ -50,14 +50,28 @@ pub(crate) fn kit(t: &Theme) -> Kit {
     k
 }
 
+/// After each drawn frame: the artifact page goes where its slot was drawn,
+/// through the panel's springs and its slide in and out, so the page and its
+/// tab strip move as one. Once the slot is gone, the page goes too.
+pub fn follow_drawn(rt: &rune::Runtime<App>) {
+    let s = &rt.state;
+    match rt.presented("artifact-html") {
+        Some((r, _)) if r[2] > 1.0 && r[3] > 1.0 && (s.preview_visible() || !s.side_shown()) => crate::native_preview::place(r),
+        None if !s.side_shown() => crate::native_preview::clear(),
+        _ => {}
+    }
+}
+
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    if !s.artifact_visible() { crate::native_preview::clear(); }
+    // The artifact page is loaded here and moved every frame to where its slot
+    // is drawn (`follow_drawn`); folding the panel, it rides out with it.
+    if s.side_shown() && !s.artifact_visible() { crate::native_preview::clear(); }
     if s.preview_visible() {
         if let (Some(rect), Some(a)) = (s.preview_rect, s.front_artifact().and_then(|p| p.loaded.ready())) {
-            crate::native_preview::show(&a.preview_html, s.gliding(1, rect), !s.prefs.reduce_motion);
+            crate::native_preview::show(&a.preview_html, rect, false);
         }
         crate::native_preview::preview_pass_through(s.native_view_clear());
-    } else {
+    } else if s.side_shown() {
         crate::native_preview::hide();
     }
     // The browser tab's page sits over its slot only while nothing is drawn over it.
@@ -240,26 +254,27 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
     // is dragged from its left edge as the sidebar's width is; widened, it
     // takes the whole split and the page steps aside.
     let wide = s.side_shown() && s.side.wide;
-    let split_spring = if s.wide_snapping() { rune::Spring::NONE } else { SPLIT };
     // Widened with the sidebar folded, the panel reaches the window's left edge:
     // its tabs start past the traffic lights and the sidebar's buttons, 12
     // points after them as the header's breadcrumbs do (the card sits on the canvas inset).
     let strip_lead = if wide && !s.sidebar_open { shell::collapsed_slot_end(titlebar_inset) + 12.0 - inset } else { 10.0 };
-    let side_card = (s.side_shown() && !s.side_panel_duplicates_page()).then(|| side::view(s, t, k, strip_lead));
-    // Widened, or on the way there and back, the chat keeps the width it has
-    // beside the panel and is clipped as the panel slides over it: shrinking
-    // with the column, its text wrapped tighter on every frame.
-    let holding = s.side_shown() && (wide || s.wide_snapping());
-    let held_w = (s.split_w - (s.split_w * s.prefs.helper() / 100.0).round() - if s.sidebar_open { 0.0 } else { inset }).max(0.0);
-    let panel = if holding && held_w > 0.0 { panel.w(held_w).min_w(held_w) } else { panel };
+    // Folded, the panel is parked just past the window's right edge rather than
+    // removed: a removed element always fades out, and the page inside it is a
+    // native view that cannot fade with it.
+    let parked = !s.side_shown() && s.screen == crate::state::Screen::Workspace && (s.side_item() || s.side.browser.shown);
+    let side_card = ((s.side_shown() || parked) && !s.side_panel_duplicates_page()).then(|| side::view(s, t, k, strip_lead));
+    // The chat keeps the width it will have, and its column clips it while the
+    // panel slides: shrinking with the column, its text re-wrapped every frame.
+    let share = if s.side_shown() { (s.split_w * s.prefs.helper() / 100.0).round() } else { 0.0 };
+    let chat_w = (s.split_w - share - if s.sidebar_open || wide { 0.0 } else { inset }).max(0.0);
+    let panel = if s.split_w > 0.0 && chat_w > 0.0 { panel.w(chat_w).min_w(chat_w) } else { panel };
     let panel = col()
         .key("panel-column")
-        .grow(1.0)
         .min_w(0.0)
         .h_full()
         .pt(inset)
         .pb(inset)
-        .pr(if side_card.is_some() { 0.0 } else { inset })
+        .pr(if s.side_shown() { 0.0 } else { inset })
         .pl(if s.sidebar_open || wide { 0.0 } else { inset })
         .opacity(if wide { 0.0 } else { 1.0 })
         .clip_rounded(0.0)
@@ -271,14 +286,19 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
         .key("side-split")
         // Its own spring: the root's is none (themes swap at once), and inheriting
         // that landed the split mid-slide on the first commit after a change.
-        // Widening the side panel changes it at once (`App::toggle_wide`).
-        .motion(split_spring)
+        .motion(SPLIT)
         .grow(1.0)
         .min_w(0.0)
         .h_full()
         // Layout units already: the zoom scales the whole drawn tree, not its layout.
         .on_layout(|s: &mut App, r: [f32; 4]| s.split_w = r[2])
-        .child(panel.w(0.0).motion(split_spring));
+        // Its width moves on the split spring, the panel's offset on the same one:
+        // the chat's edge and the panel's edge travel together.
+        .child({
+            let side_w = if s.side_shown() && s.split_w > 0.0 { if wide { s.split_w } else { (s.split_w * s.prefs.helper() / 100.0).round() } } else { 0.0 };
+            let cw = (s.split_w - side_w).max(0.0);
+            if s.split_w > 0.0 { panel.w(cw).min_w(cw).motion(SPLIT) } else { panel.grow(1.0).motion(SPLIT) }
+        });
     if let Some(card) = side_card {
         let w = if s.split_w <= 0.0 {
             0.0
@@ -292,11 +312,16 @@ fn workspace(s: &App, t: &Theme, k: &Kit, titlebar_inset: f32) -> El {
             // narrows beside it; closing plays it backwards.
             col()
                 .key("side-panel-column")
+                // In from the right edge and back out, on the chat's spring, with no
+                // fade: the page inside follows its drawn place (`follow_drawn`).
+                .transition(Transition::offset(w.max(1.0), 0.0).springs(SpringPair::new(SPLIT, SPLIT)))
+                // Pinned to the right; folded, it slides out past the edge by its width.
+                .pin(None, Some(0.0), Some(0.0), Some(0.0))
+                .offset(if parked { w } else { 0.0 }, 0.0)
                 .w(w)
-                .grow(if w > 0.0 { 0.0 } else { 1.0 })
                 // Held at its share: without it the panel's content outweighs it.
                 .min_w(w)
-                .motion(split_spring)
+                .motion(SPLIT)
                 .h_full()
                 .pt(inset)
                 .pb(inset)

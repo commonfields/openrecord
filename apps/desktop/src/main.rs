@@ -263,6 +263,8 @@ fn main() {
         })
         .titlebar(rune::Titlebar::new(ui::TITLEBAR).traffic_lights(ui::TRAFFIC_LIGHT_INSET, ui::TRAFFIC_LIGHT_INSET))
         .standard_menus()
+        // Native pages follow where their slots are drawn, frame by frame.
+        .on_frame_drawn(ui::follow_drawn)
         // Clear where the app paints nothing, so the browser's page, drawn
         // behind the app's view, shows through with the chat box over it.
         .window_options(rune::WindowOptions { transparent: true, ..Default::default() })

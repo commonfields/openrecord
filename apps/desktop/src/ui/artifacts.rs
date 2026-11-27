@@ -28,12 +28,8 @@ pub fn view(s: &App, t: &Theme) -> El {
         .grow(1.0)
         .min_h(0.0)
         .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
+            // Where it rests; the page itself is moved every frame (`ui::follow_drawn`).
             s.preview_rect = Some(r);
-            if s.preview_visible() {
-                if let Some(a) = s.front_artifact().and_then(|p| p.loaded.ready()) {
-                    crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
-                }
-            }
         });
     pane.child(slot)
 }

@@ -97,6 +97,25 @@ void or_preview_backdrop(double r, double g, double b) {
     }
 }
 
+// Moves the page to where the app drew its slot this frame (`follow_drawn`), without loading anything.
+void or_preview_place(double x, double y, double w, double h) {
+    if (!preview || !previewHost || w <= 0 || h <= 0) return;
+    NSView *host = previewHost;
+    NSView *frameView = host.superview;
+    CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
+    NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
+    if (!NSEqualRects(previewBox.frame, frame)) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [previewBox setFrame:frame];
+        [preview setFrame:previewBox.bounds];
+        [CATransaction commit];
+    }
+    if (previewBox.hidden) [previewBox setHidden:NO];
+    if (preview.hidden) { [preview setHidden:NO]; }
+    reveal();
+}
+
 void or_preview_show(const char *html, double x, double y, double w, double h, int motion) {
     animate = motion != 0;
     NSWindow *window = NSApp.mainWindow ?: NSApp.keyWindow;

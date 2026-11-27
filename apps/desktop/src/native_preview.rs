@@ -7,6 +7,7 @@ unsafe extern "C" {
     fn or_preview_keep(rects: *const f64, count: i32);
     fn or_preview_pass_through(on: i32);
     fn or_preview_page_light() -> i32;
+    fn or_preview_place(x: f64, y: f64, w: f64, h: f64);
     fn or_preview_backdrop(r: f64, g: f64, b: f64);
     fn or_oauth_start(url: *const std::ffi::c_char);
     fn or_oauth_result() -> i32;
@@ -121,6 +122,17 @@ pub fn document(content: &str) -> String {
     )
 }
 /// Shows the document at `rect`; with `motion` it fades up once it has painted.
+/// Moves the artifact page to `rect` without loading anything: where the app
+/// drew its slot this frame, so the page rides the panel's springs with it.
+pub fn place(rect: [f32; 4]) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        or_preview_place(rect[0] as f64, rect[1] as f64, rect[2] as f64, rect[3] as f64);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = rect;
+}
+
 pub fn show(content: &str, rect: [f32; 4], motion: bool) {
     #[cfg(target_os = "macos")]
     if let Ok(html) = std::ffi::CString::new(document(content)) {

@@ -10,11 +10,15 @@ use crate::native_preview::{self, BrowserCommand};
 use crate::side::{Launch, SideTab};
 use crate::state::App;
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, ico, icon_button, label};
+use crate::ui::widgets::{ico, icon_button, label};
 
 /// The button that opens or folds the right panel (⌥⌘B), at a header's right end.
 pub fn toggle(t: &Theme, open: bool) -> El {
-    icon_button(t, "side-toggle", &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false).on_press(|s: &mut App| s.toggle_side())
+    // Its own key in each place: shared, the header's and the panel's were taken
+    // for one button and it flew across the window when the panel opened.
+    icon_button(t, if open { "side-toggle-panel" } else { "side-toggle" }, &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false)
+        .motion(crate::state::SIDEBAR_SPRING)
+        .on_press(|s: &mut App| s.toggle_side())
 }
 
 pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
@@ -227,7 +231,8 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .w_full()
         .h(48.0)
         .pl(lead)
-        .motion(if s.wide_snapping() { rune::Spring::NONE } else { super::widgets::CONTROL })
+        // The panel's own spring: on a quicker one its buttons ran ahead and bounced back.
+        .motion(crate::state::SIDEBAR_SPRING)
         .pr(10.0)
         .gap(4.0)
         .center_y()
@@ -235,7 +240,8 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .child(tabs)
         .child(
             icon_button(t, "side-wide", if wide { &icons::MINIMIZE_2 } else { &icons::MAXIMIZE_2 }, if wide { "Restore panel width" } else { "Expand panel" }, false)
-                .on_press_tx(|s: &mut App, tx| s.toggle_wide(tx)),
+                .motion(crate::state::SIDEBAR_SPRING)
+                .on_press(|s: &mut App| s.side.wide = !s.side.wide),
         )
         .child(toggle(t, true))
 }
@@ -256,7 +262,8 @@ fn tab_button(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, on: b
         .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
-        .motion(CONTROL)
+        // The panel's spring, so tabs travel with their strip.
+        .motion(crate::state::SIDEBAR_SPRING)
         .child(ico(icon, 14.0, ink));
     b = if compact {
         match close {
