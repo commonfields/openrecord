@@ -821,7 +821,22 @@ fn picker_entries(s: &App) -> Vec<(usize, crate::state::PickerCard)> {
 }
 
 /// One business as the app's other lists draw a row: its name and a quiet note.
-fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, current: bool, on: bool) -> El {
+/// The business's correct-AI-answers line, as the Inbox card draws it; shown on the highlighted row.
+fn business_trend(s: &App, t: &Theme, card: &crate::state::PickerCard, on: bool) -> Option<El> {
+    let (days, load) = s.trends.get(card.id.as_ref()?)?;
+    let n = crate::ui::inbox::accuracy(load.ready()?, *days)?;
+    if n.days.len() < 2 {
+        return None;
+    }
+    let tone = match (&n.delta, n.better) {
+        (None, _) => t.chart.primary,
+        (_, true) => t.supported,
+        (_, false) => t.wrong,
+    };
+    Some(row().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(crate::ui::inbox::sparkline(&n.days, tone, 96.0, 28.0)))
+}
+
+fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, current: bool, on: bool, trend: Option<El>) -> El {
     row()
         .w_full()
         .min_h(44.0)
@@ -835,6 +850,8 @@ fn business_row(t: &Theme, card: &crate::state::PickerCard, note: Option<&str>, 
                 .children(note.map(|n| label(n.to_string(), type_::XS, t.muted_foreground).truncate())),
         )
         .children(current.then(|| ico(&icons::CHECK, 14.0, t.muted_foreground)))
+        // The trend line sits just left of the ↵ mark.
+        .children(trend)
         // The ↵ mark is always there, shown only on the highlighted row, so nothing shifts.
         .child(row().size(14.0, 14.0).center().opacity(if on { 1.0 } else { 0.0 }).motion(crate::ui::widgets::HOVER).child(ico(&icons::CORNER_DOWN_LEFT, 14.0, t.muted_foreground)))
 }
@@ -916,7 +933,7 @@ pub fn business_picker_dialog(s: &App, t: &Theme, k: &rune_kit::Kit, layer: &mut
             None
         };
         let key = card.id.clone().unwrap_or_else(|| "general".into());
-        let slot = business_row(t, card, note, current, on)
+        let slot = business_row(t, card, note, current, on, business_trend(s, t, card, on))
             .key(format!("business-card-{key}"))
             .role("option")
             .label(card.name.clone())
