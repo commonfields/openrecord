@@ -59,12 +59,63 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+/// The background a document declares for its page (`body` or `html`), as
+/// red, green and blue; white when it sets none we can read. The panel's tab
+/// strip takes this colour so the strip and the page read as one surface, and
+/// the frame holding the page uses it, so nothing flashes while it loads.
+pub fn page_color(content: &str) -> (u8, u8, u8) {
+    let lower = content.to_ascii_lowercase();
+    for selector in ["body", "html"] {
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(selector) {
+            let at = from + i;
+            from = at + selector.len();
+            // A rule for the element itself: `body{` or `body {`, not `.body-copy{`.
+            let before = lower[..at].chars().last().unwrap_or('}');
+            let rest = lower[from..].trim_start();
+            if !(before == '}' || before == '>' || before.is_whitespace() || before == ',') || !rest.starts_with(['{', ',']) {
+                continue;
+            }
+            let Some(open) = lower[from..].find('{') else { break };
+            let Some(close) = lower[from + open..].find('}') else { break };
+            let block = &lower[from + open + 1..from + open + close];
+            for prop in ["background-color:", "background:"] {
+                if let Some(c) = block.find(prop).and_then(|p| parse_color(block[p + prop.len()..].trim_start())) {
+                    return c;
+                }
+            }
+        }
+    }
+    (255, 255, 255)
+}
+
+fn parse_color(v: &str) -> Option<(u8, u8, u8)> {
+    if let Some(h) = v.strip_prefix('#') {
+        let hex: String = h.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        let n = |s: &str| u8::from_str_radix(s, 16).ok();
+        return match hex.len() {
+            3 | 4 => { let d: Vec<String> = hex.chars().take(3).map(|c| format!("{c}{c}")).collect(); Some((n(&d[0])?, n(&d[1])?, n(&d[2])?)) }
+            6 | 8 => Some((n(&hex[0..2])?, n(&hex[2..4])?, n(&hex[4..6])?)),
+            _ => None,
+        };
+    }
+    if let Some(body) = v.strip_prefix("rgb(").or_else(|| v.strip_prefix("rgba(")) {
+        let parts: Vec<u8> = body.split([',', ' ', ')']).filter(|p| !p.is_empty()).take(3).filter_map(|p| p.parse::<f32>().ok()).map(|f| f.clamp(0.0, 255.0) as u8).collect();
+        return (parts.len() == 3).then(|| (parts[0], parts[1], parts[2]));
+    }
+    if v.starts_with("white") { return Some((255, 255, 255)); }
+    if v.starts_with("black") { return Some((0, 0, 0)); }
+    None
+}
+
 pub fn document(content: &str) -> String {
+    let bg = page_color(content);
     // The inner policy is inserted first, so a document's own markup cannot
     // weaken it. The outer policy refuses navigation away from local frames.
     let policy = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'\"><meta name=\"referrer\" content=\"no-referrer\">";
     format!(
-        "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; frame-src about:; img-src https: data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'\"><style>html,body,iframe{{margin:0;border:0;width:100%;height:100%;background:white;display:block}}</style><iframe sandbox=\"\" referrerpolicy=\"no-referrer\" srcdoc=\"{}\"></iframe>",
+        "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; frame-src about:; img-src https: data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'\"><style>html,body,iframe{{margin:0;border:0;width:100%;height:100%;background:#{:02x}{:02x}{:02x};display:block}}</style><iframe sandbox=\"\" referrerpolicy=\"no-referrer\" srcdoc=\"{}\"></iframe>",
+        bg.0, bg.1, bg.2,
         escape(&format!("<!doctype html>{policy}{content}"))
     )
 }
@@ -101,6 +152,16 @@ mod tests {
         assert!(page.contains("default-src 'none'"));
         assert!(!page.contains("allow-scripts"));
         assert!(!page.contains("allow-same-origin"));
+    }
+
+    #[test]
+    fn the_page_colour_comes_from_its_own_body_or_html_rule() {
+        use super::page_color;
+        assert_eq!(page_color("<style>body{margin:0;background:#f3f1ec;color:#333}</style>"), (0xf3, 0xf1, 0xec));
+        assert_eq!(page_color("<style>html { background-color: #111 }</style>"), (0x11, 0x11, 0x11));
+        assert_eq!(page_color("<style>.body-copy{background:#000} body{background:rgb(10, 20, 30)}</style>"), (10, 20, 30));
+        assert_eq!(page_color("<p>No styles at all</p>"), (255, 255, 255));
+        assert!(super::document("<style>body{background:#0b1020}</style>").contains("background:#0b1020"));
     }
 }
 

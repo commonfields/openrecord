@@ -73,6 +73,16 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
     // A page in the browser or an artifact preview runs to the foot: native WebKit
     // sits behind the app and the chat box floats over it.
     if s.browser_page_shown() || s.artifact_preview_float() {
+        // Over an artifact the strip takes the page's own colour and the matching
+        // theme, with no rule between them: tabs and page read as one surface.
+        let top = if s.artifact_preview_float() { s.front_artifact().and_then(|p| p.loaded.ready()).map(|a| crate::native_preview::page_color(&a.preview_html)) } else { None };
+        let strip_theme = top.map(|(r, g, b)| {
+            let light = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b) > 140.0;
+            let mut th = Theme::get(!light);
+            th.background = crate::theme::hex(&format!("#{r:02x}{g:02x}{b:02x}"));
+            th
+        });
+        let st: &Theme = strip_theme.as_ref().unwrap_or(t);
         let mut panel = col()
             .key("side-panel")
             .w_full()
@@ -82,17 +92,19 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
             .clip_rounded(10.0)
             .role("complementary")
             .label("Side panel")
-            .child(strip(s, t, &tab, lead).fill(t.background))
+            .child(strip(s, st, &tab, lead).fill(st.background))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body));
         if s.artifact_preview_float() {
             let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
             let owned;
-            let ct: &Theme = match crate::native_preview::preview_page_light() {
-                Some(light) => {
+            // The chat box over the page takes the page's theme, as the strip does.
+            let ct: &Theme = match (&strip_theme, crate::native_preview::preview_page_light()) {
+                (Some(th), _) => th,
+                (None, Some(light)) => {
                     owned = Theme::get(!light);
                     &owned
                 }
-                None => t,
+                (None, None) => t,
             };
             panel = panel.child(
                 col()
