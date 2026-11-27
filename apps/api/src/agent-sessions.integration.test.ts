@@ -11,7 +11,7 @@ import { cancelHarnessConversation } from "./harness-store.js"
 import type { AgentToolDeps } from "./agent-tools.js"
 import { createSessions, type BaseResponder } from "./agent-sessions.js"
 import { MAX_SESSION_DEPTH } from "./agent-session-tools.js"
-import { claimAgentWork, executeAgentWork } from "./agent-work-queue.js"
+import { claimAgentWork, executeAgentWorkWith } from "./agent-work-queue.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
 const suite = url ? describe : describe.skip
@@ -115,11 +115,11 @@ suite("sessions that work together (disposable PostgreSQL, scripted model, no li
     expect(recovered).toMatchObject({ job_id: reserved.job_id })
     if (!recovered) throw new Error("Missing recovered helper")
     expect(recovered.claim_id).not.toBe(reserved.claim_id)
-    await runtime.runPromise(executeAgentWork(reserved, (_kind, payload, job) => sessions.runQueued(job, payload)))
+    await runtime.runPromise(executeAgentWorkWith(reserved, (_kind, payload, job) => sessions.runQueued(job, payload)))
     // The parent can finish while persisting the task's wake marker fails.
     await pool.query("ALTER TABLE agent_tasks ADD CONSTRAINT test_refuse_wake_marker CHECK (woke_parent_at IS NULL) NOT VALID")
     try {
-      await runtime.runPromise(executeAgentWork(recovered, (_kind, payload, job) => sessions.runQueued(job, payload)))
+      await runtime.runPromise(executeAgentWorkWith(recovered, (_kind, payload, job) => sessions.runQueued(job, payload)))
       expect((await tasks(scope.businessId))[0].woke_parent_at).toBeNull()
     } finally {
       await pool.query("ALTER TABLE agent_tasks DROP CONSTRAINT test_refuse_wake_marker")
