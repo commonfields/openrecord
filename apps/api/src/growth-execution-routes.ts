@@ -140,6 +140,17 @@ export const growthExecutionApi = (withSession: WithSession) => {
       if (!gh.transport) return yield* refuse("ExecutionNotConfigured")
       return yield* json(200, { operation: yield* repo.dispatch(session, businessId, operationId, input) }, PRIVATE_HEADERS)
     }))),
+    // The Inbox's one decision: authorize exactly the reviewed change, then open its pull request.
+    HttpRouter.post(`${base}/connected-executions/:operationId/approve`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
+      const input = decode(AuthorizeExecution, yield* readJson)
+      if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)
+      const repo = yield* GrowthExecutionRepository
+      const current = yield* repo.get(session.accountId, businessId, operationId)
+      const gh = yield* gitHubConfig
+      if (!executionRepositoryPermitted(gh.allowed, current.owner, current.repository, session.accountId)) return yield* refuse("RepositoryNotPermitted")
+      if (!gh.transport) return yield* refuse("ExecutionNotConfigured")
+      return yield* json(200, { operation: yield* repo.approve(session, businessId, operationId, input) }, PRIVATE_HEADERS)
+    }))),
     HttpRouter.post(`${base}/connected-executions/:operationId/cancel`, scoped("operationId", (session, businessId, operationId) => Effect.gen(function*() {
       const input = decode(CancelExecution, yield* readJson)
       if (!input) return yield* json(422, { _tag: "InvalidRequest" }, PRIVATE_HEADERS)

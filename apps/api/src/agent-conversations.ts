@@ -7,6 +7,7 @@ import type { HarnessSelection } from "@openrecord/contracts"
 import { HarnessReasoningEffort, type AgentAttachment, type AgentResponseStyle } from "@openrecord/contracts"
 import { AgentModelError } from "./agent-model.js"
 import { ArtifactRefSchema } from "./artifacts.js"
+import { markResumed, savePause } from "./agent-pause.js"
 
 export class AgentConversationRefused extends Data.TaggedError("AgentConversationRefused")<{
   readonly reason: "NOT_FOUND" | "BUSY" | "STALE"
@@ -16,7 +17,9 @@ const Usage = Schema.Struct({ observedModel: Schema.NullOr(Schema.String), promp
 // The run that produced an agent message: its outcome, or how it stopped.
 const RunRef = Schema.Struct({ id: Schema.UUID, status: Schema.Literal("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"),
   outcome: Schema.optional(Schema.Literal("ANSWERED", "ANSWERED_WITH_GAPS")), gaps: Schema.optional(Schema.Array(Schema.String)) })
-const DecisionRef = Schema.Struct({ type: Schema.Literal("AGENT_PROPOSAL", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "ACCOUNT_ACTION"), id: Schema.UUID })
+// Every card type a reply can carry (DecisionRef in agent-registry.ts); a chat
+// holding one this schema did not list could not be opened.
+const DecisionRef = Schema.Struct({ type: Schema.Literal("CAMPAIGN_PUBLICATION", "CAMPAIGN_REVIEW", "MARKETING_STRATEGY", "AGENT_PROPOSAL", "GROWTH_OPPORTUNITY", "WORDPRESS_CHANGE", "WEBFLOW_CHANGE", "GITHUB_CHANGE", "ACCOUNT_ACTION"), id: Schema.UUID })
 const TaskStatus = Schema.Literal("RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED")
 const TaskRef = Schema.Struct({ id: Schema.UUID, sessionId: Schema.UUID, title: Schema.String, role: Schema.String, status: TaskStatus, model: Schema.optional(Schema.String) })
 // A message another session sent: a task it asked for, a follow-up,
@@ -31,7 +34,7 @@ const Activity = Schema.Union(
 const Attachment = Schema.Struct({ name: Schema.String, type: Schema.String, text: Schema.String })
 const ContextUse = Schema.Struct({ historyChars: Schema.Number, budgetChars: Schema.Number, verbatim: Schema.Number, compacted: Schema.Number, omitted: Schema.Number })
 const Message = Schema.Struct({ context: Schema.optional(ContextUse), attachments: Schema.optional(Schema.Array(Attachment).pipe(Schema.maxItems(3))), activity: Schema.optional(Schema.Array(Activity).pipe(Schema.maxItems(24))), durationMs: Schema.optional(Schema.Number), role: Schema.Literal("user", "agent"), text: Schema.String, citations: Schema.optional(Schema.Array(Citation)), toolCalls: Schema.optional(Schema.Array(Schema.Struct({ tool: Schema.String, summary: Schema.String }))), run: Schema.optional(RunRef),
-  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), artifacts: Schema.optional(Schema.Array(ArtifactRefSchema).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), notes: Schema.optional(Schema.Array(Schema.String).pipe(Schema.maxItems(10))), blanks: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, question: Schema.String, options: Schema.Array(Schema.String), assumed: Schema.String })).pipe(Schema.maxItems(3))), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
+  decisions: Schema.optional(Schema.Array(DecisionRef).pipe(Schema.maxItems(10))), tasks: Schema.optional(Schema.Array(TaskRef).pipe(Schema.maxItems(10))), artifacts: Schema.optional(Schema.Array(ArtifactRefSchema).pipe(Schema.maxItems(10))), origin: Schema.optional(MessageOrigin), notes: Schema.optional(Schema.Array(Schema.String).pipe(Schema.maxItems(10))), blanks: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, question: Schema.String, options: Schema.Array(Schema.String), assumed: Schema.String })).pipe(Schema.maxItems(3))), waiting: Schema.optional(Schema.Struct({ itemIds: Schema.Array(Schema.UUID) })), plan: Schema.optional(Schema.Struct({ steps: Schema.Array(Schema.Struct({ step: Schema.String, status: Schema.Literal("pending", "in_progress", "completed") })).pipe(Schema.maxItems(8)), note: Schema.optional(Schema.String) })), inference: Schema.optional(Schema.Struct({ provider: Schema.String, requestedModel: Schema.String, instanceId: Schema.optional(Schema.UUID), reasoningEffort: Schema.optional(HarnessReasoningEffort), usage: Schema.Array(Usage) })) })
 const Session = Schema.Struct({ parentSessionId: Schema.NullOr(Schema.UUID), title: Schema.NullOr(Schema.String), role: Schema.NullOr(Schema.String), depth: Schema.Number })
 const Conversation = Schema.Struct({ id: Schema.UUID, messages: Schema.Array(Message), revision: Schema.Number, session: Schema.optional(Session),
   title: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))) })
@@ -223,12 +226,16 @@ export interface TurnContext {
   readonly style?: AgentResponseStyle | undefined
   /** What the client draws beyond Markdown (`AgentMessageRequest.surfaces`). */
   readonly surfaces?: ReadonlyArray<"ui"> | undefined
+  /** The turn may pause for the owner's decision on cards it saves (top-level chats only). */
+  readonly pausable?: boolean
+  /** A paused turn's own model conversation, ending with the decisions, to continue from. */
+  readonly resume?: ReadonlyArray<import("./agent-model.js").ModelContent> | undefined
 }
 export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMessage>>> = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory, selection: HarnessSelection | undefined,
   assertActive: Effect.Effect<void, AgentModelError, SqlClient.SqlClient>, journal: RunJournal, turn: TurnContext) => Effect.Effect<{
     readonly reply: string; readonly citations: ReadonlyArray<unknown>; readonly toolCalls: ReadonlyArray<unknown>; readonly usage: ReadonlyArray<unknown>
     readonly provider: string; readonly requestedModel: string; readonly outcome?: RunOutcome | undefined; readonly gaps?: ReadonlyArray<string> | undefined
-    readonly decisions?: ReadonlyArray<{ readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "MARKETING_STRATEGY" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }> | undefined
+    readonly decisions?: ReadonlyArray<{ readonly type: "CAMPAIGN_PUBLICATION" | "CAMPAIGN_REVIEW" | "MARKETING_STRATEGY" | "AGENT_PROPOSAL" | "GROWTH_OPPORTUNITY" | "WORDPRESS_CHANGE" | "WEBFLOW_CHANGE" | "GITHUB_CHANGE" | "ACCOUNT_ACTION"; readonly id: string }> | undefined
     readonly tasks?: ReadonlyArray<{ readonly id: string; readonly sessionId: string; readonly title: string; readonly role: string; readonly status: string }> | undefined
     readonly artifacts?: ReadonlyArray<import("./artifacts.js").ArtifactRef> | undefined
     readonly activity?: ReadonlyArray<unknown> | undefined; readonly durationMs?: number | undefined; readonly title?: string | undefined
@@ -237,10 +244,15 @@ export type Responder<R = Effect.Effect.Context<ReturnType<typeof handleAgentMes
     readonly notes?: ReadonlyArray<string> | undefined
     /** Questions the run left for the person, with what it assumed. */
     readonly blanks?: ReadonlyArray<{ readonly id: string; readonly question: string; readonly options: ReadonlyArray<string>; readonly assumed: string }> | undefined
+    /** The plan the run showed, as it stood at the end. */
+    readonly plan?: import("./agent-plan.js").PlanRef | undefined
+    /** Set when the turn paused for decisions; kept beside the reply, never sent to the client. */
+    readonly pause?: import("./agent-pause.js").Pause | undefined
   }, unknown, R>
 /** The agent without session tools; the turn context is not passed on. */
 const plainResponder: Responder = (accountId, userId, businessId, message, history, selection, assertActive, journal, turn) =>
-  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal, undefined, turn.generateTitle === true, turn.style, turn.surfaces)
+  handleAgentMessage(accountId, userId, businessId, message, history, selection, assertActive, journal, undefined, turn.generateTitle === true, turn.style, turn.surfaces,
+    { pausable: turn.pausable === true, resume: turn.resume })
 const HISTORY_FILE_CHARS = 4000
 /** A message with its attached files, each marked as the person's data rather than instructions. */
 export const withAttachments = (message: string, files: ReadonlyArray<{ readonly name: string; readonly type: string; readonly text: string }> | undefined) =>
@@ -261,6 +273,8 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
   readonly viewing?: { readonly artifacts: ReadonlyArray<string> } | undefined
   /** Set when another session, not the operator, started this turn. */
   readonly origin?: MessageOrigin | undefined
+  /** Continue a paused turn (agent-pause.ts): its run and its conversation ending with the decisions. */
+  readonly resume?: { readonly runId: string; readonly contents: ReadonlyArray<import("./agent-model.js").ModelContent> } | undefined
 }, respond: Responder<R> = plainResponder as unknown as Responder<R>, commitGuard: Effect.Effect<void, AgentModelError, SqlClient.SqlClient> = Effect.void, runBudget: RunBudget = DEFAULT_RUN_BUDGET) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const lease = randomUUID()
@@ -325,10 +339,14 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
     const reply = yield* respond(scope.accountId, scope.userId, scope.businessId, withViewing(withAttachments(body.message, body.attachments), body.viewing), history, body.selection, assertActive, journal,
       { conversationId: current.id, runId, depth: conversation.depth, origin: body.origin, selection: body.selection, deadline: Date.now() + TURN_LIMIT_MS,
         // The operator's first turn in a top-level chat also asks for a topic title.
-        generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined, style: body.style, surfaces: body.surfaces })
+        generateTitle: !current.title && conversation.depth === 0 && body.origin === undefined, style: body.style, surfaces: body.surfaces,
+        // Only a top-level chat pauses: a helper's turn answers the session that started it.
+        pausable: conversation.depth === 0, resume: body.resume?.contents })
     const run = { id: runId, status: "COMPLETED" as const, outcome: reply.outcome ?? "ANSWERED", gaps: reply.gaps ?? [] }
-    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}), ...(reply.notes?.length ? { notes: reply.notes.slice(0, 10) } : {}) }, { role: "agent", text: reply.reply, citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.artifacts?.length ? { artifacts: reply.artifacts } : {}), ...(reply.blanks?.length ? { blanks: reply.blanks } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
-    const response = { ...reply, title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
+    // A paused turn's conversation is kept beside the reply, never in it.
+    const { pause, ...shown } = reply
+    const messages = [...current.messages, { role: "user", text: body.message, ...(body.attachments?.length ? { attachments: body.attachments } : {}), ...(body.origin ? { origin: body.origin } : {}), ...(reply.notes?.length ? { notes: reply.notes.slice(0, 10) } : {}) }, { role: "agent", text: reply.reply, ...(pause ? { waiting: { itemIds: pause.itemIds } } : {}), citations: reply.citations, toolCalls: reply.toolCalls, ...(reply.decisions?.length ? { decisions: reply.decisions } : {}), ...(reply.tasks?.length ? { tasks: reply.tasks } : {}), ...(reply.artifacts?.length ? { artifacts: reply.artifacts } : {}), ...(reply.blanks?.length ? { blanks: reply.blanks } : {}), ...(reply.plan?.steps.length ? { plan: reply.plan } : {}), ...(reply.activity?.length ? { activity: reply.activity } : {}), ...(reply.durationMs !== undefined ? { durationMs: reply.durationMs } : {}), ...(reply.context ? { context: reply.context } : {}), run, inference: { provider: reply.provider, requestedModel: reply.requestedModel, usage: reply.usage, ...(body.selection ? { instanceId:body.selection.instanceId, ...(body.selection.reasoningEffort ? { reasoningEffort:body.selection.reasoningEffort } : {}) } : {}) } }].slice(-200)
+    const response = { ...shown, ...(pause ? { waiting: { itemIds: pause.itemIds } } : {}), title: current.title ?? reply.title ?? null, outcome: run.outcome, gaps: run.gaps, runId, conversationId: current.id, revision: current.revision + 1 }
     const updated = yield* sql.withTransaction(Effect.gen(function*() {
       // Background grants may be revoked while the model is answering. The
       // caller can lock and recheck its authority in the same commit transaction.
@@ -343,7 +361,10 @@ export const sendConversation = <R = Effect.Effect.Context<ReturnType<typeof han
         AND (${body.selection === undefined} OR EXISTS(SELECT 1 FROM agent_harness_instances i JOIN agent_bridges b ON b.id=i.bridge_id
           WHERE i.id=${body.selection?.instanceId ?? null} AND i.account_id=${scope.accountId} AND i.user_id=${scope.userId} AND i.enabled AND b.revoked_at IS NULL))
       RETURNING id`
-      // The reply, the run's completion and its usage commit together.
+      // A resumed pause is used once: a second turn resuming the same pause does not commit.
+      if (rows.length && body.resume && !(yield* markResumed(body.resume.runId, runId))) return false
+      // The reply, the run's completion and its usage commit together, and a pause with them.
+      if (rows.length && pause && scope.businessId !== null) yield* savePause({ ...scope, businessId: scope.businessId }, current.id, runId, pause)
       if (rows.length) {
         yield* finishRun(runId, "COMPLETED", { outcome: run.outcome, gaps: run.gaps })
         yield* recordUsage(scope, runId, reply)

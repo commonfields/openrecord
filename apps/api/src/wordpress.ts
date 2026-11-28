@@ -17,6 +17,7 @@
 //   * the previous values are kept, so a person can undo in one click (a new
 //     post goes back to draft, never deleted).
 import { followUpFix } from "./issue-fix.js"
+import { enqueueChangePublish, runChangePublishNow } from "./change-publish.js"
 import { HttpRouter, HttpServerResponse } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
 import { Context, Data, Effect, JSONSchema, Option, Schema } from "effect"
@@ -181,34 +182,69 @@ const liveCheck = (link: string | null, after: WpValues) => Effect.gen(function*
   return { status: 200, observed: probes.length ? probes.every(p => text.includes(p.trim())) : null }
 })
 
-/** Publishes an approved change exactly once, attributed to the approver. */
-export const publishChange = (session: Session, businessId: string, id: string) => guarded(businessId, Effect.gen(function*() {
+/** Moves an approved change to PUBLISHING and queues its publish, in one transaction. The job id comes back. */
+export const approveChange = (session: Session, businessId: string, id: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const claimed = (yield* sql`UPDATE wordpress_changes SET status = 'PUBLISHING', decided_by_user_id = ${session.userId}, decided_at = now()
-    WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING *`)[0]
-  if (!claimed) return yield* refuse("ChangeNotPending")
-  const change = toChange(claimed)
-  const fail = (failure: string) => sql`UPDATE wordpress_changes SET status = 'FAILED', failure = ${failure} WHERE id = ${id}`.pipe(Effect.andThen(refuse(failure)))
-  const outcome = yield* Effect.gen(function*() {
-    const { site } = yield* siteFor(session.accountId, businessId)
+  return yield* sql.withTransaction(Effect.gen(function*() {
+    const claimed = (yield* sql`UPDATE wordpress_changes SET status = 'PUBLISHING', decided_by_user_id = ${session.userId}, decided_at = now()
+      WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING id`)[0]
+    if (!claimed) return yield* refuse("ChangeNotPending")
+    return yield* enqueueChangePublish({ system: "WORDPRESS", accountId: session.accountId, userId: session.userId, businessId, changeId: id })
+  }))
+})
+
+/**
+ * Publishes a change that is PUBLISHING, reading the site before it writes so
+ * that running it again after an interruption never writes twice: a post that
+ * already holds the approved values is recorded as published, one edited by
+ * someone else since it was prepared is refused, and a new post that an
+ * earlier attempt may have created is found and adopted or reported as
+ * unknown, never created a second time. A change in any other state is left
+ * as it is. Recording the publication and the AI-answer fix follow-up happens
+ * once, on the step that publishes it.
+ */
+export const carryOutChange = (accountId: string, businessId: string, id: string) => guarded(businessId, Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const row = (yield* sql`SELECT * FROM wordpress_changes WHERE id = ${id} AND account_id = ${accountId} AND business_id = ${businessId}`)[0]
+  if (!row || row["status"] !== "PUBLISHING") return { change: yield* changeOf(accountId, businessId, id), fix: null }
+  const change = toChange(row)
+  const fail = (failure: string) => sql`UPDATE wordpress_changes SET status = 'FAILED', failure = ${failure} WHERE id = ${id} AND status = 'PUBLISHING'`.pipe(Effect.andThen(refuse(failure)))
+  yield* Effect.gen(function*() {
+    const { site } = yield* siteFor(accountId, businessId)
+    let written: { id: number }
     if (change.kind !== "CREATE_POST") {
       const now = yield* readPost(site, change.postType, change.postId!)
-      const target = (yield* sql`SELECT target_modified FROM wordpress_changes WHERE id = ${id}`)[0]?.["target_modified"]
-      if (now.modified !== target) return yield* fail("ChangedSincePrepared")
+      // An earlier attempt already wrote it: record it, do not write again.
+      if (stored(now, change.after)) written = now
+      else if (now.modified !== row["target_modified"]) return yield* fail("ChangedSincePrepared")
+      else written = toPost(yield* request(site, "POST", `/wp/v2/${change.postType}/${change.postId}?context=edit`, change.after))
+    } else if (row["write_attempted_at"]) {
+      // An earlier attempt sent the new post: adopt it if it is there, never create a second one.
+      const query = new URLSearchParams({ per_page: "20", status: "publish,draft,pending,private", context: "edit", search: String(change.after.title ?? change.targetTitle).slice(0, 200) })
+      const listed = (yield* request(site, "GET", `/wp/v2/${change.postType}?${query}`)) as unknown
+      const found = (Array.isArray(listed) ? listed : []).map(toPost).find(p => stored(p, change.after))
+      if (!found) return yield* fail("OutcomeUnknown")
+      written = found
+    } else {
+      yield* sql`UPDATE wordpress_changes SET write_attempted_at = now() WHERE id = ${id} AND status = 'PUBLISHING'`
+      written = toPost(yield* request(site, "POST", `/wp/v2/${change.postType}?context=edit`, change.after))
     }
-    const path = change.kind === "CREATE_POST" ? `/wp/v2/${change.postType}` : `/wp/v2/${change.postType}/${change.postId}`
-    const written = toPost(yield* request(site, "POST", `${path}?context=edit`, change.after))
     const check = yield* readPost(site, change.postType, written.id)
     if (!stored(check, change.after)) return yield* fail(change.kind === "SET_SEO" ? "SeoNotWritable" : "NotStoredAsApproved")
     const live = yield* liveCheck(check.link, change.after)
     // The publication record and its time are one statement; published_at is never taken from input.
     yield* sql`UPDATE wordpress_changes SET status = 'PUBLISHED', published_at = now(), published_post_id = ${written.id}, published_link = ${check.link},
       live_check = ${JSON.stringify(live)}::jsonb WHERE id = ${id} AND status = 'PUBLISHING'`
-    return written.id
-  }).pipe(Effect.catchAll(e => e instanceof WordPressRefused && (e.reason === "ChangedSincePrepared" || e.reason === "SeoNotWritable" || e.reason === "NotStoredAsApproved")
+  }).pipe(Effect.catchAll(e => e instanceof WordPressRefused && (e.reason === "ChangedSincePrepared" || e.reason === "SeoNotWritable" || e.reason === "NotStoredAsApproved" || e.reason === "OutcomeUnknown")
     ? Effect.fail(e)
     : sql`UPDATE wordpress_changes SET status = 'FAILED', failure = ${e instanceof WordPressRefused ? e.reason.slice(0, 120) : "PublishFailed"} WHERE id = ${id} AND status = 'PUBLISHING'`.pipe(Effect.andThen(Effect.fail(e)))))
-  return { postId: outcome, change: yield* changeOf(session.accountId, businessId, id) }
+  const c = yield* changeOf(accountId, businessId, id)
+  // A change made to fix a wrong AI answer records that fix and queues its re-check.
+  const userId = row["decided_by_user_id"] ? String(row["decided_by_user_id"]) : null
+  const fix = c && c.status === "PUBLISHED" && userId
+    ? yield* followUpFix({ businessId, claimId: c.claimId, userId, kind: c.kind, link: c.publishedLink, title: c.targetTitle, rationale: c.rationale, publishedAt: c.publishedAt })
+    : null
+  return { change: c, fix }
 }))
 
 /** Puts the previous values back: a new post returns to draft. */
@@ -229,7 +265,7 @@ export const undoChange = (session: Session, businessId: string, id: string) => 
 const Read = Schema.Struct({ postType: Schema.Literal("pages", "posts"), search: Schema.optional(Schema.String.pipe(Schema.maxLength(100))), postId: Schema.optional(Schema.Int.pipe(Schema.positive())) })
 export const wordpressDeclarations: ReadonlyArray<ToolDeclaration> = [
   { name: "read_wordpress_content", description: "Read the business's connected WordPress site: list published pages or posts (optionally matching search), or read one by postId with its current title, body (block-editor markup) and SEO title and description. Use it before preparing a change; never guess IDs.", parametersJsonSchema: JSONSchema.make(Read) },
-  { name: "prepare_wordpress_change", description: "Prepare one exact change to the connected WordPress site for a person to approve; nothing is written until they approve it, then OpenRecord publishes it and checks it live. kind: UPDATE_COPY (new title and/or full body for postId; keep the existing block markup and change only what is needed), SET_SEO (seoTitle about 50 to 60 characters, seoDescription about 140 to 160; needs Yoast or Rank Math), ADD_FAQ (faq: up to 10 question and answer pairs appended to postId as an FAQ section with matching structured data), CREATE_POST (a new published post or page: title and body, no postId). Use only facts from approved business truth or the page itself. Fixing a wrong AI answer: pass its claimId. A page edited in WordPress after you prepare is refused at approval; prepare it again.", parametersJsonSchema: JSONSchema.make(Prepare) },
+  { name: "prepare_wordpress_change", description: "Prepare one exact change to the connected WordPress site for a person to approve. Nothing is written until they approve it, then OpenRecord publishes it and checks it live. kind: UPDATE_COPY (new title and/or full body for postId; keep the existing block markup and change only what is needed), SET_SEO (seoTitle about 50 to 60 characters, seoDescription about 140 to 160; needs Yoast or Rank Math), ADD_FAQ (faq: up to 10 question and answer pairs appended to postId as an FAQ section with matching structured data), CREATE_POST (a new published post or page: title and body, no postId). Use only facts from approved business truth or the page itself. Fixing a wrong AI answer: pass its claimId. A page edited in WordPress after you prepare is refused at approval; prepare it again.", parametersJsonSchema: JSONSchema.make(Prepare) },
 ]
 export const dispatchWordPress = (ctx: ToolContext, name: string, raw: unknown) => Effect.gen(function*() {
   if (!(yield* (yield* BusinessRepository).getScoped(ctx.accountId, ctx.businessId))) return yield* Effect.fail(new AgentNotInScope())
@@ -307,13 +343,13 @@ export const wordpressApi = (withSession: WithSession) => {
       return yield* json(200, { change }, PRIVATE)
     }))),
     HttpRouter.post(`${base}/changes/:changeId/approve`, business((session, businessId, params) => Effect.gen(function*() {
-      const published = yield* publishChange(session, businessId, params["changeId"]!)
-      const c = published.change
-      // A change made to fix a wrong AI answer records that fix and queues its re-check.
-      const fix = c && c.status === "PUBLISHED"
-        ? yield* followUpFix({ businessId, claimId: c.claimId, userId: session.userId, kind: c.kind, link: c.publishedLink, title: c.targetTitle, rationale: c.rationale, publishedAt: c.publishedAt })
-        : null
-      return yield* json(200, { ...published, fix }, PRIVATE)
+      // Approval and its publish job commit together; the job then runs at once, here.
+      const job = yield* approveChange(session, businessId, params["changeId"]!)
+      const done = job ? yield* runChangePublishNow(job, carryOutChange(session.accountId, businessId, params["changeId"]!)) : null
+      const change = yield* changeOf(session.accountId, businessId, params["changeId"]!)
+      if (change?.status === "FAILED") return yield* refuse(change.failure ?? "PublishFailed")
+      // Still PUBLISHING only when a worker has it; it finishes there.
+      return yield* json(200, { change, fix: done?.fix ?? null }, PRIVATE)
     }))),
     HttpRouter.post(`${base}/changes/:changeId/reject`, business((session, businessId, params) => Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient

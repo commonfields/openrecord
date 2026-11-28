@@ -47,7 +47,7 @@ export const CORE_TOOLS = [
   "read_business_truth", "read_growth_goal", "read_proposals", "read_decision_feedback", "read_objective_investigations",
   "read_competitors", "read_search_performance", "read_results", "read_acquisition_overview", "read_marketing_work", "read_marketing_campaigns",
   "find_research_capabilities", "run_research", "read_research_evidence", "read_web_page", "read_web_pages", "search_web",
-  "remember", "leave_blank",
+  "remember", "leave_blank", "update_plan",
   // Notes about OpenRecord's own tools: a capability it lacks, a result that was wrong.
   "tool_feedback",
   // Where each setting lives, so a "turn it off" request is answered with the real place.
@@ -70,7 +70,8 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
       "read_representations", "read_open_issues", "read_issue", "read_observation", "draft_source_action", "read_discovery_scopes",
       "research_timeline", "read_research_credit", "list_connected_tools", "call_connected_tool",
       // Fixing a wrong answer on the business's own site, whichever kind it is.
-      "read_wordpress_content", "prepare_wordpress_change", "read_webflow_content", "prepare_webflow_change", "read_connected_execution_targets", "prepare_page_change"],
+      "read_wordpress_content", "prepare_wordpress_change", "read_webflow_content", "prepare_webflow_change", "read_connected_execution_targets", "prepare_page_change",
+      "read_growth_goal", "propose_growth_opportunity", "read_growth_opportunities"],
     prefetch: ["read_competitors", "read_business_truth", "read_research_evidence", "read_growth_goal", "read_acquisition_citations"],
   },
   write: {

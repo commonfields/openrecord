@@ -9,8 +9,8 @@ import { pendingStrategies } from "./marketing-strategy.js"
 import { Effect } from "effect"
 import { SqlClient } from "@effect/sql"
 import { HttpRouter } from "@effect/platform"
-import { AgentProposalRepository, BusinessRepository, GrowthRefused, GrowthRepository, type AgentProposal } from "@openrecord/db"
-import type { GrowthOpportunity } from "@openrecord/contracts"
+import { AgentProposalRepository, BusinessRepository, GrowthExecutionRefused, GrowthExecutionRepository, GrowthRefused, GrowthRepository, type AgentProposal } from "@openrecord/db"
+import type { ExecutionOperation, GrowthOpportunity } from "@openrecord/contracts"
 import { json, operatorSessionFor, type WithSession } from "./record-routes.js"
 import { listChanges, type WordPressChange } from "./wordpress.js"
 import { listWebflowChanges, type WebflowChange } from "./webflow.js"
@@ -29,6 +29,7 @@ export type DecisionItem =
   | { readonly type: "GROWTH_OPPORTUNITY"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly opportunity: GrowthOpportunity }
   | { readonly type: "WORDPRESS_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly change: WordPressChange }
   | { readonly type: "WEBFLOW_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly change: WebflowChange }
+  | { readonly type: "GITHUB_CHANGE"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly change: ExecutionOperation & { readonly initiative: string | null } }
   | { readonly type: "ACCOUNT_ACTION"; readonly business: { readonly id: string; readonly name: string }; readonly createdAt: string; readonly conversationId?: string; readonly agent?: DecisionAgent; readonly action: AccountAction }
 
 export const pendingDecisions = (accountId: string, userId: string) => Effect.gen(function*() {
@@ -46,6 +47,12 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
     const reviews = yield* pendingCampaignReviews(accountId, b.id)
     const strategies = yield* pendingStrategies(accountId, b.id)
     const actions = yield* listActions(accountId, b.id, "PROPOSED")
+    // Code-repository changes waiting on review; none when execution isn't configured or the business has no record yet.
+    const execution = yield* Effect.serviceOption(GrowthExecutionRepository)
+    const github = execution._tag === "Some"
+      ? yield* execution.value.awaitingApproval(accountId, b.id).pipe(Effect.catchIf(e => e instanceof GrowthExecutionRefused, () => Effect.succeed([])))
+      : []
+    const titles = new Map(initiatives.map(o => [o.id, o.title]))
     return [
       ...strategies.map((strategy): DecisionItem => ({ type: "MARKETING_STRATEGY", business, createdAt: strategy.createdAt, strategy: strategy as unknown as Record<string, unknown> })),
       ...reviews.map((review): DecisionItem => ({ type: "CAMPAIGN_REVIEW", business, createdAt: new Date(String(review["createdAt"])).toISOString(), review })),
@@ -55,6 +62,7 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       ...changes.map((change): DecisionItem => ({ type: "WORDPRESS_CHANGE", business, createdAt: change.createdAt, change })),
       ...webflow.map((change): DecisionItem => ({ type: "WEBFLOW_CHANGE", business, createdAt: change.createdAt, change })),
       ...actions.map((action): DecisionItem => ({ type: "ACCOUNT_ACTION", business, createdAt: action.createdAt, action })),
+      ...github.map((change): DecisionItem => ({ type: "GITHUB_CHANGE", business, createdAt: change.createdAt, change: { ...change, initiative: titles.get(change.opportunityId) ?? null } })),
     ]
   }), { concurrency: 4 })
   const items = perBusiness.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -85,6 +93,7 @@ export const pendingDecisions = (accountId: string, userId: string) => Effect.ge
       : item.type === "AGENT_PROPOSAL" ? ["proposalId", item.proposal.id]
       : item.type === "GROWTH_OPPORTUNITY" ? ["opportunityId", item.opportunity.id]
       : item.type === "ACCOUNT_ACTION" ? ["accountActionId", item.action.id]
+      : item.type === "GITHUB_CHANGE" ? ["githubChangeId", item.change.id]
       : item.type === "WEBFLOW_CHANGE" ? ["webflowChangeId", item.change.id] : ["wordpressChangeId", item.change.id]
     const said = sent.find(row => String(row["business_id"]) === item.business.id && refs(row["message"]).some(d => d["type"] === item.type && d["id"] === id))
     if (said) {

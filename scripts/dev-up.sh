@@ -80,6 +80,29 @@ if [ -z "$setup_pid" ] || ! ps -p "$setup_pid" -o command= 2>/dev/null | grep -q
   echo "$!" > "$setup_pid_file"
 fi
 
+# Optional local workers, each started once and left alone while it runs.
+start_worker() {
+  local name="$1" script="$2" pid_file="/tmp/openrecord-$1-worker.pid" pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -z "$pid" ] || ! ps -p "$pid" -o command= 2>/dev/null | grep -q "src/$script"; then
+    echo "starting $name worker (logs: /tmp/opencode-$name-worker.log)"
+    DATABASE_URL="$DATABASE_URL" detach "/tmp/opencode-$name-worker.log" pnpm --filter @openrecord/worker exec tsx "src/$script"
+    echo "$!" > "$pid_file"
+  fi
+}
+# AI-answer checks and re-checks ask real assistants and are billed by them, so
+# they run only when asked for: OPENRECORD_CHECKS=1.
+if [ "${OPENRECORD_CHECKS:-0}" = "1" ]; then
+  start_worker checks checks-only.ts
+else
+  echo "AI checks and re-checks stay queued (paid calls); OPENRECORD_CHECKS=1 runs them"
+fi
+# Approved code-repository changes open their pull requests through this
+# worker; it needs the GitHub execution settings in .env.
+if [ -n "${GITHUB_EXECUTION_TOKEN:-}" ] && [ -n "${GITHUB_EXECUTION_REPOSITORIES:-}" ]; then
+  start_worker execution execution-only.ts
+fi
+
 # Agent chat runs separately from HTTP and unrelated worker queues. Existing API
 # processes may still own loops until their next idle restart; claims coordinate.
 agent_worker_count="$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM agent_worker_instances WHERE mode='standalone' AND stopped_at IS NULL AND heartbeat_at>now()-interval '30 seconds'")"

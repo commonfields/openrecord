@@ -34,9 +34,13 @@ Practical notes for running this checkout locally. Architecture lives in
 - The script loads the git-ignored `.env` before starting anything; that is
   where the hosted agent model (`AGENT_EXTERNAL_PROCESSING_ENABLED`,
   `AGENT_MODEL`, `AGENT_API_KEY`) and provider keys go. Nothing else loads it.
-- The script starts a setup-only worker for website discovery. It does not
-  consume AI-check, publishing, or other worker queues; start the full worker
-  separately when those queues are intended to run.
+- The script starts a setup-only worker for website discovery. AI checks and
+  re-checks (after a fix is published) stay queued unless `OPENRECORD_CHECKS=1`,
+  which starts a checks-only worker: each check is a paid call to an assistant.
+  When `GITHUB_EXECUTION_TOKEN` and `GITHUB_EXECUTION_REPOSITORIES` are set, it
+  also starts the execution worker that opens pull requests for approved
+  code-repository changes. Other queues (discovery, site inspection, GA4 sync)
+  need the full worker.
 - It also starts a standalone agent chat worker (`pnpm --filter
   @openrecord/api agent:worker`). Newly started APIs set
   `AGENT_REQUEST_WORKER_ENABLED=false`; the default remains true for deployments

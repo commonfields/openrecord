@@ -297,7 +297,13 @@ pub fn chart_hit_row_help(
     hits
 }
 
-fn trend_tooltip(t: &Theme, tr: &Trend<'_>, day: usize) -> El {
+/// Indexes of the chart's days on which a change to the site went live.
+fn live_days(s: &App, dates: &[String]) -> Vec<usize> {
+    let Some(i) = s.insights.ready() else { return Vec::new() };
+    dates.iter().enumerate().filter(|(_, d)| i.live.iter().any(|c| d.get(..10) == Some(c.day.as_str()))).map(|(n, _)| n).collect()
+}
+
+fn trend_tooltip(s: &App, t: &Theme, tr: &Trend<'_>, day: usize) -> El {
     let date = tr.dates.get(day).map(|d| format::short_day(d)).unwrap_or_default();
     let main = tr.values.get(day).copied().flatten().map(|v| tr.format(v)).unwrap_or_else(|| "—".into());
     let mut body = col()
@@ -326,6 +332,13 @@ fn trend_tooltip(t: &Theme, tr: &Trend<'_>, day: usize) -> El {
                 .child(label(c, type_::XS_MEDIUM.features("'tnum' 1"), t.foreground)),
         );
     }
+    // What went live that day. It happened then; nothing here says it moved the number.
+    if let (Some(i), Some(d)) = (s.insights.ready(), tr.dates.get(day)) {
+        for c in i.live.iter().filter(|c| d.get(..10) == Some(c.day.as_str())).take(3) {
+            let text = format!("Went live: {}{}", c.title, if c.undone { " (since undone)" } else { "" });
+            body = body.child(label(text, type_::XS, t.muted_foreground).truncate().max_w(260.0));
+        }
+    }
     shadows(
         col()
             .gap(6.0)
@@ -342,13 +355,13 @@ fn trend_tooltip(t: &Theme, tr: &Trend<'_>, day: usize) -> El {
 }
 
 /// Places a tooltip above the hovered day, aligned like the web `ChartTooltip`.
-fn trend_tooltip_row(t: &Theme, tr: &Trend<'_>, day: usize, days: usize) -> El {
+fn trend_tooltip_row(s: &App, t: &Theme, tr: &Trend<'_>, day: usize, days: usize) -> El {
     let cols = days.min(CHART_HIT_COLUMNS);
     let mut r = row().w_full().pin(Some(0.0), Some(8.0), Some(0.0), None);
     for j in 0..cols {
         let d = if cols == 1 { 0 } else { j * (days - 1) / (cols - 1) };
         if d == day {
-            r = r.child(col().grow(1.0).items_center().child(trend_tooltip(t, tr, day)));
+            r = r.child(col().grow(1.0).items_center().child(trend_tooltip(s, t, tr, day)));
         } else {
             r = r.child(el().grow(1.0));
         }
@@ -370,6 +383,15 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
     for k in 0..3 {
         let gy = y(lo + (max - lo) * k as f64 / 2.0);
         shape = shape.line([0.0, gy], [1.0, gy], 1.0, LineCap::Butt, t.chart.grid);
+    }
+    // The days a change to the site went live: a quiet dashed rule, named in the day's tooltip.
+    let live = live_days(s, tr.dates);
+    for &i in &live {
+        let mut y0 = TOP;
+        while y0 < VIEW_H {
+            shape = shape.line([x(i), y0], [x(i), (y0 + 3.0).min(VIEW_H)], 1.0, LineCap::Butt, t.chart.axis.alpha(0.35));
+            y0 += 6.0;
+        }
     }
     if let Some(i) = hover {
         shape = shape.line([x(i), TOP], [x(i), VIEW_H], 1.0, LineCap::Butt, t.border);
@@ -436,7 +458,7 @@ pub fn area_trend(s: &App, t: &Theme, mut tr: Trend<'_>) -> El {
     let hits = chart_hit_row(tr.key, n);
     let mut plot = col().grow(1.0).min_w(0.0).h(tr.height).child(canvas(shape).w_full().h_full()).child(hits);
     if let Some(day) = hover {
-        plot = plot.child(trend_tooltip_row(t, &tr, day, n));
+        plot = plot.child(trend_tooltip_row(s, t, &tr, day, n));
     }
     let mut scale = col().w(AXIS_W).h(tr.height);
     for k in 0..3 {

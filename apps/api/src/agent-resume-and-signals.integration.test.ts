@@ -14,7 +14,7 @@ import { requireSession } from "./router.js"
 import { decisionFeedbackApi } from "./decision-feedback.js"
 import { decisionResumeMessage, writeDecisionResumeJob } from "./decision-resume.js"
 import { capabilitySignalsApi, dispatchCapabilitySignal } from "./capability-signals.js"
-import { claimAgentWork, enqueueAgentWork, executeAgentWork, AgentWorkRetry } from "./agent-work-queue.js"
+import { claimAgentWork, enqueueAgentWork, executeAgentWorkWith, AgentWorkRetry } from "./agent-work-queue.js"
 import { AgentConversationRefused } from "./agent-conversations.js"
 import { capabilityStats } from "./capabilities/discovery.js"
 import { measuredResearch, rankResearch, researchStats } from "./research/ranking.js"
@@ -78,6 +78,14 @@ suite("chat resume, ordered work and capability signals (disposable PostgreSQL, 
     const busy = () => Effect.fail(new AgentConversationRefused({ reason: "BUSY" }))
     expect(await run(writeDecisionResumeJob(jobs[0].payload, busy, { finalAttempt: false }).pipe(Effect.flip))).toMatchObject({ _tag: "AgentWorkRetry", reason: "CHAT_BUSY" })
     expect(await run(writeDecisionResumeJob(jobs[0].payload, busy, { finalAttempt: true }).pipe(Effect.flip))).toBe("DECISION_RESUME_FAILED")
+    // A chat the person archived meanwhile is set aside, and no new decision on it resumes it.
+    await pool.query("UPDATE agent_conversations SET user_archived_at=now() WHERE id=$1", [f.conversationId])
+    expect(await run(writeDecisionResumeJob(jobs[0].payload, ok, { finalAttempt: false }).pipe(Effect.flip))).toBe("DECISION_RESUME_CHAT_GONE")
+    const later = randomUUID()
+    await carried(f, [{ type: "WORDPRESS_CHANGE", id: later }])
+    await pool.query("UPDATE agent_conversations SET user_archived_at=now() WHERE id=$1", [f.conversationId])
+    expect((await decide(f, { kind: "WORDPRESS_CHANGE", itemId: later, verdict: "APPROVED", title: "Later" })).status).toBe(200)
+    expect((await jobsOf(f)).filter(j => j.ref_id === later)).toEqual([])
   })
 
   it("runs one chat's work in order: a later job waits while an earlier one is running or waiting to retry", async () => {
@@ -92,7 +100,7 @@ suite("chat resume, ordered work and capability signals (disposable PostgreSQL, 
     expect(b?.job_id).toBe(elsewhere)
     expect(await claim()).toBeNull()
     // The first asks to run again later: still queued, so the second keeps waiting.
-    await run(executeAgentWork(a!, () => Effect.fail(new AgentWorkRetry({ reason: "CHAT_BUSY" }))))
+    await run(executeAgentWorkWith(a!, () => Effect.fail(new AgentWorkRetry({ reason: "CHAT_BUSY" }))))
     expect((await pool.query("SELECT status FROM agent_work_jobs WHERE job_id=$1", [first])).rows[0].status).toBe("QUEUED")
     expect(await claim()).toBeNull()
     // Once the first has finished, the second comes up.

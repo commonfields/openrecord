@@ -12,7 +12,8 @@ import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import { AuthRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
 import { AdsProvider, adsConfigFromEnv } from "@openrecord/ads"
-import { accountActionsApi, dispatchAccountAction } from "./account-actions.js"
+import { accountActionsApi, approveAction, carryOutAction, dispatchAccountAction } from "./account-actions.js"
+import { claimAgentWorkById, executeAgentWorkWith } from "./agent-work-queue.js"
 import { growthApi } from "./growth-routes.js"
 import { requireSession, RepoLayers } from "./router.js"
 import { decisionApi } from "./decision-routes.js"
@@ -219,5 +220,29 @@ suite("approved account actions (scripted Google Business Profile and Google Ads
     const listed = await ok<{ actions: Array<{ status: string }> }>(call(a, "GET", `/api/businesses/${biz}/account-actions`))
     expect(listed.actions.map(x => x.status).sort()).toEqual(["DONE", "FAILED", "FAILED", "FAILED", "FAILED", "FAILED", "FAILED", "UNDONE", "UNDONE", "UNDONE"])
     for (const text of seen) expect(text).not.toMatch(/SECRET/)
+
+    // Cut off after Google took the reply but before it was recorded: on recovery the reply is
+    // read back and recorded, not posted twice.
+    reviews["r3"] = { comment: "Great colour", reply: null }
+    const late = Either.getOrThrow(await agent("prepare_account_action", { kind: "REPLY_TO_REVIEW", reviewId: "r3", reply: "Thank you for coming in!", rationale: "Thank a happy customer." }))
+    const lateId = String((late.data as { accountActionId: string }).accountActionId)
+    const run = <A, E>(fx: Effect.Effect<A, E, unknown>) => Effect.runPromise((fx as Effect.Effect<A, E, never>).pipe(Effect.provide(layer)))
+    const job = (await run(approveAction({ accountId: a.accountId, userId: a.userId }, biz, lateId)))!
+    reviews["r3"]!.reply = "Thank you for coming in!"
+    writes.length = 0
+    const claimed = (await run(claimAgentWorkById(job)))!
+    await run(executeAgentWorkWith(claimed, () => carryOutAction(a.accountId, biz, lateId)))
+    expect((await ok<{ action: { status: string } }>(call(a, "GET", `/api/businesses/${biz}/account-actions/${lateId}`))).action.status).toBe("DONE")
+    expect(writes).toEqual([])
+
+    // A new ad an earlier attempt may have sent is reported as unknown, never sent again.
+    const resent = Either.getOrThrow(await agent("prepare_account_action", { ...draft, headlines: ["Haircuts again", ...draft.headlines.slice(1)], finalUrl: "https://www.northstar-salon.com/book" }))
+    const resentId = String((resent.data as { accountActionId: string }).accountActionId)
+    const adJob = (await run(approveAction({ accountId: a.accountId, userId: a.userId }, biz, resentId)))!
+    await pool.query("UPDATE account_actions SET write_attempted_at=now() WHERE id=$1", [resentId])
+    const adsBefore = ads.size
+    await run(executeAgentWorkWith((await run(claimAgentWorkById(adJob)))!, () => carryOutAction(a.accountId, biz, resentId)))
+    expect((await pool.query("SELECT status, failure FROM account_actions WHERE id=$1", [resentId])).rows[0]).toEqual({ status: "FAILED", failure: "OutcomeUnknown" })
+    expect(ads.size).toBe(adsBefore)
   })
 })

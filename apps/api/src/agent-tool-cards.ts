@@ -39,6 +39,10 @@ const firstSentence = (text: string) => {
 // says it (maxLength: 300). The model reads the keyword; the pair only costs bytes.
 const GENERATED_TITLE = /^(int|positive|negative|nonNegative|unknown|[a-zA-Z]+\(.*\))$/
 const GENERATED_DESCRIPTION = /^(an? (string|number|integer|array|positive|non-negative|negative)\b.*)?$/
+// The same for a UUID or a pattern, whose label has no title beside it.
+const repeatsKeyword = (o: Record<string, unknown>, text: string) =>
+  (o["format"] === "uuid" && text === "a Universally Unique Identifier")
+  || (typeof o["pattern"] === "string" && text === `a string matching the pattern ${o["pattern"]}`)
 const withoutGenerated = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(withoutGenerated)
   if (value === null || typeof value !== "object") return value
@@ -46,6 +50,7 @@ const withoutGenerated = (value: unknown): unknown => {
   const generated = typeof o["title"] === "string" && GENERATED_TITLE.test(o["title"])
   return Object.fromEntries(Object.entries(o)
     .filter(([k, v]) => !(generated && (k === "title" || (k === "description" && typeof v === "string" && GENERATED_DESCRIPTION.test(v)))))
+    .filter(([k, v]) => !(k === "description" && typeof v === "string" && repeatsKeyword(o, v)))
     .map(([k, v]) => [k, k === "properties" || k === "patternProperties" || k === "$defs" || k === "definitions"
       ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([p, s]) => [p, withoutGenerated(s)]))
       : withoutGenerated(v)]))

@@ -9,7 +9,7 @@ import { Effect, Exit, Layer, Redacted, Scope } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import pg from "pg"
 import type { ExecutionOperation, ExecutionTarget, GrowthOpportunity } from "@openrecord/contracts"
-import { AcquisitionRepositoryLive, AuthRepositoryLive, RecordRepositoryLive } from "@openrecord/db"
+import { AcquisitionRepositoryLive, AuthRepositoryLive, GrowthExecutionRepository, RecordRepositoryLive } from "@openrecord/db"
 import { executionPatchSha256, fixtureGitHub, fixtureGitHubLayer, gitBlobSha, sha256Text, removeNoindexFromHtml } from "@openrecord/site-operator"
 import { growthExecutionApi } from "./growth-execution-routes.js"
 import { growthApi } from "./growth-routes.js"
@@ -212,6 +212,7 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
       ["GET", `${s.base}/connected-executions/${op.id}`, undefined],
       ["POST", `${s.base}/connected-executions/${op.id}/authorize`, { reviewedPatchSha256: op.patchSha256, expectedRevision: 1, reason: "TEST", idempotencyKey: k() }],
       ["POST", `${s.base}/connected-executions/${op.id}/dispatch`, { expectedRevision: 1, idempotencyKey: k() }],
+      ["POST", `${s.base}/connected-executions/${op.id}/approve`, { reviewedPatchSha256: op.patchSha256, expectedRevision: 1, reason: "TEST", idempotencyKey: k() }],
       ["POST", `${s.base}/connected-executions/${op.id}/cancel`, { expectedRevision: 1, reason: "TEST", idempotencyKey: k() }],
       ["POST", `${s.base}/connected-executions/${op.id}/check`, { idempotencyKey: k() }], ["POST", `${s.base}/connected-executions/${op.id}/live-check`, { idempotencyKey: k() }],
     ]
@@ -280,5 +281,38 @@ suite("connected execution over HTTP (authorization, tenancy, exact change; fixt
     expect(await s.refusal(s.call(s.a, "POST", `${s.base}/opportunities/${oid}/approve`, { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "x" }))).toBeTruthy()
     const cancel = await s.refusal(s.call(s.a, "POST", `${s.base}/opportunities/${oid}/cancel`, { expectedStatus: "APPROVED", expectedRevision: 2, idempotencyKey: randomUUID(), reason: "TEST cancel" }))
     expect(cancel).toEqual({ status: 409, reason: "ExecutionUnresolved" })
+  })
+
+  it("refuses approval from an Inbox card after the change is declined", async () => {
+    const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
+    const { operation } = await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, prepareBody(t)))
+    const path = `${s.base}/connected-executions/${operation.id}`
+    await s.ok(s.call(s.a, "POST", `${path}/cancel`, {
+      expectedRevision: operation.revision, reason: "TEST declined", idempotencyKey: randomUUID(),
+    }))
+    expect(await s.refusal(s.call(s.a, "POST", `${path}/approve`, {
+      reviewedPatchSha256: operation.patchSha256, expectedRevision: operation.revision, reason: "TEST stale approval", idempotencyKey: randomUUID(),
+    }))).toEqual({ status: 409, reason: "StaleExecution" })
+    expect(s.provider.fixture.writes).toEqual([])
+  })
+
+  it("waits in the Inbox until approved there: one approval authorizes the reviewed change and queues its pull request", async () => {
+    const s = await setup(makeProvider()), t = await targetOf(s), oid = await opportunity(s)
+    const op = (await s.ok<{ operation: ExecutionOperation }>(prepare(s, oid, prepareBody(t)))).operation
+    const waiting = () => Effect.runPromise(Effect.flatMap(GrowthExecutionRepository, r => r.awaitingApproval(s.a.accountId, s.businessId)).pipe(Effect.provide(repos)))
+    expect((await waiting()).map(o => o.id)).toEqual([op.id])
+    const path = `${s.base}/connected-executions/${op.id}/approve`
+    const body = { reviewedPatchSha256: op.patchSha256, expectedRevision: 1, reason: "TEST approved in the Inbox", idempotencyKey: randomUUID() }
+    expect((await s.call(s.b, "POST", path, body)).status).toBe(404)
+    expect(await s.refusal(s.call(s.a, "POST", path, { ...body, reviewedPatchSha256: "0".repeat(64), idempotencyKey: randomUUID() }))).toEqual({ status: 409, reason: "PatchMismatch" })
+    const done = (await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", path, body))).operation
+    expect(done.state).toBe("DISPATCHING")
+    // A replay of the same approval changes nothing and queues no second pull request.
+    expect((await s.ok<{ operation: ExecutionOperation }>(s.call(s.a, "POST", path, body))).operation.state).toBe("DISPATCHING")
+    expect(await s.refusal(s.call(s.a, "POST", path, { ...body, reviewedPatchSha256: "0".repeat(64) }))).toEqual({ status: 409, reason: "PatchMismatch" })
+    expect(await s.refusal(s.call(s.a, "POST", path, { ...body, idempotencyKey: randomUUID() }))).toEqual({ status: 409, reason: "StaleExecution" })
+    expect(Number((await pool.query("SELECT count(*) FROM growth_execution_jobs WHERE operation_id=$1 AND kind='DISPATCH'", [op.id])).rows[0].count)).toBe(1)
+    expect(await waiting()).toEqual([])
+    expect(s.provider.fixture.writes).toEqual([])
   })
 })

@@ -6,7 +6,8 @@ import { PgClient } from "@effect/sql-pg"
 import type { SqlClient } from "@effect/sql"
 import pg from "pg"
 import { AgentModelError } from "./agent-model.js"
-import { AgentWorkRetry, MAX_WORK_ATTEMPTS, claimAgentWork, enqueueAgentWork, executeAgentWork, retryDelaySeconds } from "./agent-work-queue.js"
+import { AgentWorkRetry, MAX_WORK_ATTEMPTS, claimAgentWork, enqueueAgentWork, executeAgentWorkWith, reconcileAgentWork, retryDelaySeconds } from "./agent-work-queue.js"
+import { MAX_CONTINUATIONS } from "./turn-continuation.js"
 import { retryableTurnFailure } from "./unattended-agent.js"
 import { capabilityStats, rankCapabilities } from "./capabilities/discovery.js"
 import { writeSetupCampaignJob } from "./setup-campaign.js"
@@ -20,7 +21,8 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
   // Handlers are replaced in these tests, so only the database is needed.
   const run = <A, E, R>(fx: Effect.Effect<A, E, R>) => Effect.runPromise((fx as Effect.Effect<A, E, SqlClient.SqlClient>).pipe(Effect.provide(Layer.orDie(sql))))
   beforeAll(async () => {
-    await pool.query(readFileSync(new URL("../../../packages/db/migrations/0103_agent_retry_and_continuation.sql", import.meta.url), "utf8"))
+    for (const name of ["0103_agent_retry_and_continuation.sql", "0109_durable_actions_and_continued_work.sql"])
+      await pool.query(readFileSync(new URL(`../../../packages/db/migrations/${name}`, import.meta.url), "utf8"))
   })
   // Claims take the oldest queued job anywhere; leftovers from other files would be claimed first.
   beforeEach(async () => { await pool.query("UPDATE agent_work_jobs SET status='CANCELLED', finished_at=now() WHERE status IN ('QUEUED','RUNNING')") })
@@ -60,7 +62,7 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     for (let attempt = 1; attempt <= MAX_WORK_ATTEMPTS; attempt++) {
       const claimed = await run(claimAgentWork)
       expect(claimed?.job_id).toBe(id)
-      await run(executeAgentWork(claimed!, failing))
+      await run(executeAgentWorkWith(claimed!, failing))
       const row = await job(id)
       expect(row.attempt_count).toBe(attempt)
       expect(row.failure_reason).toBe("MODEL_UNAVAILABLE")
@@ -79,7 +81,7 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     const f = await fixture()
     const id = await run(enqueueAgentWork({ ...f, kind: "GROWTH_BRIEF_WRITE", refId: randomUUID(), payload: {} }))
     const claimed = await run(claimAgentWork)
-    await run(executeAgentWork(claimed!, () => Effect.fail("HELPER_TASK_FAILED" as const)))
+    await run(executeAgentWorkWith(claimed!, () => Effect.fail("HELPER_TASK_FAILED" as const)))
     expect(await job(id!)).toMatchObject({ status: "FAILED", attempt_count: 1, failure_reason: "HELPER_TASK_FAILED" })
     expect(await run(claimAgentWork)).toBeNull()
   })
@@ -111,6 +113,34 @@ suite("agent work retries and measured capabilities (disposable PostgreSQL, no l
     expect(sent).toBeGreaterThan(0)
     // A turn that answered is done, whatever attempt it was.
     await run(writeSetupCampaignJob(payload, () => Effect.succeed({ reply: "Saved" }), { finalAttempt: false }))
+  })
+
+  it("continues a background turn a restart cut short, worded as a continuation, a few times at most", async () => {
+    const f = await fixture()
+    const payload = { scope: { accountId: f.accountId, userId: f.userId, businessId: f.businessId }, setupId: randomUUID(), conversationId: f.conversationId, message: "Start the first campaign for TEST" }
+    const id = await run(enqueueAgentWork({ ...f, kind: "SETUP_CAMPAIGN_WRITE", refId: payload.setupId, payload }))
+    const followup = await run(enqueueAgentWork({ ...f, kind: "INVESTIGATION_FOLLOWUP_WRITE", refId: randomUUID(), payload: {} }))
+    /** Claims a job, lets it start, and lets its process die. */
+    const cut = async (jobId: string) => {
+      await pool.query("UPDATE agent_work_jobs SET status='RUNNING', claim_id=gen_random_uuid(), execution_started_at=now(), attempt_count=attempt_count+1, lease_until=now()-interval '1 second' WHERE job_id=$1", [jobId])
+      await run(reconcileAgentWork)
+      return (await pool.query("SELECT status, continuations FROM agent_work_jobs WHERE job_id=$1", [jobId])).rows[0] as { status: string; continuations: number }
+    }
+    // A read-only follow-up is not continued; the agent turn is.
+    expect(await cut(followup!)).toMatchObject({ status: "INTERRUPTED" })
+    expect(await cut(id!)).toEqual({ status: "QUEUED", continuations: 1 })
+    // Its next run is worded as a continuation of the same request, marked as OpenRecord's.
+    const sent: Array<{ message: string; origin?: unknown }> = []
+    const claimed = await run(claimAgentWork)
+    expect(claimed?.job_id).toBe(id)
+    await run(executeAgentWorkWith(claimed!, () => writeSetupCampaignJob(payload, (_s, body) => { sent.push(body); return Effect.succeed({ reply: "Saved" }) }, { finalAttempt: false })))
+    expect(sent[0]!.message).toContain("cut short when OpenRecord restarted")
+    expect(sent[0]!.message).toContain("«Start the first campaign for TEST»")
+    expect(sent[0]!.origin).toEqual({ kind: "wake", title: "Continued after a restart" })
+    // A turn that keeps being cut short stops being continued.
+    const again = await run(enqueueAgentWork({ ...f, kind: "SETUP_CAMPAIGN_WRITE", refId: randomUUID(), payload }))
+    for (let i = 1; i <= MAX_CONTINUATIONS; i++) expect(await cut(again!)).toEqual({ status: "QUEUED", continuations: i })
+    expect(await cut(again!)).toMatchObject({ status: "INTERRUPTED", continuations: MAX_CONTINUATIONS })
   })
 
   it("measures tools from this account's runs only, ignores the model's own mistakes, and lists unreliable ones last", async () => {

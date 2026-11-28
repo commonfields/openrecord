@@ -15,7 +15,8 @@ import type { HttpTransport } from "@openrecord/representation"
 import { RepoLayers, requireSession } from "./router.js"
 import { WebAccess, type WebAccessService } from "./web-access.js"
 import { dispatchToolSpec } from "./agent-registry.js"
-import { WebflowHttp, webflowApi } from "./webflow.js"
+import { WebflowHttp, approveWebflowChange, carryOutWebflowChange, webflowApi } from "./webflow.js"
+import { claimAgentWorkById, executeAgentWorkWith } from "./agent-work-queue.js"
 import { connectionGaps } from "./agent-decision.js"
 
 const url = process.env["TEST_DATABASE_URL"] ?? ""
@@ -28,7 +29,7 @@ function fakeWebflow() {
   let t = Date.parse("2026-11-01T00:00:00Z")
   const tick = () => new Date(t += 120_000).toISOString()
   const state = {
-    publishes: 0,
+    publishes: 0, writes: 0,
     site: { id: SITE, displayName: "Cueup", shortName: "cueup", lastUpdated: "2026-11-01T00:00:00.000Z", lastPublished: "2026-11-01T00:00:00.000Z", customDomains: [{ id: DOMAIN, url: "www.cueup.test" }] },
     page: { id: PAGE, title: "Pricing", slug: "pricing", seo: { title: "Pricing", description: "" }, lastUpdated: "2026-10-01T00:00:00.000Z", draft: false, archived: false, publishedPath: "/pricing" },
     livePageSeo: { title: "Pricing", description: "" },
@@ -48,6 +49,7 @@ function fakeWebflow() {
       const reply = (status: number, body?: unknown) => ({ status, headers: {}, body: new TextEncoder().encode(body === undefined ? "" : JSON.stringify(body)), peerIp: "104.18.0.1" })
       if (init.headers["authorization"] !== `Bearer ${TOKEN}`) return reply(401, { message: "secret detail" })
       const body = JSON.parse(init.body ?? "{}") as Record<string, any>
+      if (init.method === "PUT" || init.method === "PATCH" || (init.method === "POST" && path.endsWith("/items/live"))) state.writes++
       if (path === "/sites") return reply(200, { sites: [state.site] })
       if (path === `/sites/${SITE}`) return reply(200, state.site)
       if (path === `/sites/${SITE}/pages`) return reply(200, { pages: [state.page] })
@@ -61,6 +63,7 @@ function fakeWebflow() {
       }
       if (path === `/collections/${BLOG}`) return reply(200, collection)
       if (path === `/collections/${BLOG}/items`) return reply(200, { items: [...state.items.values()] })
+      if (path === `/collections/${BLOG}/items/live` && init.method !== "POST") return reply(200, { items: [...state.items.values()].filter(i => i.live) })
       if (path === `/collections/${BLOG}/items/live` && init.method === "POST") {
         const id = (state.nextItem++).toString(16).padStart(24, "0"), now = tick()
         const it = { id, fieldData: body["fieldData"], lastUpdated: now, lastPublished: now, isDraft: false, isArchived: false, live: true }
@@ -207,5 +210,54 @@ suite("Webflow connector (in-memory Webflow, no network)", () => {
     const action = (await pool.query("SELECT i.type, i.target FROM interventions i JOIN intervention_issues ii ON ii.intervention_id=i.id WHERE ii.issue_id=$1", [claimId])).rows
     expect(action).toEqual([{ type: "SOURCE_UPDATED", target: "https://www.cueup.test/pricing" }])
     expect((await pool.query("SELECT intervention_id FROM reobservation_intents WHERE issue_id=$1", [claimId])).rows).toEqual([{ intervention_id: approved.fix.interventionId }])
+  })
+
+  it("finishes a publish cut off part way from what Webflow holds, and never writes twice", async () => {
+    const f = await fixture()
+    await f.call("POST", "", { token: TOKEN })
+    const session = { accountId: f.accountId, userId: f.userId }
+    const run = <A, E>(fx: Effect.Effect<A, E, unknown>) => Effect.runPromise((fx as Effect.Effect<A, E, never>).pipe(Effect.provide(layer)))
+    const status = async (id: string) => (await pool.query("SELECT status, failure, published_item_id FROM webflow_changes WHERE id=$1", [id])).rows[0]
+    const resume = async (job: string, id: string) => {
+      const claimed = await run(claimAgentWorkById(job))
+      if (!claimed) throw new Error("publish job not queued")
+      await run(executeAgentWorkWith(claimed, () => carryOutWebflowChange(f.accountId, f.businessId, id)))
+    }
+    const post = wf.state.items.get(POST)!
+    Object.assign(post, { live: true, isDraft: false })
+    post.fieldData["summary"] = "Old summary"; post.lastUpdated = post.lastPublished = "2026-11-20T00:00:00.000Z"
+
+    // The live item already holds the approved values: recorded, not written again.
+    const update = changeId(await tool(f.ctx, "prepare_webflow_change", { kind: "UPDATE_CMS_ITEM", collectionId: BLOG, itemId: POST, fields: { summary: "Written before the stop" }, rationale: "TEST" }))
+    const job = (await run(approveWebflowChange(session, f.businessId, update)))!
+    post.fieldData["summary"] = "Written before the stop"; post.lastUpdated = post.lastPublished = "2026-11-20T00:10:00.000Z"
+    let writes = wf.state.writes
+    await resume(job, update)
+    expect(await status(update)).toMatchObject({ status: "PUBLISHED", published_item_id: POST })
+    expect(wf.state.writes).toBe(writes)
+
+    // A new item an earlier attempt sent is adopted from the live items, never created twice.
+    const created = changeId(await tool(f.ctx, "prepare_webflow_change", { kind: "CREATE_CMS_ITEM", collectionId: BLOG, fields: { name: "Small weddings", slug: "small-weddings", summary: "A guide" }, rationale: "TEST" }))
+    const createJob = (await run(approveWebflowChange(session, f.businessId, created)))!
+    await pool.query("UPDATE webflow_changes SET write_attempted_at=now() WHERE id=$1", [created])
+    const sent = "f".repeat(24)
+    wf.state.items.set(sent, { id: sent, fieldData: { name: "Small weddings", slug: "small-weddings", summary: "A guide" }, lastUpdated: "2026-11-20T00:20:00.000Z", lastPublished: "2026-11-20T00:20:00.000Z", isDraft: false, isArchived: false, live: true })
+    writes = wf.state.writes
+    await resume(createJob, created)
+    expect(await status(created)).toMatchObject({ status: "PUBLISHED", published_item_id: sent })
+    expect(wf.state.writes).toBe(writes)
+
+    // Page SEO that was written but not yet live is put back and reported, so nothing waits unseen,
+    // even inside Webflow's one-minute window where the site still reads as published.
+    const seo = changeId(await tool(f.ctx, "prepare_webflow_change", { kind: "SET_PAGE_SEO", pageId: PAGE, seoDescription: "Plans for every wedding size", rationale: "TEST" }))
+    const seoJob = (await run(approveWebflowChange(session, f.businessId, seo)))!
+    const previous = wf.state.page.seo.description
+    wf.state.page.seo = { ...wf.state.page.seo, description: "Plans for every wedding size" }
+    wf.state.site.lastUpdated = new Date(Date.parse(wf.state.site.lastPublished) + 30_000).toISOString()
+    const publishes = wf.state.publishes
+    await resume(seoJob, seo)
+    expect(await status(seo)).toMatchObject({ status: "FAILED", failure: "PublishInterrupted" })
+    expect(wf.state.page.seo.description).toBe(previous)
+    expect(wf.state.publishes).toBe(publishes)
   })
 })

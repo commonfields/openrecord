@@ -4,7 +4,7 @@
 //! a folded work log, with their sources, helper sessions and decisions, and
 //! the composer with its model picker at the bottom.
 
-use rune::{Align, Color, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
+use rune::{Align, Cursor, El, TextStyle, LiveRegion, ScrollSpec, Side, Transition, col, el, row, text_input};
 use rune_kit::{Dialog, Kit, Markdown, MarkdownStyle};
 
 use crate::api::Message;
@@ -108,6 +108,10 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
     }
     match &s.turn {
         Turn::Working { progress, .. } => {
+            // The steps it is following, ticking off as they finish.
+            if let Some(plan) = &progress.plan {
+                list = list.child(plan_card(t, "plan-live", plan, true));
+            }
             // Questions it left while it carries on, answerable now.
             for b in &progress.blanks {
                 list = list.child(blank_card(s, t, b));
@@ -571,6 +575,47 @@ fn prose(t: &Theme, k: &Kit) -> MarkdownStyle {
 /// pick, and the answer it assumes until one is picked. Picking one while the
 /// agent works reaches it at its next step; afterwards it asks it to update
 /// what it made. "Other" types an answer of the person's own.
+/// The agent's plan as a checklist: done steps ticked, the one under way
+/// marked, the rest waiting. `live` while the turn still works.
+fn plan_card(t: &Theme, key: &str, plan: &chat::Plan, live: bool) -> El {
+    let done = plan.done();
+    let mut card = col()
+        .key(key.to_string())
+        .w_full()
+        .gap(6.0)
+        .padding(12.0)
+        .radius(10.0)
+        .border(1.0, t.border)
+        .live_region(LiveRegion::Polite)
+        .child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(ico(&icons::LIST_CHECKS, 14.0, t.muted_foreground))
+                .child(label(if live { "Plan" } else { "Plan followed" }, type_::XS_MEDIUM, t.foreground))
+                .child(label(format!("{done} of {} done", plan.steps.len()), type_::XS11, t.muted_foreground)),
+        );
+    for (j, st) in plan.steps.iter().enumerate() {
+        let (icon, color, text_color) = match st.status.as_str() {
+            "completed" => (&icons::CHECK, t.muted_foreground, t.muted_foreground),
+            "in_progress" if live => (&icons::LOADER, t.foreground, t.foreground),
+            _ => (&icons::CIRCLE_DASHED, t.muted_foreground, t.muted_foreground),
+        };
+        card = card.child(
+            row()
+                .key(format!("{key}-{j}"))
+                .gap(8.0)
+                .items_start()
+                .child(el().pt(1.0).child(ico(icon, 14.0, color)))
+                .child(label(st.step.clone(), type_::XS, text_color).wrap().grow(1.0).min_w(0.0)),
+        );
+    }
+    if let Some(n) = plan.note.as_ref().filter(|n| !n.trim().is_empty()) {
+        card = card.child(label(n.clone(), type_::XS11, t.muted_foreground).wrap());
+    }
+    card
+}
+
 fn blank_card(s: &App, t: &Theme, b: &chat::Blank) -> El {
     let answer = s.blank_answer(b);
     let mut choices = row().gap(6.0).flex_wrap().center_y();
@@ -689,7 +734,27 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
         if !m.text.is_empty() {
             c = c.child(user_bubble(s, t, &m.text));
         }
-        c = c.child(copy_button(s, t, i, &m.text));
+        let mut acts = row().gap(2.0).center_y().child(copy_button(s, t, i, &m.text));
+        // The person's own message can undo the chat from there.
+        if m.origin.is_none() && s.chat_id.is_some() && !matches!(s.turn, Turn::Working { .. }) {
+            acts = acts.child(
+                row()
+                    .key(format!("undo-{i}"))
+                    .size(24.0, 24.0)
+                    .radius(6.0)
+                    .center()
+                    .role("button")
+                    .label("Undo from here")
+                    .help("Undo from here")
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .hover(t.hover_tint)
+                    .group_opacity(0.0, 1.0)
+                    .child(ico(&icons::UNDO_2, 14.0, t.muted_foreground))
+                    .on_press(move |s: &mut App| s.ask_undo(i)),
+            );
+        }
+        c = c.child(acts);
         // What the person added while that turn worked, as sent.
         for note in &m.notes {
             c = c.child(user_bubble(s, t, note)).child(label("Sent while the agent worked", type_::XS11, t.muted_foreground));
@@ -698,6 +763,9 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     }
     let mut body = col().w_full().gap(6.0);
     body = body.child(run_trace(s, t, k, i, &m.work_log(), m.duration_ms));
+    if let Some(plan) = m.plan.as_ref().filter(|p| !p.steps.is_empty()) {
+        body = body.child(plan_card(t, &format!("plan-{i}"), plan, false));
+    }
     let muted = m.run.as_ref().is_some_and(|r| r.status != "COMPLETED" && !r.status.is_empty());
     // Markdown (Pierre / rune-kit — native sibling of `@pierre/words` on web), with ```chart
     // blocks as charts. A fresh reply streams the full text with a 180ms fade; tap to settle.
@@ -740,6 +808,22 @@ fn message(s: &App, t: &Theme, k: &Kit, i: usize, m: &Message, statuses: &std::c
     }
     if !m.decisions.is_empty() {
         body = body.children(decisions(s, t, i, &m.decisions));
+    }
+    // A turn paused for these decisions picks up from exactly here once they are all made.
+    if let Some(w) = m.waiting.as_ref().filter(|w| !w.item_ids.is_empty()) {
+        // Still open while it is in the inbox.
+        let open = w.item_ids.iter().filter(|id| s.decisions.iter().any(|d| d.key.rsplit(':').next() == Some(id.as_str()))).count();
+        let note = if open == 0 { "Decided. The agent continues from here.".to_string() }
+            else if w.item_ids.len() == 1 { "Paused for your decision above. The agent continues from here once you decide.".to_string() }
+            else { format!("Paused for your decisions above, {open} of {} still open. The agent continues from here once you decide them all.", w.item_ids.len()) };
+        body = body.child(
+            row()
+                .key(format!("waiting-{i}"))
+                .gap(6.0)
+                .center_y()
+                .child(ico(&icons::CORNER_DOWN_RIGHT, 12.0, t.muted_foreground))
+                .child(label(note, type_::XS11, t.muted_foreground).wrap()),
+        );
     }
     c.child(body).child(reply_actions(s, t, i, &m.text))
 }
@@ -1423,7 +1507,8 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         .items_end()
         .radius(COMPOSER_PILL)
         .border(1.0, t.border)
-        .fill(if float_on_page { Color::TRANSPARENT } else { t.card })
+        // Solid over a page too: text read through it was hard to follow.
+        .fill(t.card)
         // Files dropped on the box are attached, as on the web.
         .on_drop_files(|s: &mut App, paths, _tx| {
             for p in paths {
@@ -1433,7 +1518,7 @@ pub fn composer(s: &App, t: &Theme, business: &str, slot: ComposerSlot, float_on
         .child(plus)
         .child(col().grow(1.0).min_w(0.0).self_center().px(2.0).child(input))
         .child(trailing);
-    let field = if float_on_page { field_row } else { shadows(field_row, &t.control_shadow) };
+    let field = shadows(field_row, &t.control_shadow);
 
     // "Chat options" under the box: the business on the left; follow-ups, the
     // memory meter, the model and reasoning on the right, 12 points apart.
@@ -2254,6 +2339,47 @@ pub fn layers(s: &App, t: &Theme, k: &Kit, layer: &mut Vec<El>) {
     if s.followups_open {
         followups_dialog(s, t, k, layer);
     }
+    if let Some(u) = &s.undo {
+        undo_dialog(t, k, u, layer);
+    }
+}
+
+/// Confirms undoing the chat from one of the person's messages.
+fn undo_dialog(t: &Theme, k: &Kit, u: &crate::state::UndoTurn, layer: &mut Vec<El>) {
+    let undo = crate::ui::widgets::button(t, "undo-confirm", if u.busy { "Undoing…" } else { "Undo" }, crate::ui::widgets::Variant::Primary);
+    let undo = if u.busy { undo.opacity(0.5).cursor(Cursor::Default) } else { undo.on_press(|s: &mut App| s.confirm_undo()) };
+    let quoted: String = u.text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+    let mut body = col()
+        .w_full()
+        .px(16.0)
+        .pb(16.0)
+        .gap(10.0)
+        .child(label(format!("«{quoted}» and everything after it leave this chat. The message comes back to the box so you can change it and send it again."), type_::SM_13, t.foreground).wrap())
+        .child(label("Changes, proposals and drafts those turns saved that you haven't decided are withdrawn. Pieces they wrote go back to how they were, unless someone edited them since. Helpers they started stop.", type_::SM_13, t.muted_foreground).wrap())
+        .child(label("Anything you already approved or published stays as it is. Research and notes the agent saved stay too.", type_::SM_13, t.muted_foreground).wrap());
+    if let Some(e) = &u.error {
+        body = body.child(label(e.clone(), type_::XS, t.wrong).wrap().live_region(LiveRegion::Polite));
+    }
+    body = body.child(
+        row()
+            .w_full()
+            .gap(8.0)
+            .child(el().grow(1.0))
+            .child(crate::ui::widgets::button(t, "undo-cancel", "Cancel", crate::ui::widgets::Variant::Outline).on_press(|s: &mut App| s.undo = None))
+            .child(undo),
+    );
+    Dialog::new("undo-turn", "Undo from here")
+        .description("Take the chat back to before this message.")
+        .width(460.0)
+        .fit()
+        .open(true)
+        .child(body)
+        .on_close(|s: &mut App| {
+            if s.undo.as_ref().is_some_and(|u| !u.busy) {
+                s.undo = None;
+            }
+        })
+        .build(k, layer);
 }
 
 /// Quick actions aligned with the message box.
