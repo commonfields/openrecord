@@ -29,6 +29,7 @@ import {
   type AdsTarget,
 } from "@openrecord/ads"
 import { writeAccess } from "./ads.js"
+import { enqueueChangePublish, runChangePublishNow } from "./change-publish.js"
 import { businessWebsite } from "./agent-web-tools.js"
 import { AgentNotInScope } from "./agent-tool-errors.js"
 import type { AgentToolResult } from "./agent-tools.js"
@@ -253,30 +254,52 @@ const write = (accountId: string, businessId: string, a: AccountAction, bindingI
 const reasonOf = (e: unknown) => e instanceof AccountActionRefused || (typeof e === "object" && e !== null && "_tag" in e && e._tag === "AdsRefused")
   ? String((e as { reason: string }).reason).slice(0, 120) : "ActionFailed"
 
-/** Carries out an approved action exactly once, attributed to the approver, and reads it back. */
-export const executeAction = (session: Session, businessId: string, id: string) => Effect.gen(function*() {
+/** Moves an approved action to EXECUTING and queues it, in one transaction. The job id comes back. */
+export const approveAction = (session: Session, businessId: string, id: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
-  const claimed = (yield* sql`UPDATE account_actions SET status = 'EXECUTING', decided_by_user_id = ${session.userId}, decided_at = now()
-    WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING *`)[0]
-  if (!claimed) return yield* refuse("ActionNotPending")
-  const a = toAction(claimed), bindingId = String(claimed["binding_id"])
+  return yield* sql.withTransaction(Effect.gen(function*() {
+    const claimed = (yield* sql`UPDATE account_actions SET status = 'EXECUTING', decided_by_user_id = ${session.userId}, decided_at = now()
+      WHERE id = ${id} AND account_id = ${session.accountId} AND business_id = ${businessId} AND status = 'PROPOSED' RETURNING id`)[0]
+    if (!claimed) return yield* refuse("ActionNotPending")
+    return yield* enqueueChangePublish({ system: "ACCOUNT", accountId: session.accountId, userId: session.userId, businessId, changeId: id })
+  }))
+})
+
+/**
+ * Carries out an action that is EXECUTING, reading the account before it
+ * writes, so running it again after an interruption never writes twice: a
+ * target that already holds the approved values is recorded as done, one that
+ * changed since it was prepared is refused, and a new ad an earlier attempt
+ * may have sent is reported as unknown rather than created again (it was
+ * created paused, so nothing runs unseen). It is read back after writing. An
+ * action in any other state is left as it is.
+ */
+export const carryOutAction = (accountId: string, businessId: string, id: string) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const row = (yield* sql`SELECT * FROM account_actions WHERE id = ${id} AND account_id = ${accountId} AND business_id = ${businessId}`)[0]
+  if (!row || row["status"] !== "EXECUTING") return yield* actionOf(accountId, businessId, id)
+  const a = toAction(row), bindingId = String(row["binding_id"])
   const outcome = yield* Effect.gen(function*() {
     if (a.kind === "CREATE_SEARCH_AD") {
       const website = yield* businessWebsite(businessId)
       if (!website || normalizeDomain(website) !== normalizeDomain(new URL(s(a.after["finalUrl"])).hostname)) return yield* refuse("FinalUrlNotOwnSite")
+      // An earlier attempt sent the ad: never create a second one.
+      if (row["write_attempted_at"]) return { failure: "OutcomeUnknown", result: null }
+      yield* sql`UPDATE account_actions SET write_attempted_at = now() WHERE id = ${id} AND status = 'EXECUTING'`
+    } else {
+      const now = yield* observe(accountId, businessId, a, bindingId, null)
+      // An earlier attempt already made the change: record it, do not write again.
+      if (holds(a, now, a.after)) return { failure: null, result: { observed: now, verifiedAt: new Date().toISOString() } }
+      if (!holds(a, now, a.before)) return { failure: "ChangedSincePrepared", result: { observedBefore: now } }
     }
-    const now = yield* observe(session.accountId, businessId, a, bindingId, null)
-    if (a.kind !== "CREATE_SEARCH_AD" && !holds(a, now, a.before)) return { failure: "ChangedSincePrepared", result: { observedBefore: now } }
-    const resourceName = yield* write(session.accountId, businessId, a, bindingId, a.after, null)
-    const observed = yield* observe(session.accountId, businessId, a, bindingId, resourceName)
+    const resourceName = yield* write(accountId, businessId, a, bindingId, a.after, null)
+    const observed = yield* observe(accountId, businessId, a, bindingId, resourceName)
     const result = { ...(resourceName ? { resourceName } : {}), observed, verifiedAt: new Date().toISOString() }
     return holds(a, observed, a.after) ? { failure: null, result } : { failure: "NotStoredAsApproved", result }
   }).pipe(Effect.catchAll(e => Effect.succeed({ failure: reasonOf(e), result: null })))
   yield* sql`UPDATE account_actions SET status = ${outcome.failure ? "FAILED" : "DONE"}, failure = ${outcome.failure},
     result = ${outcome.result ? JSON.stringify(outcome.result) : null}::jsonb WHERE id = ${id} AND status = 'EXECUTING'`
-  const action = (yield* actionOf(session.accountId, businessId, id))!
-  if (outcome.failure) return yield* refuse(outcome.failure)
-  return action
+  return yield* actionOf(accountId, businessId, id)
 })
 
 /** Puts the previous value back; a new ad is removed. Refused if the target changed since. */
@@ -384,7 +407,14 @@ export const accountActionsApi = (withSession: WithSession) => {
       return yield* json(200, { action }, PRIVATE)
     }))),
     HttpRouter.post(`${base}/:actionId/approve`, business((session, businessId, params) =>
-      Effect.flatMap(executeAction(session, businessId, params["actionId"]!), action => json(200, { action }, PRIVATE)))),
+      Effect.gen(function*() {
+        // Approval and its job commit together; the job then runs at once, here.
+        const job = yield* approveAction(session, businessId, params["actionId"]!)
+        if (job) yield* runChangePublishNow(job, carryOutAction(session.accountId, businessId, params["actionId"]!))
+        const action = yield* actionOf(session.accountId, businessId, params["actionId"]!)
+        if (action?.status === "FAILED") return yield* refuse(action.failure ?? "ActionFailed")
+        return yield* json(200, { action }, PRIVATE)
+      }))),
     HttpRouter.post(`${base}/:actionId/reject`, business((session, businessId, params) => Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient
       const done = yield* sql`UPDATE account_actions SET status = 'REJECTED', decided_by_user_id = ${session.userId}, decided_at = now()

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { MAX_CONTINUATIONS, TurnContinuation } from "./turn-continuation.js"
 import { SqlClient } from "@effect/sql"
 import { Cause, Data, Effect, Option, Schedule, Schema } from "effect"
 import { AgentWorkKind, runAgentWorkJob } from "./agent-work-handlers.js"
@@ -12,6 +13,8 @@ type WorkJob = {
   ref_id: string
   payload: unknown
   claim_id: string
+  /** Times a restart cut this job's turn short and it was queued again. */
+  continuations?: number
 }
 
 /**
@@ -24,6 +27,15 @@ export class AgentWorkRetry extends Data.TaggedError("AgentWorkRetry")<{ readonl
 export const MAX_WORK_ATTEMPTS = 4
 /** Kinds whose handler reads the outside state before writing, so one interrupted mid-run may run again. */
 const RESUMABLE_KINDS: ReadonlySet<string> = new Set(["CHANGE_PUBLISH_WRITE"])
+/**
+ * Kinds whose work is one agent turn sent through sendUnattendedTurn. One cut
+ * short by a restart runs again as a continuation (TurnContinuation): told the
+ * original request and to check before repeating, at most MAX_CONTINUATIONS
+ * times, as an interrupted chat turn is. Follow-ups, visibility reviews and
+ * helpers are read-only or have their own recovery, and are not continued.
+ */
+const CONTINUABLE_KINDS: ReadonlySet<string> = new Set(["GROWTH_BRIEF_WRITE", "SETUP_DRAFT_WRITE", "APPROVED_INITIATIVE_WRITE", "DECLINED_INITIATIVE_WRITE",
+  "SETUP_CAMPAIGN_WRITE", "DECISION_RESUME_WRITE"])
 /** One, three, then nine minutes. */
 export const retryDelaySeconds = (attempt: number) => Math.min(1800, 60 * 3 ** Math.max(0, attempt - 1))
 /** Which attempt this is, for handlers that settle their record only on the last one. */
@@ -39,6 +51,10 @@ export const reconcileAgentWork = Effect.gen(function*() {
   // A publish reads the site before it writes, so one cut off mid-run is safe to run again (up to its attempts).
   yield* sql`UPDATE agent_work_jobs SET status='QUEUED', claim_id=NULL, lease_until=NULL, started_at=NULL, execution_started_at=NULL, failure_reason='INTERRUPTED'
     WHERE status='RUNNING' AND lease_until<=now() AND execution_started_at IS NOT NULL AND kind IN ${sql.in([...RESUMABLE_KINDS])} AND attempt_count < ${MAX_WORK_ATTEMPTS}`
+  yield* sql`UPDATE agent_work_jobs SET status='QUEUED', claim_id=NULL, lease_until=NULL, started_at=NULL, execution_started_at=NULL,
+      failure_reason='INTERRUPTED', continuations=continuations+1
+    WHERE status='RUNNING' AND lease_until<=now() AND execution_started_at IS NOT NULL AND kind IN ${sql.in([...CONTINUABLE_KINDS])}
+      AND continuations < ${MAX_CONTINUATIONS}`
   yield* sql`UPDATE agent_work_jobs SET status='INTERRUPTED', failure_reason='INTERRUPTED', finished_at=now(), claim_id=NULL, lease_until=NULL
     WHERE status='RUNNING' AND lease_until<=now() AND execution_started_at IS NOT NULL`
 })
@@ -122,7 +138,9 @@ export const executeAgentWorkWith = <E, R>(job: WorkJob, run: JobRunner<E, R>) =
   const work = Effect.gen(function*() {
     yield* active
     const kind = yield* Schema.decodeUnknown(AgentWorkKind)(job.kind)
-    return yield* run(kind, job.payload, { ...job, ...tries })
+    const handled = run(kind, job.payload, { ...job, ...tries })
+    // A job continuing after a restart has its turn worded as a continuation.
+    return yield* (job.continuations ? Effect.provideService(handled, TurnContinuation, { continuations: job.continuations }) : handled)
   })
   const outcome = yield* Effect.raceFirst(work, heartbeat).pipe(Effect.exit)
   if (outcome._tag === "Success") {

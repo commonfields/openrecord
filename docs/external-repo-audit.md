@@ -129,6 +129,11 @@ Added on 2026-11-27 ([migration 0108](../packages/db/migrations/0108_durable_cha
 
 - Approving a WordPress or Webflow change moves it to PUBLISHING and queues `CHANGE_PUBLISH_WRITE` in one transaction. The job then runs at once in the same request, so the person sees the result. A publish cut off part way goes back on the queue after its lease and finishes from what the site holds. A post or live item that already has the approved values is recorded, not written again. One edited since it was prepared is refused. A new post or item an earlier attempt sent is adopted when found and reported as `OutcomeUnknown` when not, never created twice. Webflow page SEO written but not live is put back and reported. The AI-answer fix follow-up runs once, on the step that publishes. [Publish job](../apps/api/src/change-publish.ts)
 
+Added on 2026-11-27 ([migration 0109](../packages/db/migrations/0109_durable_actions_and_continued_work.sql)):
+
+| The same read-before-write effects, for any provider. | Approved account actions (Google review replies, Google Ads campaign, budget and ad changes) run through the same publish job. A target that already holds the approved values is recorded as done, and one that changed since it was prepared is refused. A new ad an earlier attempt may have sent is reported as `OutcomeUnknown` and never sent again; it was created paused. [Account actions](../apps/api/src/account-actions.ts) |
+- Background agent turns get the same treatment as chat turns: the weekly brief, setup draft, first campaign, approved and declined initiative work, and the turn after a decision. One cut short by a restart runs again as a continuation, at most three times. It is told the original request and to check before repeating anything, and is marked as OpenRecord's in the chat. Read-only follow-ups and helpers have their own recovery and are not continued. [Turn continuation](../apps/api/src/turn-continuation.ts)
+
 Also adopted on 2026-11-27:
 
 - A chat the person archived is set aside. It is not continued after a restart, and a decision on a card it saved does not pick it back up.
