@@ -30,6 +30,7 @@ pub fn view(s: &App, t: &Theme) -> El {
                     Kind::GoogleAds => "Google Ads",
                     Kind::GoogleBusiness => "Google Business Profile",
                     Kind::Meta => "Meta Ads",
+                    Kind::LinkedIn => "LinkedIn",
                 },
                 type_::SM_MEDIUM,
                 t.foreground,

@@ -27,7 +27,7 @@ suite("tools withheld for what a business has not connected (disposable TEST fix
   it("withholds WordPress, Ads and account-action tools until those are connected, and says so", async () => {
     const f = await fixture()
     const none = await run(connectionGaps(f.accountId, f.businessId))
-    expect([...none.withheld].sort()).toEqual(["prepare_account_action", "prepare_page_change", "prepare_webflow_change", "prepare_wordpress_change", "read_ad_campaigns", "read_reviews", "read_webflow_content", "read_wordpress_content"])
+    expect([...none.withheld].sort()).toEqual(["prepare_account_action", "prepare_page_change", "prepare_webflow_change", "prepare_wordpress_change", "read_ad_campaigns", "read_linkedin_posts", "read_reviews", "read_webflow_content", "read_wordpress_content"])
     expect(none.note).toContain("WordPress")
     expect(none.note).toContain("Webflow")
     expect(none.note).toContain("Channels page")

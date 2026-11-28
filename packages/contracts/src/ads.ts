@@ -9,11 +9,11 @@ import { SEARCH_PERFORMANCE_DAYS, type SearchWindow } from "./search-console.js"
 export const AD_PROVIDERS = ["meta", "google_ads"] as const
 export const AdProvider = Schema.Literal(...AD_PROVIDERS)
 export type AdProvider = typeof AdProvider.Type
-/** Everything signed in through the same connection tables: the ad platforms and Google Business Profile. */
-export const CHANNEL_PROVIDERS = ["meta", "google_ads", "google_business"] as const
+/** Everything signed in through the same connection tables: the ad platforms, Google Business Profile and LinkedIn. */
+export const CHANNEL_PROVIDERS = ["meta", "google_ads", "google_business", "linkedin"] as const
 export const ChannelProvider = Schema.Literal(...CHANNEL_PROVIDERS)
 export type ChannelProvider = typeof ChannelProvider.Type
-export const AD_PROVIDER_NAME: Readonly<Record<ChannelProvider, string>> = { meta: "Meta Ads", google_ads: "Google Ads", google_business: "Google Business Profile" }
+export const AD_PROVIDER_NAME: Readonly<Record<ChannelProvider, string>> = { meta: "Meta Ads", google_ads: "Google Ads", google_business: "Google Business Profile", linkedin: "LinkedIn" }
 export const AD_OAUTH_CALLBACK_PATH = "/api/ads/oauth/callback"
 export const AD_PERFORMANCE_DAYS = SEARCH_PERFORMANCE_DAYS
 export type AdPerformanceDays = typeof AD_PERFORMANCE_DAYS[number]
@@ -96,7 +96,8 @@ export const adWindows = (nowMs: number, days: AdPerformanceDays): { readonly cu
 export const StartAdConnection = Schema.Struct({ provider: ChannelProvider, businessId: Schema.UUID })
 export const BindAdAccount = Schema.Struct({
   connectionId: Schema.UUID,
-  externalId: Schema.String.pipe(Schema.pattern(/^(act_)?\d{1,30}$/)),
+  /** An ad account or location number (Meta's may start act_), or a LinkedIn author URN. */
+  externalId: Schema.String.pipe(Schema.pattern(/^((act_)?\d{1,30}|urn:li:(organization:\d{1,30}|person:[A-Za-z0-9_-]{1,64}))$/)),
 })
 
 /** One Google Business Profile location: what people did from the profile, how often it was shown, what they searched, and its reviews. */

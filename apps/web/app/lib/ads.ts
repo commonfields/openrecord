@@ -39,6 +39,11 @@ export const SETUP_NEEDED: Record<ChannelProvider, Record<string, string>> = {
     MISSING_REDIRECT_URI: "Needs ADS_OAUTH_REDIRECT_URI, added to the Google client's redirect URIs.",
     MISSING_ENCRYPTION_KEY: "Needs a token encryption key (ADS_TOKEN_ENCRYPTION_KEYS).",
   },
+  linkedin: {
+    MISSING_APP: "Needs a LinkedIn app with Share on LinkedIn and Sign in with LinkedIn (LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET).",
+    MISSING_REDIRECT_URI: "Needs ADS_OAUTH_REDIRECT_URI, added to the LinkedIn app's redirect URLs.",
+    MISSING_ENCRYPTION_KEY: "Needs a token encryption key (ADS_TOKEN_ENCRYPTION_KEYS).",
+  },
 }
 
 export const adsError = (err: unknown): string => {

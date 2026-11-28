@@ -83,7 +83,7 @@ suite("ad and listing connections over HTTP and for the agent (scripted Meta and
     expect(before.data).toMatchObject({ status: "NOT_CONNECTED" })
 
     const status = await ok<{ providers: Record<string, { configured: boolean; reason?: string }> }>(call(a, "GET", `/api/ads/clients/${ba}`))
-    expect(status.providers).toEqual({ meta: { configured: true }, google_ads: { configured: false, reason: "MISSING_APP" }, google_business: { configured: false, reason: "MISSING_APP" } })
+    expect(status.providers).toEqual({ meta: { configured: true }, google_ads: { configured: false, reason: "MISSING_APP" }, google_business: { configured: false, reason: "MISSING_APP" }, linkedin: { configured: false, reason: "MISSING_APP" } })
     const { authorizationUrl } = await ok<{ authorizationUrl: string }>(call(a, "POST", "/api/ads/connect", { provider: "meta", businessId: ba }))
     const state = new URL(authorizationUrl).searchParams.get("state")!
     expect(new URL(authorizationUrl).searchParams.get("scope")).toBe("ads_read")

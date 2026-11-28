@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS campaign_reviews (
 -- At most one review waits for a decision per campaign.
 CREATE UNIQUE INDEX IF NOT EXISTS campaign_reviews_one_open ON campaign_reviews(campaign_id) WHERE status = 'PROPOSED';
 
-ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
-ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK (kind IN
-  ('CAMPAIGN_PUBLICATION', 'CAMPAIGN_REVIEW', 'AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'WEBFLOW_CHANGE', 'ACCOUNT_ACTION'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint.
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='decision_feedback'::regclass
+    AND conname='decision_feedback_kind_check' AND pg_get_constraintdef(oid) LIKE '%MARKETING_STRATEGY%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
+  ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK (kind IN
+    ('CAMPAIGN_PUBLICATION', 'CAMPAIGN_REVIEW', 'AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'WEBFLOW_CHANGE', 'ACCOUNT_ACTION'));
+END $$;

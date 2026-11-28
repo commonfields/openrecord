@@ -6,20 +6,48 @@
 -- Business Profile account it belongs to, which the reviews API needs.
 --
 -- Additive and replay-safe.
-ALTER TABLE ad_connections DROP CONSTRAINT IF EXISTS ad_connections_provider_check;
-ALTER TABLE ad_connections ADD CONSTRAINT ad_connections_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint (0117 adds LinkedIn).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ad_connections'::regclass
+    AND conname='ad_connections_provider_check' AND pg_get_constraintdef(oid) LIKE '%linkedin%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE ad_connections DROP CONSTRAINT IF EXISTS ad_connections_provider_check;
+  ALTER TABLE ad_connections ADD CONSTRAINT ad_connections_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
+END $$;
 ALTER TABLE ad_connections DROP CONSTRAINT IF EXISTS ad_connections_google_business_scopes_check;
 ALTER TABLE ad_connections ADD CONSTRAINT ad_connections_google_business_scopes_check CHECK (provider <> 'google_business' OR (
   granted_scopes <@ ARRAY['openid','email','https://www.googleapis.com/auth/userinfo.email','https://www.googleapis.com/auth/business.manage']
   AND 'https://www.googleapis.com/auth/business.manage' = ANY(granted_scopes)));
-ALTER TABLE ad_oauth_states DROP CONSTRAINT IF EXISTS ad_oauth_states_provider_check;
-ALTER TABLE ad_oauth_states ADD CONSTRAINT ad_oauth_states_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
-ALTER TABLE ad_account_bindings DROP CONSTRAINT IF EXISTS ad_account_bindings_provider_check;
-ALTER TABLE ad_account_bindings ADD CONSTRAINT ad_account_bindings_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint (0117 adds LinkedIn).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ad_oauth_states'::regclass
+    AND conname='ad_oauth_states_provider_check' AND pg_get_constraintdef(oid) LIKE '%linkedin%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE ad_oauth_states DROP CONSTRAINT IF EXISTS ad_oauth_states_provider_check;
+  ALTER TABLE ad_oauth_states ADD CONSTRAINT ad_oauth_states_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
+END $$;
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint (0117 adds LinkedIn).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ad_account_bindings'::regclass
+    AND conname='ad_account_bindings_provider_check' AND pg_get_constraintdef(oid) LIKE '%linkedin%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE ad_account_bindings DROP CONSTRAINT IF EXISTS ad_account_bindings_provider_check;
+  ALTER TABLE ad_account_bindings ADD CONSTRAINT ad_account_bindings_provider_check CHECK (provider IN ('meta','google_ads','google_business'));
+END $$;
 ALTER TABLE ad_account_bindings ADD COLUMN IF NOT EXISTS parent_id TEXT NULL;
 ALTER TABLE ad_account_bindings DROP CONSTRAINT IF EXISTS ad_account_bindings_parent_id_check;
 ALTER TABLE ad_account_bindings ADD CONSTRAINT ad_account_bindings_parent_id_check CHECK (
   (parent_id IS NULL OR parent_id ~ '^[0-9]{1,30}$') AND (provider <> 'google_business' OR parent_id IS NOT NULL));
 -- Business Profile location IDs can be longer than ad account IDs.
-ALTER TABLE ad_account_bindings DROP CONSTRAINT IF EXISTS ad_account_bindings_external_id_check;
-ALTER TABLE ad_account_bindings ADD CONSTRAINT ad_account_bindings_external_id_check CHECK (external_id ~ '^[0-9]{1,30}$');
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint (0117 adds LinkedIn).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ad_account_bindings'::regclass
+    AND conname='ad_account_bindings_external_id_check' AND pg_get_constraintdef(oid) LIKE '%urn:li%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE ad_account_bindings DROP CONSTRAINT IF EXISTS ad_account_bindings_external_id_check;
+  ALTER TABLE ad_account_bindings ADD CONSTRAINT ad_account_bindings_external_id_check CHECK (external_id ~ '^[0-9]{1,30}$');
+END $$;

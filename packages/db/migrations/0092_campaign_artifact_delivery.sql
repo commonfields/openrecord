@@ -103,5 +103,12 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS campaign_publication_guard ON campaign_publications;
 CREATE TRIGGER campaign_publication_guard BEFORE INSERT OR UPDATE ON campaign_publications FOR EACH ROW EXECUTE FUNCTION guard_campaign_publication();
-ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
-ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK(kind IN ('CAMPAIGN_PUBLICATION','AGENT_PROPOSAL','AGENT_DRAFT','GROWTH_OPPORTUNITY','WORDPRESS_CHANGE','WEBFLOW_CHANGE','ACCOUNT_ACTION'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint.
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='decision_feedback'::regclass
+    AND conname='decision_feedback_kind_check' AND pg_get_constraintdef(oid) LIKE '%CAMPAIGN_REVIEW%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
+  ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK(kind IN ('CAMPAIGN_PUBLICATION','AGENT_PROPOSAL','AGENT_DRAFT','GROWTH_OPPORTUNITY','WORDPRESS_CHANGE','WEBFLOW_CHANGE','ACCOUNT_ACTION'));
+END $$;

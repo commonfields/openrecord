@@ -107,6 +107,7 @@ pub fn read_ads(v: &Value) -> Vec<Row> {
         ("google_business", "Google Business Profile", "Calls, directions, searches and reviews from your Google listing."),
         ("google_ads", "Google Ads", "What your Search, YouTube and Display ads cost and bring in."),
         ("meta", "Meta Ads", "What your Facebook and Instagram ads cost and bring in."),
+        ("linkedin", "LinkedIn", "Post approved updates to your company page or profile, and see how page posts do."),
     ]
     .into_iter()
     .map(|(provider, title, purpose)| {
@@ -184,9 +185,12 @@ mod tests {
         assert_eq!(sc.state, Some(State::Choose));
         let bound = read_search_console(&json!({ "configured": true, "binding": { "siteUrl": "sc-domain:x.com" }, "connections": [] }));
         assert_eq!((bound.state, bound.identity.as_deref()), (Some(State::Connected), Some("x.com")));
-        let ads = read_ads(&json!({ "providers": { "google_business": { "configured": false }, "google_ads": { "configured": true }, "meta": { "configured": true } },
-            "connections": [{ "provider": "meta", "status": "REAUTHORIZATION_REQUIRED" }], "bindings": [{ "provider": "google_ads", "name": "Acme" }] }));
-        assert_eq!(ads.iter().map(|r| r.state).collect::<Vec<_>>(), vec![Some(State::Unavailable), Some(State::Connected), Some(State::Reconnect)]);
+        let ads = read_ads(&json!({ "providers": { "google_business": { "configured": false }, "google_ads": { "configured": true }, "meta": { "configured": true }, "linkedin": { "configured": true } },
+            "connections": [{ "provider": "meta", "status": "REAUTHORIZATION_REQUIRED" }, { "provider": "linkedin", "status": "ACTIVE" }], "bindings": [{ "provider": "google_ads", "name": "Acme" }] }));
+        assert_eq!(ads.iter().map(|r| r.state).collect::<Vec<_>>(), vec![Some(State::Unavailable), Some(State::Connected), Some(State::Reconnect), Some(State::Choose)]);
+        // A server without the LinkedIn app shows it as unavailable, never as connectable.
+        let older = read_ads(&json!({ "providers": { "meta": { "configured": true } }, "connections": [], "bindings": [] }));
+        assert_eq!(older.last().map(|r| (r.key, r.state)), Some(("linkedin", Some(State::Unavailable))));
         assert_eq!(keyed(&json!({ "configured": true, "connection": { "status": "REVOKED" } }), "displayName").0, State::Reconnect);
     }
 }
