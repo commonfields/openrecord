@@ -54,7 +54,7 @@ suite("chat rollback (disposable PostgreSQL)", () => {
     const userId = String((await one("INSERT INTO users(email,password_hash) VALUES($1,'TEST') RETURNING id", [`rollback-${randomUUID()}@example.test`])).id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [accountId, userId])
     const businessId = String((await one("INSERT INTO businesses(account_id,name) VALUES($1,'TEST Dental') RETURNING id", [accountId])).id)
-    const session = String((await one("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).id)
+    const session = String((await one("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).id)
     return { accountId, userId, businessId, session }
   }
   type F = Awaited<ReturnType<typeof fixture>>

@@ -39,7 +39,7 @@ suite("objective work lineage (disposable PostgreSQL)", () => {
     const accountId = String((await pool.query("INSERT INTO accounts(name) VALUES('TEST lineage') RETURNING id")).rows[0].id)
     const userId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST') RETURNING id", [`lineage-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [accountId, userId])
-    const cookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
+    const cookie = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).rows[0].id)
     const response = await call("POST", "/api/growth/products", cookie, { name: "TEST product", websiteUrl: "https://example.test", engagement: "DOGFOOD", category: "Software", audience: "Teams", valueProposition: "Help teams", goalStatement: "More qualified leads", idempotencyKey: randomUUID(), metric: { conversionKind: "SIGNUP", label: "Signups", sourceKind: "GA4_AGGREGATE_EXPORT", sourceIdentity: "Test", eventName: "signup", countingSemantics: "EVENT_COUNT", unit: "COUNT", currency: null, reportingTimeZone: "UTC", propertyRef: "Test" } })
     expect(response.status).toBe(200)
     const data = await response.json() as { profile: { businessId: string; primaryGoal: { id: string } } }

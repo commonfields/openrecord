@@ -36,7 +36,7 @@ suite("durable request submission and worker (no live model)",() => {
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)",[accountId,userId])
     const businessId=(await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST queue') RETURNING id",[accountId])).rows[0].id as string
     const conversationId=(await pool.query("INSERT INTO agent_conversations(account_id,user_id,business_id) VALUES($1,$2,$3) RETURNING id",[accountId,userId,businessId])).rows[0].id as string
-    const cookie=(await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id",[accountId,userId])).rows[0].id as string
+    const cookie=(await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id",[accountId,userId])).rows[0].id as string
     return {accountId,userId,businessId,conversationId,cookie}
   }
   const body=(conversationId:string) => ({conversationId,requestId:randomUUID(),revision:0,message:"Read saved campaign status"})

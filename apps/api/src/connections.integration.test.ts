@@ -51,7 +51,7 @@ suite("Connections and health checks (stand-in Webflow, no network)", () => {
     const userId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST') RETURNING id", [`conn-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [accountId, userId])
     const businessId = String((await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST Cueup') RETURNING id", [accountId])).rows[0].id)
-    const cookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
+    const cookie = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).rows[0].id)
     const call = (method: string, path = "", target = businessId) => web.handler(new Request(`http://localhost/api/businesses/${target}/connections${path}`, {
       method, headers: { "content-type": "application/json", cookie: `or_session=${cookie}` }, ...(method === "POST" ? { body: "{}" } : {}) }))
     const connectWebflow = () => pool.query(`INSERT INTO webflow_connections(business_id, account_id, site_id, site_name, site_url, domain_ids, token_ciphertext, token_last4, status, connected_by_user_id)

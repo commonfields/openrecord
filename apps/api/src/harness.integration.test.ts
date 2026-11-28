@@ -69,7 +69,7 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
     const cookie = String(
       (
         await pool.query(
-          "INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id",
+          "INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id",
           [accountId, userId]
         )
       ).rows[0].id

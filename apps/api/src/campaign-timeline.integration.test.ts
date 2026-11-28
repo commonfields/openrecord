@@ -33,7 +33,7 @@ suite("campaign timeline (disposable PostgreSQL)", () => {
       const a = (await pool.query("INSERT INTO accounts(name) VALUES('TEST timeline') RETURNING id")).rows[0].id
       const userId = (await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST') RETURNING id", [`timeline-${randomUUID()}@example.test`])).rows[0].id
       await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [a, userId])
-      const cookie = (await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [a, userId])).rows[0].id
+      const cookie = (await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [a, userId])).rows[0].id
       const businessId = (await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST timeline') RETURNING id", [a])).rows[0].id
       people.push({ userId, businessId, cookie })
     }

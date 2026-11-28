@@ -62,7 +62,7 @@ suite("weekly brief schedule controls (disposable PostgreSQL, no model calls)", 
     const account = String((await pool.query("INSERT INTO accounts(name) VALUES('TEST brief schedule') RETURNING id")).rows[0].id)
     const user = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST') RETURNING id", [`schedule-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [account,user])
-    const session = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [account,user])).rows[0].id)
+    const session = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [account,user])).rows[0].id)
     const business = String((await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST Schedule') RETURNING id", [account])).rows[0].id)
     return { business, session }
   }

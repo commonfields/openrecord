@@ -43,7 +43,7 @@ suite("durable agent runs (disposable PostgreSQL, fixture models, no live provid
     Layer.mergeAll(AuthRepositoryLive, GrowthRepositoriesLive, AgentProposalRepositoryLive, BusinessRepositoryLive).pipe(Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) }))))
   const get = (path: string, cookie?: string) => web.handler(new Request(`http://localhost${path}`, { headers: cookie ? { cookie: `or_session=${cookie}` } : {} }))
   const session = async (accountId: string, userId: string) =>
-    String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
+    String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).rows[0].id)
   beforeAll(() => { pool = new pg.Pool({ connectionString: url }) })
   afterAll(async () => { await web.dispose(); await decisionsWeb.dispose(); await pool.end() })
   const fixture = async () => {

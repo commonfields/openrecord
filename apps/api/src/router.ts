@@ -1,5 +1,6 @@
 import { isDemoBusiness } from "./demo-data.js"
 import { failureResponse } from "./http-failure.js"
+import { SessionOverride } from "./session-override.js"
 import { campaignPublicationApi } from "./campaign-publication.js"
 import { campaignResultsApi } from "./campaign-results.js"
 import { strategyApi } from "./marketing-strategy.js"
@@ -413,16 +414,16 @@ export const loadAnalytics = (businessId: string, days: number) =>
     }
   })
 
-export const requireSession = Effect.flatMap(HttpServerRequest.HttpServerRequest, (req) => {
-  const sid = sessionOf(req as unknown as { headers: Record<string, string | undefined> })
-  if (!sid) return Effect.fail({ _tag: "NotAuthenticated" as const })
-  return Effect.gen(function*() {
-    const auth = yield* AuthRepository
-    const s = yield* auth.getSession(sid)
-    if (!s) return yield* Effect.fail({ _tag: "NotAuthenticated" as const })
-    return { session: s, sessionId: sid }
-  })
-})
+export const requireSession = Effect.flatMap(HttpServerRequest.HttpServerRequest, (req) => Effect.gen(function*() {
+  const override = yield* Effect.serviceOption(SessionOverride)
+  if (Option.isSome(override)) return { session: override.value }
+  const token = sessionOf(req as unknown as { headers: Record<string, string | undefined> })
+  if (!token) return yield* Effect.fail({ _tag: "NotAuthenticated" as const })
+  const auth = yield* AuthRepository
+  const s = yield* auth.getSession(token)
+  if (!s) return yield* Effect.fail({ _tag: "NotAuthenticated" as const })
+  return { session: s }
+}))
 
 export const makeRouter = () => {
   const router = HttpRouter.empty
@@ -478,13 +479,13 @@ export const makeRouter = () => {
           Effect.catchAll((e) => (e instanceof EmailTaken ? Effect.succeed(null) : Effect.fail(e))),
         )
         if (!created) return yield* json(409, { _tag: "Conflict", message: "email taken" })
-        const { sessionId, accountId, userId } = created
+        const { sessionToken, accountId, userId } = created
         const baseUrl = yield* AppBaseUrl
         const secure = baseUrl.startsWith("https://")
         return yield* json(
           200,
           { userId, accountId },
-          { "Set-Cookie": sessionCookieHeader(sessionId, secure) },
+          { "Set-Cookie": sessionCookieHeader(sessionToken, secure) },
         )
       }),
     ),
@@ -510,13 +511,13 @@ export const makeRouter = () => {
           return yield* json(401, { _tag: "NotAuthenticated" })
         }
         authThrottle.clear(emailKey)
-        const sessionId = yield* auth.createSession({ userId: row.id, accountId: row.accountId })
+        const sessionToken = yield* auth.createSession({ userId: row.id, accountId: row.accountId })
         const baseUrl = yield* AppBaseUrl
         const secure = baseUrl.startsWith("https://")
         return yield* json(
           200,
           { userId: row.id, accountId: row.accountId },
-          { "Set-Cookie": sessionCookieHeader(sessionId, secure) },
+          { "Set-Cookie": sessionCookieHeader(sessionToken, secure) },
         )
       }),
     ),
