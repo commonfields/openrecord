@@ -190,4 +190,32 @@ suite("research call metering (disposable PostgreSQL)", () => {
     expect((await serpRun(f.ctx, "dentist near me")).right.data).toMatchObject({ status: "NOT_AVAILABLE" })
     expect(seen.length).toBe(before)
   })
+
+  it("stops paid calls at the business's monthly limit, leaves other businesses alone, and runs again once it is raised", async () => {
+    process.env["OPENRECORD_SEO_DATA_CREDENTIAL"] = PLATFORM
+    process.env["RESEARCH_PRICES_MICRO"] = "seo.serp=5000"
+    const f = await fixture()
+    await credit(f.accountId, 100000)
+    const sibling = String((await pool.query("INSERT INTO businesses(account_id,name) VALUES($1,'TEST Sibling') RETURNING id", [f.accountId])).rows[0].id)
+    await pool.query("INSERT INTO business_research_budgets(business_id, account_id, monthly_limit_micro) VALUES ($1, $2, 12000)", [f.businessId, f.accountId])
+    expect((await serpRun(f.ctx, "dentist one")).right.data).toMatchObject({ status: "OBSERVED" })
+    // A failed paid call is refunded and does not count against the limit.
+    upstream = 500
+    expect((await serpRun(f.ctx, "dentist failing")).right.data.status).not.toBe("OBSERVED")
+    upstream = 200
+    expect((await serpRun(f.ctx, "dentist two")).right.data).toMatchObject({ status: "OBSERVED" })
+    // 10000 spent of 12000: the next 5000 call is refused before anything is sent.
+    const before = seen.length
+    const stopped = await serpRun(f.ctx, "dentist three")
+    expect(stopped.right.data).toMatchObject({ status: "BUDGET_REACHED", limitMicro: 12000, spentMicro: 10000, estimatedCostMicro: 5000 })
+    expect(seen.length).toBe(before)
+    // The credit is untouched by the refusal, and another business on the account still runs.
+    expect((await serpRun({ ...f.ctx, businessId: sibling }, "dentist sibling")).right.data).toMatchObject({ status: "OBSERVED" })
+    const read = await tool(f.ctx, "read_research_credit", {})
+    expect(read.right.data.monthlyBudget).toMatchObject({ limitMicro: 12000, spentMicro: 10000, remainingMicro: 2000 })
+    expect(read.right.data.balanceMicro).toBe(100000 - 15000)
+    // Removing the limit lets the call run.
+    await pool.query("UPDATE business_research_budgets SET monthly_limit_micro = NULL WHERE business_id = $1", [f.businessId])
+    expect((await serpRun(f.ctx, "dentist three")).right.data).toMatchObject({ status: "OBSERVED" })
+  })
 })

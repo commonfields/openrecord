@@ -14,6 +14,7 @@ import { SqlClient } from "@effect/sql"
 import { Cause, Effect, Either } from "effect"
 import { AgentWorkRetry, enqueueAgentWork } from "./agent-work-queue.js"
 import { retryableTurnFailure, sendUnattendedTurn, type UnattendedSender } from "./unattended-agent.js"
+import { resumableFor } from "./agent-pause.js"
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
 
@@ -82,8 +83,12 @@ export const writeDecisionResumeJob = <R>(raw: DecisionResumePayload, sender: Un
   // A chat the person archived since is set aside: it is not picked back up.
   const revision = Number((yield* sql`SELECT revision FROM agent_conversations WHERE id=${raw.conversationId} AND expires_at>now() AND user_archived_at IS NULL`)[0]?.["revision"] ?? -1)
   if (revision < 0) return yield* Effect.fail("DECISION_RESUME_CHAT_GONE" as const)
+  // A turn that paused for this decision continues its own conversation once every card it waits on is decided.
+  const paused = yield* resumableFor(raw.conversationId, raw.scope.businessId, raw.itemId)
+  if (paused.kind === "waiting" || paused.kind === "spent") return
+  const resume = paused.kind === "ready" ? { runId: paused.runId, contents: paused.contents } : undefined
   const result = yield* sendUnattendedTurn(raw.scope, sender, { message: raw.message, requestId: randomUUID(), conversationId: raw.conversationId,
-    revision, origin: { kind: "wake", title: "After your decision" } }).pipe(Effect.either)
+    revision, origin: { kind: "wake", title: resume ? "Continuing after your decision" : "After your decision" }, ...(resume ? { resume } : {}) }).pipe(Effect.either)
   if (Either.isRight(result)) return
   if (!tries.finalAttempt && conversationBusy(result.left)) return yield* Effect.fail(new AgentWorkRetry({ reason: "CHAT_BUSY" }))
   const retry = tries.finalAttempt ? null : yield* retryableTurnFailure(result.left, raw.conversationId, since)

@@ -10,11 +10,15 @@ use crate::native_preview::{self, BrowserCommand};
 use crate::side::{Launch, SideTab};
 use crate::state::App;
 use crate::theme::{Theme, shadows, type_};
-use crate::ui::widgets::{CONTROL, ico, icon_button, label};
+use crate::ui::widgets::{ico, icon_button, label};
 
 /// The button that opens or folds the right panel (⌥⌘B), at a header's right end.
 pub fn toggle(t: &Theme, open: bool) -> El {
-    icon_button(t, "side-toggle", &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false).on_press(|s: &mut App| s.toggle_side())
+    // Its own key in each place: shared, the header's and the panel's were taken
+    // for one button and it flew across the window when the panel opened.
+    icon_button(t, if open { "side-toggle-panel" } else { "side-toggle" }, &icons::PANEL_RIGHT, if open { "Collapse panel (⌥⌘B)" } else { "Open panel (⌥⌘B)" }, false)
+        .motion(crate::state::SIDEBAR_SPRING)
+        .on_press_tx(|s: &mut App, tx| s.toggle_side_smooth(tx))
 }
 
 pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
@@ -73,6 +77,16 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
     // A page in the browser or an artifact preview runs to the foot: native WebKit
     // sits behind the app and the chat box floats over it.
     if s.browser_page_shown() || s.artifact_preview_float() {
+        // Over an artifact the strip takes the page's own colour and the matching
+        // theme, with no rule between them: tabs and page read as one surface.
+        let top = if s.artifact_preview_float() { s.front_artifact().and_then(|p| p.loaded.ready()).map(|a| crate::native_preview::page_color(&a.preview_html)) } else { None };
+        let strip_theme = top.map(|(r, g, b)| {
+            let light = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b) > 140.0;
+            let mut th = Theme::get(!light);
+            th.background = crate::theme::hex(&format!("#{r:02x}{g:02x}{b:02x}"));
+            th
+        });
+        let st: &Theme = strip_theme.as_ref().unwrap_or(t);
         let mut panel = col()
             .key("side-panel")
             .w_full()
@@ -82,17 +96,19 @@ pub fn view(s: &App, t: &Theme, k: &Kit, lead: f32) -> El {
             .clip_rounded(10.0)
             .role("complementary")
             .label("Side panel")
-            .child(strip(s, t, &tab, lead).fill(t.background))
+            .child(strip(s, st, &tab, lead).fill(st.background))
             .child(col().w_full().grow(1.0).min_h(0.0).child(body));
         if s.artifact_preview_float() {
             let business = s.active_business().map(|b| b.name.clone()).unwrap_or_default();
             let owned;
-            let ct: &Theme = match crate::native_preview::preview_page_light() {
-                Some(light) => {
+            // The chat box over the page takes the page's theme, as the strip does.
+            let ct: &Theme = match (&strip_theme, crate::native_preview::preview_page_light()) {
+                (Some(th), _) => th,
+                (None, Some(light)) => {
                     owned = Theme::get(!light);
                     &owned
                 }
-                None => t,
+                (None, None) => t,
             };
             panel = panel.child(
                 col()
@@ -215,7 +231,8 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .w_full()
         .h(48.0)
         .pl(lead)
-        .motion(super::widgets::CONTROL)
+        // The panel's own spring: on a quicker one its buttons ran ahead and bounced back.
+        .motion(crate::state::SIDEBAR_SPRING)
         .pr(10.0)
         .gap(4.0)
         .center_y()
@@ -223,7 +240,8 @@ fn strip(s: &App, t: &Theme, front: &SideTab, lead: f32) -> El {
         .child(tabs)
         .child(
             icon_button(t, "side-wide", if wide { &icons::MINIMIZE_2 } else { &icons::MAXIMIZE_2 }, if wide { "Restore panel width" } else { "Expand panel" }, false)
-                .on_press(|s: &mut App| s.side.wide = !s.side.wide),
+                .motion(crate::state::SIDEBAR_SPRING)
+                .on_press_tx(|s: &mut App, tx| s.toggle_wide(tx)),
         )
         .child(toggle(t, true))
 }
@@ -244,7 +262,8 @@ fn tab_button(t: &Theme, key: &str, icon: &'static rune::Icon, name: &str, on: b
         .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.hover_tint)
-        .motion(CONTROL)
+        // The panel's spring, so tabs travel with their strip.
+        .motion(crate::state::SIDEBAR_SPRING)
         .child(ico(icon, 14.0, ink));
     b = if compact {
         match close {

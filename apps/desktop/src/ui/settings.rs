@@ -556,6 +556,7 @@ fn agent(s: &App, t: &Theme, k: &Kit) -> El {
             ],
         ))
         .children(s.active_business().map(|b| memory(s, t, k, &b.name)))
+        .children(s.active_business().map(|b| research_spending(s, t, &b.name)))
         .child(connection(s, t))
         .children(pairing(s, t))
         .child(group(
@@ -659,6 +660,61 @@ fn memory(s: &App, t: &Theme, k: &Kit, business: &str) -> El {
         "memory",
         &format!("What the agent remembers about {business}"),
         Some("Notes the agent reads at the start of every chat for this business. It saves them when you state a preference or decision, or when results teach something. They guide it; they are not facts it can quote."),
+        rows,
+    )
+}
+
+/// What the business on screen may spend on research paid from OpenRecord's accounts.
+fn research_spending(s: &App, t: &Theme, business: &str) -> El {
+    use crate::settings::dollars;
+    let mut rows: Vec<El> = Vec::new();
+    match &s.research_spend {
+        Load::Ready(spend) => {
+            let b = &spend.budget;
+            let resets = crate::format::date(&b.resets_at);
+            rows.push(setting(
+                t,
+                "Spent this month",
+                Some(match b.limit_micro {
+                    Some(l) => format!("{} of the {} limit. It starts again on {resets}.", dollars(b.spent_micro), dollars(l)),
+                    None => format!("{} so far, with no monthly limit. Research credit left on the account: {}.", dollars(b.spent_micro), dollars(spend.balance_micro)),
+                }),
+                None,
+            ));
+            let input = text_input(&s.research_limit, type_::XS)
+                .key("research-limit")
+                .placeholder("No limit", t.muted_foreground)
+                .label("Monthly research limit in dollars")
+                .w_full()
+                .color(t.foreground)
+                .on_edit(|s: &mut App| &mut s.research_limit)
+                .on_submit(|s: &mut App, _tx| s.save_research_limit());
+            let busy = s.research_limit_busy;
+            rows.push(
+                row()
+                    .key("research-limit-row")
+                    .w_full()
+                    .padding(14.0)
+                    .gap(8.0)
+                    .center_y()
+                    .child(col().grow(1.0).min_w(0.0).gap(2.0)
+                        .child(label("Monthly limit", type_::SM, t.foreground))
+                        .child(label("In dollars. A paid call that would go over it is refused until next month. Leave it empty for no limit.", type_::XS, t.muted_foreground).wrap()))
+                    .child(shadows(row().w(120.0).h(32.0).px(10.0).radius(8.0).center_y().fill(t.control).child(label("$", type_::XS, t.muted_foreground)).child(input), &t.control_shadow))
+                    .child(small_button(t, "research-limit-save", if busy { "Saving…" } else { "Save" }).disabled(busy).opacity(if busy { 0.5 } else { 1.0 }).on_press(|s: &mut App| s.save_research_limit())),
+            );
+            if let Some(e) = &s.research_limit_error {
+                rows.push(label(e.clone(), type_::XS, t.wrong).wrap().padding(14.0).live_region(rune::LiveRegion::Polite));
+            }
+        }
+        Load::Failed(e) => rows.push(setting(t, "Couldn't load research spending", Some(e.clone()), None)),
+        _ => rows.push(label("Loading", type_::SM_13, t.muted_foreground).padding(14.0)),
+    }
+    group(
+        t,
+        "research-spending",
+        &format!("Research spending for {business}"),
+        Some("Paid research the agent runs on OpenRecord's provider accounts. Research on the business's own connections or public sources is never charged and never limited."),
         rows,
     )
 }
