@@ -1158,6 +1158,13 @@ pub fn agent_find(s: &mut App) {
 pub fn business_menu(s: &mut App) {
     inbox(s);
     s.open_business_picker();
+    // Every business shows the fixture's AI-answer line, hovered or not.
+    let a = insights().analytics.ok();
+    for b in s.businesses.clone() {
+        if let Some(a) = a.clone() {
+            s.trends.insert(b.id, (s.days, crate::state::Load::Ready(a)));
+        }
+    }
 }
 
 pub fn account_menu(s: &mut App) {

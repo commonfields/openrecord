@@ -572,6 +572,8 @@ pub struct App {
     pub new_chat: Option<NewChat>,
     /// "Switch business", while it is open.
     pub business_picker: Option<BusinessPicker>,
+    /// Each business's AI-answer numbers for the picker's trend line, by the days they cover.
+    pub trends: std::collections::HashMap<String, (u32, Load<crate::insights::Analytics>)>,
     /// "Find…", while it is open, and the approved facts it lists.
     pub find: Option<Find>,
     pub find_facts: Load<Vec<crate::api::Fact>>,
@@ -795,6 +797,7 @@ impl App {
             synced_at: std::time::Instant::now(),
             new_chat: None,
             business_picker: None,
+            trends: std::collections::HashMap::new(),
             find: None,
             find_facts: Load::Idle,
             row_hover: None,
@@ -1090,6 +1093,20 @@ impl App {
             .and_then(|id| self.businesses.iter().position(|b| b.id == id))
             .unwrap_or(0);
         self.business_picker = Some(BusinessPicker::new(PickerMode::Switch, focus));
+        self.load_trends();
+    }
+
+    /// Reads each business's trend line once per period, so hovering a row shows it straight away.
+    fn load_trends(&mut self) {
+        let days = self.days;
+        let ids: Vec<String> = self.businesses.iter().take(50).map(|b| b.id.clone()).collect();
+        for id in ids {
+            if self.trends.get(&id).is_some_and(|(d, l)| *d == days && !matches!(l, Load::Failed(_))) {
+                continue;
+            }
+            self.trends.insert(id.clone(), (days, Load::Loading));
+            self.net.trend(id, days);
+        }
     }
 
     /// The composer's folder chip: same picker, to choose what the next chat is about.
@@ -1101,6 +1118,7 @@ impl App {
             self.active.as_deref().and_then(|id| self.businesses.iter().position(|b| b.id == id)).unwrap_or(0)
         };
         self.business_picker = Some(BusinessPicker::new(PickerMode::Chat, focus));
+        self.load_trends();
     }
 
     /// Cards shown in the picker: businesses, plus general chat in Chat mode.
@@ -3591,6 +3609,12 @@ impl App {
                 self.clear_chart_lines();
             }
             Reply::Insights(..) => {}
+            Reply::Trend { business, days, result } => {
+                if self.trends.get(&business).is_some_and(|(d, _)| *d == days) {
+                    let load = to_load(self.failed(result));
+                    self.trends.insert(business, (days, load));
+                }
+            }
             Reply::UpdateChecked(r) => {
                 use crate::update::Update;
                 // A check that lands during an install leaves the install alone.

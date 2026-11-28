@@ -355,15 +355,15 @@ fn footer(s: &App, t: &Theme, d: &Decision, count: usize, narrow: bool) -> El {
 }
 
 /// One of the business's numbers: what it is, where it stands, and its days.
-struct Number {
-    name: String,
-    value: String,
-    delta: Option<String>,
-    better: bool,
-    days: Vec<f64>,
+pub(crate) struct Number {
+    pub name: String,
+    pub value: String,
+    pub delta: Option<String>,
+    pub better: bool,
+    pub days: Vec<f64>,
 }
 
-fn accuracy(a: &Analytics, days: u32) -> Option<Number> {
+pub(crate) fn accuracy(a: &Analytics, days: u32) -> Option<Number> {
     let now = a.current.accuracy()?;
     let change = a.previous.accuracy().map(|b| ((now - b) * 100.0).round()).filter(|c| *c != 0.0);
     let daily: Vec<Option<f64>> = a.daily.iter().map(|d| d.v.accuracy()).collect();
@@ -425,14 +425,12 @@ fn numbers(s: &App, t: &Theme, d: &Decision, narrow: bool) -> Option<El> {
             .hover(t.foreground.alpha(0.08))
             .on_press(|s: &mut App| s.show_page(crate::state::Page::Overview))
             .child(col().grow(1.0).min_w(0.0).gap(2.0).child(label(n.name, type_::XS, t.muted_foreground).truncate()).child(figures))
-            .children((n.days.len() > 1 && !narrow).then(|| sparkline(&n.days, tone))),
+            .children((n.days.len() > 1 && !narrow).then(|| sparkline(&n.days, tone, 160.0, 44.0))),
     )
 }
 
 /// The days as one line between their lowest and highest, the latest marked with a dot.
-fn sparkline(values: &[f64], color: Color) -> El {
-    const W: f32 = 160.0;
-    const H: f32 = 44.0;
+pub(crate) fn sparkline(values: &[f64], color: Color, w: f32, h: f32) -> El {
     const PAD: f32 = 4.0;
     let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
     let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -443,14 +441,14 @@ fn sparkline(values: &[f64], color: Color) -> El {
         .enumerate()
         .map(|(i, v)| {
             let up = if span > 0.0 { ((v - lo) / span) as f32 } else { 0.5 };
-            [PAD + (W - 2.0 * PAD) * i as f32 / last, H - PAD - (H - 2.0 * PAD) * up]
+            [PAD + (w - 2.0 * PAD) * i as f32 / last, h - PAD - (h - 2.0 * PAD) * up]
         })
         .collect();
     let end = pts[pts.len() - 1];
     let shape = Shape::new()
         .stroke_with(pts, false, 1.75, LineCap::Round, color)
         .stroke_with(vec![end, [end[0] + 0.01, end[1]]], false, 6.0, LineCap::Round, color);
-    canvas(shape).size(W, H).a11y_hidden()
+    canvas(shape).size(w, h).a11y_hidden()
 }
 
 fn disc(fill: Color, icon: &'static rune::Icon, ink: Color) -> El {

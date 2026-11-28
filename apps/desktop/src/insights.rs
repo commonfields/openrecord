@@ -608,6 +608,12 @@ fn iso_day(days_ago: i64) -> String {
 }
 
 impl Client {
+    /// Just the AI-answer numbers for a business, for the picker's trend line.
+    pub fn ai_analytics(&self, business: &str, days: u32) -> ApiResult<Analytics> {
+        let v = self.get::<Value>(&format!("/api/businesses/{}/analytics?days={days}", enc(business)))?;
+        Ok(Analytics::read(v.get("analytics").unwrap_or(&Value::Null)))
+    }
+
     /// Everything the Overview shows for a business, over `days`.
     pub fn insights(&self, business: &str, days: u32) -> ApiResult<Insights> {
         let b = enc(business);

@@ -100,6 +100,8 @@ pub enum Reply {
     BriefScheduleControl { business: String, generation: u64, origin: Option<String>, result: ApiResult<crate::brief_schedule::Control> },
     /// The Overview's data for a business over a number of days.
     Insights(String, u32, ApiResult<crate::insights::Insights>),
+    /// A business's AI-answer numbers, for its trend line in the picker.
+    Trend { business: String, days: u32, result: ApiResult<crate::insights::Analytics> },
     /// The newest desktop release past this build, if any.
     UpdateChecked(Result<Option<crate::update::Release>, String>),
     /// An update was installed (the app restarts), or why it was not.
@@ -314,6 +316,13 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.insights(&business, days);
             send(Reply::Insights(business, days, r));
+        });
+    }
+
+    pub fn trend(&self, business: String, days: u32) {
+        self.spawn(move |c, send| {
+            let result = c.ai_analytics(&business, days);
+            send(Reply::Trend { business, days, result });
         });
     }
 
