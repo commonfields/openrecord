@@ -89,11 +89,14 @@ export class GrowthExecutionRepository extends Context.Tag("GrowthExecutionRepos
   readonly targets: (accountId: string, businessId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionTarget>>
   readonly connectTarget: (session: Session, businessId: string, input: ConnectExecutionTarget) => GrowthExecutionEffect<ExecutionTarget>
   readonly list: (accountId: string, businessId: string, opportunityId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionOperation>>
+  /** Changes prepared for review and not yet approved or cancelled, across the business's initiatives (newest first). */
+  readonly awaitingApproval: (accountId: string, businessId: string) => GrowthExecutionEffect<ReadonlyArray<ExecutionOperation>>
   readonly get: (accountId: string, businessId: string, operationId: string) => GrowthExecutionEffect<ExecutionOperation>
   /** Replays by request key when the request is identical; a different request under the key is refused. */
   readonly findPrepared: (session: Session, businessId: string, opportunityId: string, fingerprint: string, idempotencyKey: string) => GrowthExecutionEffect<ExecutionOperation | null>
   readonly prepare: (session: Session, businessId: string, opportunityId: string, fingerprint: string, plan: PreparedExecution, actor?: "OPERATOR" | "ASSISTANT") => GrowthExecutionEffect<ExecutionOperation>
   readonly authorize: (session: Session, businessId: string, operationId: string, input: AuthorizeExecution) => GrowthExecutionEffect<ExecutionOperation>
+  readonly approve: (session: Session, businessId: string, operationId: string, input: AuthorizeExecution) => GrowthExecutionEffect<ExecutionOperation>
   readonly dispatch: (session: Session, businessId: string, operationId: string, input: DispatchExecution) => GrowthExecutionEffect<ExecutionOperation>
   readonly cancel: (session: Session, businessId: string, operationId: string, input: CancelExecution) => GrowthExecutionEffect<ExecutionOperation>
   readonly requestReconcile: (session: Session, businessId: string, operationId: string, input: RequestExecutionCheck) => GrowthExecutionEffect<ExecutionOperation>
@@ -144,10 +147,10 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       INSERT INTO growth_execution_events(operation_id,business_id,revision,state,actor,user_id,reason,detail,request_key)
       VALUES(${operationId},${businessId},${revision},${state},${actor},${userId},${reason},${JSON.stringify(detail)}::jsonb,${requestKey})`)
   /** A repeated request key replays the original event; a different request under it is refused. */
-  const replayed = (operationId: string, key: string, expect: { state: ExecutionState; reason?: string; revision: number }) => Effect.gen(function*() {
-    const rows = yield* sql`SELECT state,reason,revision FROM growth_execution_events WHERE operation_id=${operationId} AND request_key=${key}`
+  const replayed = (operationId: string, key: string, expect: { state: ExecutionState; reason?: string; revision: number; userId?: string }) => Effect.gen(function*() {
+    const rows = yield* sql`SELECT state,reason,revision,user_id FROM growth_execution_events WHERE operation_id=${operationId} AND request_key=${key}`
     if (!rows[0]) return false
-    if (rows[0]["state"] !== expect.state || (expect.reason !== undefined && rows[0]["reason"] !== expect.reason) || Number(rows[0]["revision"]) !== expect.revision + 1) return yield* refuse("IdempotencyConflict")
+    if ((expect.userId !== undefined && rows[0]["user_id"] !== expect.userId) || rows[0]["state"] !== expect.state || (expect.reason !== undefined && rows[0]["reason"] !== expect.reason) || Number(rows[0]["revision"]) !== expect.revision + 1) return yield* refuse("IdempotencyConflict")
     return true
   })
   const operatorMove = (session: Session, businessId: string, operationId: string, to: ExecutionState, key: string, expectedRevision: number, reason: string,
@@ -168,6 +171,13 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
     INSERT INTO growth_execution_jobs(operation_id,business_id,kind,not_before,request_key,requested_by_user_id)
     VALUES(${operationId},${businessId},${kind},now()+${delaySeconds}*interval '1 second',${requestKey},${userId})
     ON CONFLICT DO NOTHING`)
+
+  const authorizationDetail = (session: Session, input: AuthorizeExecution) => ({
+    approvedPatchSha256: input.reviewedPatchSha256,
+    expiresAt: new Date(Date.now() + EXECUTION_AUTHORIZATION_HOURS * 3_600_000).toISOString(),
+    authorizedByUserId: session.userId,
+  })
+  const dispatchReason = "Dispatch requested by an operator"
 
   return {
     targets: (accountId, businessId) => Effect.gen(function*() {
@@ -200,6 +210,13 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
       const rows = yield* sql`SELECT document FROM growth_execution_documents WHERE business_id=${businessId} AND opportunity_id=${opportunityId} ORDER BY created_at DESC LIMIT 20`
       return (yield* Effect.forEach(rows, r => decodeRow(OperationDoc, "growth_execution_documents", r["document"]))) as ExecutionOperation[]
     }),
+    awaitingApproval: (accountId, businessId) => Effect.gen(function*() {
+      yield* ids(businessId)
+      yield* scope(accountId, businessId)
+      const rows = yield* sql`SELECT d.document FROM growth_execution_documents d JOIN growth_execution_operations o ON o.id=d.id
+        WHERE d.business_id=${businessId} AND growth_execution_state(o.id)='PREPARED' ORDER BY d.created_at DESC LIMIT 20`
+      return (yield* Effect.forEach(rows, r => decodeRow(OperationDoc, "growth_execution_documents", r["document"]))) as ExecutionOperation[]
+    }),
     get: (accountId, businessId, operationId) => Effect.gen(function*() {
       yield* ids(businessId, operationId)
       yield* scope(accountId, businessId)
@@ -230,13 +247,34 @@ export const GrowthExecutionRepositoryLive = Layer.effect(GrowthExecutionReposit
     })),
     authorize: (session, businessId, operationId, raw) => Effect.gen(function*() {
       const input = yield* parse(AuthorizeExecution, raw)
-      const expires = new Date(Date.now() + EXECUTION_AUTHORIZATION_HOURS * 3_600_000).toISOString()
       return yield* operatorMove(session, businessId, operationId, "AUTHORIZED", input.idempotencyKey, input.expectedRevision, input.reason, ["PREPARED"],
-        () => ({ approvedPatchSha256: input.reviewedPatchSha256, expiresAt: expires, authorizedByUserId: session.userId }))
+        () => authorizationDetail(session, input))
     }),
+    approve: (session, businessId, operationId, raw) => sql.withTransaction(Effect.gen(function*() {
+      const input = yield* parse(AuthorizeExecution, raw)
+      yield* ids(businessId, operationId)
+      yield* member(session, businessId)
+      yield* lock(businessId, operationId)
+      const current = yield* read(businessId, operationId)
+      if (current.patchSha256 !== input.reviewedPatchSha256) return yield* refuse("PatchMismatch")
+      const revision = input.expectedRevision
+      const userId = session.userId
+      const h = createHash("sha256").update(`dispatch:${input.idempotencyKey}`).digest("hex")
+      const dispatchKey = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
+      if (yield* replayed(operationId, input.idempotencyKey, { state: "AUTHORIZED", reason: input.reason, revision, userId })) {
+        if (yield* replayed(operationId, dispatchKey, { state: "DISPATCHING", revision: revision + 1, userId })) return current
+        return yield* refuse("IdempotencyConflict")
+      }
+      if (current.revision !== revision) return yield* refuse("StaleExecution")
+      if (current.state !== "PREPARED") return yield* refuse("TransitionRefused")
+      yield* append(operationId, businessId, revision + 1, "AUTHORIZED", "OPERATOR", userId, input.reason, authorizationDetail(session, input), input.idempotencyKey)
+      yield* append(operationId, businessId, revision + 2, "DISPATCHING", "OPERATOR", userId, dispatchReason, {}, dispatchKey)
+      yield* enqueue(operationId, businessId, "DISPATCH", 0, dispatchKey, userId)
+      return yield* read(businessId, operationId)
+    })),
     dispatch: (session, businessId, operationId, raw) => Effect.gen(function*() {
       const input = yield* parse(DispatchExecution, raw)
-      return yield* operatorMove(session, businessId, operationId, "DISPATCHING", input.idempotencyKey, input.expectedRevision, "Dispatch requested by an operator", ["AUTHORIZED"],
+      return yield* operatorMove(session, businessId, operationId, "DISPATCHING", input.idempotencyKey, input.expectedRevision, dispatchReason, ["AUTHORIZED"],
         () => ({}), () => enqueue(operationId, businessId, "DISPATCH", 0, input.idempotencyKey, session.userId))
     }),
     cancel: (session, businessId, operationId, raw) => Effect.gen(function*() {

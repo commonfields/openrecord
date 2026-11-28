@@ -19,6 +19,9 @@ pub enum Act {
     WordPress,
     /// A prepared Webflow change: approving publishes it.
     Webflow,
+    /// A prepared change in a code repository: approving authorizes exactly this
+    /// diff (bound to its hash) and opens its pull request.
+    GitHub { sha: String, revision: i64 },
     /// A Google Business Profile or Google Ads change: approving carries it out.
     Account,
     /// A private draft the agent saved: accepting keeps it, nothing is sent.
@@ -110,6 +113,10 @@ impl Decision {
             ),
             Act::WordPress => (format!("/api/businesses/{b}/wordpress/changes/{id}/approve"), json!({})),
             Act::Webflow => (format!("/api/businesses/{b}/webflow/changes/{id}/approve"), json!({})),
+            Act::GitHub { sha, revision } => (
+                format!("/api/growth/clients/{b}/connected-executions/{id}/approve"),
+                json!({ "reviewedPatchSha256": sha, "expectedRevision": revision, "reason": "Approved in the Inbox", "idempotencyKey": crate::api::uuid() }),
+            ),
             Act::Account => (format!("/api/businesses/{b}/account-actions/{id}/approve"), json!({})),
             Act::Draft => (format!("/api/businesses/{b}/agent/proposals/{id}/approve"), json!({ "draftOnly": true })),
             Act::Acquisition { cost, .. } => (
@@ -143,6 +150,10 @@ impl Decision {
             }
             Act::WordPress => (format!("/api/businesses/{b}/wordpress/changes/{id}/reject"), json!({})),
             Act::Webflow => (format!("/api/businesses/{b}/webflow/changes/{id}/reject"), json!({})),
+            Act::GitHub { revision, .. } => {
+                let why: String = reason.map(|r| format!("Declined: {r}")).unwrap_or_else(|| "Declined in the Inbox".into()).chars().take(500).collect();
+                (format!("/api/growth/clients/{b}/connected-executions/{id}/cancel"), json!({ "expectedRevision": revision, "reason": why, "idempotencyKey": crate::api::uuid() }))
+            }
             Act::Account => (format!("/api/businesses/{b}/account-actions/{id}/reject"), json!({})),
             Act::Draft | Act::Acquisition { .. } | Act::Check => (format!("/api/businesses/{b}/agent/proposals/{id}/reject"), json!({})),
         }
@@ -186,6 +197,7 @@ impl Decision {
             (Act::Strategy, true) => "This is now the strategy every campaign follows.",
             (Act::WordPress, true) => "Published to WordPress.",
             (Act::Webflow, true) => "Published to Webflow.",
+            (Act::GitHub { .. }, true) => "Approved. OpenRecord is opening the pull request.",
             (Act::Account, true) if self.approve.contains("post") => "Reply posted.",
             (Act::Account, true) => "Change made in Google Ads.",
             (Act::Draft, true) => "Draft accepted.",
@@ -501,6 +513,29 @@ pub fn parse(v: &Value) -> Option<Decision> {
                 return None;
             }
         }
+        "GITHUB_CHANGE" => {
+            let c = v.get("change")?;
+            d.id = s(c, "id");
+            let file = s(c, "filePath");
+            d.label = "Website change".into();
+            d.title = format!("Website change: {file}");
+            d.summary = s(c, "rationale");
+            d.sections.push(sec("Repository", format!("{}/{} on {}", s(c, "owner"), s(c, "repository"), s(c, "baseBranch"))));
+            if let Some(i) = opt(c, "initiative") {
+                d.sections.push(sec("Part of", i));
+            }
+            d.sections.push(sec("Page", s(c, "liveUrl")));
+            d.body = Some(clip(s(c, "diff"), 6000));
+            d.note = Some("Approving opens a pull request with exactly this change. It goes live when the pull request is merged and your site deploys; OpenRecord then checks the live page.".into());
+            d.act = Act::GitHub { sha: s(c, "patchSha256"), revision: c.get("revision").and_then(Value::as_i64).unwrap_or(1) };
+            d.approve = "Approve and open pull request".into();
+            d.decline = "Not now".into();
+            d.feedback_title = d.title.clone();
+            d.feedback_kind = "GITHUB_CHANGE";
+            if s(c, "state") != "PREPARED" {
+                return None;
+            }
+        }
         "ACCOUNT_ACTION" => {
             let a = v.get("action")?;
             d.id = s(a, "id");
@@ -677,6 +712,30 @@ mod tests {
         assert_eq!(body["reason"], "Declined: too early");
         let (_, fb) = d.feedback(false, Some(" too early "));
         assert_eq!((fb["verdict"].as_str(), fb["reason"].as_str()), (Some("REJECTED"), Some("too early")));
+    }
+
+    #[test]
+    fn reads_a_code_repository_change_bound_to_its_diff() {
+        let d = parse(&item(
+            "GITHUB_CHANGE",
+            "change",
+            json!({ "id": "g1", "filePath": "app/pricing/page.mdx", "owner": "acme", "repository": "site", "baseBranch": "main", "liveUrl": "https://acme.test/pricing",
+                    "diff": "-Old price\n+New price", "rationale": "Answers quote the old price", "patchSha256": "ab12", "revision": 1, "state": "PREPARED", "initiative": "Fix the price answer" }),
+        ))
+        .unwrap();
+        assert_eq!((d.key.as_str(), d.title.as_str()), ("GITHUB_CHANGE:g1", "Website change: app/pricing/page.mdx"));
+        assert!(d.body.as_deref().unwrap().contains("+New price"));
+        assert!(!d.quick_yes(), "a pull request is never one key away");
+        let (path, body) = d.approve_call(None);
+        assert_eq!(path, "/api/growth/clients/b1/connected-executions/g1/approve");
+        assert_eq!((body["reviewedPatchSha256"].as_str(), body["expectedRevision"].as_i64()), (Some("ab12"), Some(1)));
+        let (path, body) = d.decline_call(Some("wrong page"));
+        assert!(path.ends_with("/connected-executions/g1/cancel"));
+        assert_eq!(body["reason"], "Declined: wrong page");
+        assert_eq!(d.feedback(true, None).1["kind"], "GITHUB_CHANGE");
+        let mut sent = item("GITHUB_CHANGE", "change", json!({ "id": "g1", "state": "DISPATCHING" }));
+        sent["change"]["state"] = json!("DISPATCHING");
+        assert!(parse(&sent).is_none());
     }
 
     #[test]

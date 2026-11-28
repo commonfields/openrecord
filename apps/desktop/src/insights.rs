@@ -369,6 +369,24 @@ pub struct Insights {
     pub revenue_data: Option<RevenueData>,
     /// Who is on the site now, from the business's Google Analytics.
     pub realtime: Option<Realtime>,
+    /// Changes to the business's own site and the day each went live, oldest first.
+    pub live: Vec<LiveChange>,
+}
+
+/// A site change on the day it went live, marked on the Analytics charts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveChange {
+    /// `YYYY-MM-DD`, as the charts' dates are.
+    pub day: String,
+    pub title: String,
+    pub undone: bool,
+}
+
+fn live_changes(v: &Value) -> Vec<LiveChange> {
+    v.get("changes").and_then(Value::as_array).map(|a| a.iter().filter_map(|c| {
+        let at = c.get("at")?.as_str()?;
+        Some(LiveChange { day: at.get(..10)?.to_string(), title: s(c, "title"), undone: c.get("undone").and_then(Value::as_bool).unwrap_or(false) })
+    }).collect()).unwrap_or_default()
 }
 
 /// GA4's last 30 minutes: active users, by country and page, and per minute (oldest first).
@@ -666,7 +684,8 @@ impl Client {
             Err(e) => Source::Failed(e.message()),
         };
         let realtime = quiet(self.get::<Value>(&format!("/api/growth/clients/{b}/realtime")))?.ok().and_then(|v| realtime_of(&v));
-        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data, realtime })
+        let live = quiet(self.get::<Value>(&format!("/api/businesses/{b}/live-changes")))?.ok().map(|v| live_changes(&v)).unwrap_or_default();
+        Ok(Insights { days, analytics, goal, initiatives, health, discovery, search, ads, local, revenue, revenue_data, realtime, live })
     }
 
     fn goal(&self, b: &str, profile: &Value, days: u32) -> Option<Goal> {
@@ -899,6 +918,18 @@ fn revenue_report(v: &Value) -> Report {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reads_the_days_site_changes_went_live() {
+        let v = serde_json::json!({ "changes": [
+            { "at": "2026-11-20T09:30:00.000Z", "title": "Pricing", "source": "WORDPRESS", "undone": false },
+            { "at": "2026-11-24T18:00:00.000Z", "title": "app/faq/page.mdx", "source": "GITHUB", "undone": true },
+            { "title": "no date" },
+        ] });
+        let live = live_changes(&v);
+        assert_eq!(live.iter().map(|c| (c.day.as_str(), c.title.as_str(), c.undone)).collect::<Vec<_>>(), vec![("2026-11-20", "Pricing", false), ("2026-11-24", "app/faq/page.mdx", true)]);
+        assert!(live_changes(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn reads_analytics() {

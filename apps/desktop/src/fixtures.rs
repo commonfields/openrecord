@@ -822,6 +822,10 @@ fn insights() -> Insights {
             pages: vec![("Home".into(), 16.0), ("Pricing".into(), 10.0), ("How assistants pick sources".into(), 7.0), ("Quickstart".into(), 5.0), ("Integrations".into(), 3.0)],
             per_minute: (0..30).map(|i| (5.0 + 2.5 * (i as f64 / 3.3).sin().abs()).round()).collect(),
         }),
+        live: vec![
+            crate::insights::LiveChange { day: crate::format::iso_date(crate::format::now() - 12 * 86_400), title: "Pricing".into(), undone: false },
+            crate::insights::LiveChange { day: crate::format::iso_date(crate::format::now() - 4 * 86_400), title: "app/integrations/page.mdx".into(), undone: false },
+        ],
         revenue_data: Some({
             // Thirty days with a weekly rhythm and a gentle climb.
             let day = |i: usize, k: f64| {
