@@ -559,6 +559,7 @@ pub fn parse(v: &Value) -> Option<Decision> {
                     money(after.get("daily").unwrap_or(&empty), &currency)
                 ),
                 "CREATE_SEARCH_AD" => format!("New search ad in \"{}\" ({campaign})", s(target, "adGroupName")),
+                "PUBLISH_POST" => format!("LinkedIn post as {}", s(target, "authorName")),
                 other => other.replace('_', " ").to_lowercase(),
             };
             d.label = "Account change".into();
@@ -570,6 +571,15 @@ pub fn parse(v: &Value) -> Option<Decision> {
                     d.sections.push(sec("The review", if comment.is_empty() { "(no text)".into() } else { comment }));
                     d.sections.push(Section { label: "Your reply".into(), before: opt(before, "reply"), text: s(after, "reply") });
                     d.note = Some("The reply is public on Google, under the review.".into());
+                    d.approve = "Approve and post".into();
+                }
+                "PUBLISH_POST" => {
+                    d.sections.push(sec("The post", s(after, "text")));
+                    d.note = Some(if s(target, "authorKind") == "PAGE" {
+                        "Published publicly on LinkedIn as soon as you approve. Undo deletes it. Its results show up in later reports.".into()
+                    } else {
+                        "Published publicly on LinkedIn as soon as you approve. Undo deletes it. LinkedIn shares no results for profile posts.".into()
+                    });
                     d.approve = "Approve and post".into();
                 }
                 "CREATE_SEARCH_AD" => {
@@ -736,6 +746,28 @@ mod tests {
         let mut sent = item("GITHUB_CHANGE", "change", json!({ "id": "g1", "state": "DISPATCHING" }));
         sent["change"]["state"] = json!("DISPATCHING");
         assert!(parse(&sent).is_none());
+    }
+
+    #[test]
+    fn a_linkedin_post_shows_the_exact_text_and_says_it_goes_public() {
+        let post = "We cut setup to 10 minutes. #Launch";
+        let card = |kind: &str| {
+            parse(&item(
+                "ACCOUNT_ACTION",
+                "action",
+                json!({ "id": "p1", "kind": "PUBLISH_POST", "status": "PROPOSED", "rationale": "Announce the faster setup",
+                        "target": { "author": "urn:li:organization:42", "authorName": "Cueup", "authorKind": kind }, "before": {}, "after": { "text": post } }),
+            ))
+            .expect("a prepared post is a decision")
+        };
+        let d = card("PAGE");
+        assert_eq!(d.title, "LinkedIn post as Cueup");
+        assert_eq!((d.sections[0].label.as_str(), d.sections[0].text.as_str()), ("The post", post));
+        assert_eq!(d.approve, "Approve and post");
+        assert!(d.note.as_deref().unwrap().contains("Undo deletes it"));
+        assert!(!d.quick_yes(), "posting publicly is never one key away");
+        assert_eq!(d.approve_call(None).0, "/api/businesses/b1/account-actions/p1/approve");
+        assert!(card("PROFILE").note.as_deref().unwrap().contains("no results"));
     }
 
     #[test]

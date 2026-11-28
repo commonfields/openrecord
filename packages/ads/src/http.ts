@@ -7,7 +7,11 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 const MAX_RESPONSE_BYTES = 4_000_000
 const TIMEOUT_MS = 20_000
 
-export const send = async (fetchImpl: FetchLike, url: string, init: RequestInit = { method: "GET" }): Promise<unknown> => {
+export const send = async (fetchImpl: FetchLike, url: string, init: RequestInit = { method: "GET" }): Promise<unknown> =>
+  (await sendWithHeaders(fetchImpl, url, init)).body
+
+/** As `send`, also returning the response headers (LinkedIn returns a created post's id in one). */
+export const sendWithHeaders = async (fetchImpl: FetchLike, url: string, init: RequestInit = { method: "GET" }): Promise<{ readonly body: unknown; readonly headers: Headers }> => {
   let response: Response
   try {
     response = await fetchImpl(url, { ...init, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) })
@@ -24,9 +28,9 @@ export const send = async (fetchImpl: FetchLike, url: string, init: RequestInit 
     throw new AdsError({ kind: "UNAVAILABLE", status: response.status, providerCode: null })
   }
   if (response.status >= 300) throw errorFromResponse(response.status, text)
-  // A delete can answer with an empty body.
-  if (text.trim() === "") return {}
-  try { return JSON.parse(text) } catch { throw unexpected() }
+  // A delete or a create can answer with an empty body.
+  if (text.trim() === "") return { body: {}, headers: response.headers }
+  try { return { body: JSON.parse(text), headers: response.headers } } catch { throw unexpected() }
 }
 
 /** A non-negative number from a platform field that may be a number or a decimal string (int64 arrives as text). */

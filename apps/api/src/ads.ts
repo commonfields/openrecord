@@ -20,6 +20,7 @@ import {
   AdsError, AdsProvider, GOOGLE_ADS_ACCEPTED_SCOPES, GOOGLE_ADS_CONVERSIONS, GOOGLE_ADS_SCOPE, GOOGLE_BUSINESS_ACCEPTED_SCOPES, GOOGLE_BUSINESS_SCOPE, META_CONVERSIONS,
   googleAdsAccounts, googleAdsAuthorizationUrl, googleBusinessAuthorizationUrl, googleBusinessLocations, googleBusinessReviews, googleBusinessSearchTerms, googleBusinessTotals,
   googleAdsCampaigns, googleAdsTotals, metaAdAccounts, metaAuthorizationUrl, metaCampaigns, metaExchangeCode, metaIdentity, metaRevoke, metaTotals, type AdsConfig,
+  LINKEDIN_ACCEPTED_SCOPES, linkedinAuthorizationUrl, linkedinAuthors, linkedinExchangeCode, linkedinIdentity, type LinkedInConfig,
 } from "@openrecord/ads"
 import { Ga4Error, exchangeCode, identityFromIdToken, newOAuthSecret, refreshAccessToken, revokeToken } from "@openrecord/ga4"
 import { decode, json, operatorSessionFor, readJson, type WithSession } from "./record-routes.js"
@@ -32,12 +33,19 @@ const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex
 const STATE_TTL_SECONDS = 600
 const META_PERMISSIONS = new Set(["ads_read", "public_profile", "email"])
 
-const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" }, googleBusiness: { configured: false, reason: "MISSING_APP" }, stripe: { configured: false, reason: "MISSING_ENCRYPTION_KEY" } }
+const NOT_CONFIGURED: AdsConfig = { cipher: null, appBaseUrl: "http://localhost:3000", meta: { configured: false, reason: "MISSING_APP" }, googleAds: { configured: false, reason: "MISSING_APP" }, googleBusiness: { configured: false, reason: "MISSING_APP" }, stripe: { configured: false, reason: "MISSING_ENCRYPTION_KEY" }, linkedin: { configured: false, reason: "MISSING_APP" } }
 export const adsConfig = Effect.map(Effect.serviceOption(AdsProvider), o => Option.getOrElse(o, () => NOT_CONFIGURED))
 const cipherOf = (c: AdsConfig) => c.cipher ? Effect.succeed(c.cipher) : refuse("AdsNotConfigured")
 const metaOf = (c: AdsConfig) => c.meta.configured ? Effect.succeed(c.meta.config) : refuse("AdsNotConfigured")
 const googleOf = (c: AdsConfig) => c.googleAds.configured ? Effect.succeed(c.googleAds) : refuse("AdsNotConfigured")
 const businessOf = (c: AdsConfig) => c.googleBusiness.configured ? Effect.succeed(c.googleBusiness) : refuse("AdsNotConfigured")
+const linkedinOf = (c: AdsConfig): Effect.Effect<LinkedInConfig, AdsRefused> => c.linkedin.configured ? Effect.succeed(c.linkedin.config) : refuse("AdsNotConfigured")
+/**
+ * Platforms whose sign-in is one long-lived token with no refresh through
+ * Google: Meta's (about 60 days) and LinkedIn's (60 days). When it expires,
+ * the person signs in again.
+ */
+const longLived = (provider: ChannelProvider) => provider === "meta" || provider === "linkedin"
 /** The Google sign-in (client and endpoints) a Google provider uses. */
 const googleClientOf = (c: AdsConfig, provider: ChannelProvider) => provider === "google_business" ? Effect.map(businessOf(c), b => b.oauth) : Effect.map(googleOf(c), g => g.oauth)
 
@@ -50,15 +58,16 @@ const reasonOf = (e: AdsError) => e.kind === "QUOTA" ? "ProviderQuota" : e.kind 
 
 // ---- storage ---------------------------------------------------------------
 
-type ConnectionRow = AdConnection & { readonly subject: string; readonly access: string | null; readonly accessExpiresAt: number | null; readonly refresh: string | null }
+type ConnectionRow = AdConnection & { readonly subject: string; readonly access: string | null; readonly accessExpiresAt: number | null; readonly refresh: string | null; readonly scopes: ReadonlyArray<string> }
 const toConnection = (r: Record<string, unknown>): ConnectionRow => ({
   id: String(r["id"]), provider: r["provider"] as ChannelProvider, displayName: String(r["display_name"]), status: r["status"] as AdConnection["status"],
   connectedAt: new Date(r["connected_at"] as string).toISOString(), expiresAt: r["access_expires_at"] ? new Date(r["access_expires_at"] as string).toISOString() : null,
   subject: String(r["subject"]), access: (r["access_ciphertext"] as string | null) ?? null, refresh: (r["refresh_ciphertext"] as string | null) ?? null,
   accessExpiresAt: r["access_expires_at"] ? new Date(r["access_expires_at"] as string).getTime() : null,
+  scopes: Array.isArray(r["granted_scopes"]) ? (r["granted_scopes"] as Array<unknown>).map(String) : [],
 })
-const publicConnection = ({ subject: _s, access: _a, refresh: _r, accessExpiresAt: _e, ...c }: ConnectionRow): AdConnection =>
-  c.provider === "meta" ? c : { ...c, expiresAt: null }
+const publicConnection = ({ subject: _s, access: _a, refresh: _r, accessExpiresAt: _e, scopes: _g, ...c }: ConnectionRow): AdConnection =>
+  longLived(c.provider) ? c : { ...c, expiresAt: null }
 const toBinding = (r: Record<string, unknown>): AdBinding & { readonly loginCustomerId: string | null; readonly parentId: string | null } => ({
   id: String(r["id"]), provider: r["provider"] as ChannelProvider, connectionId: String(r["connection_id"]), externalId: String(r["external_id"]),
   name: String(r["name"]), currency: (r["currency"] as string | null) ?? null, boundAt: new Date(r["bound_at"] as string).toISOString(),
@@ -94,9 +103,9 @@ const scopedBusiness = (session: Session, businessId: string) => Effect.gen(func
 const accessToken = (config: AdsConfig, c: ConnectionRow, force = false) => Effect.gen(function*() {
   if (c.status !== "ACTIVE") return yield* refuse("AdsReauthorizationRequired")
   const cipher = yield* cipherOf(config)
-  const cached = c.access && (c.accessExpiresAt === null || c.accessExpiresAt - 60_000 > Date.now()) && !(force && c.provider !== "meta") ? cipher.decrypt(c.access, `ads:${c.id}:access`) : null
+  const cached = c.access && (c.accessExpiresAt === null || c.accessExpiresAt - 60_000 > Date.now()) && !(force && !longLived(c.provider)) ? cipher.decrypt(c.access, `ads:${c.id}:access`) : null
   if (cached) return cached
-  if (c.provider === "meta" || !c.refresh) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
+  if (longLived(c.provider) || !c.refresh) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
   const oauth = yield* googleClientOf(config, c.provider)
   const refreshToken = cipher.decrypt(c.refresh, `ads:${c.id}:refresh`)
   if (!refreshToken) { yield* suspend(c.id); return yield* refuse("AdsReauthorizationRequired") }
@@ -145,6 +154,10 @@ const withToken = <A>(config: AdsConfig, c: ConnectionRow, f: (token: string) =>
 export const checkAdConnection = (accountId: string, connectionId: string) => Effect.gen(function*() {
   const config = yield* adsConfig
   const c = yield* connection(accountId, connectionId)
+  if (c.provider === "linkedin") {
+    const linkedin = yield* linkedinOf(config)
+    return yield* Effect.asVoid(withToken(config, c, t => linkedinIdentity(linkedin, t)))
+  }
   if (c.provider !== "meta") return yield* Effect.asVoid(accessToken(config, c, true))
   const meta = yield* metaOf(config)
   yield* withToken(config, c, t => metaIdentity(meta, t))
@@ -153,17 +166,18 @@ export const checkAdConnection = (accountId: string, connectionId: string) => Ef
 /** The bindings of one provider for a business, the provider's config, and a
  * way to call it with a binding's token. Only account-actions.ts uses it, for
  * writes a person has approved. */
-export const writeAccess = <P extends "google_ads" | "google_business">(accountId: string, businessId: string, provider: P) => Effect.gen(function*() {
+export const writeAccess = <P extends "google_ads" | "google_business" | "linkedin">(accountId: string, businessId: string, provider: P) => Effect.gen(function*() {
   const config = yield* adsConfig
-  const providerConfig = provider === "google_ads" ? (yield* googleOf(config)).config : (yield* businessOf(config)).config
+  const providerConfig = provider === "google_ads" ? (yield* googleOf(config)).config : provider === "linkedin" ? yield* linkedinOf(config) : (yield* businessOf(config)).config
   const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider === provider)
   const run = <A>(b: (typeof bindings)[number], f: (token: string) => Promise<A>) => Effect.flatMap(connection(accountId, b.connectionId), c => withToken(config, c, f))
-  return { bindings, config: providerConfig as P extends "google_ads" ? import("@openrecord/ads").GoogleAdsConfig : import("@openrecord/ads").GoogleBusinessConfig, run }
+  return { bindings, config: providerConfig as P extends "google_ads" ? import("@openrecord/ads").GoogleAdsConfig : P extends "linkedin" ? LinkedInConfig : import("@openrecord/ads").GoogleBusinessConfig, run }
 })
 
 const listAccounts = (config: AdsConfig, c: ConnectionRow): Effect.Effect<ReadonlyArray<AdAccount>, AdsRefused | import("@effect/sql/SqlError").SqlError, SqlClient.SqlClient> => c.provider === "meta"
   ? Effect.flatMap(metaOf(config), m => withToken(config, c, t => metaAdAccounts(m, t)))
   : c.provider === "google_ads" ? Effect.flatMap(googleOf(config), g => withToken(config, c, t => googleAdsAccounts(g.config, t)))
+  : c.provider === "linkedin" ? Effect.flatMap(linkedinOf(config), l => withToken(config, c, t => linkedinAuthors(l, t, { subject: c.subject, name: c.displayName }, c.scopes)))
   : Effect.flatMap(businessOf(config), b => withToken(config, c, async t => (await googleBusinessLocations(b.config, t)).map((l): AdAccount => ({
       externalId: l.locationId, name: l.address ? `${l.name} · ${l.address}` : l.name, currency: null, loginCustomerId: null, parentId: l.accountId, active: true }))))
 
@@ -176,7 +190,8 @@ export const adPerformance = (accountId: string, businessId: string, days: AdPer
     return { ...demo, accounts: demo.accounts.filter(a => !provider || a.provider === provider) }
   }
   const config = yield* adsConfig
-  const bindings = (yield* adBindings(accountId, businessId)).filter(b => b.provider !== "google_business" && (!provider || b.provider === provider))
+  // Ad accounts only: a Business Profile location or a LinkedIn author has no ad spend.
+  const bindings = (yield* adBindings(accountId, businessId)).filter(b => (b.provider === "meta" || b.provider === "google_ads") && (!provider || b.provider === provider))
   const windows = adWindows(Date.now(), days)
   const results = yield* Effect.forEach(bindings, b => Effect.gen(function*() {
     const c = yield* connection(accountId, b.connectionId)
@@ -275,6 +290,16 @@ export const adsApi = (withSession: WithSession) => {
           return yield* back("scope_refused", businessId)
         }
         identity = { subject: who.right.subject, name: who.right.name, scopes, access: tokens.right.accessToken, accessExpiresAt: tokens.right.expiresAt, refresh: null }
+      } else if (provider === "linkedin") {
+        const linkedin = yield* linkedinOf(config)
+        const tokens = yield* call(() => linkedinExchangeCode(linkedin, code)).pipe(Effect.either)
+        if (tokens._tag === "Left") return yield* back("token_exchange_failed", businessId)
+        // Posting needs one of the two posting scopes; anything outside the accepted set is refused.
+        const scopes = tokens.right.scopes
+        if (!scopes.some(sc => sc === "w_member_social" || sc === "w_organization_social") || scopes.some(sc => !LINKEDIN_ACCEPTED_SCOPES.includes(sc))) return yield* back("scope_refused", businessId)
+        const who = yield* call(() => linkedinIdentity(linkedin, tokens.right.accessToken)).pipe(Effect.either)
+        if (who._tag === "Left") return yield* back("identity_unverified", businessId)
+        identity = { subject: who.right.subject, name: who.right.name, scopes, access: tokens.right.accessToken, accessExpiresAt: tokens.right.expiresAt, refresh: null }
       } else {
         const oauth = yield* googleClientOf(config, provider)
         const tokens = yield* call(() => exchangeCode(oauth, code, verifier)).pipe(Effect.either)
@@ -310,7 +335,7 @@ export const adsApi = (withSession: WithSession) => {
       const config = yield* adsConfig
       const status = (s: { readonly configured: true } | { readonly configured: false; readonly reason: string }) => s.configured ? { configured: true } : { configured: false, reason: s.reason }
       return yield* json(200, {
-        providers: { meta: status(config.meta), google_ads: status(config.googleAds), google_business: status(config.googleBusiness) },
+        providers: { meta: status(config.meta), google_ads: status(config.googleAds), google_business: status(config.googleBusiness), linkedin: status(config.linkedin) },
         connections: (yield* connections(session.accountId)).map(publicConnection),
         bindings: (yield* adBindings(session.accountId, p["id"]!)).map(({ loginCustomerId: _l, parentId: _p, ...b }) => b),
       }, PRIVATE)
@@ -324,6 +349,7 @@ export const adsApi = (withSession: WithSession) => {
       const state = newOAuthSecret(), verifier = newOAuthSecret()
       const url = input.provider === "meta" ? metaAuthorizationUrl(yield* metaOf(config), state)
         : input.provider === "google_ads" ? yield* Effect.map(googleOf(config), g => googleAdsAuthorizationUrl(g.config, g.oauth, state, verifier))
+        : input.provider === "linkedin" ? linkedinAuthorizationUrl(yield* linkedinOf(config), state)
         : yield* Effect.map(businessOf(config), b => googleBusinessAuthorizationUrl(b.config, b.oauth, state, verifier))
       const sql = yield* SqlClient.SqlClient
       yield* sql`DELETE FROM ad_oauth_states WHERE expires_at < now() - interval '1 day'`
@@ -344,10 +370,12 @@ export const adsApi = (withSession: WithSession) => {
       const token = c.access && config.cipher ? config.cipher.decrypt(c.access, `ads:${c.id}:access`) : null
       const refresh = c.refresh && config.cipher ? config.cipher.decrypt(c.refresh, `ads:${c.id}:refresh`) : null
       const meta = config.meta.configured ? config.meta.config : null
-      const google = c.provider === "google_business" ? (config.googleBusiness.configured ? config.googleBusiness.oauth : null) : config.googleAds.configured ? config.googleAds.oauth : null
+      // Only a Google sign-in is revoked at Google. LinkedIn offers apps no revoke; its token is deleted below.
+      const google = c.provider === "google_business" ? (config.googleBusiness.configured ? config.googleBusiness.oauth : null)
+        : c.provider === "google_ads" && config.googleAds.configured ? config.googleAds.oauth : null
       if (c.provider === "meta" && token && meta) yield* call(() => metaRevoke(meta, token, c.subject)).pipe(Effect.ignore)
       const googleToken = refresh ?? token
-      if (c.provider !== "meta" && googleToken && google) yield* call(() => revokeToken(google, googleToken)).pipe(Effect.ignore)
+      if (google && googleToken) yield* call(() => revokeToken(google, googleToken)).pipe(Effect.ignore)
       const sql = yield* SqlClient.SqlClient
       yield* sql.withTransaction(Effect.gen(function*() {
         yield* sql`UPDATE ad_account_bindings SET ended_at = now(), ended_by_user_id = ${session.userId} WHERE connection_id = ${c.id} AND ended_at IS NULL`

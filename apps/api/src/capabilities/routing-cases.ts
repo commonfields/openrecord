@@ -37,6 +37,7 @@ export const ROUTING_CASES: ReadonlyArray<RoutingCaseDef> = [
   { id: "webflow-change", task: "Prepare a Webflow change to the pricing page SEO description for approval", expect: ["prepare_webflow_change"], avoid: ["prepare_wordpress_change"] },
   { id: "repo-change", task: "Prepare a page change in the connected repository to fix the meta description", expect: ["prepare_page_change"] },
   { id: "reviews", task: "Read our unanswered Google reviews", expect: ["read_reviews"] },
+  { id: "linkedin-results", task: "How did our LinkedIn posts do last month?", expect: ["read_linkedin_posts"] },
   { id: "review-reply", task: "Prepare a reply to the two-star Google review for approval", expect: ["prepare_account_action"] },
   { id: "ads-budget", task: "Prepare raising the daily budget of the Google Ads search campaign", expect: ["prepare_account_action"] },
   { id: "ads-performance", task: "How did our ads perform and what did we spend last month?", expect: ["read_ad_performance"] },

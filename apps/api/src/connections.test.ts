@@ -25,7 +25,7 @@ describe("connection state", () => {
 describe("tool gating", () => {
   it("withholds every gated tool when nothing is connected, and names what is missing", () => {
     const gaps = gapsOf(all([]))
-    expect([...gaps.withheld].sort()).toEqual(["prepare_account_action", "prepare_page_change", "prepare_webflow_change", "prepare_wordpress_change", "read_ad_campaigns", "read_reviews", "read_webflow_content", "read_wordpress_content"])
+    expect([...gaps.withheld].sort()).toEqual(["prepare_account_action", "prepare_page_change", "prepare_webflow_change", "prepare_wordpress_change", "read_ad_campaigns", "read_linkedin_posts", "read_reviews", "read_webflow_content", "read_wordpress_content"])
     expect(gaps.note).toContain("not connected: Website repository, WordPress, Webflow, Google Ads, Google Business Profile")
   })
   it("offers a tool gated by several connectors when any of them is ready", () => {

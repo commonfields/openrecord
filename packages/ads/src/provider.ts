@@ -10,6 +10,9 @@
 //   GOOGLE_ADS_DEVELOPER_TOKEN     from the Google Ads API Center of a manager account
 //   GOOGLE_ADS_API_VERSION         default v21
 //   (Google Business Profile uses the Google client above; Google must grant the project Business Profile API access.)
+//   LINKEDIN_CLIENT_ID/SECRET      a LinkedIn app with Share on LinkedIn and Sign in with LinkedIn (OpenID Connect)
+//   LINKEDIN_ORGANIZATIONS=1       the app also has the Community Management API: post to company pages and read their statistics
+//   LINKEDIN_API_VERSION           YYYYMM, default 202611
 //   ADS_PROVIDER_STAND_IN_URL      loopback stand-in for tests only
 import { Context, Layer } from "effect"
 import { AD_OAUTH_CALLBACK_PATH, type ChannelProvider } from "@openrecord/contracts"
@@ -18,6 +21,7 @@ import { GOOGLE_ADS_ENDPOINT, type GoogleAdsConfig } from "./google-ads.js"
 import { GOOGLE_BUSINESS_ENDPOINTS, type GoogleBusinessConfig } from "./google-business.js"
 import { STRIPE_ENDPOINT, type StripeConfig } from "./stripe.js"
 import { META_ENDPOINTS, type MetaConfig } from "./meta.js"
+import { LINKEDIN_ENDPOINTS, type LinkedInConfig } from "./linkedin.js"
 import type { FetchLike } from "./http.js"
 
 export type AdsUnavailable = "MISSING_REDIRECT_URI" | "MISSING_ENCRYPTION_KEY" | "MISSING_APP" | "MISSING_DEVELOPER_TOKEN"
@@ -30,9 +34,11 @@ export interface AdsConfig {
   /** Stripe needs only the encryption key: each business pastes its own restricted key. */
   readonly stripe: { readonly configured: true; readonly config: StripeConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
   readonly googleBusiness: { readonly configured: true; readonly config: GoogleBusinessConfig; readonly oauth: Ga4OAuthConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
+  readonly linkedin: { readonly configured: true; readonly config: LinkedInConfig } | { readonly configured: false; readonly reason: AdsUnavailable }
 }
 export class AdsProvider extends Context.Tag("AdsProvider")<AdsProvider, AdsConfig>() {}
-export const adsConfigured = (c: AdsConfig, provider: ChannelProvider) => (provider === "meta" ? c.meta : provider === "google_ads" ? c.googleAds : c.googleBusiness).configured
+export const adsConfigured = (c: AdsConfig, provider: ChannelProvider) =>
+  (provider === "meta" ? c.meta : provider === "google_ads" ? c.googleAds : provider === "linkedin" ? c.linkedin : c.googleBusiness).configured
 
 const validRedirect = (raw: string) => {
   try {
@@ -77,7 +83,13 @@ export const adsConfigFromEnv = (env: Record<string, string | undefined> = proce
         oauth: { clientId: v("GOOGLE_OAUTH_CLIENT_ID"), clientSecret: v("GOOGLE_OAUTH_CLIENT_SECRET"), redirectUri, endpoints, fetch: fetchImpl } }
   const stripe: AdsConfig["stripe"] = !cipher ? { configured: false, reason: "MISSING_ENCRYPTION_KEY" }
     : { configured: true, config: { endpoint: origin ? `${origin}/stripe/v1` : STRIPE_ENDPOINT, fetch: fetchImpl } }
-  return { cipher, appBaseUrl, meta, googleAds, googleBusiness, stripe }
+  const linkedinVersion = /^\d{6}$/.test(v("LINKEDIN_API_VERSION")) ? v("LINKEDIN_API_VERSION") : "202611"
+  const linkedin: AdsConfig["linkedin"] = common ? { configured: false, reason: common }
+    : !v("LINKEDIN_CLIENT_ID") || !v("LINKEDIN_CLIENT_SECRET") ? { configured: false, reason: "MISSING_APP" }
+    : { configured: true, config: { clientId: v("LINKEDIN_CLIENT_ID"), clientSecret: v("LINKEDIN_CLIENT_SECRET"), redirectUri, version: linkedinVersion,
+        organizations: v("LINKEDIN_ORGANIZATIONS") === "1", fetch: fetchImpl,
+        endpoints: origin ? { authorize: `${origin}/linkedin/oauth/authorization`, token: `${origin}/linkedin/oauth/accessToken`, api: `${origin}/linkedin` } : LINKEDIN_ENDPOINTS } }
+  return { cipher, appBaseUrl, meta, googleAds, googleBusiness, stripe, linkedin }
 }
 
 export const AdsProviderLive = Layer.sync(AdsProvider, () => adsConfigFromEnv())

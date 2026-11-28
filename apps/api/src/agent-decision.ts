@@ -28,7 +28,7 @@ import { connectorStatuses, gapsOf } from "./connections.js"
 
 export const DECISION_VERSION = "rules-v1"
 
-export type Intent = "report" | "visibility" | "write" | "site" | "campaign" | "media" | "review"
+export type Intent = "report" | "visibility" | "write" | "site" | "campaign" | "media" | "social" | "review"
 
 interface IntentRule {
   readonly match: RegExp
@@ -99,6 +99,11 @@ const RULES: Readonly<Record<Intent, IntentRule>> = {
     match: /\b(ads?|adwords|google ads|meta ads|facebook ads|spend|budget|cpc|cpa|roas|bids?|reviews?|stars?|google business|local|maps|listing)\b/,
     tools: ["read_ad_campaigns", "read_ad_performance", "prepare_account_action", "read_reviews", "read_local_profile"],
     prefetch: ["read_ad_performance", "read_search_performance", "read_results", "read_local_profile", "read_business_truth"],
+  },
+  social: {
+    match: /\b(linkedin|social|posts?|posting|followers?|company page|thought leadership|announce\w*)\b/,
+    tools: ["read_linkedin_posts", "prepare_account_action", "read_marketing_strategy", "read_marketing_campaigns"],
+    prefetch: ["read_linkedin_posts", "read_business_truth", "read_marketing_strategy"],
   },
   review: {
     match: /\b(review(er)?|second opinion|check (this|the|my)|approve|approval|proposals?|decisions?|inbox|pending|rejected|outcomes?)\b/,

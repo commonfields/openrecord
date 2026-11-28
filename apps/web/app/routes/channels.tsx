@@ -109,6 +109,7 @@ export function ChannelsPage() {
       google_business: "Calls, directions, searches and reviews from your Google listing.",
       google_ads: "What your Search, YouTube and Display ads cost and bring in.",
       meta: "What your Facebook and Instagram ads cost and bring in.",
+      linkedin: "Approved posts on your company page or profile, and how page posts do.",
     }
     for (const provider of ["google_business", "google_ads", "meta"] as const) {
       const platform = a.providers[provider]

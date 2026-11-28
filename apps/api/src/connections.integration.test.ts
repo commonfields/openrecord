@@ -67,7 +67,7 @@ suite("Connections and health checks (stand-in Webflow, no network)", () => {
   it("lists every connector for the business with how to connect it and what is missing", async () => {
     const f = await fixture()
     const list = await f.statuses()
-    expect(list.map(c => c.id)).toEqual(["google", "github", "wordpress", "webflow", "google_ads", "google_business", "meta", "stripe"])
+    expect(list.map(c => c.id)).toEqual(["google", "github", "wordpress", "webflow", "google_ads", "google_business", "meta", "linkedin", "stripe"])
     expect(list.find(c => c.id === "webflow")).toMatchObject({ state: "NOT_CONNECTED", method: "PASTE_KEY", detail: "Webflow is not connected." })
     // Nothing registers OpenRecord with Google or GitHub in this test, so nobody could connect them yet: said plainly, not as "not connected".
     expect(list.find(c => c.id === "google")).toMatchObject({ state: "UNAVAILABLE" })

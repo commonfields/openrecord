@@ -20,6 +20,7 @@ const BLURB: Record<ChannelProvider, string> = {
   google_business: "Your Google listing on Search and Maps: calls, directions, searches and reviews.",
   meta: "Facebook and Instagram ads: spend, clicks, leads and purchases.",
   google_ads: "Search, YouTube and Display ads: spend, clicks and conversions.",
+  linkedin: "Approved posts on your company page or profile, and how page posts do.",
 }
 
 /** Connect Meta and Google Ads, and choose which ad accounts belong to this business. */

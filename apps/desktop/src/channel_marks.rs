@@ -46,7 +46,7 @@ pub fn for_channel(key: &str) -> Option<&'static Icon> {
         "profile:YELP" => &YELP,
         "profile:G2" => &G2,
         "profile:PRODUCT_HUNT" => &PRODUCT_HUNT,
-        "profile:LINKEDIN" => &LINKEDIN,
+        "linkedin" | "profile:LINKEDIN" => &LINKEDIN,
         _ => return None,
     })
 }

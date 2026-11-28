@@ -27,7 +27,7 @@ import { checkWordPress } from "./wordpress.js"
 import { checkWebflow } from "./webflow.js"
 import { json, operatorSessionFor, type WithSession } from "./record-routes.js"
 
-export type ConnectorId = "google" | "google_ads" | "google_business" | "meta" | "stripe" | "wordpress" | "webflow" | "github"
+export type ConnectorId = "google" | "google_ads" | "google_business" | "meta" | "linkedin" | "stripe" | "wordpress" | "webflow" | "github"
 /** How a person connects it: sign in with the provider, paste a key from it, or the OpenRecord team sets it up. */
 export type ConnectMethod = "SIGN_IN" | "PASTE_KEY" | "TEAM"
 export type ConnectorState =
@@ -61,6 +61,7 @@ export const CONNECTORS: ReadonlyArray<ConnectorSpec> = [
   { id: "google_ads", label: "Google Ads", method: "SIGN_IN", enables: "Reads campaigns and spend, and prepares changes for approval.", gates: ["read_ad_campaigns", "prepare_account_action"] },
   { id: "google_business", label: "Google Business Profile", method: "SIGN_IN", enables: "Reads profile views, search terms and reviews, and drafts review replies.", gates: ["read_reviews", "prepare_account_action"] },
   { id: "meta", label: "Meta ads", method: "SIGN_IN", enables: "Reads Facebook and Instagram ad performance and spend.", gates: [] },
+  { id: "linkedin", label: "LinkedIn", method: "SIGN_IN", enables: "Publishes approved posts to a company page or profile, and reads how page posts did.", gates: ["read_linkedin_posts", "prepare_account_action"] },
   { id: "stripe", label: "Stripe", method: "PASTE_KEY", enables: "Reads revenue, to tie marketing to money.", gates: [] },
 ]
 
@@ -175,6 +176,7 @@ export const connectorStatuses = (accountId: string, businessId: string) => Effe
     google_ads: { configured: ads.googleAds.configured, accounts: adAccounts("google_ads") },
     google_business: { configured: ads.googleBusiness.configured, accounts: adAccounts("google_business") },
     meta: { configured: ads.meta.configured, accounts: adAccounts("meta") },
+    linkedin: { configured: ads.linkedin.configured, accounts: adAccounts("linkedin") },
     stripe: { configured: ads.stripe.configured && ads.cipher !== null, accounts: stripe },
   }
   return CONNECTORS.map((spec): ConnectorStatus => {
