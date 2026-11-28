@@ -103,6 +103,12 @@ pub struct Message {
     /// Questions the run left for the person, with what it assumed.
     #[serde(default)]
     pub blanks: Vec<crate::chat::Blank>,
+    /// The plan the run showed, as it stood at the end.
+    #[serde(default)]
+    pub plan: Option<crate::chat::Plan>,
+    /// Set when the turn paused for the owner's decision on these cards.
+    #[serde(default)]
+    pub waiting: Option<crate::chat::Waiting>,
     #[serde(default)]
     pub context: Option<crate::chat::ContextUse>,
 }
@@ -125,6 +131,8 @@ impl Message {
             attachments: Vec::new(),
             notes: Vec::new(),
             blanks: Vec::new(),
+            plan: None,
+            waiting: None,
             context: None,
         }
     }
@@ -144,6 +152,64 @@ pub struct ToolCall {
     pub tool: String,
     #[serde(default)]
     pub summary: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RollbackItem {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// What undoing a chat changed, as the server reports it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Rollback {
+    #[serde(default, rename = "removedMessages")]
+    pub removed_messages: usize,
+    #[serde(default)]
+    pub withdrawn: Vec<RollbackItem>,
+    /// Cards already decided (approved, published, done), left as they are.
+    #[serde(default, rename = "keptCards")]
+    pub kept_cards: Vec<RollbackItem>,
+    #[serde(default, rename = "restoredArtifacts")]
+    pub restored_artifacts: Vec<RollbackItem>,
+    #[serde(default, rename = "archivedArtifacts")]
+    pub archived_artifacts: Vec<RollbackItem>,
+    /// Pieces someone edited since, or that are on a campaign page.
+    #[serde(default, rename = "keptArtifacts")]
+    pub kept_artifacts: Vec<RollbackItem>,
+    #[serde(default, rename = "stoppedTasks")]
+    pub stopped_tasks: usize,
+}
+
+impl Rollback {
+    /// One plain sentence or two for the notice after an undo.
+    pub fn summary(&self) -> String {
+        let n = |k: usize, one: &str, many: &str| if k == 1 { format!("1 {one}") } else { format!("{k} {many}") };
+        let mut done = Vec::new();
+        if !self.withdrawn.is_empty() {
+            done.push(format!("withdrew {}", n(self.withdrawn.len(), "pending item", "pending items")));
+        }
+        if !self.restored_artifacts.is_empty() {
+            done.push(format!("put {} back as it was", n(self.restored_artifacts.len(), "piece", "pieces")));
+        }
+        if !self.archived_artifacts.is_empty() {
+            done.push(format!("archived {} it wrote", n(self.archived_artifacts.len(), "piece", "pieces")));
+        }
+        if self.stopped_tasks > 0 {
+            done.push(format!("stopped {}", n(self.stopped_tasks, "helper", "helpers")));
+        }
+        let mut out = if done.is_empty() { "Undone.".to_string() } else {
+            let last = done.pop().unwrap_or_default();
+            let head = if done.is_empty() { last } else { format!("{} and {last}", done.join(", ")) };
+            format!("Undone. OpenRecord {head}.")
+        };
+        let kept = self.kept_cards.len() + self.kept_artifacts.len();
+        if kept > 0 {
+            out.push_str(&format!(" {} stayed because {} already decided or edited since.", n(kept, "item", "items"), if kept == 1 { "it was" } else { "they were" }));
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -774,6 +840,20 @@ impl Client {
         }
         let path = format!("{}/conversation", agent_base(business));
         Ok(self.post::<R>(&path, json!({ "conversationId": id, "from": { "conversationId": from, "through": through } }))?.conversation)
+    }
+
+    /// Undoes a chat from the person's message `from`: that message and every
+    /// later one leave the chat, and the pending work those turns saved is
+    /// withdrawn. `request` makes a retried call return the same result.
+    pub fn rollback_conversation(&self, business: &str, conversation: &str, from: usize, revision: i64, request: &str) -> ApiResult<(Conversation, Rollback)> {
+        #[derive(Deserialize)]
+        struct R {
+            conversation: Conversation,
+            rollback: Rollback,
+        }
+        let path = format!("{}/conversations/{}/rollback", agent_base(business), enc(conversation));
+        let r = self.post::<R>(&path, json!({ "from": from, "revision": revision, "requestId": request }))?;
+        Ok((r.conversation, r.rollback))
     }
 
     /// Queues a turn and returns once the API has accepted it.
@@ -1471,5 +1551,26 @@ mod turn_failure_tests {
         }
         // Anything else keeps the general message.
         assert_eq!(ApiError::Status(500, "boom".into()).message(), "The server could not complete the request. Try again shortly.");
+    }
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::Rollback;
+
+    #[test]
+    fn an_undo_says_what_changed_and_what_stayed() {
+        let parse = |v: serde_json::Value| serde_json::from_value::<Rollback>(v).expect("rollback");
+        assert_eq!(parse(serde_json::json!({ "removedMessages": 2 })).summary(), "Undone.");
+        let r = parse(serde_json::json!({
+            "removedMessages": 4,
+            "withdrawn": [{ "type": "WORDPRESS_CHANGE", "id": "a" }, { "type": "MARKETING_STRATEGY", "id": "b" }],
+            "keptCards": [{ "type": "WORDPRESS_CHANGE", "id": "c", "status": "PUBLISHED" }],
+            "restoredArtifacts": [{ "id": "d", "title": "Pricing page", "version": 4, "restoredFrom": 1 }],
+            "archivedArtifacts": [], "keptArtifacts": [], "stoppedTasks": 1
+        }));
+        assert_eq!(r.removed_messages, 4);
+        assert_eq!(r.summary(), "Undone. OpenRecord withdrew 2 pending items, put 1 piece back as it was and stopped 1 helper. 1 item stayed because it was already decided or edited since.");
+        assert!(!r.summary().contains('·'));
     }
 }

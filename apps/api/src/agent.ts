@@ -5,6 +5,8 @@ import type { AgentToolResult } from "./agent-tools.js"
 import { AgentModelError, configuredAgentModel, type AgentModel, type ModelContent, type ModelResponse } from "./agent-model.js"
 import { collectReplyInternals, replyInternals, sanitiseAgentReply } from "./agent-reply.js"
 import { LEAVE_BLANK, MAX_BLANKS_PER_REPLY, blankOf, type BlankRef } from "./agent-blanks.js"
+import { UPDATE_PLAN, planOf, type PlanRef } from "./agent-plan.js"
+import { WAIT_FOR_DECISION, WaitInput, waitDeclaration, type Pause } from "./agent-pause.js"
 import type { HarnessSelection } from "@openrecord/contracts"
 import { harnessModel } from "./harness-model.js"
 import { resolveHarness } from "./harness-store.js"
@@ -162,6 +164,10 @@ export const runConversation = (input: {
   readonly capabilityStats?: ((names: ReadonlyArray<string>) => Effect.Effect<CapabilityStats>) | undefined
   /** Saves a search that found nothing as a request for the team; never fails. Absent in fixtures. */
   readonly recordMissingCapability?: ((query: string) => Effect.Effect<void>) | undefined
+  /** The turn may pause for the owner's decision on cards it saved (wait_for_decision). */
+  readonly pausable?: boolean | undefined
+  /** A paused turn's own model conversation, ending with the decisions: the run continues it instead of building context. */
+  readonly resumeContents?: ReadonlyArray<ModelContent> | undefined
 }) => Effect.gen(function*() {
   const journal = input.journal ?? noJournal
   const budget = input.budget ?? DEFAULT_RUN_BUDGET
@@ -184,6 +190,7 @@ export const runConversation = (input: {
     ...routedCards,
     ...(routed.length < tools.length && !routedCards.some(t => t.name === TOOL_DETAILS.name) ? [TOOL_DETAILS] : []),
     ...(discovery ? [FIND_CAPABILITIES] : []),
+    ...(input.pausable && tools.length ? [waitDeclaration] : []),
   ]
   const declare = () => {
     const unlocked = routed.length < tools.length ? tools.filter(t => expanded.has(t.name) && !routed.includes(t)) : []
@@ -202,8 +209,11 @@ export const runConversation = (input: {
     contextBudget = { ...contextBudget, historyChars: Math.max(0, Math.min(contextBudget.historyChars - 1, Math.floor(contextBudget.historyChars * ratio) - 256)) }
     built = buildContext(input.history, input.message, contextBudget, input.resumeContext)
   }
-  const contents: ModelContent[] = built.contents
-  yield* journal.record("CONTEXT_BUILT", { verbatimMessages: built.verbatimMessages, compactedMessages: built.compactedMessages, omittedMessages: built.omittedMessages, chars: built.chars })
+  // A paused turn continues its own conversation when it still fits; otherwise it starts from the chat as any turn does.
+  const resumed = input.resumeContents?.length && Buffer.byteLength(JSON.stringify(input.resumeContents), "utf8") <= contextLimit(declare()) ? input.resumeContents : undefined
+  const contents: ModelContent[] = resumed ? [...resumed] : built.contents
+  yield* journal.record("CONTEXT_BUILT", resumed ? { resumedFromPause: true, entries: resumed.length, chars: JSON.stringify(resumed).length }
+    : { verbatimMessages: built.verbatimMessages, compactedMessages: built.compactedMessages, omittedMessages: built.omittedMessages, chars: built.chars, ...(input.resumeContents?.length ? { pauseTooLarge: true } : {}) })
   const toolCalls: AgentToolCall[] = []
   const citations = new Map<string, AgentCitation>()
   const internals = replyInternals()
@@ -218,6 +228,8 @@ export const runConversation = (input: {
   const notesRead: string[] = []
   // Questions left for the person while the work carried on.
   const blanks: BlankRef[] = []
+  // The latest plan the model showed; each update replaces the whole list.
+  let plan: PlanRef | undefined
   const startedAt = Date.now()
   const deadline = input.deadline ?? startedAt + EXECUTION_LIMITS.runMs
   const evidenceForAnswer: { tool: string; summary: string; excerpt: string }[] = []
@@ -375,7 +387,7 @@ export const runConversation = (input: {
       const outcome: RunOutcome = gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED"
       yield* journal.record("VERIFICATION", { passed: gaps.length === 0, missing, gaps, outcome })
       return { reply, toolCalls, citations: [...citations.values()], usage, outcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks), artifacts: mergeArtifacts(artifacts),
-        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}),
+        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}), ...(plan ? { plan } : {}),
         context: { historyChars: built.historyChars, budgetChars: built.budgetChars, verbatim: built.verbatimMessages, compacted: built.compactedMessages, omitted: built.omittedMessages } }
     }
     // The model ignored the final notice; the run cannot end with an answer.
@@ -394,7 +406,9 @@ export const runConversation = (input: {
     const invocationIds = functions.map(() => randomUUID())
     const withinBudget = functions.map((_, i) => calls + i < budget.toolCalls)
     const started = new Map<number, Either.Either<AgentToolResult, unknown>>()
-    const catalogCall = (name: string) => name === TOOL_DETAILS.name || name === FIND_CAPABILITIES.name
+    const catalogCall = (name: string) => name === TOOL_DETAILS.name || name === FIND_CAPABILITIES.name || name === WAIT_FOR_DECISION
+    // Set when the model pauses this turn for the owner's decision on cards it saved.
+    let pauseFor: ReadonlyArray<string> | undefined
     const offeredCatalogTool = (name: string) => requestTools.some(t => t.name === name) && !tools.some(t => t.name === name)
     const independent = functions.length > 1 && functions.every(call => runsTogether(call.name))
     const parallel = functions.flatMap((call, i) => withinBudget[i] && !catalogCall(call.name) && (toolEffect(call.name) === "delegate" || independent) ? [i] : [])
@@ -430,6 +444,19 @@ export const runConversation = (input: {
         yield* journal.record("VERIFICATION", matches.length ? { action: "CAPABILITIES_FOUND", step, tools: matches.map(match => match.name) }
           : { action: "CAPABILITIES_NOT_FOUND", step, query: parsed.right.query.slice(0, 200) })
         results.push({ functionResponse: { name: call.name, response: { capabilities: matches, found: matches.length > 0, note: capabilityNote(matches.length) } } })
+        continue
+      }
+      if (call.name === WAIT_FOR_DECISION) {
+        const parsed = Schema.decodeUnknownEither(WaitInput, { onExcessProperty: "error" })(call.args)
+        const saved = new Set(decisions.map(d => d.id))
+        if (!input.pausable || parsed._tag === "Left") { refuse(call.name, toolFailure(input.pausable ? "INVALID_INPUT" : "UNKNOWN_TOOL")); continue }
+        const unknown = parsed.right.itemIds.filter(id => !saved.has(id))
+        if (unknown.length) {
+          refuse(call.name, { ...toolFailure("INVALID_INPUT"), guidance: `Only cards saved in this turn can be waited on; these are not: ${unknown.join(", ")}. Save the proposal first, then wait on the ID its receipt returned.` })
+          continue
+        }
+        pauseFor = [...new Set(parsed.right.itemIds)]
+        yield* journal.record("VERIFICATION", { action: "PAUSED_FOR_DECISION", step, itemIds: pauseFor })
         continue
       }
       if (call.name === TOOL_DETAILS.name) {
@@ -481,7 +508,9 @@ export const runConversation = (input: {
       artifacts.push(...(result.right.artifacts ?? []))
       const blank = call.name === LEAVE_BLANK && blanks.length < MAX_BLANKS_PER_REPLY ? blankOf(result.right) : undefined
       if (blank) blanks.push(blank)
-      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary, ...(blank ? { blank } : {}),
+      const shown = call.name === UPDATE_PLAN ? planOf(result.right) : undefined
+      if (shown) plan = shown
+      yield* journal.record("TOOL_COMPLETED", { invocationId, tool: call.name, effect, summary: result.right.summary, ...(blank ? { blank } : {}), ...(shown ? { plan: shown } : {}),
         citations: result.right.citations.slice(0, 20).map(c => ({ kind: c.kind, id: c.id, text: c.text.slice(0, 140) })),
         ...(effect === "propose" || effect === "record" ? { receipt: proposalReceipt(result.right) } : {}),
         ...(result.right.artifacts?.length ? { artifacts: result.right.artifacts } : {}),
@@ -490,6 +519,16 @@ export const runConversation = (input: {
       ruled.add(call.name)
       results.push({ functionResponse: { name: call.name, response: { ...(fitted?.partial ? { compactedEvidence: fitted.value, partial: true, note: fitted.note } : { untrustedEvidence: result.right }),
         ...(rule ? { openrecordNote: rule } : {}) } } })
+    }
+    // Paused: the turn ends here with what the model said, keeping its conversation to continue from.
+    if (pauseFor) {
+      const said = sanitiseAgentReply(trimReply(content.parts.map(p => (p as { text?: string }).text ?? "").join("").trim()), internals).trim()
+      const reply = said || `I've saved ${pauseFor.length === 1 ? "this" : "these"} for your decision and will carry on from here once you decide.`
+      const pause: Pause = { itemIds: pauseFor, checkpoint: { contents: [...contents], results } }
+      yield* journal.record("VERIFICATION", { passed: gaps.length === 0, gaps, outcome: gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED", paused: true })
+      return { reply, toolCalls, citations: [...citations.values()], usage, outcome: (gaps.length ? "ANSWERED_WITH_GAPS" : "ANSWERED") as RunOutcome, gaps, decisions: mergeDecisions(decisions), tasks: mergeTasks(tasks), artifacts: mergeArtifacts(artifacts),
+        activity: activity.slice(-MAX_ACTIVITY), durationMs: Date.now() - startedAt, ...(notesRead.length ? { notes: notesRead } : {}), ...(blanks.length ? { blanks } : {}), ...(plan ? { plan } : {}),
+        context: { historyChars: built.historyChars, budgetChars: built.budgetChars, verbatim: built.verbatimMessages, compacted: built.compactedMessages, omitted: built.omittedMessages }, pause }
     }
     if (calls >= budget.toolCalls || step >= budget.modelSteps - 1) {
       finalStep = true
@@ -521,7 +560,9 @@ export interface TurnExtension {
   readonly dispatch: (name: string, args: unknown) => Effect.Effect<AgentToolResult, unknown>
 }
 export const handleAgentMessage = (accountId: string, userId: string, businessId: string | null, message: string, history: AgentHistory = [], selection?: HarnessSelection,
-  assertActive: Effect.Effect<void, AgentModelError, import("@effect/sql").SqlClient.SqlClient> = Effect.void, journal: RunJournal = noJournal, extension?: TurnExtension, generateTitle = false, style?: AgentResponseStyle, surfaces?: ReadonlyArray<"ui">) =>
+  assertActive: Effect.Effect<void, AgentModelError, import("@effect/sql").SqlClient.SqlClient> = Effect.void, journal: RunJournal = noJournal, extension?: TurnExtension, generateTitle = false, style?: AgentResponseStyle, surfaces?: ReadonlyArray<"ui">,
+  /** A top-level business turn may pause for decisions; a resumed one continues its paused conversation. */
+  pausing?: { readonly pausable: boolean; readonly resume?: ReadonlyArray<ModelContent> | undefined }) =>
   Effect.gen(function*() {
     const model = selection ? yield* harnessModel({ accountId,userId,businessId },selection) : yield* configuredAgentModel
     // Capture Effect services in a dispatcher; the pure loop is fixture-testable.
@@ -561,6 +602,7 @@ export const handleAgentMessage = (accountId: string, userId: string, businessId
     const decision = decides && businessId !== null && workflow === null && !message.trim().startsWith("/") ? decideTurn(message, offered) : undefined
     const decidedNote = (decision?.tools ? "\n\nIf the declared tools do not cover the task, search with find_capabilities and load a match with tool_details." : "") + gaps.note
     const answer = yield* runConversation({ message, history, model: invoke, dispatch, journal, resumeContext, limits: requestLimits(selection ? HARNESS_REQUEST_BYTES : HOSTED_REQUEST_BYTES), context: TURN_CONTEXT_BUDGET, budget: workflow?.budget ?? DEFAULT_RUN_BUDGET, completion: workflow?.completion, cards: workflow === null, style, surfaces,
+      pausable: pausing?.pausable === true && businessId !== null && workflow === null, resumeContents: businessId !== null && workflow === null ? pausing?.resume : undefined,
       decision, recordMissingCapability: query => businessId ? recordMissingCapability({ accountId, businessId }, query, "SEARCH_MISS").pipe(Effect.provide(modelContext)) : Effect.void,
       capabilityStats: names => capabilityStats(accountId, names).pipe(Effect.provide(modelContext), Effect.timeout("3 seconds"), Effect.orElseSucceed(() => new Map())),
       ...plan, ...(guidance || decidedNote ? { tools: offered, system: `${plan.system}${guidance}${decidedNote}` } : { tools: offered }), ...(businessId === null ? {

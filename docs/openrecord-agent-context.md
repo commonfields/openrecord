@@ -282,7 +282,7 @@ How it maps onto what exists:
   runs in a sandbox with no tenant credentials, or not at all. Connected MCP
   tools stay read-only (`call_connected_tool`).
 - Credentials are injected server-side and never appear in schemas or
-  results (the treg pattern).
+  results.
 
 ### Evals that gate the switch
 

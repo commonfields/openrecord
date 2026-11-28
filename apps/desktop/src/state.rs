@@ -292,6 +292,19 @@ impl AnswerView {
 }
 
 /// The "Save as playbook" dialog.
+/// Undoing the chat from one of the person's messages, while it asks to confirm.
+pub struct UndoTurn {
+    /// The message's place in the chat, and the chat it was in.
+    pub index: usize,
+    pub conversation: String,
+    pub revision: i64,
+    pub text: String,
+    /// Kept across a retried click, so the server undoes once.
+    pub request: String,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
 pub struct SavePlaybook {
     pub title: TextEdit,
     /// The command; empty means the title's slug.
@@ -428,6 +441,12 @@ pub struct App {
     /// Skip split springs for one layout after dock/collapse so the right panel does not ease.
     /// The sidebar folding or unfolding, while it moves (`SidebarSlide`).
     pub sidebar_slide: Option<SidebarSlide>,
+    /// A picture of the artifact page moving in its place (`page_shot`).
+    pub page_shot: Option<crate::page_shot::PageShot>,
+    /// The picture the panel last folded with, for its way back.
+    pub last_shot: Option<crate::page_shot::PageShot>,
+    /// The page's width beside the chat when the panel was last widened (`page_shot`).
+    pub shot_narrow_w: Option<f32>,
     pub menu: Option<Menu>,
     /// The business switcher: archived businesses (for restoring), whether they
     /// show, and whether "Archive" is waiting for its second press.
@@ -512,6 +531,7 @@ pub struct App {
     pub composer_slot: ComposerSlot,
     pub composer_widths: [f32; 2],
     pub save_playbook: Option<SavePlaybook>,
+    pub undo: Option<UndoTurn>,
     pub share: Option<ShareChat>,
     /// Automatic follow-ups for the business on screen, and their dialog.
     pub followups: Load<crate::followups::Followups>,
@@ -596,6 +616,11 @@ pub struct App {
     pub memory: Load<Vec<crate::settings::Note>>,
     pub memory_kind: usize,
     pub memory_text: TextEdit,
+    /// The business's research spending and monthly limit, and the limit box.
+    pub research_spend: Load<crate::settings::ResearchSpend>,
+    pub research_limit: TextEdit,
+    pub research_limit_busy: bool,
+    pub research_limit_error: Option<String>,
     pub providers: Load<crate::settings::Catalog>,
     pub open_models: std::collections::BTreeSet<String>,
     pub pairing: Load<crate::settings::Pairing>,
@@ -696,6 +721,9 @@ impl App {
             sidebar_open: true,
             sidebar_peek: false,
             sidebar_slide: None,
+            page_shot: None,
+            last_shot: None,
+            shot_narrow_w: None,
             menu: None,
             archived_businesses: Vec::new(),
             show_archived_businesses: false,
@@ -783,6 +811,7 @@ impl App {
             composer_slot: ComposerSlot::Main,
             composer_widths: [0.0; 2],
             save_playbook: None,
+            undo: None,
             share: None,
             open_logs: Default::default(),
             open_sources: Default::default(),
@@ -805,6 +834,10 @@ impl App {
             memory: Load::Idle,
             memory_kind: 0,
             memory_text: TextEdit::new(""),
+            research_spend: Load::Idle,
+            research_limit: TextEdit::new(""),
+            research_limit_busy: false,
+            research_limit_error: None,
             providers: Load::Idle,
             open_models: Default::default(),
             pairing: Load::Idle,
@@ -1912,7 +1945,10 @@ impl App {
                 self.net.providers();
                 if let Some(b) = self.active.clone() {
                     self.memory = keep_or_load(&self.memory);
-                    self.net.memory(b);
+                    self.net.memory(b.clone());
+                    self.research_spend = keep_or_load(&self.research_spend);
+                    self.research_limit_error = None;
+                    self.net.research_spend(b);
                 }
             }
             _ => {}
@@ -1939,6 +1975,22 @@ impl App {
     pub fn set_pref(&mut self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
         f(&mut self.prefs);
         self.prefs.save();
+    }
+
+    /// Saves the monthly research limit typed in settings; an empty box removes it.
+    pub fn save_research_limit(&mut self) {
+        let Some(b) = self.active.clone() else { return };
+        if self.research_limit_busy {
+            return;
+        }
+        match crate::settings::parse_limit(&self.research_limit.text) {
+            Ok(limit) => {
+                self.research_limit_busy = true;
+                self.research_limit_error = None;
+                self.net.set_research_budget(b, limit);
+            }
+            Err(e) => self.research_limit_error = Some(e.into()),
+        }
     }
 
     pub fn add_memory(&mut self) {
@@ -2544,6 +2596,33 @@ impl App {
     }
 
     /// Asks the question behind the latest reply again.
+    /// Asks to undo the chat from the person's message `i`.
+    pub fn ask_undo(&mut self, i: usize) {
+        if matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        let Some(c) = self.conversation.ready() else { return };
+        if self.chat_id.as_deref() != Some(c.id.as_str()) {
+            return;
+        }
+        let Some(m) = c.messages.get(i) else { return };
+        if m.role != "user" || m.origin.is_some() {
+            return;
+        }
+        self.undo = Some(UndoTurn { index: i, conversation: c.id.clone(), revision: c.revision, text: m.text.clone(), request: crate::api::uuid(), busy: false, error: None });
+    }
+
+    pub fn confirm_undo(&mut self) {
+        let Some(scope) = self.chat_scope() else { return };
+        let Some(u) = &mut self.undo else { return };
+        if u.busy || matches!(self.turn, Turn::Working { .. }) {
+            return;
+        }
+        u.busy = true;
+        u.error = None;
+        self.net.rollback(scope, u.conversation.clone(), u.index, u.revision, u.request.clone(), u.text.clone());
+    }
+
     /// Carries the chat up to message `i` into a new chat and opens it there;
     /// the original stays as it was in the history.
     pub fn branch_reply(&mut self, i: usize) {
@@ -2689,6 +2768,7 @@ impl App {
         } else {
             self.notice_track = None;
         }
+        changed |= self.poll_page_shot(tx);
         // Native panes are placed by hand each frame while the sidebar slides.
         if let Some(slide) = &self.sidebar_slide {
             if slide.started.elapsed().as_secs_f32() > SIDEBAR_SPRING.duration * 2.0 {
@@ -2987,6 +3067,57 @@ impl App {
                     Err(e) => self.conversation = Load::Failed(e),
                 }
             }
+            Reply::RolledBack(b, text, r) if self.chat_scope().as_deref() == Some(b.as_str()) => {
+                let busy = matches!(&r, Err(ApiError::Status(409, body)) if body.contains("\"BUSY\""));
+                let stale = matches!(&r, Err(ApiError::Status(409, body)) if body.contains("\"STALE\""));
+                match self.failed(r) {
+                    Ok((c, rollback)) => {
+                        self.undo = None;
+                        // Pieces it archived close; ones it put back read again.
+                        for a in &rollback.archived_artifacts {
+                            self.close_tab(&crate::side::SideTab::Artifact(a.id.clone()));
+                        }
+                        for a in &rollback.restored_artifacts {
+                            if self.artifacts.iter().any(|p| p.id == a.id) {
+                                self.net.artifact(b.clone(), a.id.clone(), None);
+                            }
+                        }
+                        if self.chat_id.as_deref() == Some(c.id.as_str()) {
+                            self.turn = Turn::Idle;
+                            self.conversation = Load::Ready(c);
+                            // The undone message comes back to the box, to change and send again.
+                            if self.composer.text.trim().is_empty() {
+                                self.composer.replace_text(&text);
+                            }
+                            tx.settle();
+                            tx.scroll_to_bottom("transcript");
+                            tx.focus("composer-input", false);
+                        }
+                        self.notice = Some(rollback.summary());
+                    }
+                    Err(e) => {
+                        let message = if busy {
+                            "The agent is still working in this chat. Undo once it finishes.".to_string()
+                        } else if stale {
+                            "This chat changed since you opened it. Look at it again, then undo.".to_string()
+                        } else if e.is_empty() {
+                            "Couldn't undo the chat. Try again.".to_string()
+                        } else {
+                            e
+                        };
+                        if stale {
+                            self.undo = None;
+                            self.notice = Some(message);
+                            if let Some(id) = self.chat_id.clone() {
+                                self.net.conversation(b.clone(), id);
+                            }
+                        } else if let Some(u) = &mut self.undo {
+                            u.busy = false;
+                            u.error = Some(message);
+                        }
+                    }
+                }
+            }
             Reply::Branched(b, r) if self.chat_scope().as_deref() == Some(b.as_str()) => match self.failed(r) {
                 Ok(c) => {
                     self.chat_id = Some(c.id.clone());
@@ -3028,6 +3159,31 @@ impl App {
             Reply::Identity(r) => self.identity = to_load(self.failed(r)),
             Reply::Memory(b, r) if here(self, &b) => self.memory = to_load(self.failed(r)),
             Reply::Memory(..) => {}
+            Reply::ResearchSpend(b, r) if here(self, &b) => {
+                let r = to_load(self.failed(r));
+                if let Load::Ready(spend) = &r {
+                    self.research_limit.replace_text(&spend.budget.limit_micro.map(|m| format!("{:.2}", m as f64 / 1_000_000.0)).unwrap_or_default());
+                }
+                self.research_spend = r;
+            }
+            Reply::ResearchSpend(..) => {}
+            Reply::ResearchBudgetSaved(b, r) if here(self, &b) => {
+                self.research_limit_busy = false;
+                match self.failed(r) {
+                    Ok(budget) => {
+                        if let Load::Ready(spend) = &mut self.research_spend {
+                            spend.budget = budget.clone();
+                        }
+                        self.research_limit.replace_text(&budget.limit_micro.map(|m| format!("{:.2}", m as f64 / 1_000_000.0)).unwrap_or_default());
+                        self.notice = Some(match budget.limit_micro {
+                            Some(m) => format!("Monthly research limit set to {}.", crate::settings::dollars(m)),
+                            None => "Monthly research limit removed.".into(),
+                        });
+                    }
+                    Err(e) => self.research_limit_error = Some(if e.is_empty() { "Couldn't save the limit. Try again.".into() } else { e }),
+                }
+            }
+            Reply::ResearchBudgetSaved(..) => self.research_limit_busy = false,
             Reply::Providers(r) => {
                 let r = self.failed(r);
                 // A failed refresh keeps the list it had and says it may be stale.
@@ -3465,6 +3621,7 @@ impl App {
             | Reply::CampaignRuns(..)
             | Reply::Conversation(..)
             | Reply::Branched(..)
+            | Reply::RolledBack(..)
             | Reply::TurnQueued { .. } => {}
         }
     }
