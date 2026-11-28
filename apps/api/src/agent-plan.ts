@@ -11,14 +11,14 @@ import { AgentInvalidInput, type AgentToolResult } from "./agent-tools.js"
 export const UPDATE_PLAN = "update_plan"
 export const MAX_PLAN_STEPS = 8
 
-const Status = Schema.Literal("pending", "in_progress", "completed")
+type PlanStatus = "pending" | "in_progress" | "completed"
 // Compact on the request: the steps in order, and how many are finished. The
 // first unfinished one is in progress unless every step is done.
 const Plan = Schema.Struct({
   steps: Schema.Array(Schema.String.pipe(Schema.trimmed(), Schema.minLength(2), Schema.maxLength(120))).pipe(Schema.minItems(1), Schema.maxItems(MAX_PLAN_STEPS)),
   done: Schema.Int.pipe(Schema.between(0, MAX_PLAN_STEPS)),
 })
-export type PlanStep = { readonly step: string; readonly status: typeof Status.Type }
+export type PlanStep = { readonly step: string; readonly status: PlanStatus }
 /** The plan as the client draws it. */
 export interface PlanRef { readonly steps: ReadonlyArray<PlanStep>; readonly note?: string }
 
