@@ -10,8 +10,8 @@ import { briefScheduler } from "./growth-brief.js"
 import { trackingScheduler } from "./acquisition-schedule.js"
 import { answerScheduler } from "./research/answer-schedule.js"
 import { followupScheduler } from "./agent-followups.js"
-import { agentRequestWorker } from "./agent-request-queue.js"
-import { agentWorkWorker } from "./agent-work-queue.js"
+import { agentRequestStandby, agentRequestWorker } from "./agent-request-queue.js"
+import { agentWorkStandby, agentWorkWorker } from "./agent-work-queue.js"
 import { withAgentWorkerRuntime } from "./agent-worker-runtime.js"
 import { setupScheduler } from "./setup-scheduler.js"
 import { connectionCheckScheduler } from "./connections.js"
@@ -43,9 +43,11 @@ const main = Effect.flatMap(ApiConfig, (config) =>
     const Setup = Layer.scopedDiscard(Effect.forkScoped(setupScheduler))
     // Connection health: each connection is checked with one cheap read about twice a day.
     const ConnectionChecks = Layer.effectDiscard(Effect.forkDaemon(connectionCheckScheduler.pipe(Effect.delay("90 seconds"))))
-    const AgentRequests = config.agentRequestWorkerEnabled
-      ? Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", Effect.all([agentRequestWorker, agentWorkWorker], { concurrency: "unbounded" }))))
-      : Layer.empty
+    // With a separate agent worker, the API stands by: it takes only a chat turn
+    // or job left waiting 20 seconds, so a stopped worker never strands one.
+    const AgentRequests = Layer.scopedDiscard(Effect.forkScoped(withAgentWorkerRuntime("api", config.agentRequestWorkerEnabled
+      ? Effect.all([agentRequestWorker, agentWorkWorker], { concurrency: "unbounded" })
+      : Effect.all([agentRequestStandby, agentWorkStandby], { concurrency: "unbounded" }))))
     const ServerLive = Layer.mergeAll(HttpServer.serve(makeRouter()), LocalBridges, Briefs, Followups, Tracking, AnswerTracking, Setup, ConnectionChecks, AgentRequests).pipe(
       Layer.provide(ReposProvided),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),

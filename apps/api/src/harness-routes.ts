@@ -45,7 +45,8 @@ const failure = (e: unknown) => {
   if (e instanceof HarnessRefused)
     return json(
       e.reason === "UNAUTHENTICATED" ? 401 : e.reason === "NOT_FOUND" ? 404 : 409,
-      { _tag: "HarnessUnavailable", reason: e.reason },
+      // A provider whose bridge is reconnecting reads as unavailable, as it always has.
+      { _tag: "HarnessUnavailable", reason: e.reason === "OFFLINE" ? "UNAVAILABLE" : e.reason },
       { "cache-control": "no-store" }
     )
   if (typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated")

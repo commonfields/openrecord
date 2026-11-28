@@ -74,7 +74,7 @@ export const enqueueAgentWork = (input: {
   return inserted[0] ? String(inserted[0]["job_id"]) : null
 })
 
-const claimWork = (helperOnly: boolean) => Effect.gen(function*() {
+const claimWork = (helperOnly: boolean, waitedSeconds = 0) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* reconcileAgentWork
   return yield* sql.withTransaction(Effect.gen(function*() {
@@ -82,7 +82,7 @@ const claimWork = (helperOnly: boolean) => Effect.gen(function*() {
     const running = (yield* sql`SELECT count(*)::int AS n FROM agent_work_jobs WHERE status='RUNNING'`)[0]
     if (Number(running?.["n"] ?? 0) >= 4) return null
     const row = (yield* sql<WorkJob>`SELECT j.* FROM agent_work_jobs j
-      WHERE j.status='QUEUED' AND j.available_at<=now() AND (${!helperOnly} OR j.kind='HELPER_TASK_RUN')
+      WHERE j.status='QUEUED' AND j.available_at <= now() - make_interval(secs => ${waitedSeconds}) AND (${!helperOnly} OR j.kind='HELPER_TASK_RUN')
         -- One chat's work runs in order: a job waits while an older one for the same chat is queued
         -- (waiting to retry included) or running, so a later step never overtakes an earlier one.
         AND NOT EXISTS (SELECT 1 FROM agent_work_jobs older WHERE older.status IN ('QUEUED','RUNNING') AND older.job_id<>j.job_id
@@ -167,8 +167,8 @@ export const runOneAgentWork = () =>
     return job !== null
   })
 
-const workLane = (helperOnly: boolean) => Effect.gen(function*() {
-  const job = yield* claimWork(helperOnly)
+const workLane = (helperOnly: boolean, waitedSeconds = 0) => Effect.gen(function*() {
+  const job = yield* claimWork(helperOnly, waitedSeconds)
   if (job) yield* executeAgentWork(job)
   else if (!helperOnly) {
     const sessions = yield* Effect.promise(() => import("./agent-sessions.js"))
@@ -182,3 +182,5 @@ const workLane = (helperOnly: boolean) => Effect.gen(function*() {
 // Keep the existing lane for scheduled work and let async helpers run in
 // parallel. The database enforces the shared four-job cap across replicas.
 export const agentWorkWorker = Effect.all([workLane(false), workLane(true), workLane(true)], { concurrency: 3 }).pipe(Effect.asVoid)
+/** The API's standby: work due this long with no worker taking it (`agentRequestStandby`). */
+export const agentWorkStandby = Effect.all([workLane(false, 20), workLane(true, 20)], { concurrency: 2 }).pipe(Effect.asVoid)

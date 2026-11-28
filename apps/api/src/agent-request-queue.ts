@@ -97,7 +97,12 @@ export const enqueueAgentRequest = (scope: ConversationScope, raw: unknown) => E
   }))
 })
 
-export const claimAgentRequest = Effect.gen(function*() {
+/**
+ * Claims the oldest queued request. `waitedSeconds` claims only one queued at
+ * least that long: the API's standby takes a turn no worker picked up, so a
+ * stopped worker never leaves the person's message waiting until it expires.
+ */
+export const claimAgentRequestAfter = (waitedSeconds: number) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   yield* reconcileRequestJobs
   return yield* sql.withTransaction(Effect.gen(function*() {
@@ -106,6 +111,7 @@ export const claimAgentRequest = Effect.gen(function*() {
     if (Number(running?.["n"] ?? 0)>=4) return null
     const row = (yield* sql<Job>`SELECT j.* FROM agent_request_jobs j
       WHERE j.status='QUEUED' AND j.expires_at>now()
+      AND j.created_at <= now() - make_interval(secs => ${waitedSeconds})
       AND (SELECT count(*) FROM agent_request_jobs a WHERE a.account_id=j.account_id AND a.status='RUNNING')<2
       ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1`)[0]
     if (!row) return null
@@ -114,6 +120,8 @@ export const claimAgentRequest = Effect.gen(function*() {
     return { ...row, claim_id: claimId }
   }))
 })
+
+export const claimAgentRequest = claimAgentRequestAfter(0)
 
 export const executeAgentRequest = <R>(job: Job, responder: Responder<R>) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -194,10 +202,15 @@ export const cancelAgentRequest = (accountId: string,userId: string,requestId: s
   }))
 })
 
-export const agentRequestWorker = Effect.all([0,1].map(() => Effect.gen(function*() {
-  const job = yield* claimAgentRequest
+const requestLanes = (waitedSeconds: number) => Effect.all([0,1].map(() => Effect.gen(function*() {
+  const job = yield* claimAgentRequestAfter(waitedSeconds)
   if (job) {
     yield* executeAgentRequest(job,sessionResponder)
     if (job.business_id !== null) yield* wakeSessionParent({accountId:job.account_id,userId:job.user_id,businessId:job.business_id},job.conversation_id)
   }
 }).pipe(Effect.catchAllCause(() => Effect.logWarning("agent request worker unavailable")),Effect.repeat(Schedule.spaced("1 second")))),{ concurrency: 2 })
+
+export const agentRequestWorker = requestLanes(0)
+/** The API's standby: requests queued this long with no worker taking them. */
+export const STANDBY_AFTER_SECONDS = 20
+export const agentRequestStandby = requestLanes(STANDBY_AFTER_SECONDS)

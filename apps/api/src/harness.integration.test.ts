@@ -194,6 +194,12 @@ suite("user-owned harness bridges (disposable PostgreSQL, no provider calls)", (
         )
       )
     ).rejects.toMatchObject({ reason: "CONTEXT_LIMIT" })
+    // A bridge that has not reported in for a while reads as offline, which a
+    // turn waits out, not as a provider switched off or signed out.
+    await pool.query("UPDATE agent_bridges SET last_seen_at=now()-interval '5 minutes' WHERE id=$1", [c.bridge.id])
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model" }))).rejects.toMatchObject({ reason: "OFFLINE" })
+    expect((await run(pollHarnessJobs(c.bridge, [c.status], false))).refresh).toBe(false)
+    await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "fixture-model" }))).resolves.toMatchObject({ id: c.instance.id })
     await expect(run(resolveHarness(a, { instanceId: c.instance.id, model: "not-advertised" }))).rejects.toMatchObject({
       reason: "MODEL_UNAVAILABLE"
     })

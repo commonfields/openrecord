@@ -8,7 +8,7 @@ import { SqlClient } from "@effect/sql"
 import { AuthRepositoryLive } from "@openrecord/db"
 import pg from "pg"
 import { agentRequestApi } from "./agent-request-routes.js"
-import { cancelAgentRequest, claimAgentRequest, enqueueAgentRequest, executeAgentRequest, reconcileRequestJobs } from "./agent-request-queue.js"
+import { cancelAgentRequest, claimAgentRequest, claimAgentRequestAfter, enqueueAgentRequest, executeAgentRequest, reconcileRequestJobs } from "./agent-request-queue.js"
 import { requireSession } from "./router.js"
 import { streamRunProgress } from "./agent-run.js"
 import type { Responder } from "./agent-conversations.js"
@@ -79,6 +79,18 @@ suite("durable request submission and worker (no live model)",() => {
     expect(seqs).toEqual([...seqs].sort((a,b) => a-b))
     // A client that reconnects after the last event it saw gets only the ending.
     expect(await collect(f,seqs.at(-1)!)).toBe('event: done\ndata: {"status":"COMPLETED","failureReason":null}\n\n')
+  })
+  it("leaves a fresh request to the worker and stands in for one left waiting",async () => {
+    const f=await fixture(),input=body(f.conversationId)
+    await run(enqueueAgentRequest(f,input))
+    // The API's standby leaves a request just sent to the agent worker.
+    expect(await run(claimAgentRequestAfter(20))).toBeNull()
+    // Unclaimed for half a minute, as when no worker is running, the standby takes it.
+    await pool.query("UPDATE agent_request_jobs SET created_at=now()-interval '30 seconds' WHERE request_id=$1",[input.requestId])
+    const job=await run(claimAgentRequestAfter(20))
+    expect(job?.request_id).toBe(input.requestId)
+    await run(executeAgentRequest(job!,reply))
+    expect((await pool.query("SELECT status FROM agent_request_jobs WHERE request_id=$1",[input.requestId])).rows[0].status).toBe("COMPLETED")
   })
   it("executes once independently of the submit connection and persists the reply",async () => {
     const f=await fixture(),input=body(f.conversationId)
