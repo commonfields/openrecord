@@ -199,15 +199,20 @@ void or_preview_conceal(int on) {
 int or_preview_painted(void) { return preview && painted ? 1 : 0; }
 
 // Starts a picture of the page as it shows now: 1 when one is on its way.
-int or_preview_snapshot(void) {
+// `width` > 0 takes only that many points about the page's middle.
+int or_preview_snapshot(double width) {
     if (!preview || preview.hidden || previewBox.hidden || !painted || preview.alphaValue < 1.0) return 0;
     free(shotData);
     shotData = NULL;
     shotState = 1;
     NSUInteger generation = ++shotGeneration;
-    CGSize points = preview.bounds.size;
+    NSRect rect = preview.bounds;
+    if (width > 0 && width < rect.size.width) rect = NSMakeRect(NSMidX(rect) - width / 2.0, rect.origin.y, width, rect.size.height);
+    CGSize points = rect.size;
     WKSnapshotConfiguration *config = [WKSnapshotConfiguration new];
-    config.rect = preview.bounds;
+    config.rect = rect;
+    // What is on screen now, without waiting for the next screen update.
+    config.afterScreenUpdates = NO;
     [preview takeSnapshotWithConfiguration:config completionHandler:^(NSImage *image, NSError *error) {
         if (generation != shotGeneration) return;
         CGImageRef cg = (image && !error) ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;

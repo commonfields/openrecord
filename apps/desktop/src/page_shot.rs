@@ -15,7 +15,7 @@ const ASK_LIMIT: Duration = Duration::from_millis(160);
 const LAND: Duration = Duration::from_millis(90);
 const LAND_LIMIT: Duration = Duration::from_millis(700);
 /// The picture's fade off the page.
-pub const FADE: rune::Spring = rune::Spring::new(0.18, 0.0);
+pub const FADE: rune::Spring = rune::Spring::new(0.14, 0.0);
 const TICK: Duration = Duration::from_millis(8);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -50,6 +50,26 @@ pub struct PageShot {
     pub at: Instant,
     /// The artifact it shows, so the panel coming back can reuse it.
     pub artifact: String,
+    /// The width in points to trim the picture to, about its centre.
+    pub crop: Option<f32>,
+}
+
+/// The middle `width` points of `pic`. Narrowing the panel, the page shows
+/// only that much of its wide picture, centred as the page centres its text:
+/// trimmed, it never overhangs its slot, and smaller, it is taken and drawn
+/// without a pause before the move.
+fn centre(pic: crate::native_preview::Shot, width: f32) -> crate::native_preview::Shot {
+    let [pw, ph] = pic.px;
+    if pic.size[0] <= width || pic.size[0] <= 0.0 { return pic; }
+    let scale = pw as f32 / pic.size[0];
+    let w = ((width * scale).round() as u32).clamp(1, pw);
+    let x0 = (pw - w) / 2;
+    let mut rgba = Vec::with_capacity(w as usize * ph as usize * 4);
+    for row in 0..ph as usize {
+        let start = (row * pw as usize + x0 as usize) * 4;
+        rgba.extend_from_slice(&pic.rgba[start..start + w as usize * 4]);
+    }
+    crate::native_preview::Shot { rgba, px: [w, ph], size: [w as f32 / scale, pic.size[1]] }
 }
 
 impl App {
@@ -101,8 +121,19 @@ impl App {
     fn ask_shot(&mut self, what: ShotMove, tx: &mut Tx) -> bool {
         if !self.shot_ready() { return false; }
         let Some((artifact, color)) = self.page_color() else { return false };
-        if !crate::native_preview::snapshot() { return false; }
-        self.page_shot = Some(PageShot { pixels: rune::Pixels::new(), size: [0.0; 2], color, phase: ShotPhase::Asked, what, at: Instant::now(), artifact });
+        // Widening, the page's width beside the chat is kept for the way back:
+        // narrowing, only that much of its middle is taken, and the picture is
+        // trimmed to it (`crop`) should the page give more.
+        let crop = match what {
+            ShotMove::Wide if self.side.wide => self.shot_narrow_w,
+            ShotMove::Wide => {
+                self.shot_narrow_w = self.preview_rect.map(|r| r[2]);
+                None
+            }
+            _ => None,
+        };
+        if !crate::native_preview::snapshot(crop) { return false; }
+        self.page_shot = Some(PageShot { pixels: rune::Pixels::new(), size: [0.0; 2], color, phase: ShotPhase::Asked, what, at: Instant::now(), artifact, crop });
         tx.wake_after(Duration::ZERO);
         true
     }
@@ -122,12 +153,13 @@ impl App {
         match shot.phase {
             ShotPhase::Asked => match crate::native_preview::snapshot_take() {
                 Ok(Some(pic)) => {
+                    let pic = match shot.crop { Some(w) => centre(pic, w), None => pic };
                     shot.pixels.set(pic.px[0], pic.px[1], pic.rgba);
                     shot.size = pic.size;
                     shot.phase = ShotPhase::Moving;
                     shot.at = Instant::now();
                     let what = shot.what;
-                    crate::native_preview::conceal(true);
+                    // The page is hidden once a frame shows the picture over it (`ui::follow_drawn`).
                     self.apply_move(what);
                     tx.wake_after(TICK);
                     true
@@ -145,6 +177,8 @@ impl App {
                 }
             },
             ShotPhase::Moving => {
+                // Hidden at once, the page left the window showing for the frame
+                // before the app drew its picture: black beside a light page.
                 if elapsed.as_secs_f32() < SIDEBAR_SPRING.duration * 1.35 {
                     tx.wake_after(TICK);
                     return false;
@@ -191,3 +225,4 @@ impl App {
         self.page_shot.as_ref().is_some_and(|s| s.phase == ShotPhase::Moving)
     }
 }
+

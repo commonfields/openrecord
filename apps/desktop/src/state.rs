@@ -445,6 +445,8 @@ pub struct App {
     pub page_shot: Option<crate::page_shot::PageShot>,
     /// The picture the panel last folded with, for its way back.
     pub last_shot: Option<crate::page_shot::PageShot>,
+    /// The page's width beside the chat when the panel was last widened (`page_shot`).
+    pub shot_narrow_w: Option<f32>,
     pub menu: Option<Menu>,
     /// The business switcher: archived businesses (for restoring), whether they
     /// show, and whether "Archive" is waiting for its second press.
@@ -721,6 +723,7 @@ impl App {
             sidebar_slide: None,
             page_shot: None,
             last_shot: None,
+            shot_narrow_w: None,
             menu: None,
             archived_businesses: Vec::new(),
             show_archived_businesses: false,

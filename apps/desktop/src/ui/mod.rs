@@ -60,11 +60,23 @@ pub(crate) fn kit(t: &Theme) -> Kit {
 /// is drawn when the page lands, the page covers it and no window shows at its
 /// leading edge. What sticks out is under the strip or the chat.
 pub fn follow_drawn(rt: &rune::Runtime<App>) {
-    thread_local! { static LAST: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) }; }
+    thread_local! {
+        static LAST: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) };
+        static COVERED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
     let s = &rt.state;
+    if !s.page_shot_moving() { COVERED.with(|c| c.set(0)); }
     match rt.presented("artifact-html") {
         // While its picture moves in its place the page stays where it was, hidden (`page_shot`).
-        Some(_) if s.page_shot_moving() => {}
+        Some(_) if s.page_shot_moving() => {
+            // The page hides only under a frame that shows its picture: hidden
+            // sooner, the window showed through for the frames before.
+            // A drawn frame reaches the screen a little after the page's own
+            // change does, so it waits a few frames with the picture over it.
+            let shown = rt.presented("artifact-shot").is_some_and(|(_, o)| o > 0.99);
+            let frames = COVERED.with(|c| { let n = if shown { c.get() + 1 } else { 0 }; c.set(n); n });
+            if frames >= 3 { crate::native_preview::conceal(true); }
+        }
         Some((r, _)) if r[2] > 1.0 && r[3] > 1.0 && (s.preview_visible() || !s.side_shown()) => {
             let last = LAST.with(|c| c.replace(Some(r)));
             crate::native_preview::place(ahead(r, last, s.preview_rect));

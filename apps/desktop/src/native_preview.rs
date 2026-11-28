@@ -10,7 +10,7 @@ unsafe extern "C" {
     fn or_preview_place(x: f64, y: f64, w: f64, h: f64);
     fn or_preview_conceal(on: i32);
     fn or_preview_painted() -> i32;
-    fn or_preview_snapshot() -> i32;
+    fn or_preview_snapshot(width: f64) -> i32;
     fn or_preview_snapshot_state(data: *mut *const u8, w: *mut i32, h: *mut i32, pw: *mut f64, ph: *mut f64) -> i32;
     fn or_preview_snapshot_done();
     fn or_preview_backdrop(r: f64, g: f64, b: f64);
@@ -158,14 +158,18 @@ pub fn painted() -> bool {
     false
 }
 
-/// Starts a picture of the artifact page as it shows now; false when there is no page to take.
-pub fn snapshot() -> bool {
+/// Starts a picture of the artifact page as it shows now, only its middle
+/// `width` points when given; false when there is no page to take.
+pub fn snapshot(width: Option<f32>) -> bool {
     #[cfg(target_os = "macos")]
     unsafe {
-        or_preview_snapshot() != 0
+        or_preview_snapshot(width.map_or(0.0, f64::from)) != 0
     }
     #[cfg(not(target_os = "macos"))]
-    false
+    {
+        let _ = width;
+        false
+    }
 }
 
 /// A picture of the page: RGBA rows top first, its size in pixels and in points.
