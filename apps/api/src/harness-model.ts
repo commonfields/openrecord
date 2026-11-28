@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Schedule } from "effect"
 import type { HarnessSelection } from "@openrecord/contracts"
 import { AgentModelError, type AgentModel, type ModelResponse } from "./agent-model.js"
 import { invokeHarness, resolveHarness, HarnessRefused } from "./harness-store.js"
@@ -10,12 +10,22 @@ export const harnessFailureReason = (reason: string): AgentModelError["reason"] 
   return "UNAVAILABLE"
 }
 
+/** How long a turn waits for the person's provider to come back online. */
+export const PROVIDER_WAIT = "90 seconds"
+
 export const harnessModel = (
   scope: { accountId: string; userId: string; businessId: string | null },
   selection: HarnessSelection
 ) =>
   Effect.gen(function* () {
-    const instance = yield* resolveHarness(scope, selection)
+    // The bridge reports in every few seconds and comes back with the API that
+    // starts it: a turn begun while it reconnects waits for it rather than failing.
+    const instance = yield* resolveHarness(scope, selection).pipe(
+      Effect.retry({
+        while: (e) => e instanceof HarnessRefused && e.reason === "OFFLINE",
+        schedule: Schedule.spaced("3 seconds").pipe(Schedule.upTo(PROVIDER_WAIT))
+      })
+    )
     // Capture the SQL service once; the existing model loop has no transport dependencies.
     const context = yield* Effect.context<import("@effect/sql").SqlClient.SqlClient>()
     const invoke: AgentModel = (input) =>

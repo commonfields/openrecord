@@ -123,6 +123,9 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
             if !progress.answer.is_empty() {
                 list = list.child(live_reply(t, k, &progress.answer));
             }
+            // What it is doing now, under the person's message and the reply
+            // as it streams, as Claude Code keeps it: never at the top of the chat.
+            list = list.children(live_status(s, t, k));
         }
         Turn::Failed { error, message } => {
             // The web's failed note: right-aligned, small, with Retry when there is a message to resend.
@@ -193,7 +196,6 @@ fn chat_session(s: &App, t: &Theme, k: &Kit, layout: ChatLayout) -> El {
         .h_full()
         .min_h(0.0)
         .children(if lit { window_light(s, t) } else { None })
-        .children(agent_working_status(s, t, k, side, column))
         .child(body)
         .child(composer(s, t, &business, slot, false))
 }
@@ -237,8 +239,8 @@ fn words_webview(s: &App, t: &Theme, k: &Kit, column: f32, business: &str) -> El
         .h_full()
         .min_h(0.0)
         .children(if lit { window_light(s, t) } else { None })
-        .children(agent_working_status(s, t, k, false, column))
         .child(body)
+        .children(words_working_status(s, t, k, column))
         .child(composer(s, t, business, ComposerSlot::Main, false))
 }
 
@@ -914,24 +916,65 @@ fn run_trace(s: &App, t: &Theme, k: &Kit, i: usize, activity: &[Activity], durat
     if activity.is_empty() {
         rail = rail.child(label("No steps were recorded for this reply.", type_::XS, t.muted_foreground));
     }
-    let fold = rune_kit::Collapsible::new(title.clone(), open)
-        .ghost()
-        .on_toggle(move |s: &mut App| {
+    let _ = k;
+    disclosure(t, &format!("trace-{i}"), &title, open, at, rail)
+}
+
+/// A quiet fold, as Claude Code draws a reply's thinking: a muted line with a
+/// chevron that turns as it opens, and the steps fading in under it.
+fn disclosure(t: &Theme, key: &str, title: &str, open: bool, at: (usize, usize), body: El) -> El {
+    let chevron = row()
+        .key(format!("{key}-chevron"))
+        .size(14.0, 14.0)
+        .center()
+        .rotate(if open { std::f32::consts::FRAC_PI_2 } else { 0.0 })
+        .motion(CONTROL)
+        .child(ico(&icons::CHEVRON_RIGHT, 12.0, t.muted_foreground));
+    let head = row()
+        .key(format!("{key}-head"))
+        .role("button")
+        .label(title.to_string())
+        .expanded(open)
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .self_start()
+        .h(26.0)
+        .px(6.0)
+        .ml(-6.0)
+        .gap(4.0)
+        .center_y()
+        .radius(6.0)
+        .hover(t.hover_tint)
+        .child(label(title.to_string(), type_::SM, t.muted_foreground))
+        .child(chevron)
+        .on_press(move |s: &mut App| {
             if !s.open_logs.remove(&at) {
                 s.open_logs.insert(at);
             }
-        })
-        .child(rail)
-        .build(k);
-    col().key(format!("trace-{i}")).w_full().label(title).child(fold)
+        });
+    let mut c = col().key(key.to_string()).w_full().role("group").label(title.to_string()).child(head);
+    if open {
+        c = c.child(col().key(format!("{key}-body")).w_full().pt(2.0).transition(Transition::offset(0.0, -4.0).combined(Transition::opacity())).child(body));
+    }
+    c
 }
 
 // ---- The turn still running (the web's `LiveTrace`) -----------------------------
 
-/// Thinking and working: the app's loader, turning. Still when motion is reduced.
+/// Thinking and working: a ring of eight grey dots with a light running round
+/// it, as Claude's desktop app draws it. Still when motion is reduced.
 fn thinking_glyph(t: &Theme, reduce: bool) -> El {
-    let mark = ico(&icons::LOADER, 16.0, t.muted_foreground);
-    row().size(24.0, 24.0).center().a11y_hidden().child(if reduce { mark } else { mark.looping(rune::LoopSpec::rotation(1.0)) })
+    const DOTS: usize = 8;
+    const PERIOD: f64 = 0.96;
+    let mut ring = el().size(18.0, 18.0);
+    for i in 0..DOTS {
+        let a = i as f32 / DOTS as f32 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+        let (x, y) = (9.0 + 6.5 * a.cos() - 1.25, 9.0 + 6.5 * a.sin() - 1.25);
+        let dot = el().key(format!("thinking-dot-{i}")).pin(Some(x), Some(y), None, None).size(2.5, 2.5).radius(1.25).fill(t.muted_foreground);
+        // Each dot brightens a beat after the one before it, so the light travels clockwise.
+        ring = ring.child(if reduce { dot.opacity(0.6) } else { dot.looping(rune::LoopSpec::opacity(PERIOD, PERIOD * i as f64 / DOTS as f64, 0.25, 1.0)) });
+    }
+    row().size(24.0, 24.0).center().a11y_hidden().child(ring)
 }
 
 /// A finished thought's mark, as Claude Code sets one: a quiet "∴".
@@ -960,34 +1003,35 @@ fn step(t: &Theme, a: &Activity) -> El {
     }
 }
 
-/// Working status and step log at the top of the chat, not above the composer.
-fn agent_working_status(s: &App, t: &Theme, k: &Kit, side: bool, column: f32) -> Option<El> {
-    if side {
-        return None;
-    }
+/// The turn under way, as the last thing in the conversation: it fades and
+/// slides up into place when the turn starts, and away when the reply lands.
+fn live_status(s: &App, t: &Theme, k: &Kit) -> Option<El> {
     let Turn::Working { progress, started, stopping, .. } = &s.turn else {
         return None;
     };
     let ms = started.elapsed().as_millis() as i64;
-    let width = s.prefs.chat_width.max().min(column);
     Some(
         col()
             .key("agent-working-status")
             .w_full()
             .min_w(0.0)
-            .pt(12.0)
-            .pb(4.0)
-            .px(24.0)
-            .items_center()
-            .child(live_trace(s, t, k, progress, ms, *stopping).w_full().min_w(0.0).max_w(width)),
+            .pt(4.0)
+            .transition(Transition::offset(0.0, 8.0).combined(Transition::opacity()))
+            .child(live_trace(s, t, k, progress, ms, *stopping).w_full().min_w(0.0)),
     )
+}
+
+/// With the transcript in its web view, the status sits under it, above the composer.
+fn words_working_status(s: &App, t: &Theme, k: &Kit, column: f32) -> Option<El> {
+    let width = s.prefs.chat_width.max().min(column);
+    live_status(s, t, k).map(|status| col().key("words-working-status").w_full().px(24.0).pb(6.0).items_center().child(status.max_w(width)))
 }
 
 /// A turn still running: the loader turning beside "Thinking" (or "Working"
 /// once a tool runs) and a rolling timer; under it the step under way, which
 /// slides in each time it changes; and the steps already done, folded into one
 /// of Rune's collapsibles.
-fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
+fn live_trace(s: &App, t: &Theme, _k: &Kit, p: &Progress, ms: i64, stopping: bool) -> El {
     let reduce = s.prefs.reduce_motion;
     let working = p.phase != chat::Phase::Thinking || p.trace.iter().any(|a| matches!(a, Activity::Tool { .. }));
     let head = if stopping { "Stopping" } else if working { "Working" } else { "Thinking" };
@@ -1004,26 +1048,17 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
         for (i, a) in p.trace.iter().enumerate() {
             rail = rail.child(step(t, a).key(format!("live-step-{i}")));
         }
-        c = c.child(
-            rune_kit::Collapsible::new(format!("{n} {} so far", if n == 1 { "step" } else { "steps" }), s.open_logs.contains(&at))
-                .ghost()
-                .on_toggle(move |s: &mut App| {
-                    if !s.open_logs.remove(&at) {
-                        s.open_logs.insert(at);
-                    }
-                })
-                .child(rail)
-                .build(k),
-        );
+        c = c.child(disclosure(t, "live-trace", &format!("{n} {} so far", if n == 1 { "step" } else { "steps" }), s.open_logs.contains(&at), at, rail));
     }
     let headline = row()
         .key("live-head")
         .h(28.0)
-        .gap(8.0)
+        .gap(6.0)
         .center_y()
         .child(thinking_glyph(t, reduce))
-        .child(label(head, type_::SM_MEDIUM, t.foreground))
-        .child(rune_kit::RollingText::new("live-elapsed", chat::elapsed(ms)).font(type_::SM.features("'tnum' 1")).color(t.muted_foreground).build(k));
+        // Plain words at reading size, as Claude's desktop app says it; the
+        // time taken stays in the status's spoken label.
+        .child(label(match head { "Thinking" => "Thinking it through", "Working" => "Working through it", other => other }, type_::BASE, t.foreground.alpha(0.82)));
     // The step under way: each new one slides up into place as the last leaves.
     let now_text = p.live();
     let show_now = !stopping
@@ -1036,7 +1071,7 @@ fn live_trace(s: &App, t: &Theme, k: &Kit, p: &Progress, ms: i64, stopping: bool
         .key(format!("live-now:{}", now_text))
         .w_full()
         .min_h(22.0)
-        .pl(32.0)
+        .pl(30.0)
         .gap(8.0)
         .center_y()
         .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()));
