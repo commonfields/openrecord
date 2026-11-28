@@ -44,6 +44,13 @@ CREATE INDEX IF NOT EXISTS account_actions_recent ON account_actions(business_id
 ALTER TABLE account_actions DROP CONSTRAINT IF EXISTS account_actions_status_check;
 ALTER TABLE account_actions ADD CONSTRAINT account_actions_status_check
   CHECK (status IN ('PROPOSED', 'EXECUTING', 'DONE', 'REJECTED', 'FAILED', 'UNDOING', 'UNDONE'));
-ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
-ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check
-  CHECK (kind IN ('AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'ACCOUNT_ACTION'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint.
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='decision_feedback'::regclass
+    AND conname='decision_feedback_kind_check' AND pg_get_constraintdef(oid) LIKE '%CAMPAIGN_PUBLICATION%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
+  ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check
+    CHECK (kind IN ('AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'ACCOUNT_ACTION'));
+END $$;

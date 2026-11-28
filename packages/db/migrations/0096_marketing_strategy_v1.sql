@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS marketing_strategy_versions (
 CREATE UNIQUE INDEX IF NOT EXISTS marketing_strategy_one_approved ON marketing_strategy_versions(business_id) WHERE status = 'APPROVED';
 CREATE UNIQUE INDEX IF NOT EXISTS marketing_strategy_one_open ON marketing_strategy_versions(business_id) WHERE status = 'PROPOSED';
 
-ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
-ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK (kind IN
-  ('CAMPAIGN_PUBLICATION', 'CAMPAIGN_REVIEW', 'MARKETING_STRATEGY', 'AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'WEBFLOW_CHANGE', 'ACCOUNT_ACTION'));
+DO $$ BEGIN
+  -- The migration runner replays migrations. Keep any later constraint.
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='decision_feedback'::regclass
+    AND conname='decision_feedback_kind_check' AND pg_get_constraintdef(oid) LIKE '%GITHUB_CHANGE%') THEN
+    RETURN;
+  END IF;
+  ALTER TABLE decision_feedback DROP CONSTRAINT IF EXISTS decision_feedback_kind_check;
+  ALTER TABLE decision_feedback ADD CONSTRAINT decision_feedback_kind_check CHECK (kind IN
+    ('CAMPAIGN_PUBLICATION', 'CAMPAIGN_REVIEW', 'MARKETING_STRATEGY', 'AGENT_PROPOSAL', 'AGENT_DRAFT', 'GROWTH_OPPORTUNITY', 'WORDPRESS_CHANGE', 'WEBFLOW_CHANGE', 'ACCOUNT_ACTION'));
+END $$;
