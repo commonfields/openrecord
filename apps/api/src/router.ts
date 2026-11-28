@@ -1,6 +1,7 @@
 import { isDemoBusiness } from "./demo-data.js"
 import { failureResponse } from "./http-failure.js"
 import { SessionOverride } from "./session-override.js"
+import { withBusinessAccess } from "./business-access.js"
 import { campaignPublicationApi } from "./campaign-publication.js"
 import { campaignResultsApi } from "./campaign-results.js"
 import { strategyApi } from "./marketing-strategy.js"
@@ -425,7 +426,8 @@ export const requireSession = Effect.flatMap(HttpServerRequest.HttpServerRequest
   return { session: s }
 }))
 
-export const makeRouter = () => {
+/** Every route, unguarded. Serve `makeRouter()`; this is for route inventories in tests. */
+export const makeRoutes = () => {
   const router = HttpRouter.empty
   const runtimeApi = router.pipe(
     // Unauthenticated liveness/readiness for load balancers, containers and
@@ -1677,11 +1679,15 @@ export const makeRouter = () => {
       ).pipe(Effect.catchAll(failureResponse)),
     ),
   )
-  return withOriginGuard(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), HttpRouter.concat(strategyApi(withSession), channelsApi(withSession)))), HttpRouter.concat(desktopOAuthApi(), artifactsApi(withSession))), HttpRouter.concat(HttpRouter.concat(accountActionsApi(withSession), HttpRouter.concat(campaignsApi(withSession), campaignOutcomeApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentRequestApi(withSession), objectivesApi(withSession)), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
+  const routes = HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), HttpRouter.concat(strategyApi(withSession), channelsApi(withSession)))), HttpRouter.concat(desktopOAuthApi(), artifactsApi(withSession))), HttpRouter.concat(HttpRouter.concat(accountActionsApi(withSession), HttpRouter.concat(campaignsApi(withSession), campaignOutcomeApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentRequestApi(withSession), objectivesApi(withSession)), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, archiveApi), productApi), discoveryApi), memoryApi),
     HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(HttpRouter.concat(acquisitionApi(withSession), HttpRouter.concat(wordpressApi(withSession), HttpRouter.concat(webflowApi(withSession), connectionsApi(withSession)))), HttpRouter.concat(trackingScheduleApi(withSession), HttpRouter.concat(answerScheduleApi(withSession), HttpRouter.concat(researchConnectionsApi(withSession), HttpRouter.concat(mcpGrantsApi(withSession), HttpRouter.concat(mcpApi, HttpRouter.concat(aiTrafficFeedApi(withSession), HttpRouter.concat(mcpConnectionsApi(withSession), HttpRouter.concat(playbooksApi(withSession), HttpRouter.concat(chatSharesApi(withSession), HttpRouter.concat(usageApi(withSession), HttpRouter.concat(decisionFeedbackApi(withSession), HttpRouter.concat(capabilitySignalsApi(withSession), HttpRouter.concat(agentRollbackApi(withSession), HttpRouter.concat(liveChangesApi(withSession), pluginsApi(withSession))))))))))))))))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
-  ))))))
+  )))))
+  return routes
 }
+
+/** The served app: every route behind the business-ownership check, all behind the origin check. */
+export const makeRouter = () => withOriginGuard(HttpRouter.use(makeRoutes(), withBusinessAccess(requireSession)))
 
 export const RepoLayers = {
   GrowthRepositoriesLive,
