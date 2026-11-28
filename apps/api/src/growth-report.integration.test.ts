@@ -70,7 +70,7 @@ suite("growth client reports over HTTP (immutable snapshots, revocable shares, n
     const accountId = String((await pool.query("INSERT INTO accounts(name) VALUES('TEST Report API') RETURNING id", [])).rows[0].id)
     const userId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`report-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [accountId, userId])
-    const cookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
+    const cookie = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).rows[0].id)
     const { profile } = await ok<{ profile: { businessId: string; primaryGoal: { id: string; metricDefinition: { id: string } } } }>(
       call("POST", "/api/growth/products", cookie, { ...product, idempotencyKey: randomUUID() }))
     return { session: { accountId, userId } satisfies Session, cookie, businessId: profile.businessId, goalId: profile.primaryGoal.id,

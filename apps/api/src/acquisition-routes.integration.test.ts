@@ -32,7 +32,7 @@ suite("AI Discovery HTTP (TEST fixtures only)", () => {
     const account = (await pool.query("INSERT INTO accounts(name) VALUES ('TEST Agency') RETURNING id")).rows[0].id as string
     const user = (await pool.query("INSERT INTO users(email,password_hash) VALUES ($1,'TEST-only') RETURNING id", [`acq-api-${randomUUID()}@example.test`])).rows[0].id as string
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES ($1,$2)", [account, user])
-    const session = (await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES ($1,$2,now()+interval '1 hour') RETURNING id", [account, user])).rows[0].id as string
+    const session = (await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [account, user])).rows[0].id as string
     return { account, user, session }
   }
   const call = (method: string, path: string, session?: string, body?: unknown, headers: Record<string, string> = {}) => web.handler(new Request(`http://localhost${path}`, {

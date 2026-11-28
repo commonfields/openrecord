@@ -1,6 +1,6 @@
 // Auth repository over PostgreSQL (@effect/sql-pg).
 // Effect owns all Postgres access; no pg.Pool here.
-import { randomUUID } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { Context, Data, Effect, Layer } from "effect"
 import { PgClient } from "@effect/sql-pg"
 import type { SqlClient } from "@effect/sql"
@@ -11,6 +11,15 @@ export interface Session {
   readonly userId: string
   readonly accountId: string
 }
+
+/**
+ * What the sessions table stores for a cookie token. The token itself is
+ * never stored, so a copy of the table cannot be replayed as logins.
+ */
+export const sessionTokenDigest = (token: string): string => createHash("sha256").update(token, "utf8").digest("hex")
+
+/** A new cookie token: 256 random bits, unrelated to the row id. */
+const newSessionToken = (): string => randomBytes(32).toString("base64url")
 
 export class EmailTaken extends Data.TaggedError("EmailTaken")<Record<string, never>> {}
 
@@ -27,23 +36,25 @@ const isUniqueViolation = (e: unknown): boolean => {
 export class AuthRepository extends Context.Tag("AuthRepository")<
   AuthRepository,
   {
-    readonly getSession: (sessionId: string) => DbEffect<Session | null>
+    /** The live session a cookie token belongs to. */
+    readonly getSession: (token: string) => DbEffect<Session | null>
     readonly signup: (input: {
       email: string
       passwordHash: string
       accountName: string
-    }) => Effect.Effect<{ accountId: string; userId: string; sessionId: string }, SqlError | EmailTaken>
+    }) => Effect.Effect<{ accountId: string; userId: string; sessionToken: string }, SqlError | EmailTaken>
     readonly signinLookup: (email: string) => DbEffect<{ id: string; passwordHash: string; accountId: string } | null>
+    /** Returns the cookie token; only its digest is stored. */
     readonly createSession: (input: { userId: string; accountId: string }) => DbEffect<string>
-    readonly deleteSession: (sessionId: string) => DbEffect<void>
+    readonly deleteSession: (token: string) => DbEffect<void>
   }
 >() {}
 
 export const AuthRepositoryLive = Layer.effect(
   AuthRepository,
   Effect.map(PgClient.PgClient, (sql: SqlClient.SqlClient) => ({
-    getSession: (sessionId: string) =>
-      sql`SELECT user_id, account_id FROM sessions WHERE id = ${sessionId} AND expires_at > now()`.pipe(
+    getSession: (token: string) =>
+      sql`SELECT user_id, account_id FROM sessions WHERE token_digest = ${sessionTokenDigest(token)} AND expires_at > now()`.pipe(
         Effect.map((rows) => {
           const r = (rows as Array<Record<string, unknown>>)[0]
           if (!r) return null
@@ -67,9 +78,9 @@ export const AuthRepositoryLive = Layer.effect(
             >
             const userId = String((uRows[0] as Record<string, unknown>)["id"])
             yield* sql`INSERT INTO account_users (account_id, user_id) VALUES (${accountId}, ${userId})`
-            const sessionId = randomUUID()
-            yield* sql`INSERT INTO sessions (id, user_id, account_id, expires_at) VALUES (${sessionId}, ${userId}, ${accountId}, now() + interval '30 days')`
-            return { accountId, userId, sessionId }
+            const sessionToken = newSessionToken()
+            yield* sql`INSERT INTO sessions (user_id, account_id, expires_at, token_digest) VALUES (${userId}, ${accountId}, now() + interval '30 days', ${sessionTokenDigest(sessionToken)})`
+            return { accountId, userId, sessionToken }
           }),
         )
         .pipe(
@@ -92,11 +103,11 @@ export const AuthRepositoryLive = Layer.effect(
       }),
     createSession: (input: { userId: string; accountId: string }) =>
       Effect.gen(function*() {
-        const sessionId = randomUUID()
-        yield* sql`INSERT INTO sessions (id, user_id, account_id, expires_at) VALUES (${sessionId}, ${input.userId}, ${input.accountId}, now() + interval '30 days')`
-        return sessionId
+        const token = newSessionToken()
+        yield* sql`INSERT INTO sessions (user_id, account_id, expires_at, token_digest) VALUES (${input.userId}, ${input.accountId}, now() + interval '30 days', ${sessionTokenDigest(token)})`
+        return token
       }),
-    deleteSession: (sessionId: string) =>
-      sql`DELETE FROM sessions WHERE id = ${sessionId}`.pipe(Effect.asVoid),
+    deleteSession: (token: string) =>
+      sql`DELETE FROM sessions WHERE token_digest = ${sessionTokenDigest(token)}`.pipe(Effect.asVoid),
   })),
 )

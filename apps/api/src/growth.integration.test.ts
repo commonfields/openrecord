@@ -45,7 +45,7 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     const accountId = String((await pool.query("INSERT INTO accounts(name) VALUES('TEST Growth API') RETURNING id")).rows[0].id)
     const userId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`growth-api-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [accountId, userId])
-    const cookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [accountId, userId])).rows[0].id)
+    const cookie = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [accountId, userId])).rows[0].id)
     const { profile } = await ok<{ profile: GrowthProfile }>(call("POST", "/api/growth/products", cookie, { ...product, idempotencyKey: randomUUID() }))
     return { session: { accountId, userId } satisfies Session, cookie, profile, path: `/api/growth/clients/${profile.businessId}` }
   }
@@ -233,7 +233,7 @@ suite("growth HTTP and fixture-model agent (no provider calls)", () => {
     // operator's submission as their own; the identity is bound to its author.
     const secondUserId = String((await pool.query("INSERT INTO users(email,password_hash) VALUES($1,'TEST-only') RETURNING id", [`growth-w1-${randomUUID()}@example.test`])).rows[0].id)
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES($1,$2)", [f.session.accountId, secondUserId])
-    const secondCookie = String((await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id", [f.session.accountId, secondUserId])).rows[0]["id"])
+    const secondCookie = String((await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [f.session.accountId, secondUserId])).rows[0]["id"])
     const foreignActor = await call("POST", `${f.path}/opportunities/${o.id}/executions`, secondCookie, concurrent)
     expect(foreignActor.status).toBe(409); expect(await foreignActor.text()).toContain("IdempotencyConflict")
     // The initiative's scoped read and list both expose the same history.

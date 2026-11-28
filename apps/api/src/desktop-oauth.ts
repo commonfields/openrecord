@@ -4,10 +4,12 @@
 import { createHash, randomBytes } from "node:crypto"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option } from "effect"
 import { Ga4Provider, type TokenCipher } from "@openrecord/ga4"
 import { AdsProvider } from "@openrecord/ads"
+import { sessionTokenDigest } from "@openrecord/db"
 import { json } from "./record-routes.js"
+import { SessionOverride } from "./session-override.js"
 
 const digest = (s: string) => createHash("sha256").update(s).digest("hex")
 const COOKIE = "or_desktop_oauth"
@@ -17,10 +19,13 @@ const PRIVATE = { "cache-control": "no-store", "referrer-policy": "no-referrer",
 export const desktopAuthorization = (authorizationUrl: string, state: string, callbackPath: string, cipher: TokenCipher) => Effect.gen(function*() {
   const request = yield* HttpServerRequest.HttpServerRequest
   if (request.headers["x-openrecord-desktop"] !== "1") return yield* json(200, { authorizationUrl }, PRIVATE)
-  const sid = request.cookies["or_session"] ?? ""
-  if (!Schema.is(Schema.UUID)(sid)) return yield* json(401, { _tag: "NotAuthenticated" }, PRIVATE)
-  const token = randomBytes(32).toString("base64url")
+  const sessionToken = request.cookies["or_session"] ?? ""
+  if (!sessionToken || sessionToken.length > 256) return yield* json(401, { _tag: "NotAuthenticated" }, PRIVATE)
   const sql = yield* SqlClient.SqlClient
+  const live = yield* sql`SELECT id FROM sessions WHERE token_digest = ${sessionTokenDigest(sessionToken)} AND expires_at > now()`
+  if (!live.length) return yield* json(401, { _tag: "NotAuthenticated" }, PRIVATE)
+  const sid = String(live[0]!["id"])
+  const token = randomBytes(32).toString("base64url")
   yield* sql`DELETE FROM desktop_oauth_handoffs WHERE expires_at < now() - interval '1 day'`
   yield* sql`INSERT INTO desktop_oauth_handoffs(token_sha256, session_id, state_sha256, callback_path, authorization_ciphertext)
     VALUES (${digest(token)}, ${sid}, ${digest(state)}, ${callbackPath}, ${cipher.encrypt(authorizationUrl, `desktop-oauth:${digest(token)}`)})`
@@ -70,12 +75,19 @@ export const desktopOAuthCallback = <E, R>(callback: Effect.Effect<HttpServerRes
   const rows = yield* sql`UPDATE desktop_oauth_handoffs h SET consumed_at = now() FROM sessions s
     WHERE h.token_sha256 = ${digest(token)} AND h.state_sha256 = ${digest(state)} AND h.callback_path = ${url.pathname}
       AND h.session_id = s.id AND s.expires_at > now() AND h.expires_at > now() AND h.started_at IS NOT NULL AND h.consumed_at IS NULL
-    RETURNING h.session_id`
+    RETURNING s.user_id, s.account_id`
   if (!rows.length) return finish(false)
   // Use the ticket's original live session only for this callback invocation.
   // Existing account/state/PKCE checks still run inside the original callback.
-  const scopedRequest = request.modify({ headers: Headers.set(request.headers, "cookie", `or_session=${String(rows[0]!["session_id"])}`) })
-  const result = yield* callback.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, scopedRequest), Effect.either)
+  // The server holds only the session token's digest, so the verified session
+  // is handed over directly and the browser's own cookies are dropped.
+  const session = { userId: String(rows[0]!["user_id"]), accountId: String(rows[0]!["account_id"]) }
+  const scopedRequest = request.modify({ headers: Headers.remove(request.headers, "cookie") })
+  const result = yield* callback.pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, scopedRequest),
+    Effect.provideService(SessionOverride, session),
+    Effect.either,
+  )
   if (result._tag === "Left") return finish(false)
   const location = result.right.headers["location"] ?? ""
   const status = new URL(location, "http://localhost").searchParams

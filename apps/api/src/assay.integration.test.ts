@@ -20,7 +20,7 @@ suite("assay HTTP session identity (TEST fixtures only)", () => {
     const account = (await pool.query("INSERT INTO accounts(name) VALUES ('TEST API assay') RETURNING id")).rows[0].id as string
     const user = (await pool.query("INSERT INTO users(email,password_hash) VALUES ($1,'TEST-only') RETURNING id", [`api-assay-${randomUUID()}@example.test`])).rows[0].id as string
     await pool.query("INSERT INTO account_users(account_id,user_id) VALUES ($1,$2)", [account, user])
-    const session = (await pool.query("INSERT INTO sessions(account_id,user_id,expires_at) VALUES ($1,$2,now()+interval '1 hour') RETURNING id", [account, user])).rows[0].id as string
+    const session = (await pool.query("INSERT INTO sessions(id,account_id,user_id,expires_at,token_digest) SELECT u,$1::uuid,$2::uuid,now()+interval '1 hour',encode(sha256(convert_to(u::text,'UTF8')),'hex') FROM gen_random_uuid() u RETURNING id", [account, user])).rows[0].id as string
     const business = (await pool.query("INSERT INTO businesses(account_id,name) VALUES ($1,'TEST API business') RETURNING id", [account])).rows[0].id as string
     const evidence = (await pool.query("INSERT INTO raw_evidence(digest,content_text) VALUES ($1,'TEST public page') RETURNING id", [randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '')])).rows[0].id as string
     const source = (await pool.query("INSERT INTO assay_sources(business_id,url,subject,requested_by,status,raw_evidence_id,fetched_text,fetched_at) VALUES ($1,'https://example.test/pricing','Northstar',$2,'FETCHED',$3,'Northstar costs $79 flat per month.',now()) RETURNING id", [business, user, evidence])).rows[0].id as string
