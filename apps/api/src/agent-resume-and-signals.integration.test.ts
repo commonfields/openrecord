@@ -78,6 +78,14 @@ suite("chat resume, ordered work and capability signals (disposable PostgreSQL, 
     const busy = () => Effect.fail(new AgentConversationRefused({ reason: "BUSY" }))
     expect(await run(writeDecisionResumeJob(jobs[0].payload, busy, { finalAttempt: false }).pipe(Effect.flip))).toMatchObject({ _tag: "AgentWorkRetry", reason: "CHAT_BUSY" })
     expect(await run(writeDecisionResumeJob(jobs[0].payload, busy, { finalAttempt: true }).pipe(Effect.flip))).toBe("DECISION_RESUME_FAILED")
+    // A chat the person archived meanwhile is set aside, and no new decision on it resumes it.
+    await pool.query("UPDATE agent_conversations SET user_archived_at=now() WHERE id=$1", [f.conversationId])
+    expect(await run(writeDecisionResumeJob(jobs[0].payload, ok, { finalAttempt: false }).pipe(Effect.flip))).toBe("DECISION_RESUME_CHAT_GONE")
+    const later = randomUUID()
+    await carried(f, [{ type: "WORDPRESS_CHANGE", id: later }])
+    await pool.query("UPDATE agent_conversations SET user_archived_at=now() WHERE id=$1", [f.conversationId])
+    expect((await decide(f, { kind: "WORDPRESS_CHANGE", itemId: later, verdict: "APPROVED", title: "Later" })).status).toBe(200)
+    expect((await jobsOf(f)).filter(j => j.ref_id === later)).toEqual([])
   })
 
   it("runs one chat's work in order: a later job waits while an earlier one is running or waiting to retry", async () => {

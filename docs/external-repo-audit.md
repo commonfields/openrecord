@@ -129,3 +129,8 @@ Added on 2026-11-27 ([migration 0108](../packages/db/migrations/0108_durable_cha
 
 - Approving a WordPress or Webflow change moves it to PUBLISHING and queues `CHANGE_PUBLISH_WRITE` in one transaction. The job then runs at once in the same request, so the person sees the result. A publish cut off part way goes back on the queue after its lease and finishes from what the site holds. A post or live item that already has the approved values is recorded, not written again. One edited since it was prepared is refused. A new post or item an earlier attempt sent is adopted when found and reported as `OutcomeUnknown` when not, never created twice. Webflow page SEO written but not live is put back and reported. The AI-answer fix follow-up runs once, on the step that publishes. [Publish job](../apps/api/src/change-publish.ts)
 
+Also adopted on 2026-11-27:
+
+- A chat the person archived is set aside. It is not continued after a restart, and a decision on a card it saved does not pick it back up.
+- A run makes at most six searches across `find_capabilities` and `find_research_capabilities`. Later ones are answered, not run, and the model is told to use what it found. The run journal records each refusal.
+

@@ -43,13 +43,14 @@ export const decisionResumeMessage = (input: { readonly approved: boolean; reado
 /**
  * The chat whose agent reply carried this item as a decision card, newest
  * first, in the business and account where it was decided. Null when none
- * does (an item made outside a chat) or the chat's person left the account.
+ * does (an item made outside a chat), the chat's person left the account, or
+ * they archived the chat.
  */
 const originatingChat = (accountId: string, businessId: string, itemId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const rows = yield* sql`SELECT c.id, c.user_id FROM agent_conversations c
     JOIN account_users u ON u.account_id=c.account_id AND u.user_id=c.user_id
-    WHERE c.account_id=${accountId} AND c.business_id=${businessId} AND c.expires_at>now()
+    WHERE c.account_id=${accountId} AND c.business_id=${businessId} AND c.expires_at>now() AND c.user_archived_at IS NULL
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.messages) m WHERE m->>'role'='agent'
         AND m->'decisions' @> ${JSON.stringify([{ id: itemId }])}::jsonb)
     ORDER BY c.updated_at DESC LIMIT 1`
@@ -79,7 +80,8 @@ const conversationBusy = (e: unknown) => typeof e === "object" && e !== null && 
 export const writeDecisionResumeJob = <R>(raw: DecisionResumePayload, sender: UnattendedSender<R>, tries: { readonly finalAttempt: boolean }) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const since = new Date()
-  const revision = Number((yield* sql`SELECT revision FROM agent_conversations WHERE id=${raw.conversationId} AND expires_at>now()`)[0]?.["revision"] ?? -1)
+  // A chat the person archived since is set aside: it is not picked back up.
+  const revision = Number((yield* sql`SELECT revision FROM agent_conversations WHERE id=${raw.conversationId} AND expires_at>now() AND user_archived_at IS NULL`)[0]?.["revision"] ?? -1)
   if (revision < 0) return yield* Effect.fail("DECISION_RESUME_CHAT_GONE" as const)
   // A turn that paused for this decision continues its own conversation once every card it waits on is decided.
   const paused = yield* resumableFor(raw.conversationId, raw.scope.businessId, raw.itemId)

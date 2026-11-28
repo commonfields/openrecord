@@ -91,6 +91,10 @@ const FINAL_NOTICE = "OpenRecord runtime notice: the step or tool budget for thi
 // past that is told once, so it spends what is left on the request instead of
 // reading around it; the budget still ends it.
 const PACE_STEP = 8
+/** Capability and research-catalog searches one run may make. */
+export const MAX_SEARCHES_PER_RUN = 6
+const SEARCH_TOOLS: ReadonlySet<string> = new Set(["find_capabilities", "find_research_capabilities"])
+const SEARCH_LIMIT_NOTE = "This run has searched the catalogs enough. Use a capability already found, or answer with what you have and say what is missing."
 // What the person sent while the run was working, handed to the model beside
 // the tool results. It is theirs, not tool output, so it is not marked untrusted.
 export const noteNotice = (notes: ReadonlyArray<string>) =>
@@ -253,7 +257,7 @@ export const runConversation = (input: {
     if (!calls && !text) return Effect.fail(new AgentModelError({ reason: "MALFORMED", detail: "EMPTY_REPLY" }))
     return Effect.succeed(response)
   }))
-  let calls = 0, finalStep = false, reminded = false, pieceReminded = false
+  let calls = 0, finalStep = false, reminded = false, pieceReminded = false, searches = 0
   for (let step = 1; step <= budget.modelSteps; step++) {
     if (deadline - Date.now() <= EXECUTION_LIMITS.answerReserveMs) {
       finalStep = true
@@ -411,7 +415,11 @@ export const runConversation = (input: {
     let pauseFor: ReadonlyArray<string> | undefined
     const offeredCatalogTool = (name: string) => requestTools.some(t => t.name === name) && !tools.some(t => t.name === name)
     const independent = functions.length > 1 && functions.every(call => runsTogether(call.name))
-    const parallel = functions.flatMap((call, i) => withinBudget[i] && !catalogCall(call.name) && (toolEffect(call.name) === "delegate" || independent) ? [i] : [])
+    // Capability searches past the run's limit are answered, not run: a model searching in a loop
+    // spends its steps on finding instead of the work.
+    const overSearch = new Set<number>()
+    functions.forEach((call, i) => { if (SEARCH_TOOLS.has(call.name)) { if (searches >= MAX_SEARCHES_PER_RUN) overSearch.add(i); else searches++ } })
+    const parallel = functions.flatMap((call, i) => withinBudget[i] && !catalogCall(call.name) && !overSearch.has(i) && (toolEffect(call.name) === "delegate" || independent) ? [i] : [])
     if (parallel.length) {
       const readsOnly = parallel.every(i => toolEffect(functions[i]!.name) === "read")
       for (const i of parallel) yield* journal.record("TOOL_STARTED", { invocationId: invocationIds[i], tool: functions[i]!.name, effect: toolEffect(functions[i]!.name), label: toolLabel(functions[i]!.name) })
@@ -420,6 +428,11 @@ export const runConversation = (input: {
     }
     for (const [i, call] of functions.entries()) {
       const invocationId = invocationIds[i]!, effect = toolEffect(call.name)
+      if (overSearch.has(i)) {
+        yield* journal.record("VERIFICATION", { action: "SEARCH_LIMIT", step, tool: call.name })
+        results.push({ functionResponse: { name: call.name, response: { refused: "SEARCH_LIMIT", note: SEARCH_LIMIT_NOTE } } })
+        continue
+      }
       if (catalogCall(call.name) && !offeredCatalogTool(call.name)) {
         refuse(call.name, toolFailure("UNKNOWN_TOOL"))
         continue
