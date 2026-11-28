@@ -21,7 +21,7 @@ import { BUSINESS_ENDPOINTS } from "./defs-business.js"
 import { GENERATED_ENDPOINTS } from "./generated.js"
 import { BLUESKY_ENDPOINTS, META_ENDPOINTS, WIKI_MORE } from "./defs-more.js"
 import { clientToken, prepare, scrub, send, type CallFailure } from "./http.js"
-import { balanceOf, finishCall, platformServes, priceOf, recentCalls, route, spendSince, startCall, usd, type CredentialSource } from "./metering.js"
+import { balanceOf, budgetOf, finishCall, platformServes, setBudget, priceOf, recentCalls, route, spendSince, startCall, usd, type CredentialSource } from "./metering.js"
 import { CONNECTABLE, provider as providerOf } from "./providers.js"
 import type { AnyEndpoint, Provider } from "./types.js"
 
@@ -117,6 +117,9 @@ const metered = (e: AnyEndpoint, p: Provider, ctx: RunContext, source: Credentia
   if (started.kind === "insufficient")
     return refuse("INSUFFICIENT_BALANCE", `Not run: this call costs ${usd(started.costMicro)} on OpenRecord's ${p.name} account and the research credit is ${usd(started.balanceMicro)}. An account owner can add credit, or the team can connect its own ${p.name} account on the Channels page (never metered). Until then this is unknown, not zero.`,
       { balanceMicro: started.balanceMicro, estimatedCostMicro: started.costMicro, topup: "Research credit on the account's Billing page, or the business's own connection on the Channels page" })
+  if (started.kind === "over_budget")
+    return refuse("BUDGET_REACHED", `Not run: this call costs ${usd(started.costMicro)} and this business has spent ${usd(started.spentMicro)} of its ${usd(started.limitMicro)} monthly research limit on OpenRecord's accounts. The limit resets ${started.resetsAt.slice(0, 10)}. The team can raise it in Settings, or connect its own ${p.name} account on the Channels page (never metered). Until then this is unknown, not zero.`,
+      { limitMicro: started.limitMicro, spentMicro: started.spentMicro, estimatedCostMicro: started.costMicro, resetsAt: started.resetsAt })
   const exit = yield* Effect.exit(call)
   const failure = exit._tag === "Failure" ? (exit.cause._tag === "Interrupt" ? "INTERRUPTED" : "UNAVAILABLE") : isRefused(exit.value) ? exit.value.refused : null
   yield* finishCall(started.callId, failure === null ? { ok: true } : { ok: false, failure })
@@ -167,6 +170,7 @@ export const ENDPOINT_CAPABILITIES: ReadonlyArray<AnyCapability> = ENDPOINTS.fla
 
 // ---------------------------------------------------------------- connections (Channels page)
 
+const Budget = Schema.Struct({ monthlyLimitMicro: Schema.NullOr(Schema.Int.pipe(Schema.between(0, 100_000_000_000))) })
 const Connect = Schema.Struct({ credential: Schema.String.pipe(Schema.minLength(6), Schema.maxLength(400), Schema.pattern(/^[\x21-\x7e]+$/)) })
 const listConnections = (businessId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -194,10 +198,16 @@ export const researchConnectionsApi = (withSession: WithSession) => {
     HttpRouter.get("/api/businesses/:id/research-connections", client((_s, businessId) => Effect.flatMap(listConnections(businessId), b => json(200, b, { "cache-control": "no-store" })))),
     HttpRouter.get("/api/businesses/:id/research-credit", client((session, businessId) => Effect.gen(function*() {
       const balance = yield* balanceOf(session.accountId)
-      return yield* json(200, { balanceMicro: balance, balance: usd(balance), last30Days: yield* spendSince(session.accountId, 30),
+      return yield* json(200, { balanceMicro: balance, balance: usd(balance), last30Days: yield* spendSince(session.accountId, 30), budget: yield* budgetOf(businessId),
         calls: yield* recentCalls(session.accountId, businessId, 50),
         offered: ENDPOINTS.flatMap(e => { const p = providerOf(e.provider); return p && platformServes(e, p) ? [{ endpoint: e.id, title: e.title, provider: p.name, priceMicro: priceOf(e)!, price: usd(priceOf(e)!) }] : [] }) },
         { "cache-control": "no-store" })
+    }))),
+    // The business's monthly limit on research paid from OpenRecord's accounts; null removes it.
+    HttpRouter.put("/api/businesses/:id/research-budget", client((session, businessId) => Effect.gen(function*() {
+      const body = decode(Budget, yield* readJson)
+      if (!body) return yield* json(422, { _tag: "InvalidRequest" })
+      return yield* json(200, { budget: yield* setBudget(session.accountId, businessId, body.monthlyLimitMicro, session.userId) }, { "cache-control": "no-store" })
     }))),
     HttpRouter.put("/api/businesses/:id/research-connections/:provider", client((session, businessId, providerId) => Effect.gen(function*() {
       const p = CONNECTABLE.find(x => x.id === providerId)

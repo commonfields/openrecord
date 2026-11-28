@@ -47,7 +47,7 @@ export const CORE_TOOLS = [
   "read_business_truth", "read_growth_goal", "read_proposals", "read_decision_feedback", "read_objective_investigations",
   "read_competitors", "read_search_performance", "read_results", "read_acquisition_overview", "read_marketing_work", "read_marketing_campaigns",
   "find_research_capabilities", "run_research", "read_research_evidence", "read_web_page", "read_web_pages", "search_web",
-  "remember", "leave_blank",
+  "remember", "leave_blank", "update_plan",
   // Notes about OpenRecord's own tools: a capability it lacks, a result that was wrong.
   "tool_feedback",
   // Where each setting lives, so a "turn it off" request is answered with the real place.

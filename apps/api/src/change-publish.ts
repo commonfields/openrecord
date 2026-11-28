@@ -1,14 +1,15 @@
-// Approved website changes publish through a durable job. The approval moves
+// Approved website changes and account actions run through a durable job. The approval moves
 // the change to PUBLISHING and queues the job in one transaction, then runs it
 // at once so the person sees the result. If the process stops part way, the
 // job is claimed again after its lease and finishes from what the site holds:
-// each publish reads the site before it writes (wordpress.ts carryOutChange,
-// webflow.ts carryOutWebflowChange), so running it again never writes twice.
+// each one reads the site or account before it writes (wordpress.ts carryOutChange,
+// webflow.ts carryOutWebflowChange, account-actions.ts carryOutAction), so running
+// it again never writes twice.
 import { Effect } from "effect"
 import { claimAgentWorkById, enqueueAgentWork, executeAgentWorkWith } from "./agent-work-queue.js"
 
 export type ChangePublishPayload = {
-  readonly system: "WORDPRESS" | "WEBFLOW"
+  readonly system: "WORDPRESS" | "WEBFLOW" | "ACCOUNT"
   readonly accountId: string
   readonly businessId: string
   readonly changeId: string
@@ -36,6 +37,10 @@ export const writeChangePublishJob = (raw: ChangePublishPayload) => Effect.gen(f
   if (raw.system === "WORDPRESS") {
     const m = yield* Effect.promise(() => import("./wordpress.js"))
     return yield* Effect.asVoid(m.carryOutChange(raw.accountId, raw.businessId, raw.changeId))
+  }
+  if (raw.system === "ACCOUNT") {
+    const m = yield* Effect.promise(() => import("./account-actions.js"))
+    return yield* Effect.asVoid(m.carryOutAction(raw.accountId, raw.businessId, raw.changeId))
   }
   const m = yield* Effect.promise(() => import("./webflow.js"))
   return yield* Effect.asVoid(m.carryOutWebflowChange(raw.accountId, raw.businessId, raw.changeId))

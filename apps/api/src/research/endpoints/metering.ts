@@ -71,13 +71,42 @@ export const balanceOf = (accountId: string) => Effect.gen(function*() {
   return sum(yield* sql`SELECT COALESCE(sum(amount_micro), 0)::bigint AS balance FROM research_credit_entries WHERE account_id = ${accountId}`)
 })
 
+/**
+ * One business's research spending this calendar month (UTC) on OpenRecord's
+ * accounts, net of refunds, and its monthly limit (null when none is set).
+ */
+export const budgetOf = (businessId: string) => Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const r = (yield* sql`SELECT
+      (SELECT monthly_limit_micro FROM business_research_budgets WHERE business_id = ${businessId}) AS limit_micro,
+      COALESCE((SELECT sum(c.cost_micro) FROM research_calls c WHERE c.business_id = ${businessId} AND c.cost_micro > 0
+        AND c.started_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        AND NOT EXISTS (SELECT 1 FROM research_credit_entries e WHERE e.call_id = c.id AND e.kind = 'REFUND')), 0)::bigint AS spent_micro,
+      (date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC' AS resets_at`)[0]
+  return { limitMicro: r?.["limit_micro"] === null || r?.["limit_micro"] === undefined ? null : Number(r["limit_micro"]),
+    spentMicro: Number(r?.["spent_micro"] ?? 0), resetsAt: new Date(r?.["resets_at"] as string).toISOString() }
+})
+
+/** Sets (or, with null, removes) a business's monthly research limit. */
+export const setBudget = (accountId: string, businessId: string, limitMicro: number | null, userId: string) => Effect.gen(function*() {
+  if (limitMicro !== null && (!Number.isSafeInteger(limitMicro) || limitMicro < 0 || limitMicro > 100_000_000_000)) return yield* Effect.dieMessage("limit out of range")
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`INSERT INTO business_research_budgets(business_id, account_id, monthly_limit_micro, updated_by_user_id)
+    VALUES (${businessId}, ${accountId}, ${limitMicro}, ${userId})
+    ON CONFLICT (business_id) DO UPDATE SET monthly_limit_micro = EXCLUDED.monthly_limit_micro, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()
+    WHERE business_research_budgets.account_id = EXCLUDED.account_id`
+  return yield* budgetOf(businessId)
+})
+
 export interface CallStart { readonly accountId: string; readonly businessId: string; readonly endpoint: string; readonly provider: string; readonly source: CredentialSource; readonly costMicro: number }
 export type Started = { readonly kind: "started"; readonly callId: string } | { readonly kind: "insufficient"; readonly balanceMicro: number; readonly costMicro: number }
+  | { readonly kind: "over_budget"; readonly limitMicro: number; readonly spentMicro: number; readonly costMicro: number; readonly resetsAt: string }
 
 /**
  * Records a call before it is made. A platform-served call takes its price
  * from the credit in the same transaction, serialised per account, so two
- * concurrent calls cannot both spend the last of it.
+ * concurrent calls cannot both spend the last of it, nor both pass the
+ * business's monthly limit.
  */
 export const startCall = (c: CallStart) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
@@ -86,6 +115,9 @@ export const startCall = (c: CallStart) => Effect.gen(function*() {
       yield* lock(sql, c.accountId)
       const balance = sum(yield* sql`SELECT COALESCE(sum(amount_micro), 0)::bigint AS balance FROM research_credit_entries WHERE account_id = ${c.accountId}`)
       if (balance < c.costMicro) return { kind: "insufficient", balanceMicro: balance, costMicro: c.costMicro } satisfies Started
+      const budget = yield* budgetOf(c.businessId)
+      if (budget.limitMicro !== null && budget.spentMicro + c.costMicro > budget.limitMicro)
+        return { kind: "over_budget", limitMicro: budget.limitMicro, spentMicro: budget.spentMicro, costMicro: c.costMicro, resetsAt: budget.resetsAt } satisfies Started
     }
     const id = String((yield* sql`INSERT INTO research_calls(account_id, business_id, endpoint, provider, credential_source, status, cost_micro)
       VALUES (${c.accountId}, ${c.businessId}, ${c.endpoint}, ${c.provider}, ${c.source}, 'PENDING', ${c.costMicro}) RETURNING id`)[0]!["id"])

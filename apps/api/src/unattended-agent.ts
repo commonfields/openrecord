@@ -4,6 +4,7 @@ import type { HarnessSelection } from "@openrecord/contracts"
 import { SqlClient } from "@effect/sql"
 import { Effect, Either } from "effect"
 import { resolveUnattendedSelection } from "./harness-selection.js"
+import { TurnContinuation, continuationMessage } from "./turn-continuation.js"
 
 type Scope = { readonly accountId: string; readonly userId: string; readonly businessId: string }
 
@@ -26,6 +27,8 @@ export type UnattendedBody = {
   readonly selection?: HarnessSelection | undefined
   /** Marks the turn as OpenRecord's in the chat, not the person's. */
   readonly origin?: { readonly kind: "wake"; readonly title: string } | undefined
+  /** Continue a paused turn's own conversation (agent-pause.ts). */
+  readonly resume?: { readonly runId: string; readonly contents: ReadonlyArray<import("./agent-model.js").ModelContent> } | undefined
 }
 
 export type UnattendedSender<R> = (scope: Scope, body: UnattendedBody) => Effect.Effect<unknown, unknown, R>
@@ -34,8 +37,13 @@ const modelFailure = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { _tag?: string })._tag === "AgentModelError"
 
 /** Runs one turn, matching desktop model fallbacks before trying the hosted model. */
-export const sendUnattendedTurn = <R>(scope: Scope, sender: UnattendedSender<R>, body: Omit<UnattendedBody, "selection">) =>
+export const sendUnattendedTurn = <R>(scope: Scope, sender: UnattendedSender<R>, given: Omit<UnattendedBody, "selection">) =>
   Effect.gen(function*() {
+    // A job continuing after a restart says so, and to check before repeating what its last turn may have done.
+    const continued = yield* Effect.serviceOption(TurnContinuation)
+    const body = continued._tag === "Some"
+      ? { ...given, message: continuationMessage(given.message), origin: { kind: "wake" as const, title: "Continued after a restart" } }
+      : given
     const preferred = yield* lastChatSelection(scope)
     const resolved = yield* resolveUnattendedSelection(scope, preferred)
     const send = (selection: HarnessSelection | undefined) =>

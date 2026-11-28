@@ -194,6 +194,46 @@ Never print, log or share the pairing code or ~/.openrecord/bridge.json. Do not 
     )
 }
 
+/// What one business spends on research paid from OpenRecord's accounts.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct ResearchBudget {
+    /// The monthly limit, or none.
+    #[serde(default, rename = "limitMicro")]
+    pub limit_micro: Option<i64>,
+    #[serde(default, rename = "spentMicro")]
+    pub spent_micro: i64,
+    #[serde(default, rename = "resetsAt")]
+    pub resets_at: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct ResearchSpend {
+    /// The account's research credit.
+    #[serde(default, rename = "balanceMicro")]
+    pub balance_micro: i64,
+    #[serde(default)]
+    pub budget: ResearchBudget,
+}
+
+/// Dollars from micro-dollars, with cents.
+pub fn dollars(micro: i64) -> String {
+    format!("${:.2}", micro as f64 / 1_000_000.0)
+}
+
+/// A monthly limit typed in dollars ("25", "$25.50"): micro-dollars, `Ok(None)`
+/// for an empty box (no limit), or an error to show.
+pub fn parse_limit(text: &str) -> Result<Option<i64>, &'static str> {
+    let t = text.trim().trim_start_matches('$').replace(',', "");
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let v: f64 = t.parse().map_err(|_| "Type an amount in dollars, like 25, or leave it empty for no limit.")?;
+    if !v.is_finite() || v < 0.0 || v > 100_000.0 {
+        return Err("Type an amount from $0 to $100,000.");
+    }
+    Ok(Some((v * 1_000_000.0).round() as i64))
+}
+
 /// A pairing code and when it stops working.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -213,6 +253,19 @@ impl Client {
             memories: Vec<Note>,
         }
         Ok(self.get::<R>(&format!("/api/businesses/{}/memory", enc(business)))?.memories)
+    }
+
+    pub fn research_spend(&self, business: &str) -> ApiResult<ResearchSpend> {
+        self.get(&format!("/api/businesses/{}/research-credit", enc(business)))
+    }
+
+    /// Sets the business's monthly research limit; `None` removes it.
+    pub fn set_research_budget(&self, business: &str, limit_micro: Option<i64>) -> ApiResult<ResearchBudget> {
+        #[derive(Deserialize)]
+        struct R {
+            budget: ResearchBudget,
+        }
+        Ok(self.call::<R>("PUT", &format!("/api/businesses/{}/research-budget", enc(business)), Some(json!({ "monthlyLimitMicro": limit_micro })))?.budget)
     }
 
     pub fn remember(&self, business: &str, kind: &str, text: &str) -> ApiResult<()> {
@@ -277,5 +330,24 @@ mod tests {
         let i = &c.instances[0];
         assert_eq!((i.status(), i.model_count()), ("Connected", "1 of 2 models on".to_string()));
         assert_eq!(i.login_command(false), "node openrecord-bridge.mjs login --instance l1");
+    }
+}
+
+#[cfg(test)]
+mod research_limit_tests {
+    use super::{dollars, parse_limit};
+
+    #[test]
+    fn a_typed_limit_is_dollars_and_an_empty_box_is_no_limit() {
+        assert_eq!(parse_limit(""), Ok(None));
+        assert_eq!(parse_limit("  "), Ok(None));
+        assert_eq!(parse_limit("25"), Ok(Some(25_000_000)));
+        assert_eq!(parse_limit("$12.50"), Ok(Some(12_500_000)));
+        assert_eq!(parse_limit("1,000"), Ok(Some(1_000_000_000)));
+        assert_eq!(parse_limit("0"), Ok(Some(0)));
+        assert!(parse_limit("ten").is_err());
+        assert!(parse_limit("-5").is_err());
+        assert!(parse_limit("200000").is_err());
+        assert_eq!(dollars(12_500_000), "$12.50");
     }
 }

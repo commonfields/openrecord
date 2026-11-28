@@ -6,19 +6,14 @@ import { AgentModelError } from "./agent-model.js"
 import { sendConversation, type ConversationScope, type Responder } from "./agent-conversations.js"
 import { sessionResponder, wakeSessionParent } from "./agent-sessions.js"
 import { cancelHarnessConversation } from "./harness-store.js"
+import { MAX_CONTINUATIONS, continuationMessage } from "./turn-continuation.js"
 
 export class AgentRequestRefused extends Data.TaggedError("AgentRequestRefused")<{ reason: "NOT_FOUND" | "CONFLICT" | "QUEUE_FULL" | "CONVERSATION_REQUIRED" }> {}
 const refuse = (reason: AgentRequestRefused["reason"]) => Effect.fail(new AgentRequestRefused({ reason }))
 type Job = { request_id: string; account_id: string; user_id: string; business_id: string | null; conversation_id: string; payload: unknown; claim_id: string
   readonly continues_request_id?: string | null }
 
-/** How many times one request may be continued after restarts, so a turn that keeps crashing stops. */
-export const MAX_CONTINUATIONS = 3
-const ORIGINAL_CHARS = 3200
-/** What a continued turn is told. Saved work survives a restart; what may have half-run must be checked, not repeated. */
-export const continuationMessage = (original: string) => `OpenRecord notice: your last turn on this request was cut short when OpenRecord restarted. The request was:
-«${original.slice(0, ORIGINAL_CHARS)}»
-Anything that turn saved is listed above and stays saved. Finish the request now. Before you save, prepare or propose anything, check whether it already exists (read_proposals, list_artifacts or the matching read) and never repeat what completed. Mention the restart in one short line at most.`
+export { MAX_CONTINUATIONS, continuationMessage } from "./turn-continuation.js"
 const digestOf = (body: Record<string, unknown>) => createHash("sha256").update(JSON.stringify([body["message"], body["conversationId"], body["revision"], body["selection"] ?? null, body["style"] ?? null,
   body["attachments"] ?? [], ...(body["surfaces"] ? [body["surfaces"]] : []), ...(body["viewing"] ? [body["viewing"]] : [])])).digest("hex")
 
@@ -26,14 +21,15 @@ const digestOf = (body: Record<string, unknown>) => createHash("sha256").update(
  * Queues the next turn of a request a restart interrupted, in the same chat
  * with the same model, files and settings. Its message carries the original
  * request and the rule to check before repeating anything. The chain stops
- * after MAX_CONTINUATIONS, when the person left the account, or when the chat
+ * after MAX_CONTINUATIONS, when the person left the account or archived the chat, or when the chat
  * or business is gone. Call inside the transaction that marked it INTERRUPTED.
  */
 const continueInterrupted = (requestId: string) => Effect.gen(function*() {
   const sql = yield* SqlClient.SqlClient
   const prev = (yield* sql`SELECT j.account_id, j.user_id, j.business_id, j.conversation_id, j.payload, j.continuation_depth, c.revision
     FROM agent_request_jobs j
-    JOIN agent_conversations c ON c.id=j.conversation_id AND c.account_id=j.account_id AND c.user_id=j.user_id AND c.expires_at>now()
+    -- A chat the person archived is set aside: it is not continued.
+    JOIN agent_conversations c ON c.id=j.conversation_id AND c.account_id=j.account_id AND c.user_id=j.user_id AND c.expires_at>now() AND c.user_archived_at IS NULL
     JOIN account_users u ON u.account_id=j.account_id AND u.user_id=j.user_id
     WHERE j.request_id=${requestId} AND j.status='INTERRUPTED' AND j.continuation_depth < ${MAX_CONTINUATIONS}
       AND (j.business_id IS NULL OR EXISTS (SELECT 1 FROM businesses b WHERE b.id=j.business_id AND b.account_id=j.account_id AND b.archived_at IS NULL))`)[0]

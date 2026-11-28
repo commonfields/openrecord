@@ -5,7 +5,8 @@ use crate::{
     state::{App, Load},
     theme::{Theme, type_},
 };
-use rune::{El, col, row};
+use crate::page_shot::ShotPhase;
+use rune::{El, col, el, row};
 
 pub fn view(s: &App, t: &Theme) -> El {
     let Some(p) = s.front_artifact() else { return col() };
@@ -28,12 +29,32 @@ pub fn view(s: &App, t: &Theme) -> El {
         .grow(1.0)
         .min_h(0.0)
         .on_drawn_layout(|s: &mut App, r: [f32; 4]| {
+            // Where it rests; the page itself is moved every frame (`ui::follow_drawn`).
             s.preview_rect = Some(r);
-            if s.preview_visible() {
-                if let Some(a) = s.front_artifact().and_then(|p| p.loaded.ready()) {
-                    crate::native_preview::show(&a.preview_html, r, !s.prefs.reduce_motion);
-                }
-            }
         });
+    // While the panel moves, a picture of the page stands in for it (`page_shot`):
+    // drawn by the app, it travels with the tabs frame for frame. It is always
+    // there, invisible at rest: added only for the move, it started where the
+    // panel would end rather than where it was. The picture holds its size,
+    // centred from the top as the page centres its text, on the page's own colour.
+    let shot = s.page_shot.as_ref().filter(|shot| shot.phase != ShotPhase::Asked && shot.artifact == p.id);
+    let color = s.front_artifact().and_then(|a| a.loaded.ready()).map(|a| crate::native_preview::page_color(&a.preview_html)).map(|(r, g, b)| crate::theme::hex(&format!("#{r:02x}{g:02x}{b:02x}")));
+    // Both sides set: with only one, the picture's aspect ratio sized it, and
+    // the slot beside it showed the window.
+    let mut cover = el().key("artifact-shot").w_full().h_full().min_h(0.0);
+    if let Some(c) = color { cover = cover.fill(c); }
+    let cover = match shot {
+        Some(shot) => {
+            let fading = shot.phase == ShotPhase::Fading;
+            cover
+                .pixels_fit(&shot.pixels, rune::SurfaceFit::Fill)
+                .surface_anchor(rune::Align::Center, rune::Align::Start)
+                .surface_unscaled(true)
+                .opacity(if fading { 0.0 } else { 1.0 })
+                .opacity_motion(if fading { crate::page_shot::FADE } else { rune::Spring::NONE })
+        }
+        None => cover.opacity(0.0).opacity_motion(rune::Spring::NONE),
+    };
+    let slot = slot.child(cover);
     pane.child(slot)
 }
