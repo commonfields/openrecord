@@ -1,4 +1,5 @@
 // SEARCH_OPERATOR_V1 HTTP routes: site targets, runs, findings, fixes.
+import { failureResponse } from "./http-failure.js"
 // All routes are account-scoped (business must belong to the session).
 // Network fetching never happens in the request path; the worker owns it.
 // Mutations touch only the site's configured repoRef.rootDir, constrained to
@@ -73,7 +74,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!overview) return yield* json(404, { _tag: "BusinessNotFound" })
           return yield* json(200, { overview })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/sites",
@@ -86,7 +87,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!sites) return yield* json(404, { _tag: "BusinessNotFound" })
           return yield* json(200, { sites })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/search/sites",
@@ -112,7 +113,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           })
           return yield* json(200, { site: created })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/sites/:siteId/runs",
@@ -125,7 +126,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!runs) return yield* json(404, { _tag: "BusinessNotFound" })
           return yield* json(200, { runs })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/search/sites/:siteId/runs",
@@ -149,7 +150,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           yield* events.append({ businessId, runId: created.id, kind: "RUN_QUEUED", payload: { siteId } }).pipe(Effect.ignore)
           return yield* json(200, { run: created })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/sites/:siteId/runs/:runId",
@@ -172,7 +173,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
             events: yield* events.listByRun(businessId, run.id),
           })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/sites/:siteId/findings",
@@ -185,7 +186,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!rows) return yield* json(404, { _tag: "BusinessNotFound" })
           return yield* json(200, { findings: rows })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/sites/:siteId/findings/:findingId",
@@ -198,7 +199,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!detail) return yield* json(404, { _tag: "FindingNotFound" })
           return yield* json(200, detail)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Prepare the exact change (target file + before/after/patch hashes) an
     // approval binds to. Re-preparing a different change invalidates approval.
@@ -219,7 +220,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           const r = yield* prepareFix(businessId, proposalId, session.userId, body.filePath ?? null)
           return yield* json(r.status, r.body)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Approve (or reject) a proposed fix. Automated fixes approve only an
     // exact prepared change (approved_patch_sha256 = patch_sha256).
@@ -239,7 +240,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           const r = yield* approveFix(businessId, proposalId, session.userId, body.approved, body.patchSha256 ?? null)
           return yield* json(r.status, r.body)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Apply an approved fix through the site adapter. Enforces the approval
     // binding and preconditions; the same idempotency key returns the
@@ -262,7 +263,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           const r = yield* applyFix(businessId, proposalId, session.userId, body)
           return yield* json(r.status, r.body)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Request verification: marks the finding VERIFICATION_PENDING and queues
     // a fresh inspection run. The worker reconciles to VERIFIED_FIXED or
@@ -297,7 +298,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           )
           return yield* json(200, { verification: "VERIFICATION_PENDING", run: queued })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Externally observed mutation identity: the operator creates the
     // commit/PR with normal git tooling (OpenRecord never merges); this
@@ -343,7 +344,7 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
           if (!updated) return yield* json(409, { _tag: "Conflict", message: "mutation changed concurrently; reload" })
           return yield* json(200, { mutation: updated })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/search/gsc",
@@ -362,6 +363,6 @@ export const siteApi = (withSession: any): HttpRouter.HttpRouter =>
             source: "FIXTURE",
           })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
   ) as HttpRouter.HttpRouter

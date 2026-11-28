@@ -41,6 +41,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-openrecord}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-openrecord}
       APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in deploy/.env}
       PORT: "3001"
+      # The API port is never published; every request arrives through Caddy,
+      # so the last X-Forwarded-For entry is the real client (login rate limits).
+      TRUST_PROXY: "1"
       NINE_ROUTER_ENABLED: "${NINE_ROUTER_ENABLED:-false}"
       OPENRECORD_BUILD_COMMIT: ${OPENRECORD_BUILD_COMMIT:-}
     # Optional provider credentials (Gemini, GitHub execution, GA4 OAuth,
