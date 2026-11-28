@@ -1,4 +1,5 @@
 import { SqlClient } from "@effect/sql"
+import { assertWithinSpend, isHostedProvider } from "./agent-spend.js"
 import { Effect, Schema } from "effect"
 import { AGENT_SYSTEM, runConversation } from "./agent.js"
 import { sendConversation, type Responder } from "./agent-conversations.js"
@@ -36,7 +37,9 @@ const visibilityResponder = ({ scope, investigationId }: VisibilityInvestigation
         return yield* dispatchToolSpec(scope, name, args)
       }).pipe(Effect.provide(services))
       const watcher = Effect.forever(guard.pipe(Effect.andThen(Effect.sleep("500 millis"))))
-      const model: AgentModel = input => guard.pipe(Effect.andThen(Effect.raceFirst(picked.invoke(input), watcher)))
+      // The hosted model is metered: each step first checks the account's spend limits.
+      const spend = isHostedProvider(picked.provider) ? assertWithinSpend(accountId) : Effect.void
+      const model: AgentModel = input => spend.pipe(Effect.andThen(guard), Effect.andThen(Effect.raceFirst(picked.invoke(input), watcher)), Effect.provide(services))
       yield* journal.record("VERIFICATION", { visibilityAlert: true, limits: FOLLOWUP_LIMITS })
       const reply = yield* runConversation({
         message,

@@ -1531,6 +1531,7 @@ pub fn turn_failure(reason: &str) -> Option<&'static str> {
         "TIMEOUT" => "The model took too long to answer. Try again, or ask for one part at a time.",
         "CONTEXT_LIMIT" => "This chat has grown too long for the model. Start a new chat, or branch from an earlier reply.",
         "TOOL_LIMIT" => "The agent ran out of steps before it could answer. Ask for one part at a time.",
+        "SPEND_LIMIT" => "This account reached its spending limit on the hosted model. It resets at midnight UTC, or on the 1st for the monthly limit. Until then, pick your own model under the chat box.",
         "MALFORMED" => "The model's answer couldn't be read. Try again, or pick another model.",
         "INTERRUPTED" => "The agent stopped before it finished, because the server restarted. Send it again.",
         "QUEUE_EXPIRED" => "The request waited too long to start. Send it again.",
@@ -1546,7 +1547,7 @@ mod turn_failure_tests {
     fn a_stopped_turn_says_why_and_what_to_do() {
         assert!(ApiError::Status(503, "PAYMENT_REQUIRED".into()).message().contains("billing"));
         assert!(ApiError::Status(503, "CONTEXT_LIMIT".into()).message().contains("new chat"));
-        for r in ["UNCONFIGURED", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT", "TOOL_LIMIT", "MALFORMED", "INTERRUPTED", "QUEUE_EXPIRED"] {
+        for r in ["UNCONFIGURED", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT", "TOOL_LIMIT", "SPEND_LIMIT", "MALFORMED", "INTERRUPTED", "QUEUE_EXPIRED"] {
             assert!(turn_failure(r).is_some(), "{r} has no message");
         }
         // Anything else keeps the general message.
