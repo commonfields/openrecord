@@ -1,4 +1,5 @@
 import { isDemoBusiness } from "./demo-data.js"
+import { failureResponse } from "./http-failure.js"
 import { campaignPublicationApi } from "./campaign-publication.js"
 import { campaignResultsApi } from "./campaign-results.js"
 import { strategyApi } from "./marketing-strategy.js"
@@ -23,7 +24,7 @@ import { growthMeasurementApi } from "./growth-measurement-routes.js"
 import { growthReportApi } from "./growth-report-routes.js"
 import { growthExecutionApi } from "./growth-execution-routes.js"
 import { growthGa4Api } from "./growth-ga4-routes.js"
-import { agentOriginAllowed } from "./agent-origin.js"
+import { agentOriginAllowed, withOriginGuard } from "./agent-origin.js"
 import { MAX_ACTIVE, Remember, forgetNote, listMemories, rememberNote } from "./business-memory.js"
 import { MAX_LOG_BYTES, importTrafficLog } from "./research/traffic.js"
 import { readStartupGit, runtimeDiagnostic } from "./runtime.js"
@@ -125,12 +126,16 @@ import { loadIssuePacket } from "./packet-read.js"
 import { listRecheckAttempts, requestRecheck } from "./reobservations.js"
 import {
   clearedCookieHeader,
-  hashPassword,
+  hashPasswordEffect,
   parseCookies,
   SESSION_COOKIE,
   sessionCookieHeader,
-  verifyPassword,
+  verifyPasswordEffect,
 } from "./auth.js"
+import { authThrottle, clientAddress, LIMITS, retryAfterSeconds } from "./auth-throttle.js"
+
+// Long enough for any passphrase or manager-generated password.
+const MAX_PASSWORD_LENGTH = 1024
 import {
   isDuplicateActiveRun,
   loadDiscoveryCandidates,
@@ -454,21 +459,22 @@ export const makeRouter = () => {
     HttpRouter.post(
       "/api/auth/signup",
       Effect.gen(function*() {
+        const address = yield* clientAddress
+        const wait = authThrottle.blockedFor(`signup:${address}`, LIMITS.signupPerAddress)
+        if (wait > 0) return yield* json(429, { _tag: "TooManyAttempts" }, { "Retry-After": retryAfterSeconds(wait) })
+        authThrottle.hit(`signup:${address}`, LIMITS.signupPerAddress)
         const raw = (yield* readJson) as unknown
         const body = decodeRequest(SignUpRequest, raw)
         if (!body) return yield* json(422, malformed)
         const email = String(body.email ?? "").trim().toLowerCase()
         const password = String(body.password ?? "")
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return yield* json(422, { _tag: "InvalidFactValue", reason: "bad email" })
-        let passwordHash: string
-        try {
-          passwordHash = hashPassword(password)
-        } catch {
-          return yield* json(422, { _tag: "InvalidFactValue", reason: "password too short" })
-        }
+        if (password.length > MAX_PASSWORD_LENGTH) return yield* json(422, { _tag: "InvalidFactValue", reason: "password too long" })
+        const passwordHash = yield* hashPasswordEffect(password).pipe(Effect.option)
+        if (Option.isNone(passwordHash)) return yield* json(422, { _tag: "InvalidFactValue", reason: "password too short" })
         const accountName = String(body.accountName ?? `${email} account`)
         const auth = yield* AuthRepository
-        const created = yield* auth.signup({ email, passwordHash, accountName }).pipe(
+        const created = yield* auth.signup({ email, passwordHash: passwordHash.value, accountName }).pipe(
           Effect.catchAll((e) => (e instanceof EmailTaken ? Effect.succeed(null) : Effect.fail(e))),
         )
         if (!created) return yield* json(409, { _tag: "Conflict", message: "email taken" })
@@ -490,11 +496,20 @@ export const makeRouter = () => {
         if (!body) return yield* json(422, malformed)
         const email = String(body.email ?? "").trim().toLowerCase()
         const password = String(body.password ?? "")
+        if (password.length > MAX_PASSWORD_LENGTH) return yield* json(401, { _tag: "NotAuthenticated" })
+        // Checked before the password: a blocked guess learns nothing, even when it is right.
+        const address = yield* clientAddress
+        const addressKey = `signin:${address}`, emailKey = `signin-failed:${email}`
+        const wait = Math.max(authThrottle.blockedFor(addressKey, LIMITS.signinPerAddress), authThrottle.blockedFor(emailKey, LIMITS.failuresPerEmail))
+        if (wait > 0) return yield* json(429, { _tag: "TooManyAttempts" }, { "Retry-After": retryAfterSeconds(wait) })
+        authThrottle.hit(addressKey, LIMITS.signinPerAddress)
         const auth = yield* AuthRepository
         const row = yield* auth.signinLookup(email)
-        if (!row || !verifyPassword(password, row.passwordHash)) {
+        if (!(yield* verifyPasswordEffect(password, row?.passwordHash ?? null)) || !row) {
+          authThrottle.hit(emailKey, LIMITS.failuresPerEmail)
           return yield* json(401, { _tag: "NotAuthenticated" })
         }
+        authThrottle.clear(emailKey)
         const sessionId = yield* auth.createSession({ userId: row.id, accountId: row.accountId })
         const baseUrl = yield* AppBaseUrl
         const secure = baseUrl.startsWith("https://")
@@ -537,7 +552,7 @@ export const makeRouter = () => {
           // A demo workspace's numbers are sample data; the apps say so beside its name.
           return yield* json(200, { businesses: rows.map(r => ({ ...r, sample: isDemoBusiness(r.id) })) })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses",
@@ -552,7 +567,7 @@ export const makeRouter = () => {
           const row = yield* repo.create(session.accountId, name)
           return yield* json(200, { business: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- facts ----
     HttpRouter.get(
@@ -594,7 +609,7 @@ export const makeRouter = () => {
           return yield* json(200, { facts: rows, conflicts, authority: { mode }, provenance })
         }),
       ).pipe(
-        Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown)),
+        Effect.catchAll(failureResponse),
         Effect.catchAllDefect(authorityConflict),
       ),
     ),
@@ -647,7 +662,7 @@ export const makeRouter = () => {
           })
           return yield* json(200, { fact: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/facts/:factId/supersede",
@@ -679,7 +694,7 @@ export const makeRouter = () => {
           return yield* json(200, { fact: row })
         }),
       ).pipe(
-        Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown)),
+        Effect.catchAll(failureResponse),
         Effect.catchAllDefect(authorityConflict),
       ),
     ),
@@ -702,7 +717,7 @@ export const makeRouter = () => {
           return yield* json(200, { fact: row })
         }),
       ).pipe(
-        Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown)),
+        Effect.catchAll(failureResponse),
         Effect.catchAllDefect(authorityConflict),
       ),
     ),
@@ -721,7 +736,7 @@ export const makeRouter = () => {
           const q = yield* QuestionRepository
           return yield* json(200, { questions: yield* q.listByBusiness(businessId) })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/questions",
@@ -747,7 +762,7 @@ export const makeRouter = () => {
           })
           return yield* json(200, { question: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- check runs ----
     HttpRouter.get(
@@ -769,7 +784,7 @@ export const makeRouter = () => {
           )
           return yield* json(200, { checkRuns: withObs })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/check-runs",
@@ -801,7 +816,7 @@ export const makeRouter = () => {
           const row = yield* runs.enqueue({ businessId, questionId, provider, requestedModel })
           return yield* json(200, { checkRun: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- observations ----
     HttpRouter.get(
@@ -868,7 +883,7 @@ export const makeRouter = () => {
           })
           return yield* json(200, { claim: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- judgments ----
     HttpRouter.post(
@@ -896,7 +911,7 @@ export const makeRouter = () => {
           })
           return yield* json(200, { judgment: row })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- issues (derived) ----
     HttpRouter.get(
@@ -940,7 +955,7 @@ export const makeRouter = () => {
           }))
           return yield* json(200, { issues: withEvidence })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // ---- analytics (derived, read-only) ----
     // Counts and breakdowns only: no composite scores. Claim verdicts use the
@@ -965,7 +980,7 @@ export const makeRouter = () => {
           const data = yield* loadAnalytics(businessId, days)
           return yield* json(200, { analytics: data })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/overview",
@@ -989,7 +1004,7 @@ export const makeRouter = () => {
           )) as Array<Record<string, unknown>>
           return yield* json(200, { overview: countRows[0] })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
   )
   // Product Surface V1 reads live in a second pipe: HttpRouter pipe
@@ -1025,7 +1040,7 @@ export const makeRouter = () => {
           if (!target) return yield* json(422, { _tag: "InvalidFactValue", reason: "URL must be an http(s) URL" })
           return yield* json(200, { target })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/representations/targets/:targetId/bindings",
@@ -1052,7 +1067,7 @@ export const makeRouter = () => {
           if (!binding) return yield* json(404, { _tag: "RepresentationNotFound" })
           return yield* json(200, { binding })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/representations",
@@ -1067,7 +1082,7 @@ export const makeRouter = () => {
           }
           return yield* json(200, { representations: yield* loadRepresentations(session.accountId, businessId) })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/representations/:bindingId",
@@ -1084,7 +1099,7 @@ export const makeRouter = () => {
           if (!detail) return yield* json(404, { _tag: "RepresentationNotFound" })
           return yield* json(200, detail)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Bounded on-demand source re-collection for one tracked binding.
     // Synchronous hosted collection: scoped reads, safe fetch outside any
@@ -1107,7 +1122,7 @@ export const makeRouter = () => {
           if (!collected) return yield* json(404, { _tag: "RepresentationNotFound" })
           return yield* json(200, collected)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/issues/:claimId",
@@ -1124,7 +1139,7 @@ export const makeRouter = () => {
           if (!detail) return yield* json(404, { _tag: "IssueNotFound" })
           return yield* json(200, detail)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Recorded actions for one issue: the product write path for the ACT
     // stage. The body describes what was done; actor identity comes from
@@ -1166,7 +1181,7 @@ export const makeRouter = () => {
         Effect.catchTag("InterventionCorrectionInvalid", (e) =>
           json(422, { _tag: "InterventionCorrectionInvalid", reason: e.reason }),
         ),
-        Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown)),
+        Effect.catchAll(failureResponse),
       ),
     ),
     HttpRouter.get(
@@ -1187,7 +1202,7 @@ export const makeRouter = () => {
           if (!rows) return yield* json(404, { _tag: "IssueNotFound" })
           return yield* json(200, { interventions: rows })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Durable rechecks for one issue. POST derives the question, provider,
     // and requested model from the issue lineage and enqueues a QUEUED
@@ -1231,7 +1246,7 @@ export const makeRouter = () => {
         Effect.catchTag("ReobservationOriginalObservationMismatch", (e) =>
           json(422, { _tag: "ReobservationOriginalObservationMismatch", reason: e.reason }),
         ),
-        Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown)),
+        Effect.catchAll(failureResponse),
       ),
     ),
     HttpRouter.get(
@@ -1252,7 +1267,7 @@ export const makeRouter = () => {
           if (!attempts) return yield* json(404, { _tag: "IssueNotFound" })
           return yield* json(200, { attempts })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Derived issue loop: the issue beside its recorded actions, linked
     // source verification, re-observation attempts, and the latest
@@ -1276,7 +1291,7 @@ export const makeRouter = () => {
           if (!loop) return yield* json(404, { _tag: "IssueNotFound" })
           return yield* json(200, { loop })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Sealed evidence packet for one issue: the stored lineage as a valid V1
     // packet (digest + signatures[] + claims/judgments/interventions/
@@ -1309,7 +1324,7 @@ export const makeRouter = () => {
           if (!exported) return yield* json(404, { _tag: "IssueNotFound" })
           return yield* json(200, exported)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/facts/:factId/history",
@@ -1352,7 +1367,7 @@ export const makeRouter = () => {
             history: ordered.map((r) => ({ ...(r as Record<string, unknown>), provenance: provenanceByFact.get(String(r["id"])) ?? null })),
           })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     // Private, scoped conversation. Provider failures never expose raw payloads.
     HttpRouter.post(
@@ -1520,7 +1535,7 @@ export const makeRouter = () => {
             })),
           })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/discovery/scopes",
@@ -1562,7 +1577,7 @@ export const makeRouter = () => {
             },
           })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/discovery/runs",
@@ -1582,7 +1597,7 @@ export const makeRouter = () => {
           )
           return yield* json(200, { runs: dtos })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.post(
       "/api/businesses/:id/discovery/runs",
@@ -1620,7 +1635,7 @@ export const makeRouter = () => {
           if (!created) return yield* json(409, { _tag: "Conflict", message: "scope already has an active run" })
           return yield* json(200, { run: toDiscoveryRunDto(created, []) })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
     HttpRouter.get(
       "/api/businesses/:id/discovery/candidates",
@@ -1643,7 +1658,7 @@ export const makeRouter = () => {
           if (!found) return yield* json(404, { _tag: "BusinessNotFound" })
           return yield* json(200, found)
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
   )
   // Archive or restore a business: out of the lists and scheduled work, nothing deleted.
@@ -1658,13 +1673,13 @@ export const makeRouter = () => {
           const ok = yield* (yield* BusinessRepository).setArchived(session.accountId, params["id"] ?? "", body.archived)
           return ok ? yield* json(200, { archived: body.archived }) : yield* json(404, { _tag: "BusinessNotFound" })
         }),
-      ).pipe(Effect.catchAll((e) => json((e as { _tag?: string })?._tag === "NotAuthenticated" ? 401 : 500, e as unknown))),
+      ).pipe(Effect.catchAll(failureResponse)),
     ),
   )
-  return HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), HttpRouter.concat(strategyApi(withSession), channelsApi(withSession)))), HttpRouter.concat(desktopOAuthApi(), artifactsApi(withSession))), HttpRouter.concat(HttpRouter.concat(accountActionsApi(withSession), HttpRouter.concat(campaignsApi(withSession), campaignOutcomeApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentRequestApi(withSession), objectivesApi(withSession)), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
+  return withOriginGuard(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(campaignPublicationApi(withSession), HttpRouter.concat(campaignResultsApi(withSession), HttpRouter.concat(strategyApi(withSession), channelsApi(withSession)))), HttpRouter.concat(desktopOAuthApi(), artifactsApi(withSession))), HttpRouter.concat(HttpRouter.concat(accountActionsApi(withSession), HttpRouter.concat(campaignsApi(withSession), campaignOutcomeApi(withSession))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentRequestApi(withSession), objectivesApi(withSession)), followupPolicyApi(withSession)), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(runtimeApi, harnessApi(withSession)), decisionApi(withSession)), HttpRouter.concat(
     HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(api, archiveApi), productApi), discoveryApi), memoryApi),
     HttpRouter.concat(HttpRouter.concat(siteApi(withSession), assayApi(withSession)), HttpRouter.concat(HttpRouter.concat(recordApi(withSession), HttpRouter.concat(HttpRouter.concat(acquisitionApi(withSession), HttpRouter.concat(wordpressApi(withSession), HttpRouter.concat(webflowApi(withSession), connectionsApi(withSession)))), HttpRouter.concat(trackingScheduleApi(withSession), HttpRouter.concat(answerScheduleApi(withSession), HttpRouter.concat(researchConnectionsApi(withSession), HttpRouter.concat(mcpGrantsApi(withSession), HttpRouter.concat(mcpApi, HttpRouter.concat(aiTrafficFeedApi(withSession), HttpRouter.concat(mcpConnectionsApi(withSession), HttpRouter.concat(playbooksApi(withSession), HttpRouter.concat(chatSharesApi(withSession), HttpRouter.concat(usageApi(withSession), HttpRouter.concat(decisionFeedbackApi(withSession), HttpRouter.concat(capabilitySignalsApi(withSession), HttpRouter.concat(agentRollbackApi(withSession), HttpRouter.concat(liveChangesApi(withSession), pluginsApi(withSession))))))))))))))))), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(agentProposalApi(withSession), growthApi(withSession)), growthMeasurementApi(withSession)), HttpRouter.concat(growthReportApi(withSession), HttpRouter.concat(growthExecutionApi(withSession), HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(HttpRouter.concat(growthGa4Api(withSession), searchConsoleApi(withSession)), HttpRouter.concat(HttpRouter.concat(adsApi(withSession), revenueApi(withSession)), acquisitionSuggestionApi(withSession))), briefApi(withSession)), setupApi(withSession, setupDraft))))))),
-  )))))
+  ))))))
 }
 
 export const RepoLayers = {
