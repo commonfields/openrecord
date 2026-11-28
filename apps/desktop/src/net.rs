@@ -24,6 +24,8 @@ pub enum Reply {
     Notice(String),
     Chats(ApiResult<Vec<ChatSummary>>),
     Branched(String, ApiResult<crate::api::Conversation>),
+    /// A chat undone from one of the person's messages: the business, that message's text, and the result.
+    RolledBack(String, String, ApiResult<(crate::api::Conversation, crate::api::Rollback)>),
     Decisions(ApiResult<Vec<Decision>>),
     Overview(String, ApiResult<Overview>),
     Issues(String, ApiResult<Vec<Issue>>),
@@ -46,6 +48,9 @@ pub enum Reply {
     ArchivedChats(ApiResult<Vec<ChatSummary>>),
     Identity(ApiResult<crate::settings::Identity>),
     Memory(String, ApiResult<Vec<crate::settings::Note>>),
+    ResearchSpend(String, ApiResult<crate::settings::ResearchSpend>),
+    /// A saved limit: the business, and the result.
+    ResearchBudgetSaved(String, ApiResult<crate::settings::ResearchBudget>),
     Providers(ApiResult<crate::settings::Catalog>),
     Pairing(ApiResult<crate::settings::Pairing>),
     /// A settings change failed; what to tell the person.
@@ -239,6 +244,17 @@ impl Net {
             send(Reply::Businesses(c.businesses()));
             send(Reply::Chats(c.chats()));
             send(Reply::Decisions(c.decisions()));
+        });
+    }
+
+    /// Undoes a chat from message `from`, then refreshes the inbox and history,
+    /// since cards it withdrew leave the inbox too.
+    pub fn rollback(&self, business: String, conversation: String, from: usize, revision: i64, request: String, text: String) {
+        self.spawn(move |c, send| {
+            let r = c.rollback_conversation(&business, &conversation, from, revision, &request);
+            send(Reply::RolledBack(business, text, r));
+            send(Reply::Decisions(c.decisions()));
+            send(Reply::Chats(c.chats()));
         });
     }
 
@@ -571,6 +587,20 @@ impl Net {
         self.spawn(move |c, send| {
             let r = c.memory(&business);
             send(Reply::Memory(business, r));
+        });
+    }
+
+    pub fn research_spend(&self, business: String) {
+        self.spawn(move |c, send| {
+            let r = c.research_spend(&business);
+            send(Reply::ResearchSpend(business, r));
+        });
+    }
+
+    pub fn set_research_budget(&self, business: String, limit_micro: Option<i64>) {
+        self.spawn(move |c, send| {
+            let r = c.set_research_budget(&business, limit_micro);
+            send(Reply::ResearchBudgetSaved(business, r));
         });
     }
 

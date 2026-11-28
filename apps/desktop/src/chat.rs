@@ -489,6 +489,8 @@ pub struct Progress {
     pub notes_read: Vec<String>,
     /// Questions the run left for the person so far.
     pub blanks: Vec<Blank>,
+    /// The plan the run is following, as it last showed it.
+    pub plan: Option<Plan>,
 }
 
 /// What the agent will take as given for a message, shown above the chat box
@@ -544,6 +546,37 @@ pub fn feedforward(text: &str, business: Option<&str>, files: usize, style: crat
     }
     out.push(Forward::Style(style));
     out
+}
+
+/// The cards a paused turn waits on; it carries on once every one is decided.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct Waiting {
+    #[serde(default, rename = "itemIds")]
+    pub item_ids: Vec<String>,
+}
+
+/// One step of the agent's plan.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct PlanStep {
+    pub step: String,
+    /// "pending", "in_progress" or "completed".
+    #[serde(default)]
+    pub status: String,
+}
+
+/// The checklist the agent shows for work with several steps.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct Plan {
+    #[serde(default)]
+    pub steps: Vec<PlanStep>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl Plan {
+    pub fn done(&self) -> usize {
+        self.steps.iter().filter(|s| s.status == "completed").count()
+    }
 }
 
 /// A question the agent left for the person while it carried on, with the
@@ -623,7 +656,7 @@ pub fn sse_events(buffer: &mut String) -> Vec<(String, String)> {
 
 impl Default for Progress {
     fn default() -> Self {
-        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), answer: String::new(), seq: 0, notes_read: Vec::new(), blanks: Vec::new() }
+        Progress { phase: Phase::Thinking, current: None, current_tool: None, thought: String::new(), trace: Vec::new(), answer: String::new(), seq: 0, notes_read: Vec::new(), blanks: Vec::new(), plan: None }
     }
 }
 
@@ -670,6 +703,9 @@ impl Progress {
                     self.current_tool = Some(s(p, "tool")).filter(|t| !t.is_empty());
                 }
                 "TOOL_COMPLETED" | "TOOL_FAILED" => {
+                    if let Some(plan) = p.get("plan").and_then(|v| serde_json::from_value::<Plan>(v.clone()).ok()).filter(|p| !p.steps.is_empty()) {
+                        self.plan = Some(plan);
+                    }
                     if let Some(b) = p.get("blank").and_then(|b| serde_json::from_value::<Blank>(b.clone()).ok()) {
                         if !self.blanks.iter().any(|x| x.id == b.id) {
                             self.blanks.push(b);
@@ -1055,5 +1091,21 @@ mod brief_request_tests {
     fn only_the_scheduled_brief_request_is_recognised() {
         assert!(super::is_brief_request("Write this week's growth brief for this business (today is 2026-11-15). It is for the owner"));
         assert!(!super::is_brief_request("Can you write this week's growth brief?"));
+    }
+
+    #[test]
+    fn the_live_plan_follows_the_latest_update_and_survives_on_the_reply() {
+        use super::{Plan, Progress, RunEvent};
+        use serde_json::{Value, json};
+        let ev = |seq, kind: &str, payload: Value| RunEvent { seq, kind: kind.into(), payload };
+        let mut p = Progress::default();
+        p.apply(&[ev(1, "TOOL_COMPLETED", json!({ "tool": "update_plan", "summary": "Plan: 0 of 2 done", "plan": { "steps": [{ "step": "Read the site", "status": "in_progress" }, { "step": "Draft the page", "status": "pending" }] } }))]);
+        assert_eq!(p.plan.as_ref().map(Plan::done), Some(0));
+        p.apply(&[ev(2, "TOOL_COMPLETED", json!({ "tool": "read_website", "summary": "Read" }))]);
+        assert_eq!(p.plan.as_ref().map(|x| x.steps.len()), Some(2), "a tool without a plan keeps the last one");
+        p.apply(&[ev(3, "TOOL_COMPLETED", json!({ "tool": "update_plan", "plan": { "steps": [{ "step": "Read the site", "status": "completed" }, { "step": "Draft the page", "status": "in_progress" }] } }))]);
+        assert_eq!(p.plan.as_ref().map(Plan::done), Some(1));
+        let m: crate::api::Message = serde_json::from_value(json!({ "role": "agent", "text": "Done", "plan": { "steps": [{ "step": "Read the site", "status": "completed" }] } })).expect("message");
+        assert_eq!(m.plan.map(|x| x.done()), Some(1));
     }
 }

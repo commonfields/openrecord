@@ -29,6 +29,19 @@ static BOOL previewPassThrough = YES;
 static NSRect previewKeep[4];
 static int previewKeeps;
 static NSNumber *previewLight;
+// The page has been moved to where its slot was drawn (`or_preview_place`):
+// from then on only that moves it, so a rebuild mid-slide never snaps it to
+// where the spring will end and back.
+static BOOL placed;
+// While the panel moves, the app draws a picture of the page in its place
+// and the page itself stays hidden: a native view lands a frame after the
+// app's drawing, and WebKit lays the page out again at every width, so a
+// page moved with the panel trails its tabs and shows the window at its edge.
+static BOOL concealed;
+static unsigned char *shotData;
+static int shotW, shotH, shotState;
+static double shotPtW, shotPtH;
+static NSUInteger shotGeneration;
 
 // Fades the view up once it is on screen and its document has painted.
 static void reveal(void) {
@@ -60,6 +73,7 @@ static void probePreviewLight(WKWebView *view) {
 void or_preview_hide(void) {
     [preview setHidden:YES];
     preview.alphaValue = 0.0;
+    placed = NO;
     if (previewBox) [previewBox setHidden:YES];
 }
 
@@ -83,7 +97,40 @@ void or_preview_clear(void) {
     painted = NO;
     previewLight = nil;
     previewKeeps = 0;
+    placed = NO;
     if (previewBox) [previewBox setHidden:YES];
+}
+
+// The page's own colour behind it: while WebKit lays the page out again at a
+// new width, the uncovered edge shows this rather than the window.
+static NSColor *previewBackdrop;
+void or_preview_backdrop(double r, double g, double b) {
+    previewBackdrop = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+    if (previewBox) previewBox.layer.backgroundColor = previewBackdrop.CGColor;
+    if (preview) {
+        if (@available(macOS 12.0, *)) preview.underPageBackgroundColor = previewBackdrop;
+    }
+}
+
+// Moves the page to where the app drew its slot this frame (`follow_drawn`), without loading anything.
+void or_preview_place(double x, double y, double w, double h) {
+    if (!preview || !previewHost || w <= 0 || h <= 0) return;
+    NSView *host = previewHost;
+    NSView *frameView = host.superview;
+    CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
+    NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
+    if (!NSEqualRects(previewBox.frame, frame)) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [previewBox setFrame:frame];
+        [preview setFrame:previewBox.bounds];
+        [CATransaction commit];
+    }
+    placed = YES;
+    if (concealed) return;
+    if (previewBox.hidden) [previewBox setHidden:NO];
+    if (preview.hidden) { [preview setHidden:NO]; }
+    reveal();
 }
 
 void or_preview_show(const char *html, double x, double y, double w, double h, int motion) {
@@ -116,6 +163,10 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
         previewBox.layer.masksToBounds = YES;
         if (browserPanel) previewBox.layer.backgroundColor = browserPanel.CGColor;
     }
+    if (previewBackdrop) {
+        previewBox.layer.backgroundColor = previewBackdrop.CGColor;
+        if (@available(macOS 12.0, *)) preview.underPageBackgroundColor = previewBackdrop;
+    }
     if (preview.superview != previewBox) { [preview removeFromSuperview]; [previewBox addSubview:preview]; }
     NSView *frameView = host.superview;
     if (previewBox.superview != frameView) { [previewBox removeFromSuperview]; [frameView addSubview:previewBox positioned:NSWindowBelow relativeTo:host]; }
@@ -123,7 +174,7 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
     previewHost = host;
     CGFloat top = host.isFlipped ? y : host.bounds.size.height - y - h;
     NSRect frame = [host convertRect:NSMakeRect(x, top, w, h) toView:frameView];
-    if (!NSEqualRects(previewBox.frame, frame)) { [previewBox setFrame:frame]; [preview setFrame:previewBox.bounds]; }
+    if (!placed && !NSEqualRects(previewBox.frame, frame)) { [previewBox setFrame:frame]; [preview setFrame:previewBox.bounds]; }
     NSString *next = [NSString stringWithUTF8String:html];
     if (![next isEqualToString:document]) {
         // Another version keeps the one on screen until it has painted.
@@ -132,8 +183,75 @@ void or_preview_show(const char *html, double x, double y, double w, double h, i
         [preview loadHTMLString:next baseURL:nil];
     }
     if (preview.hidden) { preview.alphaValue = 0.0; [preview setHidden:NO]; }
+    if (concealed) { [previewBox setHidden:YES]; return; }
     if (previewBox.hidden) [previewBox setHidden:NO];
     reveal();
+}
+
+// Hides the page under the app's picture of it, or shows it again in place.
+void or_preview_conceal(int on) {
+    concealed = on != 0;
+    if (!previewBox) return;
+    if (concealed) [previewBox setHidden:YES];
+    else if (preview && !preview.hidden && placed) [previewBox setHidden:NO];
+}
+
+int or_preview_painted(void) { return preview && painted ? 1 : 0; }
+
+// Starts a picture of the page as it shows now: 1 when one is on its way.
+// `width` > 0 takes only that many points about the page's middle.
+int or_preview_snapshot(double width) {
+    if (!preview || preview.hidden || previewBox.hidden || !painted || preview.alphaValue < 1.0) return 0;
+    free(shotData);
+    shotData = NULL;
+    shotState = 1;
+    NSUInteger generation = ++shotGeneration;
+    NSRect rect = preview.bounds;
+    if (width > 0 && width < rect.size.width) rect = NSMakeRect(NSMidX(rect) - width / 2.0, rect.origin.y, width, rect.size.height);
+    CGSize points = rect.size;
+    WKSnapshotConfiguration *config = [WKSnapshotConfiguration new];
+    config.rect = rect;
+    // What is on screen now, without waiting for the next screen update.
+    config.afterScreenUpdates = NO;
+    [preview takeSnapshotWithConfiguration:config completionHandler:^(NSImage *image, NSError *error) {
+        if (generation != shotGeneration) return;
+        CGImageRef cg = (image && !error) ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;
+        if (!cg) { shotState = -1; return; }
+        // One pixel per screen pixel of this window: the app draws the picture
+        // at that density, and WebKit may hand back another (2x on a 1x screen),
+        // which drew the page larger than itself while the panel moved.
+        CGFloat density = preview.window.backingScaleFactor > 0 ? preview.window.backingScaleFactor : 1.0;
+        size_t w = MAX((size_t)1, (size_t)llround(points.width * density)), h = MAX((size_t)1, (size_t)llround(points.height * density));
+        unsigned char *buf = calloc(w * h * 4, 1);
+        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w * 4, space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        if (ctx) { CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh); CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg); }
+        if (ctx) CGContextRelease(ctx);
+        CGColorSpaceRelease(space);
+        if (!ctx) { free(buf); shotState = -1; return; }
+        shotData = buf;
+        shotW = (int)w;
+        shotH = (int)h;
+        shotPtW = points.width;
+        shotPtH = points.height;
+        shotState = 2;
+    }];
+    return 1;
+}
+
+// The picture's state: 0 none, 1 on its way, 2 ready (its pixels, RGBA rows
+// top first, and size in pixels and points), -1 failed.
+int or_preview_snapshot_state(const unsigned char **data, int *w, int *h, double *pw, double *ph) {
+    if (shotState == 2) { *data = shotData; *w = shotW; *h = shotH; *pw = shotPtW; *ph = shotPtH; }
+    return shotState;
+}
+
+// Lets the picture go once it has been read.
+void or_preview_snapshot_done(void) {
+    shotGeneration++;
+    free(shotData);
+    shotData = NULL;
+    shotState = 0;
 }
 
 #import <AuthenticationServices/AuthenticationServices.h>

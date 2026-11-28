@@ -134,3 +134,8 @@ Added on 2026-11-27 ([migration 0109](../packages/db/migrations/0109_durable_act
 | The same read-before-write effects, for any provider. | Approved account actions (Google review replies, Google Ads campaign, budget and ad changes) run through the same publish job. A target that already holds the approved values is recorded as done, and one that changed since it was prepared is refused. A new ad an earlier attempt may have sent is reported as `OutcomeUnknown` and never sent again; it was created paused. [Account actions](../apps/api/src/account-actions.ts) |
 - Background agent turns get the same treatment as chat turns: the weekly brief, setup draft, first campaign, approved and declined initiative work, and the turn after a decision. One cut short by a restart runs again as a continuation, at most three times. It is told the original request and to check before repeating anything, and is marked as OpenRecord's in the chat. Read-only follow-ups and helpers have their own recovery and are not continued. [Turn continuation](../apps/api/src/turn-continuation.ts)
 
+Also adopted on 2026-11-27:
+
+- A chat the person archived is set aside. It is not continued after a restart, and a decision on a card it saved does not pick it back up.
+- A run makes at most six searches across `find_capabilities` and `find_research_capabilities`. Later ones are answered, not run, and the model is told to use what it found. The run journal records each refusal.
+

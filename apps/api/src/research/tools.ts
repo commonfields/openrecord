@@ -26,7 +26,7 @@ import { businessWebsite } from "../agent-web-tools.js"
 import { CAPABILITIES, INDEX, capability, describe, findCapabilities } from "./catalog.js"
 import { normalizeDomain, normalizeUrl } from "./inputs.js"
 import { researchNet } from "./net.js"
-import { balanceOf, recentCalls, spendSince, usd } from "./endpoints/metering.js"
+import { balanceOf, budgetOf, recentCalls, spendSince, usd } from "./endpoints/metering.js"
 import { isRefused, type AnyCapability, type Observed, type Refused, type TimelineEvent } from "./types.js"
 
 const scoped = (accountId: string, businessId: string) => Effect.gen(function*() {
@@ -346,10 +346,14 @@ export const readResearchCredit = (ctx: ToolContext, args: typeof CreditInput.Ty
   const balance = yield* balanceOf(ctx.accountId)
   const spend = yield* spendSince(ctx.accountId, 30)
   const calls = yield* recentCalls(ctx.accountId, ctx.businessId, args.limit ?? 10)
-  return { summary: `Research credit ${usd(balance)}; ${spend.calls} provider calls in 30 days, ${spend.paidCalls} on OpenRecord's accounts (${usd(spend.spentMicro)})`, citations: [],
+  const budget = yield* budgetOf(ctx.businessId)
+  const limit = budget.limitMicro === null ? "no monthly limit" : `${usd(budget.spentMicro)} of its ${usd(budget.limitMicro)} monthly limit spent, resets ${budget.resetsAt.slice(0, 10)}`
+  return { summary: `Research credit ${usd(balance)}; ${spend.calls} provider calls in 30 days, ${spend.paidCalls} on OpenRecord's accounts (${usd(spend.spentMicro)}); this business: ${limit}`, citations: [],
     data: { balanceMicro: balance, balance: usd(balance), last30Days: { ...spend, spent: usd(spend.spentMicro) },
+      monthlyBudget: { limitMicro: budget.limitMicro, limit: budget.limitMicro === null ? null : usd(budget.limitMicro), spentMicro: budget.spentMicro, spent: usd(budget.spentMicro),
+        remainingMicro: budget.limitMicro === null ? null : Math.max(0, budget.limitMicro - budget.spentMicro), resetsAt: budget.resetsAt },
       calls: calls.map(c => ({ endpoint: c.endpoint, provider: c.provider, servedBy: c.credentialSource, status: c.status, failure: c.failure, cost: usd(c.costMicro), refunded: c.refunded, at: c.startedAt, durationMs: c.durationMs })),
-      note: "Calls on the business's own connection or a public route are never charged. A failed paid call is refunded. Ask before running many paid calls; say what each costs." } } satisfies AgentToolResult
+      note: "Calls on the business's own connection or a public route are never charged. A failed paid call is refunded. A paid call that would pass the business's monthly limit is refused (BUDGET_REACHED); only the team can raise the limit. Ask before running many paid calls; say what each costs and what is left of the limit." } } satisfies AgentToolResult
 })
 
 // ---------------------------------------------------------------- declarations

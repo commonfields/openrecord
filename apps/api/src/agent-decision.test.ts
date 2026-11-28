@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
-import { agentDeclarations, runConversation } from "./agent.js"
+import { MAX_SEARCHES_PER_RUN, agentDeclarations, runConversation } from "./agent.js"
 import { CORE_TOOLS, decideTurn, viewedArtifact } from "./agent-decision.js"
 import type { AgentModel, ModelInput, ModelResponse } from "./agent-model.js"
 import { toolEffect } from "./agent-registry.js"
@@ -153,6 +153,20 @@ describe("a decided turn in the run loop (deterministic fixtures, no live model)
     expect(events.find(e => e.payload["action"] === "CAPABILITIES_NOT_FOUND")!.payload["query"]).toBe("fly a drone to mars")
     // The miss is saved as a request for the team; a search that found something is not.
     expect(missed).toEqual(["fly a drone to mars"])
+  })
+
+  it("answers catalog searches past the run's limit instead of running them", async () => {
+    const search = (n: number) => Array.from({ length: n }, (_, k) => ["find_capabilities", { query: `look for capability number ${k}` }] as [string, Record<string, unknown>])
+    const { model, requests } = recorded([calls(...search(4)), calls(...search(4)), text("Done")])
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = []
+    await Effect.runPromise(runConversation({ message: "Find tools", history: [], model,
+      decision: { version: "fixture", intents: ["visibility"], tools: [], prefetch: [], expand: [] },
+      journal: { record: (type, payload) => Effect.sync(() => { events.push({ type, payload }) }) },
+      dispatch: () => Effect.succeed(read) }))
+    const answers = [1, 2].flatMap(step => (requests[step]!.contents.at(-1)!.parts as Array<{ functionResponse?: { response: Record<string, unknown> } }>).map(p => p.functionResponse!.response))
+    expect(answers.filter(r => r["refused"] === "SEARCH_LIMIT")).toHaveLength(8 - MAX_SEARCHES_PER_RUN)
+    expect(answers.filter(r => "capabilities" in r)).toHaveLength(MAX_SEARCHES_PER_RUN)
+    expect(events.filter(e => e.payload["action"] === "SEARCH_LIMIT")).toHaveLength(8 - MAX_SEARCHES_PER_RUN)
   })
 
   it("declares a writing turn's saves whole from the first step, so creating the piece needs no tool_details step", async () => {
