@@ -84,7 +84,7 @@ suite("LinkedIn posts (scripted LinkedIn)", () => {
     }
     const a = await account(), other = await account()
     const call = (acct: typeof a, method: string, path: string) =>
-      web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", cookie: `or_session=${acct.cookie}` }, body: method === "GET" ? undefined : "{}" }))
+      web.handler(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json", cookie: `or_session=${acct.cookie}` }, ...(method === "GET" ? {} : { body: "{}" }) }))
 
     // The business's LinkedIn: one sign-in (an alphanumeric member id), its page and its own profile.
     const connection = String((await pool.query(`INSERT INTO ad_connections(account_id, provider, subject, display_name, granted_scopes, connected_by_user_id)
