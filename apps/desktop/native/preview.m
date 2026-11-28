@@ -217,11 +217,15 @@ int or_preview_snapshot(double width) {
         if (generation != shotGeneration) return;
         CGImageRef cg = (image && !error) ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;
         if (!cg) { shotState = -1; return; }
-        size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+        // One pixel per screen pixel of this window: the app draws the picture
+        // at that density, and WebKit may hand back another (2x on a 1x screen),
+        // which drew the page larger than itself while the panel moved.
+        CGFloat density = preview.window.backingScaleFactor > 0 ? preview.window.backingScaleFactor : 1.0;
+        size_t w = MAX((size_t)1, (size_t)llround(points.width * density)), h = MAX((size_t)1, (size_t)llround(points.height * density));
         unsigned char *buf = calloc(w * h * 4, 1);
         CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
         CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w * 4, space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-        if (ctx) CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg);
+        if (ctx) { CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh); CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg); }
         if (ctx) CGContextRelease(ctx);
         CGColorSpaceRelease(space);
         if (!ctx) { free(buf); shotState = -1; return; }
