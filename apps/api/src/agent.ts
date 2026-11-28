@@ -1,4 +1,5 @@
 import type { AgentResponseStyle } from "@openrecord/contracts"
+import { assertWithinSpend, isHostedProvider } from "./agent-spend.js"
 import { randomUUID } from "node:crypto"
 import { Config, Effect, Fiber, Schema, type Either } from "effect"
 import type { AgentToolResult } from "./agent-tools.js"
@@ -597,7 +598,9 @@ export const handleAgentMessage = (accountId: string, userId: string, businessId
       : guard.pipe(Effect.andThen(dispatchAgentTool(accountId,userId,businessId,name,args,origin)),Effect.provide(context))
     const modelContext = yield* Effect.context<import("@effect/sql").SqlClient.SqlClient>()
     const watchCancellation = Effect.forever(guard.pipe(Effect.andThen(Effect.sleep("500 millis"))))
-    const invoke: AgentModel = input => guard.pipe(Effect.andThen(Effect.raceFirst(model.invoke(input),watchCancellation)),Effect.provide(modelContext),
+    // The hosted model is metered: each step first checks the account's spend limits.
+    const spend = selection === undefined && isHostedProvider(model.provider) ? assertWithinSpend(accountId) : Effect.void
+    const invoke: AgentModel = input => spend.pipe(Effect.andThen(guard),Effect.andThen(Effect.raceFirst(model.invoke(input),watchCancellation)),Effect.provide(modelContext),
       Effect.mapError(e => e instanceof AgentModelError ? e : new AgentModelError({ reason:"UNAVAILABLE" })))
     yield* guard
     const resumeContext = businessId !== null && workflow === null ? yield* loadResumeContext(accountId, businessId, userId) : undefined

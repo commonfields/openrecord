@@ -12,8 +12,9 @@
 // spend is what OpenRecord actually charged from research credit.
 import { SqlClient } from "@effect/sql"
 import { HttpRouter, HttpServerRequest } from "@effect/platform"
-import { Effect } from "effect"
-import { json, type WithSession } from "./record-routes.js"
+import { Effect, Schema } from "effect"
+import { decode, json, readJson, type WithSession } from "./record-routes.js"
+import { spendStatus } from "./agent-spend.js"
 
 export interface TokenPrice { readonly inputPerM: number; readonly outputPerM: number }
 
@@ -82,11 +83,32 @@ export const loadUsage = (accountId: string, days: number) => Effect.gen(functio
   }
 })
 
+// null keeps the server default for that limit; 0 switches it off.
+const Limit = (max: number) => Schema.optional(Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.between(0, max))))
+const SetLimits = Schema.Struct({ dailyUsd: Limit(1_000_000), monthlyUsd: Limit(10_000_000), dailyTokens: Limit(10_000_000_000) })
+const usageFailure = (e: unknown) => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "UsageUnavailable" })
+
 export const usageApi = (withSession: WithSession) => HttpRouter.empty.pipe(
   HttpRouter.get("/api/usage", withSession(session => Effect.gen(function*() {
     const req = yield* HttpServerRequest.HttpServerRequest
     const days = Number(new URL(req.url, "http://localhost").searchParams.get("days") ?? "30")
     if (!Number.isInteger(days) || days < 1 || days > 365) return yield* json(422, { _tag: "InvalidRequest" })
-    return yield* json(200, yield* loadUsage(session.accountId, days), { "cache-control": "no-store" })
-  })).pipe(Effect.catchAll(e => json(typeof e === "object" && e !== null && "_tag" in e && e._tag === "NotAuthenticated" ? 401 : 500, { _tag: "UsageUnavailable" })))),
+    return yield* json(200, { ...(yield* loadUsage(session.accountId, days)), spend: yield* spendStatus(session.accountId) }, { "cache-control": "no-store" })
+  })).pipe(Effect.catchAll(usageFailure))),
+  // The account's own limits on the hosted model. Fields left out keep their current value.
+  HttpRouter.put("/api/usage/limits", withSession(session => Effect.gen(function*() {
+    const body = decode(SetLimits, yield* readJson)
+    if (!body) return yield* json(422, { _tag: "InvalidRequest" })
+    if (body.dailyTokens !== undefined && body.dailyTokens !== null && !Number.isInteger(body.dailyTokens)) return yield* json(422, { _tag: "InvalidRequest" })
+    const sql = yield* SqlClient.SqlClient
+    const keep = (v: number | null | undefined) => v === undefined
+    yield* sql`INSERT INTO account_agent_limits(account_id, daily_usd, monthly_usd, daily_tokens, updated_by_user_id)
+      VALUES (${session.accountId}, ${body.dailyUsd ?? null}, ${body.monthlyUsd ?? null}, ${body.dailyTokens ?? null}, ${session.userId})
+      ON CONFLICT (account_id) DO UPDATE SET
+        daily_usd = CASE WHEN ${keep(body.dailyUsd)} THEN account_agent_limits.daily_usd ELSE EXCLUDED.daily_usd END,
+        monthly_usd = CASE WHEN ${keep(body.monthlyUsd)} THEN account_agent_limits.monthly_usd ELSE EXCLUDED.monthly_usd END,
+        daily_tokens = CASE WHEN ${keep(body.dailyTokens)} THEN account_agent_limits.daily_tokens ELSE EXCLUDED.daily_tokens END,
+        updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`
+    return yield* json(200, { spend: yield* spendStatus(session.accountId) }, { "cache-control": "no-store" })
+  })).pipe(Effect.catchAll(usageFailure))),
 )

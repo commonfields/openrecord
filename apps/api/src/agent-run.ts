@@ -101,6 +101,7 @@ const STOPPED: Readonly<Record<string, string>> = {
   RATE_LIMITED: "The model provider was rate limited before this request finished.",
   CONTEXT_LIMIT: "This request ran out of context space before it finished.",
   TOOL_LIMIT: "This request used its whole step budget before it finished.",
+  SPEND_LIMIT: "This account reached its spending limit on the hosted model. It resets at midnight UTC, or on the 1st for the monthly limit.",
 }
 type JournalRow = { readonly type: RunEventType; readonly payload: Record<string, unknown> }
 const str = (v: unknown) => typeof v === "string" ? v : ""

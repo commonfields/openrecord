@@ -2,8 +2,8 @@ import { Config, Data, Effect, Option, Redacted, Schema } from "effect"
 import { chatCompletionAnswer, chatCompletionRequest } from "@openrecord/contracts"
 
 export class AgentModelError extends Data.TaggedError("AgentModelError")<{
-  readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED"
-  readonly detail?: "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY" | "LOCAL_REQUEST_LIMIT" | "LOCAL_CONTEXT_LIMIT"
+  readonly reason: "UNCONFIGURED" | "TIMEOUT" | "RATE_LIMITED" | "UNAVAILABLE" | "MALFORMED" | "CONTEXT_LIMIT" | "TOOL_LIMIT" | "CANCELLED" | "SPEND_LIMIT"
+  readonly detail?: "DAILY_USD" | "MONTHLY_USD" | "DAILY_TOKENS" | "INVALID_JSON" | "RESPONSE_TOO_LARGE" | "INVALID_RESPONSE" | "OUTPUT_LIMIT" | "PROVIDER_STOPPED" | "EMPTY_REPLY" | "LOCAL_REQUEST_LIMIT" | "LOCAL_CONTEXT_LIMIT"
   readonly httpStatus?: number
 }> {}
 
